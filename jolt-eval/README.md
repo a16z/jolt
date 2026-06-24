@@ -33,7 +33,7 @@ The motivation is twofold:
 
 | Objective | Units | Description |
 |---|---|---|
-| `lloc` | lines | Total logical lines of code in `jolt-core/src/` |
+| `lloc` | lines | Total logical lines of code in `crates/jolt-prover-legacy/src/` |
 | `cognitive_complexity_avg` | — | Average cognitive complexity per function |
 | `halstead_bugs` | — | Estimated delivered bugs (Halstead volume / 3000) |
 
@@ -181,7 +181,7 @@ cargo run --release -p jolt-eval --bin optimize -- --list
 # Optimize a specific objective function
 cargo run --release -p jolt-eval --bin optimize -- \
     --objective minimize_lloc --iterations 5 \
-    --hint "Focus on reducing complexity in jolt-core/src/subprotocols/"
+    --hint "Focus on reducing complexity in crates/jolt-prover-legacy/src/subprotocols/"
 
 # With a custom result branch name
 cargo run --release -p jolt-eval --bin optimize -- \

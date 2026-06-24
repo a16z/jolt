@@ -1,4 +1,4 @@
-use jolt_core::field::JoltField;
+use jolt_prover_legacy::field::JoltField;
 use rand_core::RngCore;
 
 use crate::{

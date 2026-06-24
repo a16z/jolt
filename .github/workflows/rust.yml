@@ -53,13 +53,13 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host,zk
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
-      # jolt-verifier's core-fixtures feature gates the jolt-core compat layer
-      # (exhaustive enum mappings); it is not enabled by the workspace-wide
+      # jolt-verifier's prover-fixtures feature gates live prover artifact
+      # generation for verifier tests. It is not enabled by the workspace-wide
       # invocations above, so build it explicitly in both modes.
-      - name: cargo clippy -p jolt-verifier --features core-fixtures
-        run: cargo clippy -p jolt-verifier --all-targets --features core-fixtures
-      - name: cargo clippy -p jolt-verifier --features core-fixtures,zk
-        run: cargo clippy -p jolt-verifier --all-targets --features core-fixtures,zk
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,zk
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,zk
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -78,12 +78,12 @@ jobs:
           --features field-inline
           --
           -D warnings
-      - name: cargo clippy -p jolt-core -p jolt-sdk --features host,field-inline
+      - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,field-inline
         run: >
           cargo clippy
           -q
           --message-format=short
-          -p jolt-core
+          -p jolt-prover-legacy
           -p jolt-sdk
           --all-targets
           --features host,field-inline
@@ -107,12 +107,12 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
-        working-directory: ./jolt-core
+        working-directory: ./crates/jolt-prover-legacy
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
 
-  test-core:
+  test-prover:
     runs-on: ubuntu-latest
-    name: Test jolt-core
+    name: Test jolt-prover-legacy
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -135,12 +135,12 @@ jobs:
         run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run jolt-core tests
-        run: cargo nextest run --release -p jolt-core
+      - name: Run jolt-prover-legacy tests
+        run: cargo nextest run --release -p jolt-prover-legacy
 
-  test-core-zk:
+  test-prover-zk:
     runs-on: ubuntu-latest
-    name: Test jolt-core (zk)
+    name: Test jolt-prover-legacy (zk)
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -163,8 +163,8 @@ jobs:
         run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run jolt-core tests with zk feature
-        run: cargo nextest run --release -p jolt-core --features zk
+      - name: Run jolt-prover-legacy tests with zk feature
+        run: cargo nextest run --release -p jolt-prover-legacy --features zk
 
   typos:
     runs-on: ubuntu-latest
@@ -270,7 +270,7 @@ jobs:
         run: |
           set -euo pipefail
           pkgs=$(cargo metadata --format-version=1 --no-deps \
-                   | jq -r '.packages[] | select(.manifest_path | startswith("'"$(pwd)"'/crates/")) | .name' \
+                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and .name != "jolt-prover-legacy") | .name' \
                    | tr '\n' ' ')
           echo "Found crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
@@ -286,8 +286,8 @@ jobs:
             fi
             cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
           done
-      - name: Test lookup table core ABI
-        run: cargo nextest run -p jolt-lookup-tables --features core-abi-tests --test core_lookup_table_abi --cargo-quiet
+      - name: Test lookup table prover ABI
+        run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
       - name: Test crates with field-inline
         shell: bash
         run: |

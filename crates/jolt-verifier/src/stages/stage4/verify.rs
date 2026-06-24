@@ -388,8 +388,8 @@ where
         reason: error.to_string(),
     })?;
     for segment in &public_initial_ram.segments {
-        let end = segment.start_index + segment.words.len();
-        if end > checked.ram_K {
+        let end = segment.start_index + segment.words.len() as u128;
+        if end > checked.ram_K as u128 {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamValCheck,
                 reason: format!(
@@ -423,13 +423,11 @@ where
         + usize::from(checked.precommitted.program_image.is_some())
 }
 
-/// Absorb jolt-core's Fiat-Shamir domain separator for the RAM value-check gamma:
-/// an empty message labeled `b"ram_val_check_gamma"`. jolt-core appends this empty
-/// labeled chunk before sampling the gamma, so the modular verifier and prover must
+/// Absorb the Fiat-Shamir domain separator for the RAM value-check gamma: an empty
+/// message labeled `b"ram_val_check_gamma"`. The prover appends this empty labeled
+/// chunk before sampling the gamma, so the modular verifier and prover must
 /// reproduce it byte-for-byte (label chunk + empty payload) or every challenge from
-/// here on diverges from a jolt-core-produced proof. Shared by both sides so the
-/// transcript can't drift; the `core-fixtures` suite (which replays real jolt-core
-/// proofs) pins it.
+/// here on diverges. Shared by both sides so the transcript can't drift.
 pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
     transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
     transcript.append_bytes(&[]);

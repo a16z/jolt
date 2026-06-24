@@ -1,5 +1,5 @@
 // This is a variant of examples/merkle-tree that adds:
-// 1. `--save` flag to serialize proof artifacts to /tmp/ for the transpiler pipeline
+// 1. `--save` flag to serialize verifier objects to /tmp/
 // 2. Transcript feature flags (transcript-poseidon, etc.) in Cargo.toml
 //
 // The upstream merkle-tree example is left unmodified. This crate reuses its guest.
@@ -43,6 +43,9 @@ pub fn main() {
         TrustedAdvice::new(leaf3),
         &prover_preprocessing,
     );
+    let verifier_trusted_advice_commitment = trusted_advice_commitment.map(
+        <jolt_sdk::PCS as jolt_sdk::ProofCommitmentScheme<jolt_sdk::F>>::commitment_into_verifier,
+    );
 
     let prove_merkle_tree = guest::build_prover_merkle_tree(program, prover_preprocessing.clone());
     let verify_merkle_tree = guest::build_verifier_merkle_tree(verifier_preprocessing);
@@ -66,7 +69,7 @@ pub fn main() {
         serialize_and_print_size(
             "Trusted Advice Commitment",
             "/tmp/merkle_trusted_advice.bin",
-            &trusted_advice_commitment,
+            &verifier_trusted_advice_commitment,
         )
         .expect("Could not serialize trusted advice commitment.");
     }
@@ -76,7 +79,7 @@ pub fn main() {
         leaf1,
         output,
         program_io.panic,
-        trusted_advice_commitment,
+        verifier_trusted_advice_commitment,
         proof,
     );
 

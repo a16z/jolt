@@ -5,7 +5,7 @@ use arbitrary::{Arbitrary, Unstructured};
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
-use jolt_core::host::Program;
+use jolt_prover_legacy::host::Program;
 
 use tracer::instruction::Cycle;
 
@@ -173,7 +173,7 @@ impl Invariant for SoundnessInvariant {
 
         // 4. Decode to get program_size, then trace to get actual length
         let (_bytecode, _memory_init, program_size, _e_entry) =
-            jolt_core::guest::program::decode(&elf_bytes);
+            jolt_prover_legacy::guest::program::decode(&elf_bytes);
         memory_config.program_size = Some(program_size);
 
         let program = guests::GuestProgram::new(&elf_bytes, &memory_config);
@@ -259,20 +259,27 @@ impl Invariant for SoundnessInvariant {
 /// RAII guard that reverts a patch on drop via `git checkout`.
 struct PatchGuard {
     dir: PathBuf,
-    applied: bool,
+    patch: Option<String>,
 }
 
 impl Drop for PatchGuard {
     fn drop(&mut self) {
-        if self.applied {
-            let _ = Command::new("git")
+        if let Some(patch) = self.patch.as_deref() {
+            let Ok(mut child) = Command::new("git")
                 .current_dir(&self.dir)
-                .args(["checkout", "."])
-                .status();
-            let _ = Command::new("git")
-                .current_dir(&self.dir)
-                .args(["clean", "-fd"])
-                .status();
+                .args(["apply", "--reverse", "--allow-empty", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            else {
+                return;
+            };
+
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                let _ = stdin.write_all(patch.as_bytes());
+            }
+
+            let _ = child.wait();
         }
     }
 }
@@ -282,7 +289,7 @@ impl Drop for PatchGuard {
 fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, CheckError> {
     let guard = PatchGuard {
         dir: sandbox_dir.to_path_buf(),
-        applied: false,
+        patch: None,
     };
 
     if patch.trim().is_empty() {
@@ -320,7 +327,7 @@ fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, CheckError
 
     Ok(PatchGuard {
         dir: sandbox_dir.to_path_buf(),
-        applied: true,
+        patch: Some(safe_patch),
     })
 }
 
@@ -400,9 +407,9 @@ diff --git a/src/lib.rs b/src/lib.rs
     #[test]
     fn filter_drops_path_traversal() {
         let patch = "\
-diff --git a/../../jolt-core/src/lib.rs b/../../jolt-core/src/lib.rs
---- a/../../jolt-core/src/lib.rs
-+++ b/../../jolt-core/src/lib.rs
+diff --git a/../../crates/jolt-prover-legacy/src/lib.rs b/../../crates/jolt-prover-legacy/src/lib.rs
+--- a/../../crates/jolt-prover-legacy/src/lib.rs
++++ b/../../crates/jolt-prover-legacy/src/lib.rs
 @@ -1 +1 @@
 -safe
 +malicious

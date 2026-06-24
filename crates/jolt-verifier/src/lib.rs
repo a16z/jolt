@@ -1,6 +1,5 @@
-//! Verifier model crate for Jolt proofs.
+//! Canonical verifier crate for Jolt proofs.
 
-pub mod compat;
 pub mod config;
 pub mod error;
 pub mod preprocessing;

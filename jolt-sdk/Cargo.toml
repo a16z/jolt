@@ -17,18 +17,24 @@ edition = "2021"
 [features]
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
-zk = ["jolt-core?/zk"]
+zk = ["jolt-prover-legacy?/zk", "jolt-verifier?/zk"]
 field-inline = [
-  "jolt-core?/field-inline",
+  "jolt-prover-legacy?/field-inline",
   "jolt-program?/field-inline",
   "tracer?/field-inline",
 ]
 
 host = [
-  "jolt-core/default",
+  "jolt-prover-legacy/default",
+  "dep:bincode",
   "jolt-platform/std",
   "dep:common",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "dep:jolt-field",
   "dep:jolt-program",
+  "dep:jolt-transcript",
+  "dep:jolt-verifier",
   "dep:tracer",
   "postcard/use-std",
   "serde/std",
@@ -45,12 +51,22 @@ guest-std = [
   "zeroos-std",
 ]
 
-guest-verifier = ["guest-std", "dep:common", "jolt-core/minimal"]
+guest-verifier = [
+  "guest-std",
+  "dep:bincode",
+  "dep:common",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "dep:jolt-field",
+  "dep:jolt-transcript",
+  "dep:jolt-verifier",
+  "jolt-prover-legacy/minimal",
+]
 
 malloc-shim = ["jolt-platform/malloc-shim"]
-transcript-poseidon = ["jolt-core/transcript-poseidon"]
-transcript-keccak = ["jolt-core/transcript-keccak"]
-transcript-blake2b = ["jolt-core/transcript-blake2b"]
+transcript-poseidon = ["jolt-prover-legacy/transcript-poseidon"]
+transcript-keccak = ["jolt-prover-legacy/transcript-keccak"]
+transcript-blake2b = ["jolt-prover-legacy/transcript-blake2b"]
 
 # Jolt-SDK native features (optional capabilities)
 #
@@ -65,7 +81,7 @@ random = ["zeroos-random"]
 stdout = ["zeroos-vfs-device-console"]
 
 zeroos-runtime-nostd = ["zeroos?/runtime-nostd"]
-zeroos-runtime-musl = ["zeroos?/runtime-musl"]
+zeroos-runtime-musl = []
 zeroos-thread = ["zeroos?/scheduler-cooperative"]
 zeroos-vfs = ["zeroos?/vfs"]
 zeroos-random = ["zeroos?/random", "zeroos?/rng-lcg"]
@@ -85,9 +101,15 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 jolt-sdk-macros.workspace = true
 # Host-only dependencies
+bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
-jolt-core = { workspace = true, default-features = false, optional = true }
+jolt-prover-legacy = { workspace = true, default-features = false, optional = true }
+jolt-crypto = { workspace = true, optional = true }
+jolt-dory = { workspace = true, optional = true }
+jolt-field = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }
+jolt-transcript = { workspace = true, optional = true }
+jolt-verifier = { workspace = true, optional = true }
 tracer = { workspace = true, default-features = false, features = [
   "std",
 ], optional = true }
@@ -108,4 +130,7 @@ zeroos = { workspace = true, default-features = false, features = [
 ] }
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "linux"))'.dependencies]
-zeroos = { workspace = true, default-features = false, features = ["os-linux"] }
+zeroos = { workspace = true, default-features = false, features = [
+  "os-linux",
+  "runtime-musl",
+] }

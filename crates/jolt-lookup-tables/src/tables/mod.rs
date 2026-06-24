@@ -96,7 +96,7 @@ use xor::XorTable;
 /// declare which table they use via
 /// [`InstructionLookupTable::lookup_table`](crate::InstructionLookupTable::lookup_table).
 ///
-/// Variant indices match `jolt-core::LookupTables` so lookup-table flags in
+/// Variant indices match `jolt-prover-legacy::LookupTables` so lookup-table flags in
 /// core-produced proofs can be interpreted without an adapter.
 #[expect(clippy::unsafe_derive_deserialize)]
 #[derive(

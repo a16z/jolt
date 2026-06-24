@@ -9,17 +9,17 @@ use std::{
 
 use ark_bn254::Fr;
 use eyre::Result;
-use jolt_core::{
+use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_prover_legacy::{
     curve::Bn254Curve,
     host::Program,
     poly::commitment::dory::DoryCommitmentScheme,
     zkvm::{
-        program::ProgramPreprocessing,
+        preprocessing::JoltSharedPreprocessing, program::ProgramPreprocessing,
         prover::JoltProverPreprocessing,
-        verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing},
-        Serializable,
     },
 };
+use jolt_sdk::serialize_verifier_object;
 use syn::{punctuated::Punctuated, Attribute, ItemFn, Meta, PathSegment, Token};
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
@@ -60,9 +60,9 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
 
     let prover_preprocessing =
         JoltProverPreprocessing::<Fr, Bn254Curve, DoryCommitmentScheme>::new(shared);
-    let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+    let verifier_preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
 
-    let verifier_bytes = verifier_preprocessing.serialize_to_bytes()?;
+    let verifier_bytes = serialize_verifier_object(&verifier_preprocessing)?;
 
     let target_dir = Path::new("target/wasm32-unknown-unknown/release");
     fs::create_dir_all(target_dir)?;
@@ -223,10 +223,8 @@ fn generate_wasm_verify_rs(func_names: &[String]) -> Result<()> {
     code.push_str(
         r#"use wasm_bindgen::prelude::*;
 use jolt_sdk::{
-    Curve, F, PCS, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
+    deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,
 };
-
-type VerifierPreprocessing = JoltVerifierPreprocessing<F, Curve, PCS>;
 "#,
     );
 
@@ -235,23 +233,24 @@ type VerifierPreprocessing = JoltVerifierPreprocessing<F, Curve, PCS>;
             r#"
 #[wasm_bindgen]
 pub fn verify_{func_name}(preprocessing_data: &[u8], proof_data: &[u8], io_data: &[u8]) -> bool {{
-    let preprocessing = match VerifierPreprocessing::deserialize_from_bytes(preprocessing_data) {{
+    let preprocessing: JoltVerifierPreprocessing = match deserialize_verifier_object(preprocessing_data) {{
         Ok(p) => p,
         Err(_) => return false,
     }};
-    let proof = match RV64IMACProof::deserialize_from_bytes(proof_data) {{
+    let proof: RV64IMACProof = match deserialize_verifier_object(proof_data) {{
         Ok(p) => p,
         Err(_) => return false,
     }};
-    let program_io = match JoltDevice::deserialize_from_bytes(io_data) {{
+    let program_io: JoltDevice = match deserialize_verifier_object(io_data) {{
         Ok(d) => d,
         Err(_) => return false,
     }};
-    let verifier = match RV64IMACVerifier::new(&preprocessing, proof, program_io, None, None) {{
-        Ok(v) => v,
-        Err(_) => return false,
-    }};
-    verifier.verify().is_ok()
+    jolt_sdk::jolt_verifier::verify::<
+        jolt_sdk::VerifierField,
+        jolt_sdk::VerifierPCS,
+        jolt_sdk::VerifierVC,
+        jolt_sdk::VerifierTranscript,
+    >(&preprocessing, &program_io, &proof, None, false).is_ok()
 }}
 "#
         ));

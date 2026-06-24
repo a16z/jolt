@@ -122,7 +122,7 @@ impl PublicInitialRam {
 
         if !ram.bytecode_words.is_empty() {
             segments.push(PublicMemorySegment {
-                start_index: layout.remapped_word_address(ram.min_bytecode_address)? as usize,
+                start_index: layout.remapped_word_address(ram.min_bytecode_address)? as u128,
                 words: ram.bytecode_words.clone(),
             });
         }
@@ -140,7 +140,7 @@ impl PublicInitialRam {
 
         if !public_io.inputs.is_empty() {
             segments.push(PublicMemorySegment {
-                start_index: layout.remapped_word_address(layout.input_start)? as usize,
+                start_index: layout.remapped_word_address(layout.input_start)? as u128,
                 words: public_io.input_words_le(),
             });
         }

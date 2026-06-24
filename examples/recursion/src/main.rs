@@ -1,15 +1,42 @@
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
 use jolt_sdk::guest::program::Program;
 use jolt_sdk::{
     JoltDevice, JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
-    MemoryConfig, MemoryLayout, ProgramPreprocessing, RV64IMACProof, Serializable,
+    MemoryConfig, MemoryLayout, ProgramPreprocessing, RV64IMACProof,
 };
+use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{error, info};
+
+fn push_record<T: Serialize>(buffer: &mut Vec<u8>, value: &T) {
+    let bytes = bincode::serde::encode_to_vec(value, bincode::config::standard()).unwrap();
+    let len = u64::try_from(bytes.len()).unwrap();
+    buffer.extend_from_slice(&len.to_le_bytes());
+    buffer.extend_from_slice(&bytes);
+}
+
+fn read_record<T: DeserializeOwned>(buffer: &[u8], offset: &mut usize) -> Result<T, String> {
+    if buffer.len().saturating_sub(*offset) < 8 {
+        return Err("missing record length prefix".to_string());
+    }
+    let mut len_bytes = [0u8; 8];
+    len_bytes.copy_from_slice(&buffer[*offset..*offset + 8]);
+    *offset += 8;
+
+    let len = usize::try_from(u64::from_le_bytes(len_bytes)).unwrap();
+    if buffer.len().saturating_sub(*offset) < len {
+        return Err("truncated serialized record".to_string());
+    }
+    let end = *offset + len;
+    let (value, consumed) =
+        bincode::serde::decode_from_slice(&buffer[*offset..end], bincode::config::standard())
+            .map_err(|error| error.to_string())?;
+    assert_eq!(consumed, len, "record decoder left trailing bytes");
+    *offset = end;
+    Ok(value)
+}
 
 fn get_guest_src_dir() -> PathBuf {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -233,37 +260,32 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
 fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     info!("Checking data integrity...");
 
-    let mut cursor = std::io::Cursor::new(all_groups_data);
-
-    let verifier_preprocessing = jolt_sdk::JoltVerifierPreprocessing::<
-        jolt_sdk::F,
-        jolt_sdk::Curve,
-        jolt_sdk::PCS,
-    >::deserialize_compressed(&mut cursor)
-    .unwrap();
-    let verifier_bytes = verifier_preprocessing.serialize_to_bytes().unwrap();
+    let mut offset = 0;
+    let verifier_preprocessing: JoltVerifierPreprocessing =
+        read_record(all_groups_data, &mut offset).unwrap();
+    let verifier_bytes =
+        bincode::serde::encode_to_vec(&verifier_preprocessing, bincode::config::standard())
+            .unwrap();
     info!(
         "✓ Verifier preprocessing deserialized successfully ({} bytes)",
         verifier_bytes.len()
     );
 
-    let n = u32::deserialize_compressed(&mut cursor).unwrap();
+    let n: u32 = read_record(all_groups_data, &mut offset).unwrap();
     info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        match RV64IMACProof::deserialize_compressed(&mut cursor) {
+        match read_record::<RV64IMACProof>(all_groups_data, &mut offset) {
             Ok(_) => info!("✓ Proof {i} deserialized"),
             Err(e) => error!("✗ Failed to deserialize proof {i}: {e:?}"),
         }
-        match JoltDevice::deserialize_compressed(&mut cursor) {
+        match read_record::<JoltDevice>(all_groups_data, &mut offset) {
             Ok(_) => info!("✓ Device {i} deserialized"),
             Err(e) => error!("✗ Failed to deserialize device {i}: {e:?}"),
         }
     }
 
-    let position = cursor.position() as usize;
-    let all_data = cursor.into_inner();
-    let remaining_data: Vec<u8> = all_data[position..].to_vec();
+    let remaining_data: Vec<u8> = all_groups_data[offset..].to_vec();
     info!("✓ Remaining data size: {} bytes", remaining_data.len());
 
     assert_eq!(
@@ -331,21 +353,23 @@ fn collect_guest_proofs(
     let guest_prover_preprocessing =
         preprocess_guest_prover(&mut guest_prog, max_trace_length, bytecode_chunk_count);
     info!("Preprocessing guest verifier...");
-    let guest_verifier_preprocessing = JoltVerifierPreprocessing::from(&guest_prover_preprocessing);
+    let guest_verifier_preprocessing =
+        jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
+            jolt_sdk::F,
+            jolt_sdk::Curve,
+            jolt_sdk::PCS,
+        >(&guest_prover_preprocessing);
 
     let inputs = guest.inputs();
     info!("Got inputs: {inputs:?}");
 
     let mut all_groups_data = Vec::new();
-    let mut cursor = std::io::Cursor::new(&mut all_groups_data);
     let mut total_prove_time = 0.0;
 
-    guest_verifier_preprocessing
-        .serialize_compressed(&mut cursor)
-        .unwrap();
+    push_record(&mut all_groups_data, &guest_verifier_preprocessing);
 
     let n = inputs.len() as u32;
-    u32::serialize_compressed(&n, &mut cursor).unwrap();
+    push_record(&mut all_groups_data, &n);
 
     info!("Starting {} recursion with {}", guest.name(), n);
 
@@ -360,15 +384,20 @@ fn collect_guest_proofs(
         info!("  Tracing...");
         guest_prog.memory_config.program_size = Some(
             guest_verifier_preprocessing
-                .shared
-                .memory_layout
+                .program
+                .memory_layout()
                 .program_size,
         );
         let (_, _, _, device_io) = guest_prog.trace(&input_bytes, &[], &[]);
         assert!(!device_io.panic, "Guest program panicked during tracing");
 
         info!("  Proving...");
-        let (proof, io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
+        let (proof, io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove::<
+            jolt_sdk::F,
+            jolt_sdk::Curve,
+            jolt_sdk::PCS,
+            jolt_sdk::ProofTranscript,
+        >(
             &guest_prog,
             &input_bytes,
             &[],
@@ -377,7 +406,8 @@ fn collect_guest_proofs(
             None,
             &mut output_bytes,
             &guest_prover_preprocessing,
-        );
+        )
+        .expect("prover should produce verifier-native proof");
         let prove_time = now.elapsed().as_secs_f64();
         total_prove_time += prove_time;
         info!(
@@ -385,16 +415,21 @@ fn collect_guest_proofs(
             &input_bytes, prove_time
         );
 
-        proof.serialize_compressed(&mut cursor).unwrap();
-        io_device.serialize_compressed(&mut cursor).unwrap();
+        push_record(&mut all_groups_data, &proof);
+        push_record(&mut all_groups_data, &io_device);
 
         info!("  Verifying...");
-        let is_valid = jolt_sdk::guest::verifier::verify(
-            &input_bytes,
-            None,
-            &output_bytes,
-            proof,
+        let is_valid = jolt_sdk::jolt_verifier::verify::<
+            jolt_sdk::VerifierField,
+            jolt_sdk::VerifierPCS,
+            jolt_sdk::VerifierVC,
+            jolt_sdk::VerifierTranscript,
+        >(
             &guest_verifier_preprocessing,
+            &io_device,
+            &proof,
+            None,
+            false,
         )
         .is_ok();
         info!("  Verification result: {is_valid}");
@@ -523,41 +558,57 @@ fn run_recursion_proof(
     let recursion_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
     let recursion_verifier_preprocessing =
-        jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
+        jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
+            jolt_sdk::F,
+            jolt_sdk::Curve,
+            jolt_sdk::PCS,
+        >(&recursion_prover_preprocessing);
 
     // update program_size in memory_config now that we know it
     recursion.memory_config.program_size = Some(
         recursion_verifier_preprocessing
-            .shared
-            .memory_layout
+            .program
+            .memory_layout()
             .program_size,
     );
 
     let mut output_bytes = vec![
         0;
         recursion_verifier_preprocessing
-            .shared
-            .memory_layout
+            .program
+            .memory_layout()
             .max_output_size as usize
     ];
     match run_config {
         RunConfig::Prove => {
-            let (proof, _io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
-                &recursion,
-                &input_bytes,
-                &[],
-                &[],
-                None,
-                None,
-                &mut output_bytes,
-                &recursion_prover_preprocessing,
-            );
-            let is_valid = jolt_sdk::guest::verifier::verify(
-                &input_bytes,
-                None,
-                &output_bytes,
-                proof,
+            let (proof, io_device, _debug): (RV64IMACProof, _, _) =
+                jolt_sdk::guest::prover::prove::<
+                    jolt_sdk::F,
+                    jolt_sdk::Curve,
+                    jolt_sdk::PCS,
+                    jolt_sdk::ProofTranscript,
+                >(
+                    &recursion,
+                    &input_bytes,
+                    &[],
+                    &[],
+                    None,
+                    None,
+                    &mut output_bytes,
+                    &recursion_prover_preprocessing,
+                )
+                .expect("prover should produce verifier-native proof");
+            let is_valid = jolt_sdk::jolt_verifier::verify::<
+                jolt_sdk::VerifierField,
+                jolt_sdk::VerifierPCS,
+                jolt_sdk::VerifierVC,
+                jolt_sdk::VerifierTranscript,
+            >(
                 &recursion_verifier_preprocessing,
+                &io_device,
+                &proof,
+                None,
+                false,
             )
             .is_ok();
             let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();

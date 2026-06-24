@@ -25,6 +25,7 @@ pub mod stage5;
 pub mod stage6;
 pub mod stage7;
 pub mod stage8;
+#[doc(hidden)]
 pub mod zk;
 
 /// Build the one-hot [`JoltFormulaDimensions`] from the proof's one-hot config and

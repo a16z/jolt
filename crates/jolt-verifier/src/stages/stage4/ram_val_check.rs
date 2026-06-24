@@ -370,7 +370,7 @@ pub fn ram_val_check_advice_block<F: Field>(
     }
     let start_index = layout
         .remapped_word_address(start_address)
-        .map_err(public_input_failed)? as usize;
+        .map_err(public_input_failed)? as u128;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     if advice_num_vars > r_address.len() {
         return Err(public_input_failed(format!(

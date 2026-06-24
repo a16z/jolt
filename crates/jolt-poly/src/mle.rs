@@ -16,26 +16,25 @@ pub enum MleError {
     #[error("MLE block has {block_vars} variables but point has arity {arity}")]
     BlockVariablesExceedArity { block_vars: usize, arity: usize },
     #[error("MLE block start {start_index} is not aligned to block size {block_size}")]
-    BlockStartUnaligned {
-        start_index: usize,
-        block_size: u128,
-    },
+    BlockStartUnaligned { start_index: u128, block_size: u128 },
     #[error("MLE block end {end} exceeds domain size {domain_size}")]
     BlockEndOutOfDomain { end: u128, domain_size: u128 },
 }
 
-pub fn sparse_mle_msb<F: Field>(start_index: usize, values: &[u64], point: &[F]) -> F {
+pub fn sparse_mle_msb<F: Field>(start_index: u128, values: &[u64], point: &[F]) -> F {
     values
         .iter()
         .enumerate()
-        .map(|(offset, value)| F::from_u64(*value) * eq_index_msb(point, start_index + offset))
+        .map(|(offset, value)| {
+            F::from_u64(*value) * eq_index_msb(point, start_index + offset as u128)
+        })
         .sum()
 }
 
 pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
 where
     F: Field,
-    I: IntoIterator<Item = (usize, &'a [u64])>,
+    I: IntoIterator<Item = (u128, &'a [u64])>,
 {
     segments
         .into_iter()
@@ -44,7 +43,7 @@ where
 }
 
 pub fn block_selector_mle_msb<F: Field>(
-    start_index: usize,
+    start_index: u128,
     block_num_vars: usize,
     point: &[F],
 ) -> Result<F, MleError> {
@@ -68,7 +67,7 @@ pub fn block_selector_mle_msb<F: Field>(
     let domain_size = 1u128
         .checked_shl(point.len() as u32)
         .ok_or(MleError::DomainTooLarge { arity: point.len() })?;
-    let start = start_index as u128;
+    let start = start_index;
     if !start.is_multiple_of(block_size) {
         return Err(MleError::BlockStartUnaligned {
             start_index,
@@ -83,8 +82,7 @@ pub fn block_selector_mle_msb<F: Field>(
     }
 
     let selector_point_len = point.len() - block_num_vars;
-    let block_index = usize::try_from(start / block_size)
-        .map_err(|_| MleError::DomainTooLarge { arity: point.len() })?;
+    let block_index = start / block_size;
     Ok(eq_index_msb(&point[..selector_point_len], block_index))
 }
 

@@ -2803,7 +2803,7 @@ dependencies = [
  "common",
  "env_logger",
  "eyre",
- "jolt-core",
+ "jolt-prover-legacy",
  "jolt-sdk",
  "log",
  "rand 0.8.5",
@@ -2842,59 +2842,6 @@ dependencies = [
  "jolt-riscv",
  "serde",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "jolt-core"
-version = "0.1.0"
-dependencies = [
- "allocative",
- "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-std 0.5.0",
- "bincode 2.0.1",
- "blake2 0.11.0-rc.6",
- "chrono",
- "clap",
- "common",
- "criterion",
- "derive_more",
- "dory-pcs",
- "eyre",
- "fixedbitset 0.5.7",
- "iai-callgrind",
- "inferno 0.12.6",
- "itertools 0.15.0",
- "jolt-inlines-keccak256",
- "jolt-inlines-sha2",
- "jolt-optimizations",
- "jolt-program",
- "jolt-riscv",
- "light-poseidon",
- "memory-stats",
- "num",
- "num-derive 0.4.2",
- "num-traits",
- "postcard",
- "pprof",
- "prost 0.14.4",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "serial_test",
- "sha3 0.11.0-rc.9",
- "strum 0.28.0",
- "strum_macros 0.28.0",
- "sysinfo",
- "thiserror 2.0.18",
- "tracer",
- "tracing",
- "tracing-chrome",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2955,14 +2902,17 @@ dependencies = [
  "enumset",
  "eyre",
  "hex",
- "jolt-core",
+ "jolt-crypto",
+ "jolt-dory",
  "jolt-eval-macros",
  "jolt-field",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-program",
+ "jolt-prover-legacy",
  "jolt-riscv",
  "jolt-transcript",
+ "jolt-verifier",
  "postcard",
  "rand 0.8.5",
  "rust-code-analysis",
@@ -3156,8 +3106,8 @@ dependencies = [
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
- "jolt-core",
  "jolt-field",
+ "jolt-prover-legacy",
  "jolt-riscv",
  "rand 0.8.5",
  "serde",
@@ -3257,6 +3207,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-prover-legacy"
+version = "0.1.0"
+dependencies = [
+ "allocative",
+ "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+ "bincode 2.0.1",
+ "blake2 0.11.0-rc.6",
+ "chrono",
+ "clap",
+ "common",
+ "criterion",
+ "derive_more",
+ "dory-pcs",
+ "eyre",
+ "fixedbitset 0.5.7",
+ "iai-callgrind",
+ "inferno 0.12.6",
+ "itertools 0.15.0",
+ "jolt-blindfold",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-optimizations",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-riscv",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "light-poseidon",
+ "memory-stats",
+ "num",
+ "num-derive 0.4.2",
+ "num-traits",
+ "postcard",
+ "pprof",
+ "prost 0.14.4",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "serial_test",
+ "sha3 0.11.0-rc.9",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
+ "sysinfo",
+ "thiserror 2.0.18",
+ "tracer",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
@@ -3287,13 +3301,19 @@ dependencies = [
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "bytemuck",
  "cfg-if",
  "common",
- "jolt-core",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
  "jolt-platform",
  "jolt-program",
+ "jolt-prover-legacy",
  "jolt-sdk-macros",
+ "jolt-transcript",
+ "jolt-verifier",
  "postcard",
  "riscv 0.16.1",
  "serde",
@@ -3348,12 +3368,11 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
- "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "bincode 2.0.1",
  "common",
  "jolt-blindfold",
  "jolt-claims",
- "jolt-core",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3361,6 +3380,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-program",
+ "jolt-prover-legacy",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
@@ -3379,7 +3399,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -4933,10 +4953,11 @@ dependencies = [
 name = "recursion"
 version = "0.1.0"
 dependencies = [
- "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "bincode 2.0.1",
  "clap",
  "jolt-sdk",
  "postcard",
+ "serde",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4945,8 +4966,9 @@ dependencies = [
 name = "recursion-guest"
 version = "0.1.0"
 dependencies = [
- "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "bincode 2.0.1",
  "jolt-sdk",
+ "serde",
 ]
 
 [[package]]
@@ -6442,25 +6464,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "transpiler"
-version = "0.1.0"
-dependencies = [
- "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-std 0.5.0",
- "clap",
- "common",
- "jolt-core",
- "light-poseidon",
- "num-bigint",
- "rand_core 0.6.4",
- "serde",
- "serde_json",
- "zklean-extractor",
-]
-
-[[package]]
 name = "transpose"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7123,7 +7126,7 @@ name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
  "common",
- "jolt-core",
+ "jolt-prover-legacy",
  "paste",
  "tracer",
  "z3",
@@ -7341,7 +7344,7 @@ dependencies = [
  "build-fs-tree",
  "clap",
  "common",
- "jolt-core",
+ "jolt-prover-legacy",
  "num-bigint",
  "proptest",
  "rand_core 0.6.4",

@@ -109,7 +109,7 @@ RUST_LOG=info cargo run --release
 If everything is working correctly, you should see output similar to the following:
 ```
 ...
-2025-11-05T22:17:43.849979Z  INFO jolt_core::zkvm: Proved in 2.6s (0.4 kHz / padded 0.8 kHz)
+2025-11-05T22:17:43.849979Z  INFO jolt_prover_legacy::zkvm: Proved in 2.6s (0.4 kHz / padded 0.8 kHz)
 2025-11-05T22:17:43.923164Z  INFO example: output: 12586269025
 2025-11-05T22:17:43.923300Z  INFO example: valid: true
 ```

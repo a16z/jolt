@@ -1,4 +1,4 @@
-use jolt_core::{
+use jolt_prover_legacy::{
     poly::opening_proof::SumcheckId,
     zkvm::{lookup_table::LookupTables, witness::VirtualPolynomial},
 };

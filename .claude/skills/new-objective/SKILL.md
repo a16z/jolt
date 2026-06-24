@@ -37,7 +37,7 @@ This skill handles all the boilerplate: creating the objective struct, implement
 3. Read an existing objective for reference:
    - Static analysis: `jolt-eval/src/objective/code_quality/lloc.rs`
    - Performance: `jolt-eval/src/objective/performance/binding.rs`
-4. If the objective measures jolt-core functionality, explore the relevant modules.
+4. If the objective measures jolt-prover-legacy functionality, explore the relevant modules.
 
 ## Phase 3: Implement
 

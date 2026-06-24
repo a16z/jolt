@@ -14,3 +14,14 @@ jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "stdout",
 ] }
 rayon = "1.12"
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "stdlib-guest"
+path = "src/main.rs"
+test = false
+bench = false

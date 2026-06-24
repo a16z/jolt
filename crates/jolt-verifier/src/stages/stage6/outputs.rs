@@ -190,7 +190,7 @@ pub struct Stage6PublicOutput<F: Field> {
     pub instruction_ra_gamma_powers: Vec<F>,
     pub inc_gamma: F,
     /// Committed program mode only: bytecode claim-reduction batching
-    /// challenge (core's `eta`).
+    /// challenge (the prover's `eta`).
     pub bytecode_reduction_eta: Option<F>,
 }
 

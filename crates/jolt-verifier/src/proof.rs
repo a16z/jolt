@@ -15,7 +15,10 @@ use crate::{
     VerifierError,
 };
 
-#[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
+#[expect(
+    non_snake_case,
+    reason = "Matches current jolt-prover-legacy proof field name."
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
 pub struct JoltProof<

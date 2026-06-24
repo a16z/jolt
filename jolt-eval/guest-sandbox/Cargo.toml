@@ -7,5 +7,16 @@ edition = "2021"
 guest = []
 field-inline = ["jolt/field-inline"]
 
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "sandbox-guest"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../jolt-sdk" }

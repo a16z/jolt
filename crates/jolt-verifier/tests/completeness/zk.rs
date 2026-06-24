@@ -1,44 +1,46 @@
 #![cfg_attr(
-    all(feature = "core-fixtures", feature = "zk"),
+    all(feature = "prover-fixtures", feature = "zk"),
     expect(
         clippy::expect_used,
         clippy::panic,
-        reason = "fixture audit tests should fail loudly when core proof shape assumptions break"
+        reason = "fixture audit tests should fail loudly when verifier object shape assumptions break"
     )
 )]
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use crate::support;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_crypto::{Bn254G1, Pedersen};
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_dory::DoryScheme;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_field::Fr;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
 #[test]
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
-fn zk_muldiv_core_proof_is_accepted() {
-    support::assert_zk_accepts(crate::support::core_fixtures::zk_muldiv_case().verify());
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn zk_muldiv_verifier_proof_is_accepted() {
+    support::assert_zk_accepts(crate::support::verifier_fixtures::zk_muldiv_case().verify());
 }
 
 #[test]
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
-fn zk_committed_muldiv_core_proof_is_accepted() {
-    support::assert_zk_accepts(crate::support::core_fixtures::zk_committed_muldiv_case().verify());
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn zk_committed_muldiv_verifier_proof_is_accepted() {
+    support::assert_zk_accepts(
+        crate::support::verifier_fixtures::zk_committed_muldiv_case().verify(),
+    );
 }
 
 #[test]
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn zk_committed_muldiv_blindfold_shape_audit_matches_modular_protocol() {
-    let case = crate::support::core_fixtures::zk_committed_muldiv_case();
-    let modular = jolt_verifier::compat::audit_zk_blindfold_protocol_shape::<
+    let case = crate::support::verifier_fixtures::zk_committed_muldiv_case();
+    let modular = support::zk_audit::audit_zk_blindfold_protocol_shape::<
         Fr,
         DoryScheme,
         Pedersen<Bn254G1>,
@@ -47,7 +49,7 @@ fn zk_committed_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     >(&case.preprocessing, &case.public_io, &case.proof, None)
     .expect("build modular BlindFold protocol shape");
     let JoltProofClaims::Zk { blindfold_proof } = &case.proof.claims else {
-        panic!("ZK core fixture must carry a BlindFold proof");
+        panic!("ZK verifier fixture must carry a BlindFold proof");
     };
     let proof_shape = blindfold_proof_shape(blindfold_proof);
 
@@ -70,10 +72,10 @@ fn zk_committed_muldiv_blindfold_shape_audit_matches_modular_protocol() {
 }
 
 #[test]
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
-    let case = crate::support::core_fixtures::zk_muldiv_case();
-    let modular = jolt_verifier::compat::audit_zk_blindfold_protocol_shape::<
+    let case = crate::support::verifier_fixtures::zk_muldiv_case();
+    let modular = support::zk_audit::audit_zk_blindfold_protocol_shape::<
         Fr,
         DoryScheme,
         Pedersen<Bn254G1>,
@@ -82,7 +84,7 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     >(&case.preprocessing, &case.public_io, &case.proof, None)
     .expect("build modular BlindFold protocol shape");
     let JoltProofClaims::Zk { blindfold_proof } = &case.proof.claims else {
-        panic!("ZK core fixture must carry a BlindFold proof");
+        panic!("ZK verifier fixture must carry a BlindFold proof");
     };
     let proof_shape = blindfold_proof_shape(blindfold_proof);
     let committed_round_rows =
@@ -142,7 +144,7 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
     assert_eq!(modular.error_row_count, 64);
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BlindFoldProofShape {
     auxiliary_rows: usize,
@@ -156,7 +158,7 @@ struct BlindFoldProofShape {
     folded_eval_blinding_openings: usize,
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn blindfold_proof_shape(
     proof: &jolt_blindfold::BlindFoldProof<Fr, Bn254G1>,
 ) -> BlindFoldProofShape {
@@ -173,35 +175,35 @@ fn blindfold_proof_shape(
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn committed_round_rows<F, C>(proof: &SumcheckProof<F, C>) -> usize
 where
     F: jolt_field::Field,
 {
     proof
         .as_committed()
-        .expect("ZK core fixture must use committed sumcheck proofs")
+        .expect("ZK verifier fixture must use committed sumcheck proofs")
         .rounds
         .len()
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn committed_output_claim_rows<F, C>(proof: &SumcheckProof<F, C>) -> usize
 where
     F: jolt_field::Field,
 {
     proof
         .as_committed()
-        .expect("ZK core fixture must use committed sumcheck proofs")
+        .expect("ZK verifier fixture must use committed sumcheck proofs")
         .output_claims
         .commitments
         .len()
 }
 
 #[test]
-#[cfg(any(not(feature = "core-fixtures"), not(feature = "zk")))]
-#[ignore = "enable --features core-fixtures,zk to live-generate and cast this core ZK fixture"]
-fn zk_muldiv_core_proof_is_accepted() {}
+#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
+#[ignore = "enable --features prover-fixtures,zk to live-generate this verifier ZK fixture"]
+fn zk_muldiv_verifier_proof_is_accepted() {}
 
 #[test]
 #[ignore = "prefix BlindFold fixture generation is not wired yet"]

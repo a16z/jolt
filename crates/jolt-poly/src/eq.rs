@@ -127,11 +127,11 @@ pub fn try_eq_mle<F: Field>(left: &[F], right: &[F]) -> Result<F, MleError> {
     Ok(EqPolynomial::<F>::mle(left, right))
 }
 
-pub fn eq_index_msb<F: Field>(point: &[F], index: usize) -> F {
+pub fn eq_index_msb<F: Field>(point: &[F], index: u128) -> F {
     let mut eq = F::one();
     for (position, challenge) in point.iter().enumerate() {
         let shift = point.len() - 1 - position;
-        let bit = if shift < usize::BITS as usize {
+        let bit = if shift < u128::BITS as usize {
             (index >> shift) & 1
         } else {
             0

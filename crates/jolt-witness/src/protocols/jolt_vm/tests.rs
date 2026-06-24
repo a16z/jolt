@@ -582,7 +582,7 @@ fn assert_direct_eval_matches_dense(
         .iter()
         .copied()
         .enumerate()
-        .map(|(index, value)| value * eq_index_msb(&point, index))
+        .map(|(index, value)| value * eq_index_msb(&point, index as u128))
         .sum::<Fr>();
     assert_eq!(direct, expected);
     Ok(())

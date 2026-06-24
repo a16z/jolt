@@ -1,4 +1,4 @@
-use jolt_core::zkvm::lookup_table::LookupTables;
+use jolt_prover_legacy::zkvm::lookup_table::LookupTables;
 use strum::IntoEnumIterator as _;
 
 use crate::{
@@ -113,7 +113,7 @@ mod test {
     use super::*;
     use crate::util::{arb_field_elem, Environment};
 
-    use jolt_core::field::JoltField;
+    use jolt_prover_legacy::field::JoltField;
 
     use proptest::{collection::vec, prelude::*};
 

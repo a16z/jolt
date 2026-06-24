@@ -1,6 +1,6 @@
 #![expect(
     dead_code,
-    reason = "Verifier compatibility harness registers fixture metadata used by feature-gated cases."
+    reason = "Verifier fixture harness registers fixture metadata used by feature-gated cases."
 )]
 
 #[path = "soundness/mod.rs"]

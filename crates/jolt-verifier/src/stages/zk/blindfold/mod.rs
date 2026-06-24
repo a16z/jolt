@@ -50,7 +50,7 @@
 //! binds the hidden R1CS witness value used in the Jolt claim relation to the
 //! hidden PCS evaluation proved by Stage 8.
 //!
-//! In ZK mode this is the bridge between the committed stage proofs and the
+//! In ZK mode this is the link between the committed stage proofs and the
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
@@ -558,7 +558,7 @@ where
     let start_index = layout
         .remapped_word_address(start_address)
         .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?
-        as usize;
+        as u128;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
         .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?;

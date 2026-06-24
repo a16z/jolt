@@ -12,5 +12,9 @@ filter = 'test(dory)'
 test-group = 'dory'
 
 [[profile.default.overrides]]
+filter = 'package(jolt-prover-legacy) and (test(max_advice_with_small_trace) or test(advice_opening_point_derives_from_unified_point) or test(blindfold_r1cs_satisfaction) or test(truncated_trace) or test(malicious_trace) or test(initial_pc_is_constrained_to_entry_point) or test(blindfold_protocol_e2e))'
+test-group = 'dory'
+
+[[profile.default.overrides]]
 filter = 'package(jolt-verifier) and test(zk)'
 test-group = 'zk-core-fixtures'

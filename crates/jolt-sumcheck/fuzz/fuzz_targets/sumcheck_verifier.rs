@@ -3,7 +3,7 @@
 //! return `Ok(EvaluationClaim)` or a typed [`SumcheckError`].
 //!
 //! This is a single-instance verifier panic-guard, mirroring the audit-driven
-//! panic-resistance work in `jolt-core` (e.g. PR #1408 wrapping the verifier in
+//! panic-resistance work in `jolt-prover-legacy` (e.g. PR #1408 wrapping the verifier in
 //! `catch_unwind` for malformed proofs).
 
 #![no_main]

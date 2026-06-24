@@ -4,12 +4,17 @@ use common::jolt_device::MemoryLayout;
 use jolt_crypto::{DeriveSetup, VectorCommitment};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
+use serde::{Deserialize, Serialize};
 
 /// Committed-program verifier inputs: trusted bytecode-chunk and program-image
-/// commitments plus the program metadata they bind to. Mirrors `jolt-core`'s
+/// commitments plus the program metadata they bind to. Mirrors `jolt-prover-legacy`'s
 /// `CommittedProgramPreprocessing`; the chunk count is implied by
 /// `bytecode_chunk_commitments.len()`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "PCS::Output: Serialize",
+    deserialize = "PCS::Output: serde::de::DeserializeOwned"
+))]
 pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub meta: ProgramMetadata,
     pub memory_layout: MemoryLayout,
@@ -25,10 +30,14 @@ impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
 }
 
 /// Program preprocessing in one of two modes, detected at runtime from the
-/// deserialized preprocessing exactly like `jolt-core`'s
+/// deserialized preprocessing exactly like `jolt-prover-legacy`'s
 /// `ProgramPreprocessing`: `Full` carries the bytecode table and initial RAM
 /// image, `Committed` replaces them with trusted commitments plus metadata.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "PCS::Output: Serialize",
+    deserialize = "PCS::Output: serde::de::DeserializeOwned"
+))]
 pub enum ProgramPreprocessing<PCS: CommitmentScheme> {
     Full(JoltProgramPreprocessing),
     Committed(CommittedProgramPreprocessing<PCS>),
@@ -99,7 +108,11 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "ProgramPreprocessing<PCS>: Serialize, PCS::VerifierSetup: Serialize, VC::Setup: Serialize",
+    deserialize = "ProgramPreprocessing<PCS>: serde::de::DeserializeOwned, PCS::VerifierSetup: serde::de::DeserializeOwned, VC::Setup: serde::de::DeserializeOwned"
+))]
 pub struct JoltVerifierPreprocessing<PCS, VC>
 where
     PCS: CommitmentScheme,

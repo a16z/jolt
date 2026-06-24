@@ -33,7 +33,7 @@ cfg_if::cfg_if! {
         #[no_mangle]
         pub extern "C" fn __platform_abort(sig: i32) -> ! {
             unsafe {
-                // Set panic bit so jolt-core knows a panic occurred
+                // Set panic bit so jolt-prover-legacy knows a panic occurred
                 jolt_panic();
                 // Terminate with Linux signal exit code convention: 128 + signal_number
                 __platform_exit(128 + sig);

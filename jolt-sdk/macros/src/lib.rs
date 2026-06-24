@@ -243,19 +243,19 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_signature = if has_trusted_advice {
-            quote! { Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
+            quote! { Option<jolt::VerifierTrustedAdviceCommitment>, }
         } else {
             quote! {}
         };
 
         let commitment_param_in_closure = if has_trusted_advice {
-            quote! { trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
+            quote! { trusted_advice_commitment: Option<jolt::VerifierTrustedAdviceCommitment>, }
         } else {
             quote! {}
         };
 
         let commitment_arg_in_verify = if has_trusted_advice {
-            quote! { trusted_advice_commitment }
+            quote! { trusted_advice_commitment.as_ref() }
         } else {
             quote! { None }
         };
@@ -263,7 +263,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
-                preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
+                preprocessing: jolt::JoltVerifierPreprocessing,
             ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + Sync + Send
             {
                 #imports
@@ -271,7 +271,7 @@ impl MacroBuilder {
 
                 let verify_closure = move |#(#public_inputs,)* output, panic, #commitment_param_in_closure proof: jolt::RV64IMACProof| {
                     let preprocessing = (*preprocessing).clone();
-                    let memory_layout = &preprocessing.shared.memory_layout;
+                    let memory_layout = preprocessing.program.memory_layout();
                     let memory_config = MemoryConfig {
                         max_input_size: memory_layout.max_input_size,
                         max_output_size: memory_layout.max_output_size,
@@ -287,8 +287,18 @@ impl MacroBuilder {
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    let verifier = RV64IMACVerifier::new(&preprocessing, proof, io_device, #commitment_arg_in_verify, None);
-                    verifier.is_ok_and(|verifier| verifier.verify().is_ok())
+                    jolt::jolt_verifier::verify::<
+                        jolt::VerifierField,
+                        jolt::VerifierPCS,
+                        jolt::VerifierVC,
+                        jolt::VerifierTranscript,
+                    >(
+                        &preprocessing,
+                        &io_device,
+                        &proof,
+                        #commitment_arg_in_verify,
+                        jolt::_ZK_FEATURE_ENABLED,
+                    ).is_ok()
                 };
 
                 verify_closure
@@ -704,9 +714,13 @@ impl MacroBuilder {
                 shared_preprocess: jolt::JoltSharedPreprocessing,
                 generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
-            ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
+            ) -> jolt::JoltVerifierPreprocessing
             {
-                jolt::JoltVerifierPreprocessing::new(
+                jolt::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_shared::<
+                    jolt::F,
+                    jolt::Curve,
+                    jolt::PCS,
+                >(
                     shared_preprocess,
                     generators,
                     blindfold_setup,
@@ -726,11 +740,14 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>)
-                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
+                -> jolt::JoltVerifierPreprocessing
             {
                 #imports
-                let preprocessing = JoltVerifierPreprocessing::from(prover_preprocessing);
-                preprocessing
+                jolt::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
+                    jolt::F,
+                    jolt::Curve,
+                    jolt::PCS,
+                >(prover_preprocessing)
             }
         }
     }
@@ -933,7 +950,8 @@ impl MacroBuilder {
                     advice_tape,
                 );
                 let io_device = prover.program_io.clone();
-                let (jolt_proof, _) = prover.prove();
+                let (jolt_proof, _) = prover.prove()
+                    .expect("prover should produce verifier-native proof");
 
                 #handle_return
 
@@ -1075,7 +1093,7 @@ impl MacroBuilder {
     }
 
     /// Generate `jolt_panic()` function that writes to the panic address.
-    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-core.
+    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-prover-legacy.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]
@@ -1116,7 +1134,6 @@ impl MacroBuilder {
             use jolt::{
                 JoltField,
                 RV64IMACProver,
-                RV64IMACVerifier,
                 RV64IMACProof,
                 host::Program,
                 host::JoltProgramSource,
@@ -1371,26 +1388,38 @@ impl MacroBuilder {
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
-        let attributes = parse_attributes(&self.attr);
-        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
 
         quote! {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{RV64IMACProof, JoltRV64IMAC, Serializable};
+            pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8], io_bytes: &[u8]) -> bool {
+                use jolt::{deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof};
 
-                let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
-                let proof = RV64IMACProof::deserialize_from_bytes(proof_bytes).unwrap();
+                let preprocessing: JoltVerifierPreprocessing = match deserialize_verifier_object(preprocessing_data) {
+                    Ok(preprocessing) => preprocessing,
+                    Err(_) => return false,
+                };
+                let proof: RV64IMACProof = match deserialize_verifier_object(proof_bytes) {
+                    Ok(proof) => proof,
+                    Err(_) => return false,
+                };
+                let io_device: JoltDevice = match deserialize_verifier_object(io_bytes) {
+                    Ok(io_device) => io_device,
+                    Err(_) => return false,
+                };
 
-                let preprocessing = JoltRV64IMAC::preprocess(
-                    decoded_preprocessing_data.bytecode,
-                    decoded_preprocessing_data.memory_init,
-                    #max_trace_length,
-                );
-
-                let result = JoltRV64IMAC::verify(&preprocessing, proof);
-                result.is_ok()
+                jolt::jolt_verifier::verify::<
+                    jolt::VerifierField,
+                    jolt::VerifierPCS,
+                    jolt::VerifierVC,
+                    jolt::VerifierTranscript,
+                >(
+                    &preprocessing,
+                    &io_device,
+                    &proof,
+                    None,
+                    jolt::_ZK_FEATURE_ENABLED,
+                ).is_ok()
             }
         }
     }

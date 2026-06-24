@@ -355,8 +355,8 @@ When the compact parity fixture changes, treat it as a semantic review event:
 The primary e2e correctness checks remain:
 
 ```bash
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 ```
 
 ## Extraction Status

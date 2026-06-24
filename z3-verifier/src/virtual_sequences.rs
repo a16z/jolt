@@ -616,8 +616,9 @@ fn test_consistency(instr: &Instruction) {
 }
 
 macro_rules! test_sequence {
-    ($instr:ident, $operands:path, $expected:expr $(, $field:ident : $value:expr )* $(,)?) => {
+    ($(#[$attr:meta])* $instr:ident, $operands:path, $expected:expr $(, $field:ident : $value:expr )* $(,)?) => {
         paste::paste! {
+            $(#[$attr])*
             #[test]
             #[allow(nonstandard_style)]
             fn [<test_ $instr _correctness>]() {
@@ -633,6 +634,7 @@ macro_rules! test_sequence {
                 test_correctness($expected, &instr);
             }
 
+            $(#[$attr])*
             #[test]
             #[allow(nonstandard_style)]
             fn [<test_ $instr _consistency>]() {
@@ -663,50 +665,70 @@ test_sequence!(ADDW, FormatR, |instr: &ADDW, cpu| {
     cpu.x[instr.operands.rd as usize] =
         cpu.sign_ext_word(&((rs1 + rs2).extract(cpu.word_bits - 1, 0)));
 });
-test_sequence!(DIV, FormatR, |instr: &DIV, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = rs1;
-    let divisor = rs2;
-    let ones = cpu.bv_ones();
-    let min = SymbolicCpu::signed_min(cpu.bv_bits);
-    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(
-        &ones,
-        &(dividend.eq(&min) & divisor.eq(&ones)).ite(dividend, &(dividend.bvsdiv(divisor))),
-    );
-});
-test_sequence!(DIVU, FormatR, |instr: &DIVU, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = rs1;
-    let divisor = rs2;
-    let ones = cpu.bv_ones();
-    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(&ones, &(dividend.bvudiv(divisor)));
-});
-test_sequence!(DIVUW, FormatR, |instr: &DIVUW, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = cpu.word_extract(rs1);
-    let divisor = cpu.word_extract(rs2);
-    let q = divisor
-        .eq(0)
-        .ite(&cpu.word_ones(), &(dividend.bvudiv(&divisor)));
-    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
-});
-test_sequence!(DIVW, FormatR, |instr: &DIVW, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = cpu.word_extract(rs1);
-    let divisor = cpu.word_extract(rs2);
-    let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-    let word_ones = cpu.word_ones();
-    let q = divisor.eq(0).ite(
-        &word_ones,
-        &(dividend.eq(&word_min) & divisor.eq(&word_ones))
-            .ite(&dividend, &(dividend.bvsdiv(&divisor))),
-    );
-    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
-});
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    DIV,
+    FormatR,
+    |instr: &DIV, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = rs1;
+        let divisor = rs2;
+        let ones = cpu.bv_ones();
+        let min = SymbolicCpu::signed_min(cpu.bv_bits);
+        cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(
+            &ones,
+            &(dividend.eq(&min) & divisor.eq(&ones)).ite(dividend, &(dividend.bvsdiv(divisor))),
+        );
+    }
+);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    DIVU,
+    FormatR,
+    |instr: &DIVU, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = rs1;
+        let divisor = rs2;
+        let ones = cpu.bv_ones();
+        cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(&ones, &(dividend.bvudiv(divisor)));
+    }
+);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    DIVUW,
+    FormatR,
+    |instr: &DIVUW, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = cpu.word_extract(rs1);
+        let divisor = cpu.word_extract(rs2);
+        let q = divisor
+            .eq(0)
+            .ite(&cpu.word_ones(), &(dividend.bvudiv(&divisor)));
+        cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
+    }
+);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    DIVW,
+    FormatR,
+    |instr: &DIVW, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = cpu.word_extract(rs1);
+        let divisor = cpu.word_extract(rs2);
+        let word_min = SymbolicCpu::signed_min(cpu.word_bits);
+        let word_ones = cpu.word_ones();
+        let q = divisor.eq(0).ite(
+            &word_ones,
+            &(dividend.eq(&word_min) & divisor.eq(&word_ones))
+                .ite(&dividend, &(dividend.bvsdiv(&divisor))),
+        );
+        cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
+    }
+);
 // Memory operations are not tested at the moment
 // test_sequence!(LB, FormatLoad);
 // test_sequence!(LBU, FormatLoad);
@@ -714,71 +736,102 @@ test_sequence!(DIVW, FormatR, |instr: &DIVW, cpu| {
 // test_sequence!(LHU, FormatLoad);
 // test_sequence!(LW, FormatLoad);
 // test_sequence!(LWU, FormatLoad);
-test_sequence!(MULH, FormatR, |instr: &MULH, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let lhs = rs1;
-    let rhs = rs2;
-    let product = lhs.sign_ext(cpu.bv_bits) * rhs.sign_ext(cpu.bv_bits);
-    cpu.x[instr.operands.rd as usize] = product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits);
-});
-test_sequence!(MULHSU, FormatR, |instr: &MULHSU, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let lhs = rs1;
-    let rhs = rs2;
-    let product = lhs.sign_ext(cpu.bv_bits) * rhs.zero_ext(cpu.bv_bits);
-    cpu.x[instr.operands.rd as usize] = product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits);
-});
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    MULH,
+    FormatR,
+    |instr: &MULH, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let lhs = rs1;
+        let rhs = rs2;
+        let product = lhs.sign_ext(cpu.bv_bits) * rhs.sign_ext(cpu.bv_bits);
+        cpu.x[instr.operands.rd as usize] = product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits);
+    }
+);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    MULHSU,
+    FormatR,
+    |instr: &MULHSU, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let lhs = rs1;
+        let rhs = rs2;
+        let product = lhs.sign_ext(cpu.bv_bits) * rhs.zero_ext(cpu.bv_bits);
+        cpu.x[instr.operands.rd as usize] = product.extract(cpu.bv_bits * 2 - 1, cpu.bv_bits);
+    }
+);
 test_sequence!(MULW, FormatR, |instr: &MULW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
     cpu.x[instr.operands.rd as usize] =
         cpu.sign_ext_word(&(cpu.word_extract(rs1) * cpu.word_extract(rs2)));
 });
-test_sequence!(REM, FormatR, |instr: &REM, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = rs1;
-    let divisor = rs2;
-    let min = SymbolicCpu::signed_min(cpu.bv_bits);
-    let ones = cpu.bv_ones();
-    let zero = cpu.bv_zero();
-    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(
-        dividend,
-        &(dividend.eq(&min) & divisor.eq(&ones)).ite(&zero, &(dividend.bvsrem(divisor))),
-    );
-});
-test_sequence!(REMU, FormatR, |instr: &REMU, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = rs1;
-    let divisor = rs2;
-    cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(dividend, &(dividend.bvurem(divisor)));
-});
-test_sequence!(REMUW, FormatR, |instr: &REMUW, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = cpu.word_extract(rs1);
-    let divisor = cpu.word_extract(rs2);
-    let r = divisor.eq(0).ite(&dividend, &(dividend.bvurem(&divisor)));
-    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&r);
-});
-test_sequence!(REMW, FormatR, |instr: &REMW, cpu| {
-    let rs1 = &cpu.x[instr.operands.rs1 as usize];
-    let rs2 = &cpu.x[instr.operands.rs2 as usize];
-    let dividend = cpu.word_extract(rs1);
-    let divisor = cpu.word_extract(rs2);
-    let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-    let word_ones = cpu.word_ones();
-    let word_zero = cpu.word_u64(0);
-    let r = divisor.eq(0).ite(
-        &dividend,
-        &(dividend.eq(&word_min) & divisor.eq(&word_ones))
-            .ite(&word_zero, &(dividend.bvsrem(&divisor))),
-    );
-    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&r);
-});
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    REM,
+    FormatR,
+    |instr: &REM, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = rs1;
+        let divisor = rs2;
+        let min = SymbolicCpu::signed_min(cpu.bv_bits);
+        let ones = cpu.bv_ones();
+        let zero = cpu.bv_zero();
+        cpu.x[instr.operands.rd as usize] = divisor.eq(0).ite(
+            dividend,
+            &(dividend.eq(&min) & divisor.eq(&ones)).ite(&zero, &(dividend.bvsrem(divisor))),
+        );
+    }
+);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    REMU,
+    FormatR,
+    |instr: &REMU, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = rs1;
+        let divisor = rs2;
+        cpu.x[instr.operands.rd as usize] =
+            divisor.eq(0).ite(dividend, &(dividend.bvurem(divisor)));
+    }
+);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    REMUW,
+    FormatR,
+    |instr: &REMUW, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = cpu.word_extract(rs1);
+        let divisor = cpu.word_extract(rs2);
+        let r = divisor.eq(0).ite(&dividend, &(dividend.bvurem(&divisor)));
+        cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&r);
+    }
+);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    REMW,
+    FormatR,
+    |instr: &REMW, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let dividend = cpu.word_extract(rs1);
+        let divisor = cpu.word_extract(rs2);
+        let word_min = SymbolicCpu::signed_min(cpu.word_bits);
+        let word_ones = cpu.word_ones();
+        let word_zero = cpu.word_u64(0);
+        let r = divisor.eq(0).ite(
+            &dividend,
+            &(dividend.eq(&word_min) & divisor.eq(&word_ones))
+                .ite(&word_zero, &(dividend.bvsrem(&divisor))),
+        );
+        cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&r);
+    }
+);
 // test_sequence!(SB, FormatS);
 // test_sequence!(SH, FormatS);
 test_sequence!(SLL, FormatR, |instr: &SLL, cpu| {

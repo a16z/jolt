@@ -47,7 +47,7 @@ pub struct FixtureMetadata {
     pub name: &'static str,
     pub zk: bool,
     pub has_trusted_advice: bool,
-    pub expected_core_accepts: bool,
+    pub expected_prover_accepts: bool,
     pub notes: &'static str,
 }
 
@@ -103,8 +103,12 @@ pub fn assert_rejects(result: Result<(), VerifierError>) {
 pub fn assert_zk_rejects(result: Result<(), VerifierError>) {
     assert_rejects_mode(true, result);
 }
-#[cfg(feature = "core-fixtures")]
-pub mod core_fixtures;
+#[cfg(feature = "prover-fixtures")]
+pub mod proof_claims;
 pub mod tamper_manifest;
+#[cfg(feature = "prover-fixtures")]
+pub mod verifier_fixtures;
+#[cfg(feature = "zk")]
+pub mod zk_audit;
 
 use jolt_verifier::VerifierError;

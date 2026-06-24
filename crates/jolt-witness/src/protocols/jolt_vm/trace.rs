@@ -143,7 +143,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
         for index in 0..cycles {
             let next = (index + 1 < cycles).then(|| trace.next_row().unwrap_or_default());
             let value = trace_virtual_value::<F>(&current, next.as_ref(), id, self.preprocessing)?;
-            result += value * eq_index_msb(point, index);
+            result += value * eq_index_msb(point, index as u128);
             if let Some(row) = next {
                 current = row;
             }

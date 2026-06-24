@@ -42,7 +42,7 @@ This PR intentionally takes the narrow first step:
 3. Relax only the shared verifier/protocol bounds needed to demonstrate a non-BN254 field.
 4. Use Hachi's `Fp32`/`Fp64`/`Fp128` needs as the concrete design target, validated by a `Mersenne61` compat test, while keeping the trait names and semantics compatible with the audited Binius and Plonky field APIs.
 
-Later PRs should broaden the hierarchy and adoption surface: extension fields, Hachi consuming `jolt-field`, granular bound tightening across `jolt-core`, binary-field-specific requirements, and any eventual rename of the top `Field` bundle.
+Later PRs should broaden the hierarchy and adoption surface: extension fields, Hachi consuming `jolt-field`, granular bound tightening across `jolt-prover-legacy`, binary-field-specific requirements, and any eventual rename of the top `Field` bundle.
 
 ### Invariants
 
@@ -71,7 +71,7 @@ The implementation must additionally preserve:
 4. Adopting Hachi's lattice-specific traits (`PseudoMersenneField`, `SmoothFftField`, `Module`) or Hachi's exact `u128` canonical-representation trait into `jolt-field`. They stay in Hachi as further refinements above `RingCore` / `CanonicalBytes`.
 5. **Adopting Hachi's extension-field API (`LiftBase`, `ExtField`, `Fp2`, `Fp4`, `Fp2Config`, `Fp4Config`, `NegOneNr`, `TwoNr`).** Cleanly portable from Hachi (verbatim) but adds blast radius to the PR. Tracked in "Follow-Up Work" below; lands as a separate PR after this one.
 6. Removing BN254-specific capabilities from the existing top-of-hierarchy trait entirely. This PR moves method families to named capability traits: ring-core methods (`square`) to `RingCore`, inversion (`inverse`, `inv_or_zero`) to `Invertible`, primitive integer embedding to `FromPrimitiveInt`, byte encoding to `CanonicalBytes`/`ReducingBytes`/`FixedBytes`, transcript challenge decoding to `TranscriptChallenge`, random sampling to `RandomSampling`, fixed byte-size metadata to `FixedByteSize`, canonical bit-length introspection to `CanonicalBitLength`, checked `u64` extraction to `CanonicalU64`, accumulator support to `WithAccumulator`, power-of-two multiplication to `MulPow2`, and primitive-scalar multiplication to `MulPrimitiveInt`. The Jolt `Field` umbrella still includes the compatibility capabilities; smaller shared code can ask for only the capabilities it uses.
-7. Touching `jolt-poly`, `jolt-sumcheck`, `jolt-openings`, `jolt-r1cs`, `jolt-crypto`, `jolt-core` semantics. Their bounds get relaxed where possible to enable Hachi reuse, but no behavioral changes.
+7. Touching `jolt-poly`, `jolt-sumcheck`, `jolt-openings`, `jolt-r1cs`, `jolt-crypto`, `jolt-prover-legacy` semantics. Their bounds get relaxed where possible to enable Hachi reuse, but no behavioral changes.
 
 ## Evaluation
 
@@ -99,7 +99,7 @@ The implementation must additionally preserve:
 - `cargo build -p jolt-transcript --no-default-features` succeeds.
 - `cargo nextest run --workspace --features host` passes.
 - `cargo nextest run --workspace --features host,zk` passes.
-- `cargo nextest run -p jolt-core muldiv --features host` and `--features host,zk` pass.
+- `cargo nextest run -p jolt-prover-legacy muldiv --features host` and `--features host,zk` pass.
 - `cargo clippy --all --features host --all-targets -- -D warnings` passes. Same for `host,zk`.
 - `crates/jolt-sumcheck/tests/mersenne61_compat.rs`: a `Mersenne61` struct (modulus $2^{61} - 1$, no arkworks dep) implements `AdditiveGroup + RingCore + FieldCore + FromPrimitiveInt + RandomSampling + CanonicalBytes + ReducingBytes + TranscriptChallenge + CanonicalU64 + WithAccumulator + FixedByteSize + CanonicalBitLength + FixedBytes<8>` (using `NaiveAccumulator<Mersenne61>`). The test lives downstream of `jolt-field` so `jolt-field` remains a leaf crate. The test:
   - Substitutes `Mersenne61` into `Blake2bTranscript<Mersenne61>` and `KeccakTranscript<Mersenne61>` from `jolt-transcript --no-default-features`.
@@ -113,9 +113,9 @@ The implementation must additionally preserve:
 
 **Existing tests that must keep passing:**
 
-- All tests in `crates/jolt-field/`, `crates/jolt-transcript/`, `crates/jolt-poly/`, `crates/jolt-sumcheck/`, `crates/jolt-openings/`, `crates/jolt-crypto/`, `crates/jolt-r1cs/`, `jolt-core/`.
+- All tests in `crates/jolt-field/`, `crates/jolt-transcript/`, `crates/jolt-poly/`, `crates/jolt-sumcheck/`, `crates/jolt-openings/`, `crates/jolt-crypto/`, `crates/jolt-r1cs/`, `jolt-prover-legacy/`.
 - `jolt-eval` invariant suites (`field_mul_scalar`, `split_eq_bind`, `soundness`).
-- `jolt-core muldiv` end-to-end in both `host` and `host,zk` modes.
+- `jolt-prover-legacy muldiv` end-to-end in both `host` and `host,zk` modes.
 
 **New tests:**
 
@@ -438,12 +438,12 @@ They should therefore implement `RingCore`, not `FieldCore`.
 `Invertible` is a ring-level capability because some rings or ring-like representations may have a usable inversion operation without being the default field scalar type.
 It owns both `inverse` and `inv_or_zero`; the default `inv_or_zero` is intentionally simple and delegates to `inverse`.
 The first implementation PR should not introduce a separate inverse-of-two capability.
-Jolt currently computes halving at the few relevant callsites with `F::from_u64(2).inverse().unwrap()`, and this PR leaves those `jolt-core` callsites under the existing `F: Field` umbrella.
+Jolt currently computes halving at the few relevant callsites with `F::from_u64(2).inverse().unwrap()`, and this PR leaves those `jolt-prover-legacy` callsites under the existing `F: Field` umbrella.
 
 Current `Fr` division implementations may stay as concrete operator impls: they are already centralized by the existing `delegate_binop!(Div, div)` macro in `crates/jolt-field/src/arkworks/bn254.rs`.
 This PR does not add a new division trait, and `Field` no longer requires `Div`.
 `Div` intentionally stays off `Field`, `RingCore`, and `FieldCore` because the Rust operator cannot express zero-handling in its type: arkworks `Fp` division computes `other.inverse().unwrap()`, so BN254 division by zero panics, while verifier/protocol code often wants explicit branching via `inverse() -> Option<Self>`.
-The one current generic field infix-division callsite in `jolt-core/src/subprotocols/mles_product_sum.rs` should migrate mechanically from `(claim - eq_eval_at_1 * eval_at_1) / eq_eval_at_0` to multiplication by `eq_eval_at_0.inverse().expect(...)`, preserving the same partial-operation behavior while making the zero case explicit.
+The one current generic field infix-division callsite in `jolt-prover-legacy/src/subprotocols/mles_product_sum.rs` should migrate mechanically from `(claim - eq_eval_at_1 * eval_at_1) / eq_eval_at_0` to multiplication by `eq_eval_at_0.inverse().expect(...)`, preserving the same partial-operation behavior while making the zero case explicit.
 Dropping `Div` from the top `Field` bundle prevents newly relaxed shared code (`F: RingCore`, `F: FieldCore`, `F: CanonicalBytes`, etc.) from accidentally depending on panicking infix division.
 Code that needs explicit zero handling should use `Invertible::inv_or_zero` or `Invertible::inverse`, not infix `Div`.
 
@@ -520,7 +520,7 @@ pub type Blake2bTranscript<F> = DigestTranscript<Blake2b<U32>, F>;
 
 Apply the same pattern to `KeccakTranscript`.
 Remove `DigestTranscript`'s unconditional default type parameter entirely; downstream users should get the old default through `Blake2bTranscript` / `KeccakTranscript` when the `poseidon` feature is enabled.
-Default features stay on for in-workspace consumers (jolt-core, etc.), so no jolt-internal callsites change.
+Default features stay on for in-workspace consumers (jolt-prover-legacy, etc.), so no jolt-internal callsites change.
 Hachi opts into `default-features = false`.
 
 **Bound relaxation (minimal sweep).**
@@ -554,11 +554,11 @@ Those crates agree with the high-level goal, but they expose a few portability t
 
 ### Alternatives Considered
 
-1. **Delete BN254-shaped capabilities entirely instead of moving them to named traits.** Rejected — loses callable functionality from the existing API and forces churn at every jolt-core callsite that uses fixed-width bytes, sampling, accumulators, `mul_pow_2`, etc. Better to keep the capabilities available through explicit bounds.
+1. **Delete BN254-shaped capabilities entirely instead of moving them to named traits.** Rejected — loses callable functionality from the existing API and forces churn at every jolt-prover-legacy callsite that uses fixed-width bytes, sampling, accumulators, `mul_pow_2`, etc. Better to keep the capabilities available through explicit bounds.
 2. **Keep `Field` monolithic, add a `BackendField: Field` extension.** Rejected — keeps every BN254-shaped method directly on the trait body, which is exactly what Hachi cannot satisfy. The right direction is to keep `Field` as a compatibility umbrella with an empty body while moving the surface into named capabilities that can also be requested independently.
 3. **Extract a new `iop-core` crate containing the slim trait surface.** Rejected — extra crate boundary with no compile-time benefit. Hachi-Jolt sharing works as long as both implement the same traits, regardless of which crate owns them.
 4. **Drop `jolt_field::Field` entirely; force every callsite to bound exactly what it needs.** Rejected for now — too much downstream churn in one PR. Granular tightening can happen incrementally in follow-up PRs once the hierarchy is in place. The minimal bound-relaxation sweep (above) is the only change to existing bounds in this PR.
-5. **Put `Div` on `FieldCore`, `Field`, or anywhere reachable by shared verifier code.** Rejected — hides the zero-denominator case behind one infix operator. Arkworks BN254 division by zero panics through `inverse().unwrap()`, and the only current generic field infix-division callsite in `jolt-core` is migrated to explicit inversion instead.
+5. **Put `Div` on `FieldCore`, `Field`, or anywhere reachable by shared verifier code.** Rejected — hides the zero-denominator case behind one infix operator. Arkworks BN254 division by zero panics through `inverse().unwrap()`, and the only current generic field infix-division callsite in `jolt-prover-legacy` is migrated to explicit inversion instead.
 6. **Don't separate `AdditiveGroup` from `FieldCore`.** Rejected — `AdditiveGroup` is the right home for wide accumulators which need `+`/`-` but not multiplication. Hachi already exploits this for `Fp128x8i32` and the wide-cyclotomic-ring shift-accumulate kernels; Jolt's `WideAccumulator` benefits similarly.
 7. **Adopt all of Hachi's lattice-specific traits (`PseudoMersenneField`, `SmoothFftField`, `Module`) into `jolt-field`.** Rejected — these only make sense for lattice/post-quantum constructions; BN254 doesn't satisfy them. Stay in Hachi.
 8. **Adopt the extension-field API (`LiftBase`, `ExtField`, `Fp2`, `Fp4`, non-residue configs) in this PR.** Rejected for blast-radius reasons — adopting it is cheap (verbatim port from Hachi, ~5 new files, no new logic), but it extends the surface that needs review and the `Mersenne61` test gates that need writing. Tracked in "Follow-Up Work" so the design reasoning isn't lost.
@@ -569,7 +569,7 @@ Those crates agree with the high-level goal, but they expose a few portability t
 13. **Put exact `u128` canonical conversion on `CanonicalBytes` or in this Jolt PR.** Rejected — BN254 Fr can implement canonical byte encoding but its canonical element representation is 254 bits and cannot fit in `u128`. Exact small-field canonical representation is useful for Hachi, but not needed by the Jolt shared verifier/protocol sweep in this PR.
 14. **Leave `mul_pow_2` and primitive-scalar multiplication directly on `Field`.** Rejected — these are separate capabilities from the BN254-shaped top bundle. `MulPow2` and `MulPrimitiveInt` keep the operations available to `F: Field` while allowing future code to request only the multiplication helper it actually needs.
 15. **Name the ring layer `Ring` or `AdditiveRing`.** Rejected — `Ring` is too broad and likely to collide conceptually with concrete polynomial/cyclotomic ring types, while `AdditiveRing` is mathematically odd because rings are already additive groups with multiplication. `RingCore` matches `FieldCore`: it is the minimal algebraic API for ring arithmetic, not a concrete ring object.
-16. **Add a `TWO_INV` / halving capability in this PR.** Rejected — Jolt does not currently expose a `TWO_INV` trait or constant. The few existing halving callsites are in `jolt-core`, stay under the existing `F: Field` umbrella in this PR, and can be revisited when Jolt is ready to make those paths binary-field-aware.
+16. **Add a `TWO_INV` / halving capability in this PR.** Rejected — Jolt does not currently expose a `TWO_INV` trait or constant. The few existing halving callsites are in `jolt-prover-legacy`, stay under the existing `F: Field` umbrella in this PR, and can be revisited when Jolt is ready to make those paths binary-field-aware.
 
 ## Decisions and Open Questions
 
@@ -641,7 +641,7 @@ The crates touched are limited to those needed to make `crates/jolt-sumcheck/tes
 - `crates/jolt-poly/src/{multilinear.rs, binding.rs, dense.rs, eq.rs, eq_plus_one.rs, lt.rs, lagrange.rs, univariate.rs, compressed_univariate.rs}`: `F: Field` → `F: FieldCore + WithAccumulator` (or finer).
 - `crates/jolt-openings/src/{claims.rs, reduction.rs}`: `F: Field` → `F: FieldCore + RandomSampling` where applicable.
 
-`jolt-core`, `jolt-r1cs`, `jolt-crypto`, `jolt-eval` keep their `F: Field` bounds unchanged.
+`jolt-prover-legacy`, `jolt-r1cs`, `jolt-crypto`, `jolt-eval` keep their `F: Field` bounds unchanged.
 Use clippy errors during step 6 (below) to verify the relaxation is consistent.
 
 ### Order of operations
@@ -664,7 +664,7 @@ File one separate spec/PR per item once this lands.
 
 1. **Extension-field API port.** Add `LiftBase<F>` and `ExtField<F: FieldCore>: FieldCore + LiftBase<F> + FromPrimitiveInt`, plus concrete `Fp2<F, C>`/`Fp4<F, C2, C4>` types, `Fp2Config<F>`/`Fp4Config<F, C2>`, and pre-canned non-residue configs `NegOneNr` (for $p \equiv 3 \pmod 4$) and `TwoNr` (for $p \equiv 5 \pmod 8$). Verbatim port from `hachi/src/algebra/fields/{lift,ext}.rs`. Add `Fp2<Mersenne61, NegOneNr>` round-trip tests (add/mul/square/inverse, conjugate, norm). Needed for any future Jolt FRI / recursive verification / non-BN254 work. The Binius and Plonky audits show this follow-up must explicitly specify coefficient order, base-field byte order, and transcript absorption for extension elements.
 2. **Hachi adoption of `jolt-field`.** Land in `LayerZero-Labs/hachi`. Implement the slim hierarchy for `Fp32`/`Fp64`/`Fp128`; implement `RingCore` for `CyclotomicRing<F, D>` where the coefficient type supports the needed field arithmetic. Delete `hachi/src/primitives/{arithmetic,transcript}.rs`, `hachi/src/algebra/uni_poly.rs`, and the verifier half of `hachi/src/protocol/sumcheck/`. Replace with re-exports from the slim hierarchy. Keep `PseudoMersenneField`/`SmoothFftField`/`Module` as hachi-only refinements.
-3. **Granular bound tightening across `jolt-core`.** Audit every `F: Field` bound in `jolt-core` and relax to the minimum required (e.g. `F: RingCore + CanonicalBytes + FixedByteSize`). Mechanical, but blast radius is workspace-wide. Optional follow-up; no behavioral change.
+3. **Granular bound tightening across `jolt-prover-legacy`.** Audit every `F: Field` bound in `jolt-prover-legacy` and relax to the minimum required (e.g. `F: RingCore + CanonicalBytes + FixedByteSize`). Mechanical, but blast radius is workspace-wide. Optional follow-up; no behavioral change.
 4. **Transcript challenge sampling.** Once a second non-BN254 protocol uses the transcript crate, consider replacing the simple `TranscriptChallenge::from_challenge_bytes` hook with a challenger-side trait closer to Binius `CanSample<F>` or Plonky3 `CanSampleUniformBits<F>`, especially if uniform rejection sampling or native-sponge field elements matter.
 5. **`Field` naming finalization.** If maintainers want a more precise name after this lands, file a rename-only PR.
 

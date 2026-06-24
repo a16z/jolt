@@ -263,7 +263,7 @@ where
     );
 
     let mut entries = Vec::with_capacity(order.len());
-    // Core's final PCS batch order intentionally differs from proof payload order.
+    // The prover's final PCS batch order intentionally differs from proof payload order.
     for polynomial in order {
         let id = final_opening_id(polynomial);
         let (commitment, own_point, opening_claim): (&PCS::Output, &[F], Option<F>) =

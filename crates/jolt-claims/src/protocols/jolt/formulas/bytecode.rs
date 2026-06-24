@@ -632,12 +632,14 @@ where
     );
 
     for (stage_value, stage_cycle_point) in stage_values.iter_mut().zip(inputs.stage_cycle_points) {
-        *stage_value *= eq_index_msb(stage_cycle_point, cycle_index);
+        *stage_value *= eq_index_msb(stage_cycle_point, cycle_index as u128);
     }
 
     let identity = IdentityPolynomial::new(inputs.r_address.len()).evaluate(inputs.r_address);
-    let spartan_outer_raf = identity * eq_index_msb(inputs.stage_cycle_points[0], cycle_index);
-    let spartan_shift_raf = identity * eq_index_msb(inputs.stage_cycle_points[2], cycle_index);
+    let spartan_outer_raf =
+        identity * eq_index_msb(inputs.stage_cycle_points[0], cycle_index as u128);
+    let spartan_shift_raf =
+        identity * eq_index_msb(inputs.stage_cycle_points[2], cycle_index as u128);
     let entry = if address_index == inputs.entry_bytecode_index && cycle_index == 0 {
         F::one()
     } else {

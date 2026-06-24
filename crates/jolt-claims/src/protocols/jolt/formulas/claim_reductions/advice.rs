@@ -184,7 +184,7 @@ impl AdviceClaimReductionLayout {
                 (
                     self.advice_index_to_address_cycle(index),
                     value,
-                    eq_index_msb(reference_opening_point, index),
+                    eq_index_msb(reference_opening_point, index as u128),
                 )
             })
             .collect::<Vec<_>>();

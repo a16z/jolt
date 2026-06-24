@@ -26,6 +26,9 @@ pub fn main() {
         TrustedAdvice::new(leaf3),
         &prover_preprocessing,
     );
+    let verifier_trusted_advice_commitment = trusted_advice_commitment.map(
+        <jolt_sdk::PCS as jolt_sdk::ProofCommitmentScheme<jolt_sdk::F>>::commitment_into_verifier,
+    );
 
     let prove_merkle_tree = guest::build_prover_merkle_tree(program, prover_preprocessing.clone());
     let verify_merkle_tree = guest::build_verifier_merkle_tree(verifier_preprocessing);
@@ -46,7 +49,7 @@ pub fn main() {
         leaf1,
         output,
         program_io.panic,
-        trusted_advice_commitment,
+        verifier_trusted_advice_commitment,
         proof,
     );
 

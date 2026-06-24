@@ -1,10 +1,10 @@
 //! Generic digest-based Fiat-Shamir transcript, byte-compatible with
-//! `jolt-core`'s hash transcripts.
+//! `jolt-prover-legacy`'s hash transcripts.
 //!
 //! Provides [`DigestTranscript`], used to verify proofs produced by
-//! `jolt-core` provers: appends hash `state || round || payload`, squeezes
+//! `jolt-prover-legacy` provers: appends hash `state || round || payload`, squeezes
 //! hash `state || round`, and challenges use the same decoding paths as
-//! `jolt-core`. The spongefish-backed [`crate::SpongeTranscript`] is the
+//! `jolt-prover-legacy`. The spongefish-backed [`crate::SpongeTranscript`] is the
 //! native transcript; this one exists for the core-compat boundary.
 
 use digest::{consts::U32, Digest};
@@ -48,7 +48,7 @@ where
 
 /// Exists only because [`Transcript`] requires `Default`.
 ///
-/// WARNING: not byte-compatible with `jolt-core`'s derived `Default` (zero
+/// WARNING: not byte-compatible with `jolt-prover-legacy`'s derived `Default` (zero
 /// state, no initial hash); use [`Transcript::new`] for core-compatible
 /// transcripts.
 impl<D, F> Default for DigestTranscript<D, F>

@@ -88,7 +88,7 @@ In Jolt, witness polynomials can be committed in a **streaming** fashion: rather
 
 ## Implementation
 
-The Jolt implementation of Dory lives in `jolt-core/src/poly/commitment/dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. Key files:
+The Jolt implementation of Dory lives in `crates/jolt-prover-legacy/src/poly/commitment/dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. Key files:
 
 - `commitment_scheme.rs` &mdash; Implements the `CommitmentScheme` and `StreamingCommitmentScheme` traits.
 - `dory_globals.rs` &mdash; Manages per-context Dory matrix dimensions ($\nu$, $\sigma$) and coefficient layout.

@@ -60,7 +60,7 @@ No changes to entries in `jolt-eval/src/invariant/` are required — existing in
 
 ### Performance
 
-No existing `jolt-eval/src/objective/` entries are expected to move. The code-quality objectives (`lloc`, `cognitive_complexity_avg`, `halstead_bugs`) are measured over `jolt-core/src/` and are unaffected by changes to `tracer/`, `tests/arch-tests/`, `Makefile`, `scripts/bootstrap`, or CI. The Criterion performance objectives (`bind_parallel_*`, `naive_sort_time`, `prover_time_*`) are unrelated to architectural testing.
+No existing `jolt-eval/src/objective/` entries are expected to move. The code-quality objectives (`lloc`, `cognitive_complexity_avg`, `halstead_bugs`) are measured over `jolt-prover-legacy/src/` and are unaffected by changes to `tracer/`, `tests/arch-tests/`, `Makefile`, `scripts/bootstrap`, or CI. The Criterion performance objectives (`bind_parallel_*`, `naive_sort_time`, `prover_time_*`) are unrelated to architectural testing.
 
 No new `jolt-eval` objectives are warranted: the only relevant measure is CI wall-clock, which is neither a recurring optimization target nor measured by Criterion. The sole constraint is that the arch-tests CI job must not time out.
 

@@ -13,4 +13,16 @@ jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "thread",
   "random",
 ] }
-ark-serialize.workspace = true
+bincode.workspace = true
+serde.workspace = true
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "recursion-guest"
+path = "src/main.rs"
+test = false
+bench = false

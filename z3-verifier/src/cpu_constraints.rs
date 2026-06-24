@@ -1,7 +1,7 @@
 #![cfg(test)]
 #![allow(non_upper_case_globals)]
 
-use jolt_core::zkvm::{
+use jolt_prover_legacy::zkvm::{
     instruction::{
         CircuitFlags, Flags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
     },
@@ -256,12 +256,11 @@ impl JoltState {
     }
 
     fn assert_output_differs(&self, solver: &mut Solver, other: &Self) {
-        let or_terms = vec![
+        let mut or_terms = vec![
             // we are currently missing constraints on next_pc
             //(&self.next_pc).ne(&other.next_pc),
-            self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
-            // write to rd differs
-            self.rd_write_value.ne(&other.rd_write_value),
+            self.next_is_noop.eq(Int::from(0))
+                & self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
             // lookup inputs differ
             self.left_lookup.ne(&other.left_lookup),
             self.right_lookup.ne(&other.right_lookup),
@@ -269,6 +268,10 @@ impl JoltState {
             self.ram_addr.ne(&other.ram_addr),
             (&self.ram_addr.ne(Int::from(0))) & self.ram_write_value.ne(&other.ram_write_value),
         ];
+        or_terms.push(
+            self.flags[CircuitFlags::WriteLookupOutputToRD as usize].eq(Int::from(1))
+                & self.rd_write_value.ne(&other.rd_write_value),
+        );
 
         *solver += or_terms.into_iter().reduce(|acc, t| acc | t).unwrap();
     }
@@ -319,6 +322,17 @@ impl JoltState {
         *solver += other
             .lookup_output
             .eq(&other.left_lookup + &other.right_lookup);
+
+        if let Instruction::VirtualAdvice(instruction) = instr {
+            let zero = Int::from(0);
+            let advice = Int::from_str(&instruction.advice.to_string()).unwrap();
+            *solver += self.left_lookup.eq(&zero);
+            *solver += other.left_lookup.eq(&zero);
+            *solver += self.right_lookup.eq(&advice);
+            *solver += other.right_lookup.eq(&advice);
+            *solver += self.lookup_output.eq(&advice);
+            *solver += other.lookup_output.eq(&advice);
+        }
 
         // Make an artificially memory, placing rv1 at address 8 and rv2 at address 16, rest is 0
         let rv1 = Int::new_const("rv1");

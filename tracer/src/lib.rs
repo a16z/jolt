@@ -778,7 +778,7 @@ mod tests {
     }
 
     /// Build the muldiv guest and return the ELF bytes.
-    /// Mirrors the pattern used by `host::Program::build()` in jolt-core.
+    /// Mirrors the pattern used by `host::Program::build()` in jolt-prover-legacy.
     fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";

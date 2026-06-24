@@ -22,8 +22,9 @@ for entry in "${FILES[@]}"; do
   RAW_PATH="$FIXTURE_DIR/$SRC"
 
   if [[ ! -f "$SRC_TMP" ]]; then
-    echo "WARN: $SRC_TMP not found; skipping"
-    continue
+    echo "ERROR: expected fixture $SRC_TMP was not produced by 'fibonacci --save'" >&2
+    echo "       (the --save output filename contract may have drifted)" >&2
+    exit 1
   fi
 
   echo "Copying $SRC_TMP -> $RAW_PATH"
