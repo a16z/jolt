@@ -40,7 +40,7 @@ impl SymbolicSumcheck for CyclePhase {
         JoltRelationId::BytecodeClaimReductionCyclePhase
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.0.cycle_sumcheck()
     }
 
@@ -86,7 +86,7 @@ impl SymbolicSumcheck for AddressPhase {
         JoltRelationId::BytecodeClaimReduction
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.0.address_sumcheck()
     }
 
@@ -115,7 +115,7 @@ mod tests {
             CyclePhase::id(),
             JoltRelationId::BytecodeClaimReductionCyclePhase
         );
-        assert_eq!(relation.sumcheck(), dimensions.cycle_sumcheck());
+        assert_eq!(relation.spec(), dimensions.cycle_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             (0..NUM_BYTECODE_VAL_STAGES)
@@ -160,7 +160,7 @@ mod tests {
         let relation = AddressPhase::new((dimensions, 2));
 
         assert_eq!(AddressPhase::id(), JoltRelationId::BytecodeClaimReduction);
-        assert_eq!(relation.sumcheck(), dimensions.address_sumcheck());
+        assert_eq!(relation.spec(), dimensions.address_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![cycle_phase_intermediate_opening()]

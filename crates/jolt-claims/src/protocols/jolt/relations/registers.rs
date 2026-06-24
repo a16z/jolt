@@ -37,7 +37,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
         JoltRelationId::RegistersReadWriteChecking
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         read_write_checking_sumcheck(self.shape)
     }
 
@@ -85,7 +85,7 @@ impl SymbolicSumcheck for ValEvaluation {
         JoltRelationId::RegistersValEvaluation
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck(3)
     }
 
@@ -122,7 +122,7 @@ mod tests {
             JoltRelationId::RegistersReadWriteChecking
         );
         assert_eq!(
-            relation.sumcheck(),
+            relation.spec(),
             read_write_checking_sumcheck(read_write_dimensions())
         );
         assert_eq!(
@@ -152,7 +152,7 @@ mod tests {
     fn val_evaluation_symbolic_matches_dependencies() {
         let relation = ValEvaluation::new(trace_dimensions());
         assert_eq!(ValEvaluation::id(), JoltRelationId::RegistersValEvaluation);
-        assert_eq!(relation.sumcheck(), trace_dimensions().sumcheck(3));
+        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![

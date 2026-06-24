@@ -37,7 +37,7 @@ impl SymbolicSumcheck for CyclePhase {
         JoltRelationId::AdviceClaimReductionCyclePhase
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.1.cycle_sumcheck()
     }
 
@@ -79,7 +79,7 @@ impl SymbolicSumcheck for AddressPhase {
         JoltRelationId::AdviceClaimReduction
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.1.address_sumcheck()
     }
 
@@ -117,7 +117,7 @@ mod tests {
             CyclePhase::id(),
             JoltRelationId::AdviceClaimReductionCyclePhase
         );
-        assert_eq!(relation.sumcheck(), with_address_phase().cycle_sumcheck());
+        assert_eq!(relation.spec(), with_address_phase().cycle_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![ram_val_check_advice_opening(JoltAdviceKind::Trusted)]
@@ -154,7 +154,7 @@ mod tests {
         let relation = AddressPhase::new((JoltAdviceKind::Trusted, with_address_phase()));
 
         assert_eq!(AddressPhase::id(), JoltRelationId::AdviceClaimReduction);
-        assert_eq!(relation.sumcheck(), with_address_phase().address_sumcheck());
+        assert_eq!(relation.spec(), with_address_phase().address_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]

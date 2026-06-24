@@ -22,7 +22,7 @@ where
     let r = ReadWriteChecking::new(dimensions);
     JoltRelationClaims::new(
         ReadWriteChecking::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -37,7 +37,7 @@ where
     let r = ValEvaluation::new(dimensions);
     JoltRelationClaims::new(
         ValEvaluation::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )

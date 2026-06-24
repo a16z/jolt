@@ -47,7 +47,7 @@ Key abstractions introduced or modified:
   relation's four id types (`RelationId`/`OpeningId`/`PublicId`/`ChallengeId`), a
   `Shape` (the per-relation construction input — replaces each builder's dimensions
   argument and subsumes the old `sumcheck: JoltSumcheckSpec` field). Provides
-  `new(shape)`, `id()`, `sumcheck()` (returning the shared crate-root `SumcheckSpec`), and
+  `new(shape)`, `id()`, `spec()` (returning the shared crate-root `SumcheckSpec`), and
   field-method-generic `input_expression<F>()` / `output_expression<F>()` returning
   `Expr<F, OpeningId, PublicId, ChallengeId>`, plus provided `required_{openings,
   publics,challenges}<F>()` computed from those expressions. Protocol-agnostic:
@@ -59,7 +59,7 @@ Key abstractions introduced or modified:
 - **`ConcreteSumcheck` (rename of `SumcheckInstance`, `jolt-verifier`).** Gains
   `type Symbolic: SymbolicSumcheck<…>` and an accessor `symbolic(&self)`; holds its
   (F-independent) `Self::Symbolic` instead of a monomorphized
-  `claims: JoltRelationClaims<F>`. `input_claim`/`expected_output`/`sumcheck()`
+  `claims: JoltRelationClaims<F>`. `input_claim`/`expected_output`/`spec()`
   delegate to the symbolic object. Its `Inputs<C>`/`Outputs<C>` derive macros are
   unchanged.
 - **Removed:** `JoltRelationClaims`, `JoltProtocolClaims`,
@@ -135,7 +135,7 @@ baked-coefficient input claim on a fixture.
       implementing `SymbolicSumcheck`; the free builder fns are removed.
 - [ ] `SumcheckInstance` is renamed `ConcreteSumcheck` with `type Symbolic` +
       `symbolic()`; every impl holds `Self::Symbolic` (not `JoltRelationClaims<F>`);
-      `input_claim`/`expected_output`/`sumcheck()` delegate to the symbolic object.
+      `input_claim`/`expected_output`/`spec()` delegate to the symbolic object.
 - [ ] `resolve_public` takes `outputs: Option<&Self::Outputs<OpeningClaim<F>>>`;
       `input_claim` calls it with `None`, `expected_output` with `Some`.
 - [ ] `val_check` is remodeled: `RamValCheckPublic::{InitEval, InitSelector}` added;
@@ -220,7 +220,7 @@ pub trait SymbolicSumcheck {
 
     fn new(shape: Self::Shape) -> Self;
     fn id() -> Self::RelationId;             // type-level constant; NOT unique (phase/mode splits share one)
-    fn sumcheck(&self) -> SumcheckSpec;      // shared crate-root type, derived from Shape
+    fn spec(&self) -> SumcheckSpec;      // shared crate-root type, derived from Shape
 
     fn input_expression<F: RingCore>(&self)
         -> Expr<F, Self::OpeningId, Self::PublicId, Self::ChallengeId>;
@@ -264,7 +264,7 @@ where
 
     fn symbolic(&self) -> &Self::Symbolic;
     fn id(&self) -> JoltRelationId { Self::Symbolic::id() }
-    fn sumcheck(&self) -> JoltSumcheckSpec { self.symbolic().sumcheck() }
+    fn spec(&self) -> JoltSumcheckSpec { self.symbolic().spec() }
 
     fn derive_opening_points<C: GetPoint<F>>(&self, sumcheck_point: &[F], inputs: &Self::Inputs<C>)
         -> Result<Self::Outputs<Vec<F>>, VerifierError>;
@@ -297,7 +297,7 @@ verifier drives each relation statically by name, reducing scalars into a
 homogeneous `[SumcheckClaim; N]` per stage. The one place that folds a runtime-length
 batch of relations, the BlindFold builder (`batched_input_expr`/`batched_output_expr`),
 takes the per-stage instances' `input_expression::<F>()`/`output_expression::<F>()`/
-`sumcheck()` directly (gathered where the instances are already named) — no shared
+`spec()` directly (gathered where the instances are already named) — no shared
 element type.
 
 **`val_check` init as `Public` symbols.** `ram::val_check` is the only builder that
@@ -366,7 +366,7 @@ makes the pairing explicit.
 - **Unify `JoltSumcheckSpec`/`FieldInlineSumcheckSpec`.** Adopted: one crate-root
   `SumcheckSpec` (with a `domain`) replaces both; `field_inline`'s spec gains a
   `domain` (always `BooleanHypercube`), and the `Jolt*`/`FieldInline*` names become
-  aliases. `SymbolicSumcheck::sumcheck()` returns it directly, so the trait needs no
+  aliases. `SymbolicSumcheck::spec()` returns it directly, so the trait needs no
   associated spec type. (Reverses the earlier "keep it associated" decision.)
 
 ## Documentation
@@ -428,7 +428,7 @@ Task-by-task implementation plan. **Strangler migration**: `JoltRelationClaims` 
 - Test: in `crates/jolt-claims/src/symbolic.rs` `#[cfg(test)]`
 
 **Interfaces:**
-- Produces: `pub trait SymbolicSumcheck` with associated `RelationId/OpeningId/PublicId/ChallengeId/Shape`; `fn new(Shape)->Self`, `fn id()->RelationId`, `fn sumcheck(&self)->SumcheckSpec` (the shared crate-root spec), `fn input_expression<F:RingCore>(&self)->Expr<F,OpeningId,PublicId,ChallengeId>`, `fn output_expression<F:RingCore>(&self)->…`, and provided `fn required_openings<F:RingCore>(&self)->Vec<OpeningId> where OpeningId: Clone+Eq` (+ `required_publics`, `required_challenges`).
+- Produces: `pub trait SymbolicSumcheck` with associated `RelationId/OpeningId/PublicId/ChallengeId/Shape`; `fn new(Shape)->Self`, `fn id()->RelationId`, `fn spec(&self)->SumcheckSpec` (the shared crate-root spec), `fn input_expression<F:RingCore>(&self)->Expr<F,OpeningId,PublicId,ChallengeId>`, `fn output_expression<F:RingCore>(&self)->…`, and provided `fn required_openings<F:RingCore>(&self)->Vec<OpeningId> where OpeningId: Clone+Eq` (+ `required_publics`, `required_challenges`).
 
 - [ ] **Step 1: Write the failing test** (a tiny in-module dummy relation exercising the union + provided methods)
 
@@ -452,7 +452,7 @@ mod tests {
         type Shape = ();
         fn new((): ()) -> Self { Self }
         fn id() -> u8 { 7 }
-        fn sumcheck(&self) -> SumcheckSpec { SumcheckSpec::boolean(3, 1) }
+        fn spec(&self) -> SumcheckSpec { SumcheckSpec::boolean(3, 1) }
         fn input_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {
             opening(O::A) + challenge(Ch::G) * opening(O::B)
         }
@@ -498,7 +498,7 @@ pub trait SymbolicSumcheck {
 
     fn new(shape: Self::Shape) -> Self;
     fn id() -> Self::RelationId;
-    fn sumcheck(&self) -> SumcheckSpec;
+    fn spec(&self) -> SumcheckSpec;
 
     fn input_expression<F: RingCore>(
         &self,
@@ -624,7 +624,7 @@ impl SymbolicSumcheck for Shift {
 
     fn new(shape: TraceDimensions) -> Self { Self { shape } }
     fn id() -> JoltRelationId { JoltRelationId::SpartanShift }
-    fn sumcheck(&self) -> JoltSumcheckSpec { self.shape.sumcheck(/* SHIFT_DEGREE */ 2) }
+    fn spec(&self) -> JoltSumcheckSpec { self.shape.sumcheck(/* SHIFT_DEGREE */ 2) }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = shift_challenge(SpartanShiftChallenge::Gamma);
@@ -657,7 +657,7 @@ pub fn shift<F: RingCore>(dimensions: TraceDimensions) -> JoltRelationClaims<F> 
     let relation = crate::protocols::jolt::relations::spartan::Shift::new(dimensions);
     JoltRelationClaims::new(
         <relations::spartan::Shift as SymbolicSumcheck>::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -687,7 +687,7 @@ git commit -m "refactor(claims): port spartan::shift to Shift symbolic type (bri
 Apply the **Task 2.1 recipe** to every remaining jolt builder. Each is independently testable and committable; batch the commit per `formulas/*` module and gate that module.
 
 **Recipe (per builder `formulas/<mod>::<fn>`):**
-1. Add `relations::<mod>::<TypeName>` implementing `SymbolicSumcheck`, with `input_expression`/`output_expression` bodies moved verbatim from the builder, `id()` = the builder's `JoltRelationId`, `sumcheck()` from the builder's `dimensions.<…>_sumcheck()`, `Shape` = the builder's argument type (a tuple/struct if it takes >1 arg, e.g. claim_reductions `cycle_phase(dims, chunk_count)` → `Shape = (PrecommittedReductionDimensions, usize)`).
+1. Add `relations::<mod>::<TypeName>` implementing `SymbolicSumcheck`, with `input_expression`/`output_expression` bodies moved verbatim from the builder, `id()` = the builder's `JoltRelationId`, `spec()` from the builder's `dimensions.<…>_sumcheck()`, `Shape` = the builder's argument type (a tuple/struct if it takes >1 arg, e.g. claim_reductions `cycle_phase(dims, chunk_count)` → `Shape = (PrecommittedReductionDimensions, usize)`).
 2. Rewrite the builder as a bridge: construct the symbolic type and `JoltRelationClaims::new(id, sumcheck, input_expr, output_expr)`, **preserving any `.with_consistency([...])` and `.with_input_challenges([...])` suffix verbatim** (those are removed later, in Phases 7–8).
 3. Move the builder's `required_*`/`sumcheck` unit tests onto the symbolic type.
 4. Gate: `cargo nextest run -p jolt-claims <mod> --cargo-quiet`; clippy ×2; `muldiv` ×2.
@@ -748,7 +748,7 @@ where
     fn symbolic(&self) -> &Self::Symbolic;
 
     fn id(&self) -> JoltRelationId { Self::Symbolic::id() }
-    fn sumcheck(&self) -> JoltSumcheckSpec { self.symbolic().sumcheck() }
+    fn spec(&self) -> JoltSumcheckSpec { self.symbolic().spec() }
 
     /// TRANSITION ONLY — built from `symbolic()` (empty consistency; consistency is
     /// enforced by `validate`, Phase 8). Removed in Phase 9 once all callers use the
@@ -756,7 +756,7 @@ where
     fn sumcheck_relation(&self) -> JoltRelationClaims<F> {
         JoltRelationClaims::new(
             Self::Symbolic::id(),
-            self.symbolic().sumcheck(),
+            self.symbolic().spec(),
             self.symbolic().input_expression::<F>(),
             self.symbolic().output_expression::<F>(),
         )
@@ -811,7 +811,7 @@ git add -u && git commit -m "refactor(verifier): ConcreteSumcheck sources algebr
 
 **Files:** `stages/*/verify.rs`, `stages/stage6/batch.rs`, `stages/relations.rs` (`check_relation_boolean_hypercube`).
 
-- [ ] **Step 1:** Replace `instance.sumcheck_relation().sumcheck` → `instance.sumcheck()`; `…().input.expression()` → `…symbolic().input_expression::<F>()` (and output); `check_relation_boolean_hypercube` takes `(id, sumcheck_spec)` instead of `&JoltRelationClaims`. Leave BlindFold for Phase 6.
+- [ ] **Step 1:** Replace `instance.sumcheck_relation().sumcheck` → `instance.spec()`; `…().input.expression()` → `…symbolic().input_expression::<F>()` (and output); `check_relation_boolean_hypercube` takes `(id, sumcheck_spec)` instead of `&JoltRelationClaims`. Leave BlindFold for Phase 6.
 - [ ] **Step 2:** clippy ×2, muldiv ×2, commit.
 
 ---
@@ -820,7 +820,7 @@ git add -u && git commit -m "refactor(verifier): ConcreteSumcheck sources algebr
 
 #### Task 5.1: Drop double-storage
 
-Now that callers use `symbolic()`/`sumcheck()`/expression methods, the per-instance `claims: JoltRelationClaims<F>` field and the bridge builder call in `new` are dead (except where BlindFold still consumes — see Phase 6; if BlindFold not yet migrated, defer this task until after Phase 6).
+Now that callers use `symbolic()`/`spec()`/expression methods, the per-instance `claims: JoltRelationClaims<F>` field and the bridge builder call in `new` are dead (except where BlindFold still consumes — see Phase 6; if BlindFold not yet migrated, defer this task until after Phase 6).
 
 - [ ] **Step 1:** Remove the `claims` field + its construction from each of the 29 impls; `new` builds only the `symbolic` object (and the runtime challenge/point state).
 - [ ] **Step 2:** clippy ×2, muldiv ×2, commit per stage.
@@ -833,7 +833,7 @@ Now that callers use `symbolic()`/`sumcheck()`/expression methods, the per-insta
 
 **Files:** `crates/jolt-verifier/src/stages/zk/blindfold/mod.rs`, `blindfold/stage{1..7}.rs`.
 
-- [ ] **Step 1:** Change `add_batched_stage`/`batched_input_expr`/`batched_output_expr` to take a slice of `(rounds: usize, input: JoltExpr<F>, output: JoltExpr<F>)` (or a small local struct) instead of `&[JoltRelationClaims<F>]`. Per-stage builders gather these from the named instances via `instance.sumcheck().rounds`, `instance.symbolic().input_expression::<F>()`, `…output_expression::<F>()`.
+- [ ] **Step 1:** Change `add_batched_stage`/`batched_input_expr`/`batched_output_expr` to take a slice of `(rounds: usize, input: JoltExpr<F>, output: JoltExpr<F>)` (or a small local struct) instead of `&[JoltRelationClaims<F>]`. Per-stage builders gather these from the named instances via `instance.spec().rounds`, `instance.symbolic().input_expression::<F>()`, `…output_expression::<F>()`.
 - [ ] **Step 2:** `domain_spec(first.sumcheck)` → use the gathered spec. Keep `map_jolt_expr`/`scale_expr` unchanged.
 - [ ] **Step 3:** clippy ×2; `muldiv --features host,zk`; `core-fixtures,zk` (sandbox off). Commit.
 
@@ -880,7 +880,7 @@ fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
 }
 ```
 
-`output_expression` is unchanged from today (`public(LtCyclePlusGamma) * opening(ram_inc) * opening(ram_ra)`). `sumcheck()` = `val_check_sumcheck(dimensions)`. `id()` = `RamValCheck`.
+`output_expression` is unchanged from today (`public(LtCyclePlusGamma) * opening(ram_inc) * opening(ram_ra)`). `spec()` = `val_check_sumcheck(dimensions)`. `id()` = `RamValCheck`.
 
 - [ ] **Step 2:** Bridge `formulas/ram::val_check` — it currently takes `init: RamValCheckInit<F>`. Change its signature to build the F-independent `RamValCheckShape` from the *structure* of `init` (the present contributions), construct `RamValCheck`, and `JoltRelationClaims::new(…)`. **Caller impact:** `val_check`'s callers (`stage4/verify.rs`, `blindfold/mod.rs`) currently pass `RamValCheckInit<F>` (with values). They must now pass the structure + supply the values via `resolve_public` (Task 7.3) / `SourceValues` (Task 7.4). Do Tasks 7.2–7.4 in one commit so the tree compiles.
 

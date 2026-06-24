@@ -322,7 +322,7 @@ where
     let relation = OuterUniskip::new(dimensions.clone());
     JoltRelationClaims::new(
         OuterUniskip::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -337,7 +337,7 @@ where
     let relation = OuterRemainder::new(dimensions.clone());
     JoltRelationClaims::new(
         OuterRemainder::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -360,7 +360,7 @@ where
     let relation = ProductUniskip::new(dimensions);
     JoltRelationClaims::new(
         ProductUniskip::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -375,7 +375,7 @@ where
     let relation = ProductRemainder::new(dimensions);
     JoltRelationClaims::new(
         ProductRemainder::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -424,7 +424,7 @@ where
     let relation = Shift::new(dimensions);
     JoltRelationClaims::new(
         Shift::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )

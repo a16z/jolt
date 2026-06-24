@@ -34,7 +34,7 @@ impl SymbolicSumcheck for ReadRaf {
         JoltRelationId::BytecodeReadRaf
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck()
     }
 
@@ -77,7 +77,7 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
         JoltRelationId::BytecodeReadRaf
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.address_sumcheck()
     }
 
@@ -120,7 +120,7 @@ impl SymbolicSumcheck for ReadRafCyclePhase {
         JoltRelationId::BytecodeReadRaf
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.cycle_sumcheck()
     }
 
@@ -155,7 +155,7 @@ impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
         JoltRelationId::BytecodeReadRaf
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.cycle_sumcheck()
     }
 
@@ -193,7 +193,7 @@ mod tests {
     fn read_raf_symbolic_matches_dependencies() {
         let relation = ReadRaf::new(dimensions(2));
         assert_eq!(ReadRaf::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.sumcheck(), dimensions(2).sumcheck());
+        assert_eq!(relation.spec(), dimensions(2).sumcheck());
         assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
         assert_eq!(
             relation.required_publics::<Fr>(),
@@ -214,7 +214,7 @@ mod tests {
     fn read_raf_address_phase_symbolic_matches_dependencies() {
         let relation = ReadRafAddressPhase::new(dimensions(2));
         assert_eq!(ReadRafAddressPhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.sumcheck(), dimensions(2).address_sumcheck());
+        assert_eq!(relation.spec(), dimensions(2).address_sumcheck());
         assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
         assert_eq!(
             relation.output_expression::<Fr>().required_openings(),
@@ -226,7 +226,7 @@ mod tests {
     fn read_raf_cycle_phase_symbolic_matches_dependencies() {
         let relation = ReadRafCyclePhase::new(dimensions(2));
         assert_eq!(ReadRafCyclePhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.sumcheck(), dimensions(2).cycle_sumcheck());
+        assert_eq!(relation.spec(), dimensions(2).cycle_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![bytecode_read_raf_address_phase_opening()]
@@ -244,7 +244,7 @@ mod tests {
             ReadRafCyclePhaseCommitted::id(),
             JoltRelationId::BytecodeReadRaf
         );
-        assert_eq!(relation.sumcheck(), dimensions(2).cycle_sumcheck());
+        assert_eq!(relation.spec(), dimensions(2).cycle_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![bytecode_read_raf_address_phase_opening()]

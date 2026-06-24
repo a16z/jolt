@@ -337,7 +337,7 @@ where
     let r = CyclePhase::new((kind, dimensions));
     JoltRelationClaims::new(
         CyclePhase::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -355,7 +355,7 @@ where
     let r = AddressPhase::new((kind, dimensions));
     JoltRelationClaims::new(
         AddressPhase::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )

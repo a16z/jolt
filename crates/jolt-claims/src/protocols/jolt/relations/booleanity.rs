@@ -33,7 +33,7 @@ impl SymbolicSumcheck for Booleanity {
         JoltRelationId::Booleanity
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck()
     }
 
@@ -67,7 +67,7 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
         JoltRelationId::Booleanity
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.address_sumcheck()
     }
 
@@ -102,7 +102,7 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
         JoltRelationId::Booleanity
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.cycle_sumcheck()
     }
 
@@ -134,7 +134,7 @@ mod tests {
     fn booleanity_symbolic_matches_dependencies() {
         let relation = Booleanity::new(dimensions(1, 1, 1));
         assert_eq!(Booleanity::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.sumcheck(), JoltSumcheckSpec::boolean(13, 3));
+        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(13, 3));
         assert!(relation
             .input_expression::<Fr>()
             .required_openings()
@@ -153,7 +153,7 @@ mod tests {
     fn booleanity_address_phase_symbolic_matches_dependencies() {
         let relation = BooleanityAddressPhase::new(dimensions(1, 1, 1));
         assert_eq!(BooleanityAddressPhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.sumcheck(), JoltSumcheckSpec::boolean(8, 3));
+        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(8, 3));
         assert!(relation
             .input_expression::<Fr>()
             .required_openings()
@@ -170,7 +170,7 @@ mod tests {
     fn booleanity_cycle_phase_symbolic_matches_dependencies() {
         let relation = BooleanityCyclePhase::new(dimensions(1, 1, 1));
         assert_eq!(BooleanityCyclePhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.sumcheck(), JoltSumcheckSpec::boolean(5, 3));
+        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(5, 3));
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![booleanity_address_phase_opening()]

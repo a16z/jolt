@@ -34,7 +34,7 @@ impl SymbolicSumcheck for ClaimReduction {
         JoltRelationId::HammingWeightClaimReduction
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck()
     }
 
@@ -102,7 +102,7 @@ mod tests {
             ClaimReduction::id(),
             JoltRelationId::HammingWeightClaimReduction
         );
-        assert_eq!(relation.sumcheck(), JoltSumcheckSpec::boolean(8, 2));
+        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(8, 2));
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![

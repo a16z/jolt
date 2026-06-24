@@ -100,7 +100,7 @@ where
     let relation = ReadRaf::new(dimensions);
     JoltRelationClaims::new(
         ReadRaf::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -126,7 +126,7 @@ where
     let relation = ReadRafAddressPhase::new(dimensions);
     JoltRelationClaims::new(
         ReadRafAddressPhase::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -152,7 +152,7 @@ where
     let relation = ReadRafCyclePhase::new(dimensions);
     JoltRelationClaims::new(
         ReadRafCyclePhase::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -172,7 +172,7 @@ where
     let relation = ReadRafCyclePhaseCommitted::new(dimensions);
     JoltRelationClaims::new(
         ReadRafCyclePhaseCommitted::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )

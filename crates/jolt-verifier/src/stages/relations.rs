@@ -178,8 +178,8 @@ where
     }
 
     /// The sumcheck spec (rounds, degree, domain), from the symbolic relation.
-    fn sumcheck(&self) -> JoltSumcheckSpec {
-        self.symbolic().sumcheck()
+    fn spec(&self) -> JoltSumcheckSpec {
+        self.symbolic().spec()
     }
 
     /// TRANSITION: the lowered `JoltRelationClaims` form, still consumed by the

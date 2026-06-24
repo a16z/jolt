@@ -508,7 +508,7 @@ where
     let r = CyclePhase::new((dimensions, chunk_count));
     JoltRelationClaims::new(
         CyclePhase::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -527,7 +527,7 @@ where
     let r = AddressPhase::new((dimensions, chunk_count));
     JoltRelationClaims::new(
         AddressPhase::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )

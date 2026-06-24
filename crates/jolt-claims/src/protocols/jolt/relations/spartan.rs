@@ -6,11 +6,11 @@ use crate::protocols::jolt::formulas::spartan::{
     branch_flag_product, is_first_in_sequence_shift, is_noop_shift, is_virtual_shift,
     jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_first_in_sequence_outer, next_is_noop_product, next_is_virtual_outer, next_pc_outer,
-    next_unexpanded_pc_outer, outer_opening, outer_uniskip_opening, pc_shift, product_outer_opening,
-    product_should_branch_outer_opening, product_should_jump_outer_opening, product_tau_kernel,
-    product_uniskip_opening, product_uniskip_weight, product_weight, right_instruction_input_product,
-    shift_challenge, shift_public, unexpanded_pc_shift, SpartanOuterDimensions,
-    SpartanProductDimensions, SHIFT_DEGREE,
+    next_unexpanded_pc_outer, outer_opening, outer_uniskip_opening, pc_shift,
+    product_outer_opening, product_should_branch_outer_opening, product_should_jump_outer_opening,
+    product_tau_kernel, product_uniskip_opening, product_uniskip_weight, product_weight,
+    right_instruction_input_product, shift_challenge, shift_public, unexpanded_pc_shift,
+    SpartanOuterDimensions, SpartanProductDimensions, SHIFT_DEGREE,
 };
 use crate::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
@@ -41,7 +41,7 @@ impl SymbolicSumcheck for Shift {
         JoltRelationId::SpartanShift
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck(SHIFT_DEGREE)
     }
 
@@ -88,7 +88,7 @@ impl SymbolicSumcheck for OuterUniskip {
         JoltRelationId::SpartanOuter
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.uniskip_sumcheck()
     }
 
@@ -122,7 +122,7 @@ impl SymbolicSumcheck for OuterRemainder {
         JoltRelationId::SpartanOuter
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.remainder_sumcheck()
     }
 
@@ -134,7 +134,8 @@ impl SymbolicSumcheck for OuterRemainder {
         let mut output = JoltExpr::zero();
 
         for (left_index, left_variable) in self.shape.variables().iter().copied().enumerate() {
-            for (right_index, right_variable) in self.shape.variables().iter().copied().enumerate() {
+            for (right_index, right_variable) in self.shape.variables().iter().copied().enumerate()
+            {
                 output = output
                     + public(JoltPublicId::from(
                         SpartanOuterPublic::QuadraticCoefficient {
@@ -184,7 +185,7 @@ impl SymbolicSumcheck for ProductUniskip {
         JoltRelationId::SpartanProductVirtualization
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.uniskip_sumcheck()
     }
 
@@ -220,7 +221,7 @@ impl SymbolicSumcheck for ProductRemainder {
         JoltRelationId::SpartanProductVirtualization
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.remainder_sumcheck()
     }
 
@@ -251,7 +252,7 @@ mod tests {
         let relation = Shift::new(TraceDimensions::new(5));
         assert_eq!(Shift::id(), JoltRelationId::SpartanShift);
         assert_eq!(
-            relation.sumcheck(),
+            relation.spec(),
             TraceDimensions::new(5).sumcheck(SHIFT_DEGREE)
         );
         assert_eq!(

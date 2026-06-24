@@ -18,7 +18,7 @@ where
     let r = ClaimReduction::new(dimensions);
     JoltRelationClaims::new(
         ClaimReduction::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )

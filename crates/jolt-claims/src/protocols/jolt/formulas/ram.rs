@@ -157,7 +157,7 @@ where
     let r = ReadWriteChecking::new(dimensions);
     JoltRelationClaims::new(
         ReadWriteChecking::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -171,7 +171,9 @@ pub fn val_check<F>(dimensions: TraceDimensions, init: RamValCheckInit<F>) -> Jo
 where
     F: RingCore,
 {
-    use crate::protocols::jolt::relations::ram::{RamValCheck, RamValCheckShape, RamValContribution};
+    use crate::protocols::jolt::relations::ram::{
+        RamValCheck, RamValCheckShape, RamValContribution,
+    };
     use crate::SymbolicSumcheck;
 
     // The init *values* (`public_eval`, `neg_selector`) are dropped here; they are
@@ -191,7 +193,7 @@ where
     });
     JoltRelationClaims::new(
         RamValCheck::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -206,7 +208,7 @@ where
     let r = RafEvaluation::new(dimensions);
     JoltRelationClaims::new(
         RafEvaluation::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -221,7 +223,7 @@ where
     let r = OutputCheck::new(dimensions);
     JoltRelationClaims::new(
         OutputCheck::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -303,7 +305,7 @@ where
     let r = RaClaimReduction::new(dimensions);
     JoltRelationClaims::new(
         RaClaimReduction::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -343,7 +345,7 @@ where
     let r = RaVirtualization::new(dimensions);
     JoltRelationClaims::new(
         RaVirtualization::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -366,7 +368,7 @@ where
     let r = HammingBooleanity::new(dimensions);
     JoltRelationClaims::new(
         HammingBooleanity::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )

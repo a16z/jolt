@@ -34,7 +34,7 @@ impl SymbolicSumcheck for CyclePhase {
         JoltRelationId::ProgramImageClaimReductionCyclePhase
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.cycle_sumcheck()
     }
 
@@ -73,7 +73,7 @@ impl SymbolicSumcheck for AddressPhase {
         JoltRelationId::ProgramImageClaimReduction
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.address_sumcheck()
     }
 
@@ -102,7 +102,7 @@ mod tests {
             CyclePhase::id(),
             JoltRelationId::ProgramImageClaimReductionCyclePhase
         );
-        assert_eq!(relation.sumcheck(), dimensions.cycle_sumcheck());
+        assert_eq!(relation.spec(), dimensions.cycle_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![ram_val_check_contribution_opening()]
@@ -141,7 +141,7 @@ mod tests {
             AddressPhase::id(),
             JoltRelationId::ProgramImageClaimReduction
         );
-        assert_eq!(relation.sumcheck(), dimensions.address_sumcheck());
+        assert_eq!(relation.spec(), dimensions.address_sumcheck());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![cycle_phase_program_image_opening()]

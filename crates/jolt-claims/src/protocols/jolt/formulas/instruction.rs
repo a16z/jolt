@@ -247,7 +247,7 @@ where
     let r = InputVirtualization::new(dimensions);
     JoltRelationClaims::new(
         InputVirtualization::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -299,7 +299,7 @@ where
     let r = ReadRaf::new(dimensions);
     JoltRelationClaims::new(
         ReadRaf::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )
@@ -371,7 +371,7 @@ where
     let r = RaVirtualization::new(dimensions);
     JoltRelationClaims::new(
         RaVirtualization::id(),
-        r.sumcheck(),
+        r.spec(),
         r.input_expression::<F>(),
         r.output_expression::<F>(),
     )

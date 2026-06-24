@@ -43,7 +43,7 @@ impl SymbolicSumcheck for InputVirtualization {
         JoltRelationId::InstructionInputVirtualization
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck(INPUT_VIRTUALIZATION_DEGREE)
     }
 
@@ -93,7 +93,7 @@ impl SymbolicSumcheck for ReadRaf {
         JoltRelationId::InstructionReadRaf
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck()
     }
 
@@ -147,7 +147,7 @@ impl SymbolicSumcheck for RaVirtualization {
         JoltRelationId::InstructionRaVirtualization
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck()
     }
 
@@ -208,7 +208,7 @@ mod tests {
             JoltRelationId::InstructionInputVirtualization
         );
         assert_eq!(
-            relation.sumcheck(),
+            relation.spec(),
             TraceDimensions::new(5).sumcheck(INPUT_VIRTUALIZATION_DEGREE)
         );
         assert_eq!(
@@ -226,7 +226,7 @@ mod tests {
         let dimensions = read_raf_dimensions(2);
         let relation = ReadRaf::new(dimensions);
         assert_eq!(ReadRaf::id(), JoltRelationId::InstructionReadRaf);
-        assert_eq!(relation.sumcheck(), dimensions.sumcheck());
+        assert_eq!(relation.spec(), dimensions.sumcheck());
         assert_eq!(
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(InstructionReadRafChallenge::Gamma)]
@@ -247,7 +247,7 @@ mod tests {
             RaVirtualization::id(),
             JoltRelationId::InstructionRaVirtualization
         );
-        assert_eq!(relation.sumcheck(), dimensions.sumcheck());
+        assert_eq!(relation.spec(), dimensions.sumcheck());
         assert_eq!(
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(

@@ -34,7 +34,7 @@ impl SymbolicSumcheck for ClaimReduction {
         JoltRelationId::IncClaimReduction
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck(2)
     }
 
@@ -73,7 +73,7 @@ mod tests {
         let relation = ClaimReduction::new(dimensions());
 
         assert_eq!(ClaimReduction::id(), JoltRelationId::IncClaimReduction);
-        assert_eq!(relation.sumcheck(), dimensions().sumcheck(2));
+        assert_eq!(relation.spec(), dimensions().sumcheck(2));
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![

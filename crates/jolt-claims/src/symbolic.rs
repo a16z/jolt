@@ -27,7 +27,7 @@ pub trait SymbolicSumcheck {
     fn id() -> Self::RelationId;
 
     /// The sumcheck spec, derived from [`Shape`](Self::Shape).
-    fn sumcheck(&self) -> SumcheckSpec;
+    fn spec(&self) -> SumcheckSpec;
 
     fn input_expression<F: RingCore>(
         &self,
@@ -105,7 +105,7 @@ mod tests {
         fn id() -> u8 {
             7
         }
-        fn sumcheck(&self) -> SumcheckSpec {
+        fn spec(&self) -> SumcheckSpec {
             SumcheckSpec::boolean(3, 1)
         }
         fn input_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {

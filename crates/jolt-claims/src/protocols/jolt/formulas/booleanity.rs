@@ -79,7 +79,7 @@ where
     let relation = Booleanity::new(dimensions);
     JoltRelationClaims::new(
         Booleanity::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -95,7 +95,7 @@ where
     let relation = BooleanityAddressPhase::new(dimensions);
     JoltRelationClaims::new(
         BooleanityAddressPhase::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )
@@ -110,7 +110,7 @@ where
     let relation = BooleanityCyclePhase::new(dimensions);
     JoltRelationClaims::new(
         BooleanityCyclePhase::id(),
-        relation.sumcheck(),
+        relation.spec(),
         relation.input_expression::<F>(),
         relation.output_expression::<F>(),
     )

@@ -42,7 +42,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
         JoltRelationId::RamReadWriteChecking
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.read_write_sumcheck()
     }
 
@@ -86,7 +86,7 @@ impl SymbolicSumcheck for RafEvaluation {
         JoltRelationId::RamRafEvaluation
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck()
     }
 
@@ -122,7 +122,7 @@ impl SymbolicSumcheck for OutputCheck {
         JoltRelationId::RamOutputCheck
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.output_check_sumcheck()
     }
 
@@ -158,7 +158,7 @@ impl SymbolicSumcheck for RaClaimReduction {
         JoltRelationId::RamRaClaimReduction
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck(2)
     }
 
@@ -201,7 +201,7 @@ impl SymbolicSumcheck for RaVirtualization {
         JoltRelationId::RamRaVirtualization
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck()
     }
 
@@ -237,7 +237,7 @@ impl SymbolicSumcheck for HammingBooleanity {
         JoltRelationId::RamHammingBooleanity
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         self.shape.sumcheck(3)
     }
 
@@ -299,7 +299,7 @@ impl SymbolicSumcheck for RamValCheck {
         JoltRelationId::RamValCheck
     }
 
-    fn sumcheck(&self) -> JoltSumcheckSpec {
+    fn spec(&self) -> JoltSumcheckSpec {
         val_check_sumcheck(self.shape.dimensions)
     }
 
@@ -355,7 +355,7 @@ mod tests {
             JoltRelationId::RamReadWriteChecking
         );
         assert_eq!(
-            relation.sumcheck(),
+            relation.spec(),
             read_write_dimensions().read_write_sumcheck()
         );
         assert_eq!(
@@ -383,7 +383,7 @@ mod tests {
         let relation = RafEvaluation::new(raf_evaluation_dimensions());
 
         assert_eq!(RafEvaluation::id(), JoltRelationId::RamRafEvaluation);
-        assert_eq!(relation.sumcheck(), raf_evaluation_dimensions().sumcheck());
+        assert_eq!(relation.spec(), raf_evaluation_dimensions().sumcheck());
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![ram_address_spartan(), ram_ra_raf_evaluation()]
@@ -401,7 +401,7 @@ mod tests {
 
         assert_eq!(OutputCheck::id(), JoltRelationId::RamOutputCheck);
         assert_eq!(
-            relation.sumcheck(),
+            relation.spec(),
             read_write_dimensions().output_check_sumcheck()
         );
         assert_eq!(relation.required_openings::<Fr>(), vec![ram_val_final()]);
@@ -420,7 +420,7 @@ mod tests {
         let relation = RaClaimReduction::new(trace_dimensions());
 
         assert_eq!(RaClaimReduction::id(), JoltRelationId::RamRaClaimReduction);
-        assert_eq!(relation.sumcheck(), trace_dimensions().sumcheck(2));
+        assert_eq!(relation.spec(), trace_dimensions().sumcheck(2));
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![
@@ -459,10 +459,7 @@ mod tests {
         let relation = RaVirtualization::new(ra_virtualization_dimensions(3));
 
         assert_eq!(RaVirtualization::id(), JoltRelationId::RamRaVirtualization);
-        assert_eq!(
-            relation.sumcheck(),
-            ra_virtualization_dimensions(3).sumcheck()
-        );
+        assert_eq!(relation.spec(), ra_virtualization_dimensions(3).sumcheck());
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![
@@ -487,7 +484,7 @@ mod tests {
             HammingBooleanity::id(),
             JoltRelationId::RamHammingBooleanity
         );
-        assert_eq!(relation.sumcheck(), trace_dimensions().sumcheck(3));
+        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![ram_hamming_weight()]
@@ -507,7 +504,7 @@ mod tests {
         });
 
         assert_eq!(RamValCheck::id(), JoltRelationId::RamValCheck);
-        assert_eq!(relation.sumcheck(), val_check_sumcheck(trace_dimensions()));
+        assert_eq!(relation.spec(), val_check_sumcheck(trace_dimensions()));
         // Full-init form (no committed contributions): only the read-write and
         // output-check openings on the input side.
         assert_eq!(
@@ -594,6 +591,9 @@ mod tests {
             },
         );
 
-        assert_eq!(input, (val_rw - init_eval) + gamma * (val_final - init_eval));
+        assert_eq!(
+            input,
+            (val_rw - init_eval) + gamma * (val_final - init_eval)
+        );
     }
 }
