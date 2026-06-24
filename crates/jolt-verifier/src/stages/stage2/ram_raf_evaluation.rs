@@ -11,6 +11,7 @@
 //! The produced `ram_ra` opening point is `[r_address(log_k) ‖ tau_low(log_t)]`;
 //! `UnmapAddress` reads only the address prefix.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
         dimensions::ReadWriteDimensions,
@@ -24,7 +25,7 @@ use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
@@ -63,7 +64,7 @@ impl<F: Field> RamRafEvaluationInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamRafEvaluation<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::ram::RafEvaluation,
+    symbolic: relations::ram::RafEvaluation,
     claims: JoltRelationClaims<F>,
     read_write_dimensions: ReadWriteDimensions,
     ram_log_k: usize,
@@ -81,7 +82,7 @@ impl<F: Field> RamRafEvaluation<F> {
     ) -> Self {
         Self {
             claims: ram::raf_evaluation(raf_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::ram::RafEvaluation::new(raf_dimensions),
+            symbolic: relations::ram::RafEvaluation::new(raf_dimensions),
             read_write_dimensions,
             ram_log_k,
             lowest_address,
@@ -98,7 +99,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::ram::RafEvaluation;
+    type Symbolic = relations::ram::RafEvaluation;
     type Inputs<C> = RamRafEvaluationInputClaims<C>;
     type Outputs<C> = RamRafEvaluationOutputClaims<C>;
 
@@ -138,8 +139,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         _inputs: &RamRafEvaluationInputClaims<C>,
         outputs: Option<&RamRafEvaluationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamRafEvaluation(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

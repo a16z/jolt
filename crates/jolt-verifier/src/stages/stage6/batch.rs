@@ -44,7 +44,7 @@ use super::instruction_ra_virtualization::{
 use super::outputs::BytecodeReductionWeights;
 use super::ram_hamming_booleanity::{RamHammingBooleanity, RamHammingBooleanityInputClaims};
 use super::ram_ra_virtualization::{RamRaVirtualization, RamRaVirtualizationInputClaims};
-use crate::stages::relations::{OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, OpeningClaim};
 use crate::stages::{
     stage2::Stage2ClearOutput, stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
 };

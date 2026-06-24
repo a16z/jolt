@@ -12,6 +12,7 @@
 //! [`Stage2BatchOutputClaims::validate`](crate::stages::stage2::Stage2BatchOutputClaims::validate),
 //! which the stage-2 verifier runs before any consumer wires these inputs.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TraceDimensions, instruction},
     InstructionInputChallenge, InstructionInputPublic, JoltChallengeId, JoltPublicId,
@@ -24,7 +25,7 @@ use jolt_riscv::InstructionFlags;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
@@ -97,7 +98,7 @@ impl<F: Field> InstructionInputInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionInput<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::instruction::InputVirtualization,
+    symbolic: relations::instruction::InputVirtualization,
     claims: JoltRelationClaims<F>,
     gamma: F,
     product_remainder_opening_point: Vec<F>,
@@ -111,7 +112,7 @@ impl<F: Field> InstructionInput<F> {
     ) -> Self {
         Self {
             claims: instruction::input_virtualization(trace_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::instruction::InputVirtualization::new(trace_dimensions),
+            symbolic: relations::instruction::InputVirtualization::new(trace_dimensions),
             gamma,
             product_remainder_opening_point,
         }
@@ -119,7 +120,7 @@ impl<F: Field> InstructionInput<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::instruction::InputVirtualization;
+    type Symbolic = relations::instruction::InputVirtualization;
     type Inputs<C> = InstructionInputInputClaims<C>;
     type Outputs<C> = InstructionInputOutputClaims<C>;
 
@@ -162,8 +163,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
         _inputs: &InstructionInputInputClaims<C>,
         outputs: Option<&InstructionInputOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::InstructionInput(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

@@ -7,6 +7,7 @@
 //! stage-5 instruction address point. Its only public, `EqCycle`, ties the
 //! produced cycle to the stage-5 instruction read-RAF cycle.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
         dimensions::committed_address_chunks, instruction,
@@ -21,7 +22,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage5::Stage5ClearOutput;
 use crate::VerifierError;
 
@@ -57,7 +58,7 @@ impl<F: Field> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionRaVirtualization<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::instruction::RaVirtualization,
+    symbolic: relations::instruction::RaVirtualization,
     claims: JoltRelationClaims<F>,
     dimensions: InstructionRaVirtualizationDimensions,
     gamma: F,
@@ -79,7 +80,7 @@ impl<F: Field> InstructionRaVirtualization<F> {
     ) -> Self {
         Self {
             claims: instruction::ra_virtualization(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::instruction::RaVirtualization::new(dimensions),
+            symbolic: relations::instruction::RaVirtualization::new(dimensions),
             dimensions,
             gamma,
             instruction_address,
@@ -97,7 +98,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::instruction::RaVirtualization;
+    type Symbolic = relations::instruction::RaVirtualization;
     type Inputs<C> = InstructionRaVirtualizationInputClaims<C>;
     type Outputs<C> = InstructionRaVirtualizationOutputClaims<C>;
 
@@ -140,8 +141,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         _inputs: &InstructionRaVirtualizationInputClaims<C>,
         outputs: Option<&InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
             id
         else {

@@ -57,8 +57,8 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, OpeningClaim, OutputClaims,
-            ConcreteSumcheck,
+            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
+            OutputClaims,
         },
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},

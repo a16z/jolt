@@ -16,6 +16,7 @@
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::{
         advice, bytecode as bytecode_reduction, bytecode::BytecodeOutputWeightInputs, program_image,
@@ -30,7 +31,7 @@ use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use super::outputs::BytecodeReductionWeights;
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
@@ -83,7 +84,7 @@ impl<F: Field> AdviceCyclePhaseInputClaims<OpeningClaim<F>> {
 }
 
 pub struct AdviceCyclePhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::advice::CyclePhase,
+    symbolic: relations::claim_reductions::advice::CyclePhase,
     claims: JoltRelationClaims<F>,
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
@@ -100,7 +101,10 @@ impl<F: Field> AdviceCyclePhase<F> {
     ) -> Self {
         Self {
             claims: advice::cycle_phase(kind, layout.dimensions()),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::advice::CyclePhase::new((kind, layout.dimensions())),
+            symbolic: relations::claim_reductions::advice::CyclePhase::new((
+                kind,
+                layout.dimensions(),
+            )),
             kind,
             layout: layout.clone(),
             reference_opening_point,
@@ -131,7 +135,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::advice::CyclePhase;
+    type Symbolic = relations::claim_reductions::advice::CyclePhase;
     type Inputs<C> = AdviceCyclePhaseInputClaims<C>;
     type Outputs<C> = AdviceCyclePhaseOutputClaims<C>;
 
@@ -224,7 +228,7 @@ impl<F: Field> ProgramImageReductionCyclePhaseInputClaims<OpeningClaim<F>> {
 }
 
 pub struct ProgramImageReductionCyclePhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::program_image::CyclePhase,
+    symbolic: relations::claim_reductions::program_image::CyclePhase,
     claims: JoltRelationClaims<F>,
     layout: ProgramImageClaimReductionLayout,
     /// The RAM address component of the `RamVal` opening from RAM read-write
@@ -237,7 +241,9 @@ impl<F: Field> ProgramImageReductionCyclePhase<F> {
     pub fn new(layout: &ProgramImageClaimReductionLayout, r_addr_rw: Vec<F>) -> Self {
         Self {
             claims: program_image::cycle_phase(layout.dimensions()),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions()),
+            symbolic: relations::claim_reductions::program_image::CyclePhase::new(
+                layout.dimensions(),
+            ),
             layout: layout.clone(),
             r_addr_rw,
         }
@@ -252,7 +258,7 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::program_image::CyclePhase;
+    type Symbolic = relations::claim_reductions::program_image::CyclePhase;
     type Inputs<C> = ProgramImageReductionCyclePhaseInputClaims<C>;
     type Outputs<C> = ProgramImageReductionCyclePhaseOutputClaims<C>;
 
@@ -330,7 +336,7 @@ impl<F: Field> BytecodeReductionCyclePhaseInputClaims<OpeningClaim<F>> {
 }
 
 pub struct BytecodeReductionCyclePhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase,
+    symbolic: relations::claim_reductions::bytecode::CyclePhase,
     claims: JoltRelationClaims<F>,
     layout: BytecodeClaimReductionLayout,
     eta: F,
@@ -346,7 +352,10 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
     ) -> Self {
         Self {
             claims: bytecode_reduction::cycle_phase(layout.dimensions(), layout.chunk_count()),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase::new((layout.dimensions(), layout.chunk_count())),
+            symbolic: relations::claim_reductions::bytecode::CyclePhase::new((
+                layout.dimensions(),
+                layout.chunk_count(),
+            )),
             layout: layout.clone(),
             eta,
             weights,
@@ -371,7 +380,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase;
+    type Symbolic = relations::claim_reductions::bytecode::CyclePhase;
     type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 

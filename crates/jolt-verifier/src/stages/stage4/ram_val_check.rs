@@ -33,7 +33,7 @@ use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use crate::proof::JoltProof;
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage2::outputs::Stage2ClearOutput;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
@@ -243,11 +243,12 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
             // with `outputs == None`): the public initial-RAM evaluation and the
             // negated committed-contribution selectors.
             RamValCheckPublic::InitEval => Ok(self.public_eval),
-            RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => self
-                .init_selectors
-                .iter()
-                .find_map(|(selector, value)| (selector == public_id).then_some(*value))
-                .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
+            RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => {
+                self.init_selectors
+                    .iter()
+                    .find_map(|(selector, value)| (selector == public_id).then_some(*value))
+                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id })
+            }
             // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation
             // of the produced cycle point against the fixed read-write cycle.
             RamValCheckPublic::LtCyclePlusGamma => {

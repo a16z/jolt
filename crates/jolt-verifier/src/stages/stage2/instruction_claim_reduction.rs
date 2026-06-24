@@ -15,6 +15,7 @@
 //! opening-claims helper fills them from the product-remainder openings (or zero
 //! when the points disagree) before this relation's output `Expr` is evaluated.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::instruction as instruction_claim_reduction, dimensions::TraceDimensions,
@@ -28,7 +29,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
@@ -92,7 +93,7 @@ impl<F: Field> InstructionClaimReductionInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionClaimReduction<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction,
+    symbolic: relations::claim_reductions::instruction::ClaimReduction,
     claims: JoltRelationClaims<F>,
     gamma: F,
     tau_low: Vec<F>,
@@ -102,7 +103,9 @@ impl<F: Field> InstructionClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, gamma: F, tau_low: Vec<F>) -> Self {
         Self {
             claims: instruction_claim_reduction::claim_reduction(trace_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions),
+            symbolic: relations::claim_reductions::instruction::ClaimReduction::new(
+                trace_dimensions,
+            ),
             gamma,
             tau_low,
         }
@@ -117,7 +120,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction;
+    type Symbolic = relations::claim_reductions::instruction::ClaimReduction;
     type Inputs<C> = InstructionClaimReductionInputClaims<C>;
     type Outputs<C> = InstructionClaimReductionOutputClaims<C>;
 
@@ -159,8 +162,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         _inputs: &InstructionClaimReductionInputClaims<C>,
         outputs: Option<&InstructionClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::InstructionClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

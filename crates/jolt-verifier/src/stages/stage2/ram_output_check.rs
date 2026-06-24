@@ -11,6 +11,7 @@
 
 use core::marker::PhantomData;
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::ReadWriteDimensions, ram},
     JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamOutputCheckPublic,
@@ -22,7 +23,7 @@ use jolt_program::preprocess::PublicIoMemory;
 use jolt_verifier_derive::OutputClaims;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, InputClaims, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, InputClaims, OpeningClaim};
 use crate::VerifierError;
 
 /// The produced RAM `val_final` opening, sharing the single output-check opening
@@ -65,7 +66,7 @@ impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamOutputCheck<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::ram::OutputCheck,
+    symbolic: relations::ram::OutputCheck,
     claims: JoltRelationClaims<F>,
     read_write_dimensions: ReadWriteDimensions,
     output_address_challenges: Vec<F>,
@@ -80,7 +81,7 @@ impl<F: Field> RamOutputCheck<F> {
     ) -> Self {
         Self {
             claims: ram::output_check(read_write_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::ram::OutputCheck::new(read_write_dimensions),
+            symbolic: relations::ram::OutputCheck::new(read_write_dimensions),
             read_write_dimensions,
             output_address_challenges,
             public_memory,
@@ -135,7 +136,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::ram::OutputCheck;
+    type Symbolic = relations::ram::OutputCheck;
     type Inputs<C> = RamOutputCheckInputClaims<C>;
     type Outputs<C> = RamOutputCheckOutputClaims<C>;
 
@@ -165,8 +166,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         _inputs: &RamOutputCheckInputClaims<C>,
         outputs: Option<&RamOutputCheckOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamOutputCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

@@ -18,6 +18,7 @@
 //!
 //! [`stage6_bytecode_read_raf_address_input`]: super::verify::stage6_bytecode_read_raf_address_input
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
         bytecode::{
@@ -39,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use super::verify::{
     stage6_bytecode_read_raf_expected_output, Stage6BytecodeReadRafExpectedOutputInputs,
 };
-use crate::stages::relations::{GetPoint, GetValue, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, GetValue, OpeningClaim};
 use crate::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
     stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
@@ -197,7 +198,7 @@ impl<F: Field> BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>> {
 }
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::bytecode::ReadRafAddressPhase,
+    symbolic: relations::bytecode::ReadRafAddressPhase,
     claims: JoltRelationClaims<F>,
     /// The bytecode read-RAF gamma and the five per-stage folding gammas
     /// (`stageN_gammas[1]`) the input bind multiplies the stage sub-claims by; the
@@ -217,7 +218,7 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
     ) -> Self {
         Self {
             claims: bytecode::read_raf_address_phase(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::bytecode::ReadRafAddressPhase::new(dimensions),
+            symbolic: relations::bytecode::ReadRafAddressPhase::new(dimensions),
             gamma,
             stage_gammas,
             num_val_stages,
@@ -226,7 +227,7 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::bytecode::ReadRafAddressPhase;
+    type Symbolic = relations::bytecode::ReadRafAddressPhase;
     type Inputs<C> = BytecodeReadRafAddressPhaseInputClaims<C>;
     type Outputs<C> = BytecodeReadRafAddressPhaseOutputClaims<C>;
 
@@ -328,7 +329,7 @@ pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
 /// the output expression and draws its publics from a committed evaluation — stays
 /// on the verifier's existing committed helper for now.
 pub struct BytecodeReadRaf<'a, F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::bytecode::ReadRafCyclePhase,
+    symbolic: relations::bytecode::ReadRafCyclePhase,
     claims: JoltRelationClaims<F>,
     inputs: BytecodeReadRafCycleInputs<'a, F>,
 }
@@ -337,7 +338,7 @@ impl<'a, F: Field> BytecodeReadRaf<'a, F> {
     pub fn new(inputs: BytecodeReadRafCycleInputs<'a, F>) -> Self {
         Self {
             claims: bytecode::read_raf_cycle_phase(inputs.dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::bytecode::ReadRafCyclePhase::new(inputs.dimensions),
+            symbolic: relations::bytecode::ReadRafCyclePhase::new(inputs.dimensions),
             inputs,
         }
     }
@@ -360,7 +361,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::bytecode::ReadRafCyclePhase;
+    type Symbolic = relations::bytecode::ReadRafCyclePhase;
     type Inputs<C> = BytecodeReadRafInputClaims<C>;
     type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 
@@ -463,7 +464,7 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 /// [`ConcreteSumcheck::expected_output`]: the staged Val openings are inputs mixed
 /// into the output, and the committed public values are evaluated once.
 pub struct BytecodeReadRafCommitted<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::bytecode::ReadRafCyclePhaseCommitted,
+    symbolic: relations::bytecode::ReadRafCyclePhaseCommitted,
     claims: JoltRelationClaims<F>,
     dimensions: BytecodeReadRafDimensions,
     gamma: F,
@@ -478,7 +479,7 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
     pub fn new(inputs: BytecodeReadRafCommittedCycleInputs<F>) -> Self {
         Self {
             claims: bytecode::read_raf_cycle_phase_committed(inputs.dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
+            symbolic: relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
             dimensions: inputs.dimensions,
             gamma: inputs.gamma,
             r_address: inputs.r_address,
@@ -498,7 +499,7 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::bytecode::ReadRafCyclePhaseCommitted;
+    type Symbolic = relations::bytecode::ReadRafCyclePhaseCommitted;
     type Inputs<C> = BytecodeReadRafInputClaims<C>;
     type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 

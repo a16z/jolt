@@ -6,6 +6,7 @@
 //! public-value computation (against the product uni-skip `tau_low`), so the
 //! input/output claim algebra lives here once.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::registers as registers_claim_reduction, dimensions::TraceDimensions,
@@ -19,7 +20,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
@@ -72,7 +73,7 @@ impl<F: Field> RegistersClaimReductionInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RegistersClaimReduction<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::registers::ClaimReduction,
+    symbolic: relations::claim_reductions::registers::ClaimReduction,
     claims: JoltRelationClaims<F>,
     gamma: F,
     product_uniskip_tau_low: Vec<F>,
@@ -86,7 +87,7 @@ impl<F: Field> RegistersClaimReduction<F> {
     ) -> Self {
         Self {
             claims: registers_claim_reduction::claim_reduction(trace_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::registers::ClaimReduction::new(trace_dimensions),
+            symbolic: relations::claim_reductions::registers::ClaimReduction::new(trace_dimensions),
             gamma,
             product_uniskip_tau_low,
         }
@@ -94,7 +95,7 @@ impl<F: Field> RegistersClaimReduction<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::registers::ClaimReduction;
+    type Symbolic = relations::claim_reductions::registers::ClaimReduction;
     type Inputs<C> = RegistersClaimReductionInputClaims<C>;
     type Outputs<C> = RegistersClaimReductionOutputClaims<C>;
 
@@ -134,8 +135,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
         _inputs: &RegistersClaimReductionInputClaims<C>,
         outputs: Option<&RegistersClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RegistersClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

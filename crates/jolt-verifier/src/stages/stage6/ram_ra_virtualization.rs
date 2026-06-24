@@ -7,6 +7,7 @@
 //! reduced opening point. Its only public, `EqCycle`, ties the produced cycle to
 //! the reduced cycle.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::committed_address_chunks, ram, ram::RamRaVirtualizationDimensions},
     JoltPublicId, JoltRelationClaims, JoltRelationId, RamRaVirtualizationPublic,
@@ -17,7 +18,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage5::Stage5ClearOutput;
 use crate::VerifierError;
 
@@ -48,7 +49,7 @@ impl<F: Field> RamRaVirtualizationInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamRaVirtualization<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::ram::RaVirtualization,
+    symbolic: relations::ram::RaVirtualization,
     claims: JoltRelationClaims<F>,
     dimensions: RamRaVirtualizationDimensions,
     /// The stage-5 reduced address prefix, chunked into the per-chunk committed
@@ -69,7 +70,7 @@ impl<F: Field> RamRaVirtualization<F> {
     ) -> Self {
         Self {
             claims: ram::ra_virtualization(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::ram::RaVirtualization::new(dimensions),
+            symbolic: relations::ram::RaVirtualization::new(dimensions),
             dimensions,
             ram_reduced_address,
             ram_reduced_cycle,
@@ -86,7 +87,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::ram::RaVirtualization;
+    type Symbolic = relations::ram::RaVirtualization;
     type Inputs<C> = RamRaVirtualizationInputClaims<C>;
     type Outputs<C> = RamRaVirtualizationOutputClaims<C>;
 
@@ -117,8 +118,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
         _inputs: &RamRaVirtualizationInputClaims<C>,
         outputs: Option<&RamRaVirtualizationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

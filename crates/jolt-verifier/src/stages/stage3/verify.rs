@@ -25,7 +25,7 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, OpeningClaim, ConcreteSumcheck,
+            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
         },
         stage1::Stage1Output,
         stage2::Stage2Output,

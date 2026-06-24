@@ -31,7 +31,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{check_relation_boolean_hypercube, OpeningClaim, ConcreteSumcheck},
+        relations::{check_relation_boolean_hypercube, ConcreteSumcheck, OpeningClaim},
         stage2::Stage2Output,
         stage3::Stage3Output,
         zk::committed,

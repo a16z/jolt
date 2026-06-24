@@ -7,6 +7,7 @@
 //! full instruction address is split across the virtual-RA opening points, so
 //! `resolve_public` reconstructs it from the output opening cells.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::instruction::{self, InstructionReadRafDimensions},
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltChallengeId, JoltPublicId,
@@ -21,7 +22,7 @@ use jolt_poly::{
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
@@ -84,7 +85,7 @@ impl<F: Field> InstructionReadRafInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionReadRaf<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::instruction::ReadRaf,
+    symbolic: relations::instruction::ReadRaf,
     claims: JoltRelationClaims<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
@@ -94,7 +95,7 @@ impl<F: Field> InstructionReadRaf<F> {
     pub fn new(dimensions: InstructionReadRafDimensions, gamma: F) -> Self {
         Self {
             claims: instruction::read_raf(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::instruction::ReadRaf::new(dimensions),
+            symbolic: relations::instruction::ReadRaf::new(dimensions),
             dimensions,
             gamma,
         }
@@ -126,7 +127,7 @@ pub(crate) fn reconstruct_r_address<F: Field, C: GetPoint<F>>(
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::instruction::ReadRaf;
+    type Symbolic = relations::instruction::ReadRaf;
     type Inputs<C> = InstructionReadRafInputClaims<C>;
     type Outputs<C> = InstructionReadRafOutputClaims<C>;
 
@@ -188,8 +189,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         inputs: &InstructionReadRafInputClaims<C>,
         outputs: Option<&InstructionReadRafOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::InstructionReadRaf(public) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

@@ -7,6 +7,7 @@
 
 use core::marker::PhantomData;
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TraceDimensions, ram},
     JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamHammingBooleanityPublic,
@@ -17,7 +18,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::OutputClaims;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, InputClaims, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, InputClaims, OpeningClaim};
 use crate::VerifierError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
@@ -57,7 +58,7 @@ impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<OpeningClaim<F
 }
 
 pub struct RamHammingBooleanity<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::ram::HammingBooleanity,
+    symbolic: relations::ram::HammingBooleanity,
     claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     /// The stage-1 Spartan-outer cycle binding that `EqCycle` compares the raw
@@ -69,7 +70,7 @@ impl<F: Field> RamHammingBooleanity<F> {
     pub fn new(trace_dimensions: TraceDimensions, stage1_cycle_binding: Vec<F>) -> Self {
         Self {
             claims: ram::hamming_booleanity(trace_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::ram::HammingBooleanity::new(trace_dimensions),
+            symbolic: relations::ram::HammingBooleanity::new(trace_dimensions),
             trace_dimensions,
             stage1_cycle_binding,
         }
@@ -84,7 +85,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::ram::HammingBooleanity;
+    type Symbolic = relations::ram::HammingBooleanity;
     type Inputs<C> = RamHammingBooleanityInputClaims<C>;
     type Outputs<C> = RamHammingBooleanityOutputClaims<C>;
 
@@ -116,8 +117,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         _inputs: &RamHammingBooleanityInputClaims<C>,
         outputs: Option<&RamHammingBooleanityOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

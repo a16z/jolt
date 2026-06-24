@@ -7,6 +7,7 @@
 //! hand-coded on each side (and stays in lockstep with the BlindFold constraint,
 //! which evaluates the same `ram::read_write_checking` formula).
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::ReadWriteDimensions, ram},
     JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamReadWriteChallenge,
@@ -18,7 +19,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
@@ -66,7 +67,7 @@ impl<F: Field> RamReadWriteInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamReadWriteChecking<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::ram::ReadWriteChecking,
+    symbolic: relations::ram::ReadWriteChecking,
     claims: JoltRelationClaims<F>,
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
@@ -83,7 +84,7 @@ impl<F: Field> RamReadWriteChecking<F> {
     ) -> Self {
         Self {
             claims: ram::read_write_checking(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::ram::ReadWriteChecking::new(dimensions),
+            symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
             gamma,
@@ -100,7 +101,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::ram::ReadWriteChecking;
+    type Symbolic = relations::ram::ReadWriteChecking;
     type Inputs<C> = RamReadWriteInputClaims<C>;
     type Outputs<C> = RamReadWriteOutputClaims<C>;
 
@@ -142,8 +143,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         _inputs: &RamReadWriteInputClaims<C>,
         outputs: Option<&RamReadWriteOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

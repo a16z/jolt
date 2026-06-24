@@ -13,6 +13,7 @@
 //! point from the output claims and asks the layout for the scale/weights at it,
 //! exactly as stage 4's `RamValCheck` recovers the cycle from its output point.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::{
         bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
@@ -27,7 +28,7 @@ use jolt_field::Field;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
 /// Produced per-chunk `BytecodeChunk(i)` openings, all sharing the reduction's
@@ -51,7 +52,7 @@ pub struct BytecodeReductionAddressPhaseInputClaims<C> {
 }
 
 pub struct BytecodeReductionAddressPhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase,
+    symbolic: relations::claim_reductions::bytecode::AddressPhase,
     claims: JoltRelationClaims<F>,
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -71,7 +72,10 @@ impl<F: Field> BytecodeReductionAddressPhase<F> {
     ) -> Self {
         Self {
             claims: bytecode_reduction::address_phase(layout.dimensions(), layout.chunk_count()),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase::new((layout.dimensions(), layout.chunk_count())),
+            symbolic: relations::claim_reductions::bytecode::AddressPhase::new((
+                layout.dimensions(),
+                layout.chunk_count(),
+            )),
             layout: layout.clone(),
             cycle_phase_variables,
             r_bc: weights.r_bc.to_vec(),
@@ -97,7 +101,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase;
+    type Symbolic = relations::claim_reductions::bytecode::AddressPhase;
     type Inputs<C> = BytecodeReductionAddressPhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionAddressPhaseOutputClaims<C>;
 
@@ -129,8 +133,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
         outputs: Option<&BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
             chunk_idx,
         )) = id
@@ -174,7 +177,7 @@ pub struct ProgramImageReductionAddressPhaseInputClaims<C> {
 }
 
 pub struct ProgramImageReductionAddressPhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::program_image::AddressPhase,
+    symbolic: relations::claim_reductions::program_image::AddressPhase,
     claims: JoltRelationClaims<F>,
     layout: ProgramImageClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -192,7 +195,9 @@ impl<F: Field> ProgramImageReductionAddressPhase<F> {
     ) -> Self {
         Self {
             claims: program_image::address_phase(layout.dimensions()),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::program_image::AddressPhase::new(layout.dimensions()),
+            symbolic: relations::claim_reductions::program_image::AddressPhase::new(
+                layout.dimensions(),
+            ),
             layout: layout.clone(),
             cycle_phase_variables,
             reference_opening_point,
@@ -208,7 +213,7 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::program_image::AddressPhase;
+    type Symbolic = relations::claim_reductions::program_image::AddressPhase;
     type Inputs<C> = ProgramImageReductionAddressPhaseInputClaims<C>;
     type Outputs<C> = ProgramImageReductionAddressPhaseOutputClaims<C>;
 
@@ -240,8 +245,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
         outputs: Option<&ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
             id
         else {

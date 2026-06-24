@@ -9,6 +9,7 @@
 //! computation, so the input/output claim algebra lives here once instead of
 //! being hand-coded on each side.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::hamming_weight::{self, HammingWeightClaimReductionDimensions},
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
@@ -20,7 +21,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
 /// Produced one-hot `Ra` opening claims, grouped by family (instruction,
@@ -65,7 +66,7 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
 }
 
 pub struct HammingWeightClaimReduction<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction,
+    symbolic: relations::claim_reductions::hamming_weight::ClaimReduction,
     claims: JoltRelationClaims<F>,
     dimensions: HammingWeightClaimReductionDimensions,
     gamma: F,
@@ -89,7 +90,7 @@ impl<F: Field> HammingWeightClaimReduction<F> {
     ) -> Self {
         Self {
             claims: hamming_weight::claim_reduction(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction::new(dimensions),
+            symbolic: relations::claim_reductions::hamming_weight::ClaimReduction::new(dimensions),
             dimensions,
             gamma,
             r_cycle,
@@ -135,7 +136,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction;
+    type Symbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
     type Inputs<C> = HammingWeightClaimReductionInputClaims<C>;
     type Outputs<C> = HammingWeightClaimReductionOutputClaims<C>;
 
@@ -179,8 +180,7 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         _inputs: &HammingWeightClaimReductionInputClaims<C>,
         outputs: Option<&HammingWeightClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::HammingWeightClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

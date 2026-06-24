@@ -6,6 +6,7 @@
 //! computation, so the input/output claim algebra lives here once instead of
 //! being hand-coded on each side.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
         dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
@@ -20,7 +21,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage3::outputs::Stage3ClearOutput;
 use crate::VerifierError;
 
@@ -75,7 +76,7 @@ impl<F: Field> RegistersReadWriteInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RegistersReadWriteChecking<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::registers::ReadWriteChecking,
+    symbolic: relations::registers::ReadWriteChecking,
     claims: JoltRelationClaims<F>,
     register_dimensions: ReadWriteDimensions,
     gamma: F,
@@ -85,7 +86,7 @@ impl<F: Field> RegistersReadWriteChecking<F> {
     pub fn new(register_dimensions: ReadWriteDimensions, gamma: F) -> Self {
         Self {
             claims: registers::read_write_checking(register_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::registers::ReadWriteChecking::new(register_dimensions),
+            symbolic: relations::registers::ReadWriteChecking::new(register_dimensions),
             register_dimensions,
             gamma,
         }
@@ -100,7 +101,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::registers::ReadWriteChecking;
+    type Symbolic = relations::registers::ReadWriteChecking;
     type Inputs<C> = RegistersReadWriteInputClaims<C>;
     type Outputs<C> = RegistersReadWriteOutputClaims<C>;
 
@@ -146,8 +147,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         inputs: &RegistersReadWriteInputClaims<C>,
         outputs: Option<&RegistersReadWriteOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RegistersReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

@@ -10,6 +10,7 @@
 
 use core::marker::PhantomData;
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::booleanity::{self, BooleanityDimensions},
     BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltOpeningId, JoltPublicId,
@@ -21,7 +22,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
 // ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ impl<F: Field> crate::stages::relations::InputClaims<F>
 }
 
 pub struct BooleanityAddressPhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhase,
+    symbolic: relations::booleanity::BooleanityAddressPhase,
     claims: JoltRelationClaims<F>,
 }
 
@@ -75,13 +76,13 @@ impl<F: Field> BooleanityAddressPhase<F> {
     pub fn new(dimensions: BooleanityDimensions) -> Self {
         Self {
             claims: booleanity::booleanity_address_phase(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhase::new(dimensions),
+            symbolic: relations::booleanity::BooleanityAddressPhase::new(dimensions),
         }
     }
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhase;
+    type Symbolic = relations::booleanity::BooleanityAddressPhase;
     type Inputs<C> = BooleanityAddressPhaseInputClaims<C>;
     type Outputs<C> = BooleanityAddressPhaseOutputClaims<C>;
 
@@ -141,7 +142,7 @@ impl<F: Field> BooleanityInputClaims<OpeningClaim<F>> {
 }
 
 pub struct Booleanity<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhase,
+    symbolic: relations::booleanity::BooleanityCyclePhase,
     claims: JoltRelationClaims<F>,
     dimensions: BooleanityDimensions,
     gamma: F,
@@ -162,7 +163,7 @@ impl<F: Field> Booleanity<F> {
     ) -> Self {
         Self {
             claims: booleanity::booleanity_cycle_phase(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhase::new(dimensions),
+            symbolic: relations::booleanity::BooleanityCyclePhase::new(dimensions),
             dimensions,
             gamma,
             r_address,
@@ -180,7 +181,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhase;
+    type Symbolic = relations::booleanity::BooleanityCyclePhase;
     type Inputs<C> = BooleanityInputClaims<C>;
     type Outputs<C> = BooleanityOutputClaims<C>;
 
@@ -220,8 +221,7 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
         _inputs: &BooleanityInputClaims<C>,
         outputs: Option<&BooleanityOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

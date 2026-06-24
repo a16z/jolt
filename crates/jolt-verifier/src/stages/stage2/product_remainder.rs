@@ -11,6 +11,7 @@
 //! [`ConcreteSumcheck`], so it stays hand-coded in the stage-2 verifier; this
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::spartan::{self, SpartanProductDimensions},
     JoltPublicId, JoltRelationClaims, JoltRelationId, SpartanProductVirtualizationPublic,
@@ -26,7 +27,7 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
 /// Produced product-remainder openings (the eight virtualized instruction-product
@@ -83,7 +84,7 @@ impl<F: Field> ProductRemainderInputClaims<OpeningClaim<F>> {
 }
 
 pub struct ProductRemainder<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::spartan::ProductRemainder,
+    symbolic: relations::spartan::ProductRemainder,
     claims: JoltRelationClaims<F>,
     uniskip_challenge: F,
     tau_high: F,
@@ -99,7 +100,7 @@ impl<F: Field> ProductRemainder<F> {
     ) -> Self {
         Self {
             claims: spartan::product_remainder(dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::spartan::ProductRemainder::new(dimensions),
+            symbolic: relations::spartan::ProductRemainder::new(dimensions),
             uniskip_challenge,
             tau_high,
             tau_low,
@@ -115,7 +116,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::spartan::ProductRemainder;
+    type Symbolic = relations::spartan::ProductRemainder;
     type Inputs<C> = ProductRemainderInputClaims<C>;
     type Outputs<C> = ProductRemainderOutputClaims<C>;
 
@@ -151,8 +152,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         _inputs: &ProductRemainderInputClaims<C>,
         outputs: Option<&ProductRemainderOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::SpartanProductVirtualization(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

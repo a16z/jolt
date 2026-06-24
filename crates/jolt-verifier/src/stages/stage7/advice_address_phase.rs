@@ -12,6 +12,7 @@
 //! function of the reduction's final opening point, which `resolve_public`
 //! recovers from the output claims.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::advice, AdviceClaimReductionLayout, AdviceClaimReductionPublic,
     JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId, PrecommittedReductionLayout,
@@ -21,7 +22,7 @@ use jolt_field::Field;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
 /// Produced final advice openings, keyed by kind; present only when that kind's
@@ -49,7 +50,7 @@ pub struct AdviceAddressPhaseInputClaims<C> {
 }
 
 pub struct AdviceAddressPhase<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::advice::AddressPhase,
+    symbolic: relations::claim_reductions::advice::AddressPhase,
     claims: JoltRelationClaims<F>,
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
@@ -69,7 +70,10 @@ impl<F: Field> AdviceAddressPhase<F> {
     ) -> Self {
         Self {
             claims: advice::address_phase(kind, layout.dimensions()),
-            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::advice::AddressPhase::new((kind, layout.dimensions())),
+            symbolic: relations::claim_reductions::advice::AddressPhase::new((
+                kind,
+                layout.dimensions(),
+            )),
             kind,
             layout: layout.clone(),
             cycle_phase_variables,
@@ -104,7 +108,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::advice::AddressPhase;
+    type Symbolic = relations::claim_reductions::advice::AddressPhase;
     type Inputs<C> = AdviceAddressPhaseInputClaims<C>;
     type Outputs<C> = AdviceAddressPhaseOutputClaims<C>;
 
@@ -143,8 +147,7 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         _inputs: &AdviceAddressPhaseInputClaims<C>,
         outputs: Option<&AdviceAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
         else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });

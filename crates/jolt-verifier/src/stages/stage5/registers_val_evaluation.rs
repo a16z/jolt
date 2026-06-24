@@ -1,5 +1,6 @@
 //! The stage 5 `RegistersValEvaluation` sumcheck instance.
 
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
@@ -13,7 +14,7 @@ use jolt_poly::LtPolynomial;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
@@ -53,7 +54,7 @@ impl<F: Field> RegistersValEvaluationInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RegistersValEvaluation<F: Field> {
-    symbolic: jolt_claims::protocols::jolt::relations::registers::ValEvaluation,
+    symbolic: relations::registers::ValEvaluation,
     claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
 }
@@ -62,7 +63,7 @@ impl<F: Field> RegistersValEvaluation<F> {
     pub fn new(trace_dimensions: TraceDimensions) -> Self {
         Self {
             claims: registers::val_evaluation(trace_dimensions),
-            symbolic: jolt_claims::protocols::jolt::relations::registers::ValEvaluation::new(trace_dimensions),
+            symbolic: relations::registers::ValEvaluation::new(trace_dimensions),
             trace_dimensions,
         }
     }
@@ -76,7 +77,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
-    type Symbolic = jolt_claims::protocols::jolt::relations::registers::ValEvaluation;
+    type Symbolic = relations::registers::ValEvaluation;
     type Inputs<C> = RegistersValEvaluationInputClaims<C>;
     type Outputs<C> = RegistersValEvaluationOutputClaims<C>;
 
@@ -120,8 +121,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
         inputs: &RegistersValEvaluationInputClaims<C>,
         outputs: Option<&RegistersValEvaluationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs =
-            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         match id {
             JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                 let registers_cycle = &outputs.rd_inc.point()[REGISTER_ADDRESS_BITS..];
