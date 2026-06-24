@@ -46,7 +46,7 @@ impl NargDeserialize for BytesMsg {
         }
         let mut len_bytes = [0u8; 8];
         len_bytes.copy_from_slice(&buf[..8]);
-        let len = u64::from_le_bytes(len_bytes) as usize;
+        let len = usize::try_from(u64::from_le_bytes(len_bytes)).map_err(|_| VerificationError)?;
         let total = 8usize.checked_add(len).ok_or(VerificationError)?;
         if buf.len() < total {
             return Err(VerificationError);
@@ -92,6 +92,25 @@ mod tests {
         let before = cursor.len();
         let result = BytesMsg::deserialize_from_narg(&mut cursor);
         assert!(result.is_err());
+        assert_eq!(cursor.len(), before, "cursor must not advance on error");
+    }
+
+    #[test]
+    // On 32-bit this exercises the usize::try_from rejection path.
+    // On 64-bit it exercises the checked_add overflow path.
+    fn rejects_non_representable_lengths() {
+        #[cfg(target_pointer_width = "32")]
+        let len: u64 = (u32::MAX as u64) + 1;
+
+        #[cfg(target_pointer_width = "64")]
+        let len: u64 = u64::MAX;
+
+        let mut narg = Vec::new();
+        narg.extend_from_slice(&len.to_le_bytes());
+
+        let mut cursor: &[u8] = &narg;
+        let before = cursor.len();
+        assert!(BytesMsg::deserialize_from_narg(&mut cursor).is_err());
         assert_eq!(cursor.len(), before, "cursor must not advance on error");
     }
 }
