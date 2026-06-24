@@ -18,7 +18,7 @@ use super::dimensions::{
     JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec, TraceDimensions,
 };
 
-const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
+pub(crate) const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
 const READ_RAF_BASE_DEGREE: usize = 2;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -242,30 +242,14 @@ pub fn input_virtualization<F>(dimensions: TraceDimensions) -> JoltRelationClaim
 where
     F: RingCore,
 {
-    let input = opening(right_instruction_input_product())
-        + input_challenge(InstructionInputChallenge::Gamma)
-            * opening(left_instruction_input_product());
-
-    let output = input_public(InstructionInputPublic::EqProduct)
-        * opening(right_operand_is_rs2())
-        * opening(rs2_value())
-        + input_public(InstructionInputPublic::EqProduct)
-            * opening(right_operand_is_imm())
-            * opening(imm())
-        + input_public(InstructionInputPublic::EqProduct)
-            * input_challenge(InstructionInputChallenge::Gamma)
-            * opening(left_operand_is_rs1())
-            * opening(rs1_value())
-        + input_public(InstructionInputPublic::EqProduct)
-            * input_challenge(InstructionInputChallenge::Gamma)
-            * opening(left_operand_is_pc())
-            * opening(unexpanded_pc());
-
+    use crate::protocols::jolt::relations::instruction::InputVirtualization;
+    use crate::SymbolicSumcheck;
+    let r = InputVirtualization::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::InstructionInputVirtualization,
-        dimensions.sumcheck(INPUT_VIRTUALIZATION_DEGREE),
-        input,
-        output,
+        InputVirtualization::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
     .with_consistency([
         left_instruction_input_reduced().same_evaluation_as(left_instruction_input_product()),
@@ -310,32 +294,14 @@ pub fn read_raf<F>(dimensions: InstructionReadRafDimensions) -> JoltRelationClai
 where
     F: RingCore,
 {
-    let gamma = read_raf_challenge(InstructionReadRafChallenge::Gamma);
-    let input = opening(lookup_output_reduced())
-        + gamma.clone() * opening(left_lookup_operand_reduced())
-        + gamma.pow(2) * opening(right_lookup_operand_reduced());
-
-    let ra_product = instruction_ra_product(dimensions);
-    let mut output = JoltExpr::zero();
-
-    for table in LookupTableKind::<XLEN>::iter() {
-        output = output
-            + read_raf_public(eq_table_value(table))
-                * ra_product.clone()
-                * opening(lookup_table_flag(table));
-    }
-
-    output = output
-        + read_raf_public(InstructionReadRafPublic::EqRafConstant) * ra_product.clone()
-        + read_raf_public(InstructionReadRafPublic::EqRafFlag)
-            * ra_product
-            * opening(instruction_raf_flag());
-
+    use crate::protocols::jolt::relations::instruction::ReadRaf;
+    use crate::SymbolicSumcheck;
+    let r = ReadRaf::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::InstructionReadRaf,
-        dimensions.sumcheck(),
-        input,
-        output,
+        ReadRaf::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
     .with_consistency([lookup_output_reduced().same_evaluation_as(lookup_output_product())])
 }
@@ -400,23 +366,14 @@ pub fn ra_virtualization<F>(
 where
     F: RingCore,
 {
-    let gamma = ra_virtualization_challenge(InstructionRaVirtualizationChallenge::Gamma);
-    let input = weighted_instruction_ra_sum(dimensions, gamma.clone());
-
-    let eq_cycle = ra_virtualization_public(InstructionRaVirtualizationPublic::EqCycle);
-    let mut output = JoltExpr::zero();
-    for virtual_index in 0..dimensions.num_virtual_ra_polys() {
-        output = output
-            + eq_cycle.clone()
-                * gamma.clone().pow(virtual_index)
-                * committed_instruction_ra_product(dimensions, virtual_index);
-    }
-
+    use crate::protocols::jolt::relations::instruction::RaVirtualization;
+    use crate::SymbolicSumcheck;
+    let r = RaVirtualization::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::InstructionRaVirtualization,
-        dimensions.sumcheck(),
-        input,
-        output,
+        RaVirtualization::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
     .with_input_challenges([JoltChallengeId::from(
         InstructionRaVirtualizationChallenge::Gamma,
@@ -483,53 +440,55 @@ pub fn ra_virtualization_committed_instruction_ra_opening(index: usize) -> JoltO
     committed_instruction_ra(index)
 }
 
-fn input_challenge<F>(id: InstructionInputChallenge) -> JoltExpr<F>
+pub(crate) fn input_challenge<F>(id: InstructionInputChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn input_public<F>(id: InstructionInputPublic) -> JoltExpr<F>
+pub(crate) fn input_public<F>(id: InstructionInputPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn read_raf_challenge<F>(id: InstructionReadRafChallenge) -> JoltExpr<F>
+pub(crate) fn read_raf_challenge<F>(id: InstructionReadRafChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn read_raf_public<F>(id: InstructionReadRafPublic) -> JoltExpr<F>
+pub(crate) fn read_raf_public<F>(id: InstructionReadRafPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn ra_virtualization_challenge<F>(id: InstructionRaVirtualizationChallenge) -> JoltExpr<F>
+pub(crate) fn ra_virtualization_challenge<F>(
+    id: InstructionRaVirtualizationChallenge,
+) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn ra_virtualization_public<F>(id: InstructionRaVirtualizationPublic) -> JoltExpr<F>
+pub(crate) fn ra_virtualization_public<F>(id: InstructionRaVirtualizationPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn eq_table_value(table: LookupTableKind<XLEN>) -> InstructionReadRafPublic {
+pub(crate) fn eq_table_value(table: LookupTableKind<XLEN>) -> InstructionReadRafPublic {
     InstructionReadRafPublic::EqTableValue(table.index())
 }
 
-fn weighted_instruction_ra_sum<F>(
+pub(crate) fn weighted_instruction_ra_sum<F>(
     dimensions: InstructionRaVirtualizationDimensions,
     gamma: JoltExpr<F>,
 ) -> JoltExpr<F>
@@ -543,7 +502,7 @@ where
     sum
 }
 
-fn instruction_ra_product<F>(dimensions: InstructionReadRafDimensions) -> JoltExpr<F>
+pub(crate) fn instruction_ra_product<F>(dimensions: InstructionReadRafDimensions) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -554,7 +513,7 @@ where
     product
 }
 
-fn committed_instruction_ra_product<F>(
+pub(crate) fn committed_instruction_ra_product<F>(
     dimensions: InstructionRaVirtualizationDimensions,
     virtual_index: usize,
 ) -> JoltExpr<F>
@@ -569,14 +528,14 @@ where
     product
 }
 
-fn left_instruction_input_product() -> JoltOpeningId {
+pub(crate) fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn right_instruction_input_product() -> JoltOpeningId {
+pub(crate) fn right_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
@@ -604,21 +563,21 @@ fn lookup_output_product() -> JoltOpeningId {
     )
 }
 
-fn lookup_output_reduced() -> JoltOpeningId {
+pub(crate) fn lookup_output_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn left_lookup_operand_reduced() -> JoltOpeningId {
+pub(crate) fn left_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftLookupOperand,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn right_lookup_operand_reduced() -> JoltOpeningId {
+pub(crate) fn right_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightLookupOperand,
         JoltRelationId::InstructionClaimReduction,
@@ -639,70 +598,70 @@ fn committed_instruction_ra(index: usize) -> JoltOpeningId {
     )
 }
 
-fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
+pub(crate) fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupTableFlag(table.index()),
         JoltRelationId::InstructionReadRaf,
     )
 }
 
-fn instruction_raf_flag() -> JoltOpeningId {
+pub(crate) fn instruction_raf_flag() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionRafFlag,
         JoltRelationId::InstructionReadRaf,
     )
 }
 
-fn left_operand_is_rs1() -> JoltOpeningId {
+pub(crate) fn left_operand_is_rs1() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn rs1_value() -> JoltOpeningId {
+pub(crate) fn rs1_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn left_operand_is_pc() -> JoltOpeningId {
+pub(crate) fn left_operand_is_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn unexpanded_pc() -> JoltOpeningId {
+pub(crate) fn unexpanded_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn right_operand_is_rs2() -> JoltOpeningId {
+pub(crate) fn right_operand_is_rs2() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn rs2_value() -> JoltOpeningId {
+pub(crate) fn rs2_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn right_operand_is_imm() -> JoltOpeningId {
+pub(crate) fn right_operand_is_imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn imm() -> JoltOpeningId {
+pub(crate) fn imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Imm,
         JoltRelationId::InstructionInputVirtualization,
