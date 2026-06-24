@@ -356,4 +356,82 @@ mod tests {
             (1..=15).map(fr).collect::<Vec<_>>()
         );
     }
+
+    fn oc(value: u64) -> OpeningClaim<Fr> {
+        OpeningClaim {
+            point: Vec::new(),
+            value: fr(value),
+        }
+    }
+
+    /// A stage-2 batch output where the reduced instruction openings alias the
+    /// product-remainder ones (equal points + values): `lookup_output`,
+    /// `left`/`right_instruction_input`. `validate` accepts it; the tests below
+    /// perturb one alias (or the shared point) each to assert rejection.
+    fn consistent() -> Stage2BatchOutputClaims<OpeningClaim<Fr>> {
+        Stage2BatchOutputClaims {
+            ram_read_write: RamReadWriteOutputClaims {
+                val: oc(1),
+                ra: oc(2),
+                inc: oc(3),
+            },
+            product_remainder: ProductRemainderOutputClaims {
+                left_instruction_input: oc(4),
+                right_instruction_input: oc(5),
+                jump_flag: oc(6),
+                write_lookup_output_to_rd: oc(7),
+                lookup_output: oc(8),
+                branch_flag: oc(9),
+                next_is_noop: oc(10),
+                virtual_instruction: oc(11),
+            },
+            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
+                lookup_output: Some(oc(8)),
+                left_lookup_operand: oc(12),
+                right_lookup_operand: oc(13),
+                left_instruction_input: Some(oc(4)),
+                right_instruction_input: Some(oc(5)),
+            },
+            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: oc(14) },
+            ram_output_check: RamOutputCheckOutputClaims { val_final: oc(15) },
+        }
+    }
+
+    #[test]
+    fn validate_accepts_consistent_reduction() {
+        assert!(consistent().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_lookup_output_mismatch() {
+        let mut claims = consistent();
+        claims.instruction_claim_reduction.lookup_output = Some(oc(99));
+        assert!(claims.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_left_instruction_input_mismatch() {
+        let mut claims = consistent();
+        claims.instruction_claim_reduction.left_instruction_input = Some(oc(99));
+        assert!(claims.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_right_instruction_input_mismatch() {
+        let mut claims = consistent();
+        claims.instruction_claim_reduction.right_instruction_input = Some(oc(99));
+        assert!(claims.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_reduction_point_mismatch() {
+        let mut claims = consistent();
+        // Shift the product-remainder opening point away from the reduction's, so
+        // the reduced openings cannot alias the product ones.
+        claims.product_remainder.left_instruction_input = OpeningClaim {
+            point: vec![fr(1)],
+            value: fr(4),
+        };
+        assert!(claims.validate().is_err());
+    }
 }
