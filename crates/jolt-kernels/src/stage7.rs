@@ -1389,23 +1389,23 @@ impl<F: Field> Stage7ProverInstanceState<F> {
     }
 }
 
-struct HammingWeightClaimReductionState<F: Field> {
-    g: Vec<Vec<F>>,
-    eq_bool: Vec<F>,
-    eq_virt: Vec<Vec<F>>,
-    gamma_powers: Vec<F>,
-    outputs: Vec<Stage7RaOutputPlan>,
-    active_scale: F,
+pub(crate) struct HammingWeightClaimReductionState<F: Field> {
+    pub(crate) g: Vec<Vec<F>>,
+    pub(crate) eq_bool: Vec<F>,
+    pub(crate) eq_virt: Vec<Vec<F>>,
+    pub(crate) gamma_powers: Vec<F>,
+    pub(crate) outputs: Vec<Stage7RaOutputPlan>,
+    pub(crate) active_scale: F,
 }
 
 #[derive(Clone, Copy)]
-struct Stage7RaOutputPlan {
+pub(crate) struct Stage7RaOutputPlan {
     name: &'static str,
     oracle: &'static str,
 }
 
 impl<F: Field> HammingWeightClaimReductionState<F> {
-    fn round_poly(
+    pub(crate) fn round_poly(
         &mut self,
         previous_claim: F,
         relation: Stage7Relation,

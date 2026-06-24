@@ -326,6 +326,14 @@ pub struct Gather8Inputs<'a> {
     pub new_len: usize,
 }
 
+pub struct HammingRoundPolyInputs<'a> {
+    pub g: &'a [&'a DeviceFrVec],
+    pub eq_virt: &'a [&'a DeviceFrVec],
+    pub eq_bool: &'a DeviceFrVec,
+    pub gamma_powers: &'a [Fr],
+    pub scale: Fr,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -648,6 +656,14 @@ impl CudaKernelContext {
             num_cycles,
         )?;
         Ok((a.to_host()?, b.to_host()?))
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn hamming_round_poly(
+        &self,
+        inputs: HammingRoundPolyInputs<'_>,
+    ) -> Result<[Fr; 2], CudaError> {
+        todo!()
     }
 
     pub fn gather8_materialize(
@@ -2318,6 +2334,63 @@ mod tests {
                 })
                 .unwrap();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::hamming_round_poly is todo!()"]
+        fn hamming_round_poly_matches_cpu(
+            log_len in 1usize..10,
+            num_ra in 1usize..5,
+            previous_claim in fr_strategy(),
+            scale in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            use crate::stage7::{HammingWeightClaimReductionState, Stage7Relation};
+            use jolt_poly::UnivariatePoly;
+
+            let len = 1usize << log_len;
+            let g: Vec<Vec<Fr>> = (0..num_ra)
+                .map(|i| (0..len).map(|j| seed + Fr::from_u64((i * len + j + 1) as u64)).collect())
+                .collect();
+            let eq_virt: Vec<Vec<Fr>> = (0..num_ra)
+                .map(|i| (0..len).map(|j| seed + Fr::from_u64((i * len + j + 101) as u64)).collect())
+                .collect();
+            let eq_bool: Vec<Fr> =
+                (0..len).map(|j| seed + Fr::from_u64((j + 1001) as u64)).collect();
+            let gamma_powers: Vec<Fr> =
+                (0..3 * num_ra).map(|i| seed + Fr::from_u64((i + 7) as u64)).collect();
+
+            let mut state = HammingWeightClaimReductionState {
+                g: g.clone(),
+                eq_bool: eq_bool.clone(),
+                eq_virt: eq_virt.clone(),
+                gamma_powers: gamma_powers.clone(),
+                outputs: Vec::new(),
+                active_scale: scale,
+            };
+            let expected = state
+                .round_poly(previous_claim, Stage7Relation::HammingWeightClaimReduction)
+                .unwrap();
+
+            let c = ctx();
+            let g_devs: Vec<DeviceFrVec> = g.iter().map(|v| c.upload(v).unwrap()).collect();
+            let eq_virt_devs: Vec<DeviceFrVec> =
+                eq_virt.iter().map(|v| c.upload(v).unwrap()).collect();
+            let eq_bool_dev = c.upload(&eq_bool).unwrap();
+            let g_refs: Vec<&DeviceFrVec> = g_devs.iter().collect();
+            let eq_virt_refs: Vec<&DeviceFrVec> = eq_virt_devs.iter().collect();
+
+            let evals = c
+                .hamming_round_poly(HammingRoundPolyInputs {
+                    g: &g_refs,
+                    eq_virt: &eq_virt_refs,
+                    eq_bool: &eq_bool_dev,
+                    gamma_powers: &gamma_powers,
+                    scale,
+                })
+                .unwrap();
+            let got = UnivariatePoly::from_evals_and_hint(previous_claim, &evals);
+            prop_assert_eq!(got.coefficients(), expected.coefficients());
         }
     }
 
