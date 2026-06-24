@@ -7,10 +7,11 @@ use jolt_claims::protocols::jolt::{
         },
         dimensions::JoltFormulaDimensions,
     },
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
-    JoltCommittedPolynomial, JoltRelationClaims, JoltRelationId, PrecommittedReductionLayout,
+    relations, AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
+    JoltCommittedPolynomial, JoltRelationId, JoltSumcheckSpec, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -68,7 +69,8 @@ where
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
     );
-    let hamming_claims = hamming_weight::claim_reduction::<PCS::Field>(hamming_dimensions);
+    let hamming_claims =
+        relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions).spec();
 
     let layouts = Stage7Layouts {
         trusted_advice: checked.precommitted.trusted_advice.as_ref(),
@@ -78,40 +80,64 @@ where
     };
     let trusted_advice_claims = layouts.trusted_advice.and_then(|layout| {
         layout.dimensions().has_address_phase().then(|| {
-            advice::address_phase::<PCS::Field>(JoltAdviceKind::Trusted, layout.dimensions())
+            relations::claim_reductions::advice::AddressPhase::new((
+                JoltAdviceKind::Trusted,
+                layout.dimensions(),
+            ))
+            .spec()
         })
     });
     let untrusted_advice_claims = layouts.untrusted_advice.and_then(|layout| {
         layout.dimensions().has_address_phase().then(|| {
-            advice::address_phase::<PCS::Field>(JoltAdviceKind::Untrusted, layout.dimensions())
+            relations::claim_reductions::advice::AddressPhase::new((
+                JoltAdviceKind::Untrusted,
+                layout.dimensions(),
+            ))
+            .spec()
         })
     });
     let bytecode_reduction_claims = layouts.bytecode.and_then(|layout| {
         layout.dimensions().has_address_phase().then(|| {
-            bytecode_reduction::address_phase::<PCS::Field>(
+            relations::claim_reductions::bytecode::AddressPhase::new((
                 layout.dimensions(),
                 layout.chunk_count(),
-            )
+            ))
+            .spec()
         })
     });
     let program_image_reduction_claims = layouts.program_image.and_then(|layout| {
-        layout
-            .dimensions()
-            .has_address_phase()
-            .then(|| program_image::address_phase::<PCS::Field>(layout.dimensions()))
+        layout.dimensions().has_address_phase().then(|| {
+            relations::claim_reductions::program_image::AddressPhase::new(layout.dimensions())
+                .spec()
+        })
     });
 
-    check_relation_boolean_hypercube(&hamming_claims)?;
-    for claim in [
-        &trusted_advice_claims,
-        &untrusted_advice_claims,
-        &bytecode_reduction_claims,
-        &program_image_reduction_claims,
+    check_relation_boolean_hypercube(
+        relations::claim_reductions::hamming_weight::ClaimReduction::id(),
+        &hamming_claims,
+    )?;
+    for (relation, spec) in [
+        (
+            relations::claim_reductions::advice::AddressPhase::id(),
+            &trusted_advice_claims,
+        ),
+        (
+            relations::claim_reductions::advice::AddressPhase::id(),
+            &untrusted_advice_claims,
+        ),
+        (
+            relations::claim_reductions::bytecode::AddressPhase::id(),
+            &bytecode_reduction_claims,
+        ),
+        (
+            relations::claim_reductions::program_image::AddressPhase::id(),
+            &program_image_reduction_claims,
+        ),
     ]
     .into_iter()
-    .flatten()
+    .filter_map(|(relation, spec)| spec.as_ref().map(|spec| (relation, spec)))
     {
-        check_relation_boolean_hypercube(claim)?;
+        check_relation_boolean_hypercube(relation, spec)?;
     }
 
     let hamming_gamma = transcript.challenge_scalar();
@@ -119,8 +145,8 @@ where
     if checked.zk {
         let stage6 = stage6.zk()?;
         let mut statements = vec![SumcheckStatement::new(
-            hamming_claims.sumcheck.rounds,
-            hamming_claims.sumcheck.degree,
+            hamming_claims.rounds,
+            hamming_claims.degree,
         )];
         for claim in [
             &trusted_advice_claims,
@@ -131,10 +157,7 @@ where
         .into_iter()
         .flatten()
         {
-            statements.push(SumcheckStatement::new(
-                claim.sumcheck.rounds,
-                claim.sumcheck.degree,
-            ));
+            statements.push(SumcheckStatement::new(claim.rounds, claim.degree));
         }
 
         let batch_consistency = BatchedSumcheckVerifier::verify_committed_consistency(
@@ -168,7 +191,7 @@ where
             })?;
 
         let hamming_point = batch_consistency
-            .try_instance_point(hamming_claims.sumcheck.rounds)
+            .try_instance_point(hamming_claims.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: error.to_string(),
@@ -361,7 +384,7 @@ where
         reason: error.to_string(),
     })?;
 
-    let points = relations.instance_points_from_batch(&batch, hamming_claims.sumcheck.rounds)?;
+    let points = relations.instance_points_from_batch(&batch, hamming_claims.rounds)?;
     let parts = relations.clear_output(&points, claims, stage6, &layouts)?;
 
     if batch.batching_coefficients.len() != parts.expected_outputs.len() {
@@ -502,11 +525,11 @@ impl<F: Field> Stage7Relations<F> {
     /// trusted/untrusted advice, bytecode, program image.
     pub fn sumcheck_claims(
         &self,
-        hamming_claims: &JoltRelationClaims<F>,
+        hamming_claims: &JoltSumcheckSpec,
     ) -> Result<Vec<SumcheckClaim<F>>, VerifierError> {
         let mut claims = vec![SumcheckClaim::new(
-            hamming_claims.sumcheck.rounds,
-            hamming_claims.sumcheck.degree,
+            hamming_claims.rounds,
+            hamming_claims.degree,
             self.hamming.input_claim(&self.hamming_inputs)?,
         )];
         for relation in [&self.trusted_advice, &self.untrusted_advice]
@@ -1117,13 +1140,13 @@ fn advice_final_opening<F: Field>(
 /// BlindFold recomputes the sumcheck point and `FinalScale` independently.
 fn advice_address_phase_opening_point<F: Field, C>(
     batch: &BatchedCommittedSumcheckConsistency<F, C>,
-    claim: &JoltRelationClaims<F>,
+    claim: &JoltSumcheckSpec,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
     stage6: &Stage6ZkOutput<F, C>,
 ) -> Result<Vec<F>, VerifierError> {
     let advice_point = batch
-        .try_instance_point_at(0, claim.sumcheck.rounds)
+        .try_instance_point_at(0, claim.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
@@ -1161,13 +1184,13 @@ fn stage6_advice_cycle_phase_claim<F: Field>(
 /// for the ZK precommitted finals (BlindFold recomputes the rest).
 fn committed_reduction_address_phase_opening_point<F: Field, C>(
     batch: &BatchedCommittedSumcheckConsistency<F, C>,
-    claim: &JoltRelationClaims<F>,
+    claim: &JoltSumcheckSpec,
     precommitted: &jolt_claims::protocols::jolt::PrecommittedClaimReduction,
     cycle_phase_variables: &[F],
     stage: JoltRelationId,
 ) -> Result<Vec<F>, VerifierError> {
     let point = batch
-        .try_instance_point_at(0, claim.sumcheck.rounds)
+        .try_instance_point_at(0, claim.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage,
             reason: error.to_string(),

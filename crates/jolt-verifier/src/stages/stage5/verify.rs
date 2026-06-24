@@ -1,7 +1,8 @@
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::JoltFormulaDimensions, instruction, ram, registers},
-    JoltRelationId,
+    relations, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -91,12 +92,16 @@ where
     let trace_dimensions = formula_dimensions.trace;
 
     let instruction_claims =
-        instruction::read_raf::<PCS::Field>(formula_dimensions.instruction_read_raf);
-    let ram_claims = ram::ra_claim_reduction::<PCS::Field>(trace_dimensions);
-    let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
+        relations::instruction::ReadRaf::new(formula_dimensions.instruction_read_raf).spec();
+    let ram_claims = relations::ram::RaClaimReduction::new(trace_dimensions).spec();
+    let registers_claims = relations::registers::ValEvaluation::new(trace_dimensions).spec();
 
-    for claim in [&instruction_claims, &ram_claims, &registers_claims] {
-        check_relation_boolean_hypercube(claim)?;
+    for (relation, spec) in [
+        (relations::instruction::ReadRaf::id(), &instruction_claims),
+        (relations::ram::RaClaimReduction::id(), &ram_claims),
+        (relations::registers::ValEvaluation::id(), &registers_claims),
+    ] {
+        check_relation_boolean_hypercube(relation, spec)?;
     }
     let instruction_gamma = transcript.challenge_scalar();
     let ram_gamma = transcript.challenge_scalar();
@@ -120,15 +125,9 @@ where
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
         let statements = [
-            SumcheckStatement::new(
-                instruction_claims.sumcheck.rounds,
-                instruction_claims.sumcheck.degree,
-            ),
-            SumcheckStatement::new(ram_claims.sumcheck.rounds, ram_claims.sumcheck.degree),
-            SumcheckStatement::new(
-                registers_claims.sumcheck.rounds,
-                registers_claims.sumcheck.degree,
-            ),
+            SumcheckStatement::new(instruction_claims.rounds, instruction_claims.degree),
+            SumcheckStatement::new(ram_claims.rounds, ram_claims.degree),
+            SumcheckStatement::new(registers_claims.rounds, registers_claims.degree),
         ];
         let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
             &statements,
@@ -149,19 +148,19 @@ where
             })?;
 
         let instruction_point = consistency
-            .try_instance_point(instruction_claims.sumcheck.rounds)
+            .try_instance_point(instruction_claims.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::InstructionReadRaf,
                 reason: error.to_string(),
             })?;
         let ram_point = consistency
-            .try_instance_point(ram_claims.sumcheck.rounds)
+            .try_instance_point(ram_claims.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
         let registers_point = consistency
-            .try_instance_point(registers_claims.sumcheck.rounds)
+            .try_instance_point(registers_claims.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RegistersValEvaluation,
                 reason: error.to_string(),
@@ -241,18 +240,18 @@ where
 
     let sumcheck_claims = [
         SumcheckClaim::new(
-            instruction_claims.sumcheck.rounds,
-            instruction_claims.sumcheck.degree,
+            instruction_claims.rounds,
+            instruction_claims.degree,
             instruction_relation.input_claim(&instruction_inputs)?,
         ),
         SumcheckClaim::new(
-            ram_claims.sumcheck.rounds,
-            ram_claims.sumcheck.degree,
+            ram_claims.rounds,
+            ram_claims.degree,
             ram_relation.input_claim(&ram_inputs)?,
         ),
         SumcheckClaim::new(
-            registers_claims.sumcheck.rounds,
-            registers_claims.sumcheck.degree,
+            registers_claims.rounds,
+            registers_claims.degree,
             registers_relation.input_claim(&registers_inputs)?,
         ),
     ];
@@ -267,19 +266,19 @@ where
     })?;
 
     let instruction_point = batch
-        .try_instance_point(instruction_claims.sumcheck.rounds)
+        .try_instance_point(instruction_claims.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::InstructionReadRaf,
             reason: error.to_string(),
         })?;
     let ram_point = batch
-        .try_instance_point(ram_claims.sumcheck.rounds)
+        .try_instance_point(ram_claims.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RamRaClaimReduction,
             reason: error.to_string(),
         })?;
     let registers_point = batch
-        .try_instance_point(registers_claims.sumcheck.rounds)
+        .try_instance_point(registers_claims.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RegistersValEvaluation,
             reason: error.to_string(),

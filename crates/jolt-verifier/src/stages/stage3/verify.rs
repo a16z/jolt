@@ -1,12 +1,9 @@
 //! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        claim_reductions::registers as registers_claim_reduction, dimensions::TraceDimensions,
-        instruction, spartan,
-    },
-    JoltRelationId,
+    formulas::dimensions::TraceDimensions, relations, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -89,12 +86,23 @@ where
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = TraceDimensions::new(log_t);
 
-    let shift_spec = spartan::shift::<PCS::Field>(dimensions);
-    let instruction_spec = instruction::input_virtualization::<PCS::Field>(dimensions);
-    let registers_spec = registers_claim_reduction::claim_reduction::<PCS::Field>(dimensions);
+    let shift_spec = relations::spartan::Shift::new(dimensions).spec();
+    let instruction_spec = relations::instruction::InputVirtualization::new(dimensions).spec();
+    let registers_spec =
+        relations::claim_reductions::registers::ClaimReduction::new(dimensions).spec();
 
-    for claim in [&shift_spec, &instruction_spec, &registers_spec] {
-        check_relation_boolean_hypercube(claim)?;
+    for (relation, spec) in [
+        (relations::spartan::Shift::id(), &shift_spec),
+        (
+            relations::instruction::InputVirtualization::id(),
+            &instruction_spec,
+        ),
+        (
+            relations::claim_reductions::registers::ClaimReduction::id(),
+            &registers_spec,
+        ),
+    ] {
+        check_relation_boolean_hypercube(relation, spec)?;
     }
 
     let shift_gamma = transcript.challenge_scalar();
@@ -109,15 +117,9 @@ where
 
     if checked.zk {
         let statements = [
-            SumcheckStatement::new(shift_spec.sumcheck.rounds, shift_spec.sumcheck.degree),
-            SumcheckStatement::new(
-                instruction_spec.sumcheck.rounds,
-                instruction_spec.sumcheck.degree,
-            ),
-            SumcheckStatement::new(
-                registers_spec.sumcheck.rounds,
-                registers_spec.sumcheck.degree,
-            ),
+            SumcheckStatement::new(shift_spec.rounds, shift_spec.degree),
+            SumcheckStatement::new(instruction_spec.rounds, instruction_spec.degree),
+            SumcheckStatement::new(registers_spec.rounds, registers_spec.degree),
         ];
         let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
             &statements,
@@ -171,18 +173,18 @@ where
 
     let sumcheck_claims = [
         SumcheckClaim::new(
-            shift_spec.sumcheck.rounds,
-            shift_spec.sumcheck.degree,
+            shift_spec.rounds,
+            shift_spec.degree,
             shift_relation.input_claim(&shift_inputs)?,
         ),
         SumcheckClaim::new(
-            instruction_spec.sumcheck.rounds,
-            instruction_spec.sumcheck.degree,
+            instruction_spec.rounds,
+            instruction_spec.degree,
             instruction_relation.input_claim(&instruction_inputs)?,
         ),
         SumcheckClaim::new(
-            registers_spec.sumcheck.rounds,
-            registers_spec.sumcheck.degree,
+            registers_spec.rounds,
+            registers_spec.degree,
             registers_relation.input_claim(&registers_inputs)?,
         ),
     ];
@@ -197,19 +199,19 @@ where
     })?;
 
     let shift_point = batch
-        .try_instance_point(shift_spec.sumcheck.rounds)
+        .try_instance_point(shift_spec.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::SpartanShift,
             reason: error.to_string(),
         })?;
     let instruction_point = batch
-        .try_instance_point(instruction_spec.sumcheck.rounds)
+        .try_instance_point(instruction_spec.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::InstructionInputVirtualization,
             reason: error.to_string(),
         })?;
     let registers_point = batch
-        .try_instance_point(registers_spec.sumcheck.rounds)
+        .try_instance_point(registers_spec.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RegistersClaimReduction,
             reason: error.to_string(),

@@ -8,8 +8,8 @@
 //! `+ 1 + 1 + 2`-style count literals) that historically drift apart.
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    JoltSumcheckDomain, JoltSumcheckSpec,
+    JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckDomain,
+    JoltSumcheckSpec,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -21,17 +21,17 @@ use crate::VerifierError;
 /// Boolean-hypercube sumcheck. Every stage that runs a compressed-Boolean batched
 /// sumcheck applies this guard to its relation specs before trusting them; sharing
 /// it keeps the two error conditions identical across stages.
-pub fn check_relation_boolean_hypercube<F: Field>(
-    claim: &JoltRelationClaims<F>,
+pub fn check_relation_boolean_hypercube(
+    stage: JoltRelationId,
+    spec: &JoltSumcheckSpec,
 ) -> Result<(), VerifierError> {
-    let stage = claim.id;
-    if claim.sumcheck.degree == 0 {
+    if spec.degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
-            degree: claim.sumcheck.degree,
+            degree: spec.degree,
         });
     }
-    if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
+    if !matches!(spec.domain, JoltSumcheckDomain::BooleanHypercube) {
         return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage });
     }
     Ok(())
