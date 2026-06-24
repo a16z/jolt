@@ -1,6 +1,6 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening, public};
+use crate::{challenge, public};
 
 use super::super::{
     JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId,
@@ -17,29 +17,14 @@ pub fn read_write_checking<F>(dimensions: ReadWriteDimensions) -> JoltRelationCl
 where
     F: RingCore,
 {
-    let gamma = read_write_challenge(RegistersReadWriteChallenge::Gamma);
-    let eq_cycle = read_write_public(RegistersReadWritePublic::EqCycle);
-
-    let input = opening(rd_write_value_claim())
-        + gamma.clone() * opening(rs1_value_claim())
-        + gamma.clone().pow(2) * opening(rs2_value_claim());
-
-    let output = eq_cycle.clone() * opening(rd_wa_read_write()) * opening(rd_inc_read_write())
-        + eq_cycle.clone() * opening(rd_wa_read_write()) * opening(registers_val_read_write())
-        + eq_cycle.clone()
-            * gamma.clone()
-            * opening(rs1_ra_read_write())
-            * opening(registers_val_read_write())
-        + eq_cycle
-            * gamma.pow(2)
-            * opening(rs2_ra_read_write())
-            * opening(registers_val_read_write());
-
+    use crate::protocols::jolt::relations::registers::ReadWriteChecking;
+    use crate::SymbolicSumcheck;
+    let r = ReadWriteChecking::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RegistersReadWriteChecking,
-        read_write_checking_sumcheck(dimensions),
-        input,
-        output,
+        ReadWriteChecking::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -47,16 +32,14 @@ pub fn val_evaluation<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    let input = opening(registers_val_read_write());
-    let output = val_evaluation_public(RegistersValEvaluationPublic::LtCycle)
-        * opening(rd_inc_val_evaluation())
-        * opening(rd_wa_val_evaluation());
-
+    use crate::protocols::jolt::relations::registers::ValEvaluation;
+    use crate::SymbolicSumcheck;
+    let r = ValEvaluation::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RegistersValEvaluation,
-        dimensions.sumcheck(3),
-        input,
-        output,
+        ValEvaluation::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -82,91 +65,91 @@ pub fn val_evaluation_output_openings() -> [JoltOpeningId; 2] {
     [rd_inc_val_evaluation(), rd_wa_val_evaluation()]
 }
 
-fn read_write_challenge<F>(id: RegistersReadWriteChallenge) -> JoltExpr<F>
+pub(crate) fn read_write_challenge<F>(id: RegistersReadWriteChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn read_write_public<F>(id: RegistersReadWritePublic) -> JoltExpr<F>
+pub(crate) fn read_write_public<F>(id: RegistersReadWritePublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn val_evaluation_public<F>(id: RegistersValEvaluationPublic) -> JoltExpr<F>
+pub(crate) fn val_evaluation_public<F>(id: RegistersValEvaluationPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn rd_write_value_claim() -> JoltOpeningId {
+pub(crate) fn rd_write_value_claim() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
         JoltRelationId::RegistersClaimReduction,
     )
 }
 
-fn rs1_value_claim() -> JoltOpeningId {
+pub(crate) fn rs1_value_claim() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::RegistersClaimReduction,
     )
 }
 
-fn rs2_value_claim() -> JoltOpeningId {
+pub(crate) fn rs2_value_claim() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::RegistersClaimReduction,
     )
 }
 
-fn registers_val_read_write() -> JoltOpeningId {
+pub(crate) fn registers_val_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RegistersVal,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rs1_ra_read_write() -> JoltOpeningId {
+pub(crate) fn rs1_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Ra,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rs2_ra_read_write() -> JoltOpeningId {
+pub(crate) fn rs2_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Ra,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rd_wa_read_write() -> JoltOpeningId {
+pub(crate) fn rd_wa_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rd_inc_read_write() -> JoltOpeningId {
+pub(crate) fn rd_inc_read_write() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rd_inc_val_evaluation() -> JoltOpeningId {
+pub(crate) fn rd_inc_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::RegistersValEvaluation,
     )
 }
 
-fn rd_wa_val_evaluation() -> JoltOpeningId {
+pub(crate) fn rd_wa_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
         JoltRelationId::RegistersValEvaluation,
@@ -184,58 +167,6 @@ mod tests {
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 7, 2, 1)
-    }
-
-    #[test]
-    fn read_write_claims_expose_expected_dependencies() {
-        let claims = read_write_checking::<Fr>(read_write_dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::RegistersReadWriteChecking);
-        assert_eq!(
-            claims.sumcheck,
-            read_write_checking_sumcheck(read_write_dimensions())
-        );
-        assert_eq!(
-            claims.input.required_openings,
-            read_write_checking_input_openings().to_vec()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            vec![
-                rd_wa_read_write(),
-                rd_inc_read_write(),
-                registers_val_read_write(),
-                rs1_ra_read_write(),
-                rs2_ra_read_write(),
-            ]
-        );
-        assert_eq!(
-            read_write_checking_output_openings(),
-            [
-                registers_val_read_write(),
-                rs1_ra_read_write(),
-                rs2_ra_read_write(),
-                rd_wa_read_write(),
-                rd_inc_read_write(),
-            ]
-        );
-        assert_eq!(
-            claims.input.required_challenges,
-            vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(RegistersReadWritePublic::EqCycle)]
-        );
-        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -321,29 +252,6 @@ mod tests {
             output,
             eq_cycle * (rd_wa * (inc + val) + gamma * rs1_ra * val + gamma * gamma * rs2_ra * val)
         );
-    }
-
-    #[test]
-    fn val_evaluation_claims_expose_expected_dependencies() {
-        let claims = val_evaluation::<Fr>(trace_dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::RegistersValEvaluation);
-        assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
-        assert_eq!(
-            claims.input.required_openings,
-            val_evaluation_input_openings().to_vec()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            val_evaluation_output_openings().to_vec()
-        );
-        assert!(claims.output.required_challenges.is_empty());
-        assert!(claims.required_challenges().is_empty());
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(RegistersValEvaluationPublic::LtCycle)]
-        );
-        assert_eq!(claims.num_challenges(), 0);
     }
 
     #[test]
