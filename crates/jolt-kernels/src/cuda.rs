@@ -24,6 +24,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/dense_outer.cu"),
     include_str!("cuda/cubic.cu"),
     include_str!("cuda/round_poly.cu"),
+    include_str!("cuda/uniskip.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -74,6 +75,7 @@ pub struct CudaKernelContext {
     round_poly_pairs: CudaFunction,
     eq_round_poly_pairs: CudaFunction,
     round_poly_reduce: CudaFunction,
+    uniskip_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -316,6 +318,7 @@ impl CudaKernelContext {
             round_poly_pairs: module.load_function("round_poly_pairs")?,
             eq_round_poly_pairs: module.load_function("eq_round_poly_pairs")?,
             round_poly_reduce: module.load_function("round_poly_reduce")?,
+            uniskip_pairs: module.load_function("uniskip_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -505,6 +508,71 @@ impl CudaKernelContext {
     }
 
     #[expect(clippy::too_many_arguments)]
+    pub fn compute_row_dots_device(
+        &self,
+        witness: &DeviceFrVec,
+        a_offsets: &[u32],
+        a_vars: &[u32],
+        a_coeffs: &[Fr],
+        b_offsets: &[u32],
+        b_vars: &[u32],
+        b_coeffs: &[Fr],
+        row_count: usize,
+        num_vars_padded: usize,
+        num_cycles: usize,
+    ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
+        let total = num_cycles * row_count;
+        let mut a_out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+        let mut b_out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+
+        if total > 0 {
+            let a_coeffs_dev = self.upload(a_coeffs)?;
+            let b_coeffs_dev = self.upload(b_coeffs)?;
+            let a_offsets_dev = self.stream.clone_htod(a_offsets)?;
+            let a_vars_dev = self.stream.clone_htod(a_vars)?;
+            let b_offsets_dev = self.stream.clone_htod(b_offsets)?;
+            let b_vars_dev = self.stream.clone_htod(b_vars)?;
+
+            let row_count_arg = row_count as u64;
+            let num_vars_padded_arg = num_vars_padded as u64;
+            let total_arg = total as u64;
+            let cfg = LaunchConfig {
+                grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            let f = self.row_dots.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut a_out)
+                .arg(&mut b_out)
+                .arg(&witness.buf)
+                .arg(&a_offsets_dev)
+                .arg(&a_vars_dev)
+                .arg(&a_coeffs_dev.buf)
+                .arg(&b_offsets_dev)
+                .arg(&b_vars_dev)
+                .arg(&b_coeffs_dev.buf)
+                .arg(&row_count_arg)
+                .arg(&num_vars_padded_arg)
+                .arg(&total_arg);
+            // SAFETY: one thread per (cycle, row) of `total` reads its CSR row's
+            // nonzeros (bounded by the offsets) from the coeff/var arrays and the
+            // matching witness slice, writing one element to a_out/b_out (total each).
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()?;
+        }
+
+        let make = |buf, len| DeviceFrVec {
+            stream: self.stream.clone(),
+            buf,
+            len,
+            staging: self.staging.clone(),
+        };
+        Ok((make(a_out, total), make(b_out, total)))
+    }
+
+    #[expect(clippy::too_many_arguments)]
     pub fn compute_row_dots(
         &self,
         witness: &[Fr],
@@ -522,54 +590,106 @@ impl CudaKernelContext {
         if total == 0 {
             return Ok((Vec::new(), Vec::new()));
         }
-
         let witness_dev = self.upload(witness)?;
-        let a_coeffs_dev = self.upload(a_coeffs)?;
-        let b_coeffs_dev = self.upload(b_coeffs)?;
-        let a_offsets_dev = self.stream.clone_htod(a_offsets)?;
-        let a_vars_dev = self.stream.clone_htod(a_vars)?;
-        let b_offsets_dev = self.stream.clone_htod(b_offsets)?;
-        let b_vars_dev = self.stream.clone_htod(b_vars)?;
-        let mut a_out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
-        let mut b_out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
-
-        let row_count_arg = row_count as u64;
-        let num_vars_padded_arg = num_vars_padded as u64;
-        let total_arg = total as u64;
-        let cfg = LaunchConfig {
-            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
-            block_dim: (BLOCK, 1, 1),
-            shared_mem_bytes: 0,
-        };
-        let f = self.row_dots.clone();
-        let mut launch = self.stream.launch_builder(&f);
-        let _ = launch
-            .arg(&mut a_out)
-            .arg(&mut b_out)
-            .arg(&witness_dev.buf)
-            .arg(&a_offsets_dev)
-            .arg(&a_vars_dev)
-            .arg(&a_coeffs_dev.buf)
-            .arg(&b_offsets_dev)
-            .arg(&b_vars_dev)
-            .arg(&b_coeffs_dev.buf)
-            .arg(&row_count_arg)
-            .arg(&num_vars_padded_arg)
-            .arg(&total_arg);
-        // SAFETY: one thread per (cycle, row) of `total` reads its CSR row's
-        // nonzeros (bounded by the offsets) from the coeff/var arrays and the
-        // matching witness slice, writing one element to a_out/b_out (total each).
-        let _ = unsafe { launch.launch(cfg) }?;
-        self.stream.synchronize()?;
-
-        let a_raw = self.stream.clone_dtoh(&a_out)?;
-        let b_raw = self.stream.clone_dtoh(&b_out)?;
-        Ok((unflatten(&a_raw), unflatten(&b_raw)))
+        let (a, b) = self.compute_row_dots_device(
+            &witness_dev,
+            a_offsets,
+            a_vars,
+            a_coeffs,
+            b_offsets,
+            b_vars,
+            b_coeffs,
+            row_count,
+            num_vars_padded,
+            num_cycles,
+        )?;
+        Ok((a.to_host()?, b.to_host()?))
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn uniskip_extended_evals(&self, inputs: UniskipInputs<'_>) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        use num_traits::Zero;
+        let degree = inputs.degree;
+        assert!(degree >= 1, "uniskip degree must be >= 1");
+        let first_len = inputs.first_group_rows.len();
+        let second_len = inputs.second_group_rows.len();
+        assert_eq!(inputs.first_coeffs.len(), degree * first_len);
+        assert_eq!(inputs.second_coeffs.len(), degree * second_len);
+        let cycles = inputs.eq_evals.len() / 2;
+        if cycles == 0 {
+            return Ok(vec![Fr::zero(); degree]);
+        }
+        assert_eq!(inputs.row_dots_a.len(), cycles * inputs.row_count);
+        assert_eq!(inputs.row_dots_b.len(), cycles * inputs.row_count);
+
+        let first_coeffs = self.upload(inputs.first_coeffs)?;
+        let second_coeffs = self.upload(inputs.second_coeffs)?;
+        let first_rows = self.stream.clone_htod(inputs.first_group_rows)?;
+        let second_rows = self.stream.clone_htod(inputs.second_group_rows)?;
+
+        let tuple = degree * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (cycles as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let first_len_arg = first_len as u32;
+        let second_len_arg = second_len as u32;
+        let row_count_arg = inputs.row_count as u64;
+        let degree_arg = degree as u32;
+        let cycles_arg = cycles as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.uniskip_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.row_dots_a.buf)
+            .arg(&inputs.row_dots_b.buf)
+            .arg(&inputs.eq_evals.buf)
+            .arg(&first_coeffs.buf)
+            .arg(&second_coeffs.buf)
+            .arg(&first_rows)
+            .arg(&second_rows)
+            .arg(&first_len_arg)
+            .arg(&second_len_arg)
+            .arg(&row_count_arg)
+            .arg(&degree_arg)
+            .arg(&cycles_arg);
+        // SAFETY: one thread per cycle reads its row_count-strided dots, the eq pair,
+        // and the two groups' coeff/row tables (bounded by first_len/second_len),
+        // writing one `degree`-tuple per block; shared memory holds `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&degree_arg).arg(&len_arg);
+            // SAFETY: each block reads up to `block` tuples from `buf` (len total) and
+            // writes one tuple to `out`; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok((0..degree)
+            .map(|e| limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]]))
+            .collect())
     }
 
     fn map(&self, func: &CudaFunction, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
@@ -1591,7 +1711,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::uniskip_extended_evals is todo!()"]
         fn uniskip_extended_evals_matches_cpu(
             log_cycles in 0usize..9,
             seed in fr_strategy(),

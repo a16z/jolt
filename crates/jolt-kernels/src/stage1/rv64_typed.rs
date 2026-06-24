@@ -214,6 +214,19 @@ impl Stage1OuterRemainingEvaluator<Fr> for Stage1OuterRv64Data<'_> {
         )
     }
 
+    fn uniskip_extended_evals_backend(&self, backend: &'static str, tau: &[Fr]) -> Option<Vec<Fr>> {
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" {
+            if let Some(result) =
+                crate::stage1::cuda::uniskip_extended_evals_cuda(&self.field_data, tau)
+            {
+                return Some(result);
+            }
+        }
+        let _ = backend;
+        self.uniskip_extended_evals(tau)
+    }
+
     fn evaluate_virtual_oracle(
         &self,
         context: Stage1OuterRemainingContext<'_, Fr>,

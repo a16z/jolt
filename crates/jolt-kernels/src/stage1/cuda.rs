@@ -5,12 +5,12 @@ use jolt_field::{Field, Fr};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 
-use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec, FusedOuterInputs};
+use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec, FusedOuterInputs, UniskipInputs};
 use crate::dense::bind_dense_evals_reuse_cuda;
 use crate::stage1::{
     Stage1KernelError, Stage1OuterR1csData, Stage1OuterRemainingContext, Stage1RemainingRoundProof,
     OUTER_FIRST_GROUP_ROWS, OUTER_SECOND_GROUP_ROWS, OUTER_UNISKIP_BASE_START,
-    OUTER_UNISKIP_DOMAIN_SIZE,
+    OUTER_UNISKIP_DEGREE, OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_TARGET_COEFFS,
 };
 
 fn ctx() -> Option<&'static CudaKernelContext> {
@@ -149,6 +149,100 @@ pub fn prove_remaining_rounds_cuda<F: Field>(
         round_polynomials.push(poly);
     }
     Some(Ok((point, round_polynomials)))
+}
+
+pub fn uniskip_extended_evals_cuda<F: Field>(
+    data: &Stage1OuterR1csData<'_, F>,
+    tau: &[F],
+) -> Option<Vec<F>> {
+    if tau.len() != data.key.num_cycle_vars() + 2 {
+        return None;
+    }
+    let ctx = ctx()?;
+
+    let row_count = OUTER_FIRST_GROUP_ROWS.len() + OUTER_SECOND_GROUP_ROWS.len();
+    let natural_csr = |matrix: &[Vec<(usize, F)>]| -> (Vec<u32>, Vec<u32>, Vec<F>) {
+        let mut offsets = vec![0u32];
+        let mut vars = Vec::new();
+        let mut coeffs = Vec::new();
+        for row in &matrix[..row_count] {
+            for &(var, coeff) in row {
+                vars.push(var as u32);
+                coeffs.push(coeff);
+            }
+            offsets.push(vars.len() as u32);
+        }
+        (offsets, vars, coeffs)
+    };
+    let (a_offsets, a_vars, a_coeffs) = natural_csr(&data.key.matrices.a);
+    let (b_offsets, b_vars, b_coeffs) = natural_csr(&data.key.matrices.b);
+
+    let tau_low = &tau[..tau.len() - 1];
+    let eq_evals = EqPolynomial::new(tau_low.to_vec()).evaluations();
+    let num_cycles = 1usize << (data.key.num_cycle_vars());
+
+    let eq_evals = as_fr_slice(&eq_evals)?;
+    let witness = as_fr_slice(data.witness)?;
+    let a_coeffs = as_fr_slice(&a_coeffs)?;
+    let b_coeffs = as_fr_slice(&b_coeffs)?;
+
+    let first_rows: Vec<u32> = OUTER_FIRST_GROUP_ROWS.iter().map(|&r| r as u32).collect();
+    let second_rows: Vec<u32> = OUTER_SECOND_GROUP_ROWS.iter().map(|&r| r as u32).collect();
+    let mut first_coeffs = Vec::with_capacity(OUTER_UNISKIP_DEGREE * OUTER_FIRST_GROUP_ROWS.len());
+    let mut second_coeffs =
+        Vec::with_capacity(OUTER_UNISKIP_DEGREE * OUTER_SECOND_GROUP_ROWS.len());
+    for coeffs in &OUTER_UNISKIP_TARGET_COEFFS {
+        for &coeff in &coeffs[..OUTER_FIRST_GROUP_ROWS.len()] {
+            first_coeffs.push(Fr::from_i64(coeff));
+        }
+        for &coeff in &coeffs[..OUTER_SECOND_GROUP_ROWS.len()] {
+            second_coeffs.push(Fr::from_i64(coeff));
+        }
+    }
+
+    let witness_dev = ctx.resident_witness(witness).ok()?;
+    let eq_evals_dev = ctx.upload(eq_evals).ok()?;
+    let (row_dots_a, row_dots_b) = ctx
+        .compute_row_dots_device(
+            &witness_dev,
+            &a_offsets,
+            &a_vars,
+            a_coeffs,
+            &b_offsets,
+            &b_vars,
+            b_coeffs,
+            row_count,
+            data.key.num_vars_padded,
+            num_cycles,
+        )
+        .ok()?;
+
+    let evals = ctx
+        .uniskip_extended_evals(UniskipInputs {
+            row_dots_a: &row_dots_a,
+            row_dots_b: &row_dots_b,
+            eq_evals: &eq_evals_dev,
+            first_group_rows: &first_rows,
+            second_group_rows: &second_rows,
+            first_coeffs: &first_coeffs,
+            second_coeffs: &second_coeffs,
+            row_count,
+            degree: OUTER_UNISKIP_DEGREE,
+        })
+        .ok()?;
+
+    let mut out = Vec::with_capacity(evals.len());
+    for eval in evals {
+        out.push(fr_into::<F>(eval)?);
+    }
+    Some(out)
+}
+
+fn fr_into<F: Field>(value: Fr) -> Option<F> {
+    (Box::new(value) as Box<dyn Any>)
+        .downcast::<F>()
+        .ok()
+        .map(|boxed| *boxed)
 }
 
 fn cuda_error(error: CudaError) -> Stage1KernelError {

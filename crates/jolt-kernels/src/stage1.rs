@@ -28,7 +28,7 @@ pub(crate) const OUTER_UNISKIP_BASE_START: i64 = -((OUTER_UNISKIP_DOMAIN_SIZE as
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
 pub(crate) const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
 pub(crate) const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
-const OUTER_EQ_CONSTRAINT_ROWS: usize =
+pub(crate) const OUTER_EQ_CONSTRAINT_ROWS: usize =
     OUTER_FIRST_GROUP_ROWS.len() + OUTER_SECOND_GROUP_ROWS.len();
 pub(crate) const OUTER_UNISKIP_TARGET_COEFFS: [[i64; OUTER_UNISKIP_DOMAIN_SIZE];
     OUTER_UNISKIP_DEGREE] = [
@@ -280,6 +280,10 @@ pub trait Stage1OuterRemainingEvaluator<F: Field>: Sync {
 
     fn uniskip_extended_evals(&self, _tau: &[F]) -> Option<Vec<F>> {
         None
+    }
+
+    fn uniskip_extended_evals_backend(&self, _backend: &'static str, tau: &[F]) -> Option<Vec<F>> {
+        self.uniskip_extended_evals(tau)
     }
 
     fn evaluate_virtual_oracle(
@@ -692,6 +696,17 @@ impl<F: Field> Stage1OuterRemainingEvaluator<F> for Stage1OuterR1csData<'_, F> {
             );
         let extended_evals = accumulators.map(FieldAccumulator::reduce).to_vec();
         Some(extended_evals)
+    }
+
+    fn uniskip_extended_evals_backend(&self, backend: &'static str, tau: &[F]) -> Option<Vec<F>> {
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" {
+            if let Some(result) = crate::stage1::cuda::uniskip_extended_evals_cuda(self, tau) {
+                return Some(result);
+            }
+        }
+        let _ = backend;
+        self.uniskip_extended_evals(tau)
     }
 
     fn evaluate_virtual_oracle(
@@ -1437,13 +1452,12 @@ where
                     kernel: context.kernel.abi,
                     input: "uniskip_extended_evals",
                 })?;
-        owned_extended_evals =
-            evaluator
-                .uniskip_extended_evals(tau)
-                .ok_or(Stage1KernelError::MissingKernelInput {
-                    kernel: context.kernel.abi,
-                    input: "uniskip_extended_evals",
-                })?;
+        owned_extended_evals = evaluator
+            .uniskip_extended_evals_backend(context.kernel.backend, tau)
+            .ok_or(Stage1KernelError::MissingKernelInput {
+                kernel: context.kernel.abi,
+                input: "uniskip_extended_evals",
+            })?;
         owned_extended_evals.as_slice()
     };
     let poly = build_outer_uniskip_poly(extended_evals, tau_high)?;
