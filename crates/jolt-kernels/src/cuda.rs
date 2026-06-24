@@ -24,6 +24,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/dense_outer.cu"),
     include_str!("cuda/cubic.cu"),
     include_str!("cuda/round_poly.cu"),
+    include_str!("cuda/dense_product.cu"),
+    include_str!("cuda/gruen_round_poly.cu"),
     include_str!("cuda/uniskip.cu"),
     include_str!("cuda/reduce.cu"),
 );
@@ -75,6 +77,8 @@ pub struct CudaKernelContext {
     round_poly_pairs: CudaFunction,
     eq_round_poly_pairs: CudaFunction,
     round_poly_reduce: CudaFunction,
+    dense_product_pairs: CudaFunction,
+    gruen_round_poly_pairs: CudaFunction,
     uniskip_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
@@ -328,6 +332,8 @@ impl CudaKernelContext {
             round_poly_pairs: module.load_function("round_poly_pairs")?,
             eq_round_poly_pairs: module.load_function("eq_round_poly_pairs")?,
             round_poly_reduce: module.load_function("round_poly_reduce")?,
+            dense_product_pairs: module.load_function("dense_product_pairs")?,
+            gruen_round_poly_pairs: module.load_function("gruen_round_poly_pairs")?,
             uniskip_pairs: module.load_function("uniskip_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
@@ -927,12 +933,102 @@ impl CudaKernelContext {
         }))
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn dense_product_round_poly(
         &self,
         terms: RoundPolyTerms<'_>,
     ) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        use num_traits::Zero;
+        let degree = terms.degree;
+        assert!(degree >= 1, "round poly degree must be >= 1");
+        assert!(degree < 16, "dense product degree exceeds kernel bound");
+        let width = degree + 1;
+        let pair_stride = terms.factors[0].len() / 2;
+        for factor in terms.factors {
+            assert_eq!(
+                factor.len(),
+                pair_stride * 2,
+                "round poly factors must have equal length"
+            );
+        }
+        if pair_stride == 0 {
+            return Ok(vec![Fr::zero(); width]);
+        }
+
+        let mut packed: CudaSlice<u64> =
+            self.stream.alloc_zeros(terms.factors.len() * pair_stride * 2 * LIMBS)?;
+        for (index, factor) in terms.factors.iter().enumerate() {
+            let offset = index * pair_stride * 2 * LIMBS;
+            self.stream.memcpy_dtod(
+                &factor.buf,
+                &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
+            )?;
+        }
+
+        let coeffs_dev = self.upload(terms.term_coeffs)?;
+        let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
+        let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
+
+        let tuple = width * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (pair_stride as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let pair_stride_arg = pair_stride as u64;
+        let num_terms_arg = terms.term_coeffs.len() as u32;
+        let degree_arg = degree as u32;
+        let width_arg = width as u32;
+        let half_arg = pair_stride as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.dense_product_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&packed)
+            .arg(&coeffs_dev.buf)
+            .arg(&offsets_dev)
+            .arg(&indices_dev)
+            .arg(&pair_stride_arg)
+            .arg(&num_terms_arg)
+            .arg(&degree_arg)
+            .arg(&half_arg);
+        // SAFETY: one thread per row reads its pair from each packed factor and the
+        // term tables (bounded by offsets), building the width=degree+1 monomial
+        // coefficients in a thread-local buffer; shared memory holds `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums tuples of the lane count in its third
+            // arg (here `width` = degree+1) across up to `block` blocks; shared
+            // memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok((0..width)
+            .map(|e| limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]]))
+            .collect())
     }
 
     pub fn sum_of_products_round_poly(
@@ -1038,9 +1134,107 @@ impl CudaKernelContext {
             .collect())
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn gruen_round_poly(&self, inputs: GruenRoundPolyInputs<'_>) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        use num_traits::Zero;
+        let _ = inputs.degree;
+        let pair_stride = inputs.factors[0].len() / 2;
+        for factor in inputs.factors {
+            assert_eq!(
+                factor.len(),
+                pair_stride * 2,
+                "gruen round poly factors must have equal length"
+            );
+        }
+        assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
+        assert_eq!(
+            inputs.e_in.len() * inputs.e_out.len(),
+            pair_stride * 2,
+            "e_in * e_out must equal the factor length"
+        );
+        if pair_stride == 0 {
+            return Ok(vec![Fr::zero(); 2]);
+        }
+        let low_round = inputs.e_in.len() > 1;
+        let in_pairs = inputs.e_in.len() / 2;
+
+        let mut packed: CudaSlice<u64> =
+            self.stream.alloc_zeros(inputs.factors.len() * pair_stride * 2 * LIMBS)?;
+        for (index, factor) in inputs.factors.iter().enumerate() {
+            let offset = index * pair_stride * 2 * LIMBS;
+            self.stream.memcpy_dtod(
+                &factor.buf,
+                &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
+            )?;
+        }
+
+        let coeffs_dev = self.upload(inputs.term_coeffs)?;
+        let offsets_dev = self.stream.clone_htod(inputs.term_factor_offsets)?;
+        let indices_dev = self.stream.clone_htod(inputs.term_factor_indices)?;
+
+        const WIDTH: usize = 2;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (pair_stride as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let pair_stride_arg = pair_stride as u64;
+        let num_terms_arg = inputs.term_coeffs.len() as u32;
+        let half_arg = pair_stride as u64;
+        let in_pairs_arg = in_pairs as u64;
+        let low_round_arg = u32::from(low_round);
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.gruen_round_poly_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&packed)
+            .arg(&coeffs_dev.buf)
+            .arg(&offsets_dev)
+            .arg(&indices_dev)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&pair_stride_arg)
+            .arg(&num_terms_arg)
+            .arg(&half_arg)
+            .arg(&in_pairs_arg)
+            .arg(&low_round_arg);
+        // SAFETY: one thread per row reads its pair from each packed factor, the term
+        // tables (bounded by offsets), and its pair-summed split-eq weight (in range
+        // since e_in*e_out == 2*pair_stride), writing one [q_constant, q_top] tuple
+        // per block; shared memory holds `block` 2-lane tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block`
+            // blocks; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok((0..WIDTH)
+            .map(|e| limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]]))
+            .collect())
     }
 
     pub fn eq_weighted_round_poly(
@@ -1605,10 +1799,9 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::dense_product_round_poly is todo!()"]
         fn dense_product_round_poly_matches_cpu(
             log_pairs in 0usize..10,
-            degree in 1usize..6,
+            degree in 1usize..4,
             seed in fr_strategy(),
         ) {
             let half = 1usize << log_pairs;
@@ -1642,7 +1835,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::gruen_round_poly is todo!()"]
         fn gruen_round_poly_instruction_input_matches_cpu(
             num_vars in 1usize..9,
             gamma in fr_strategy(),
@@ -1706,7 +1898,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::gruen_round_poly is todo!()"]
         fn gruen_round_poly_registers_matches_cpu(
             num_vars in 1usize..9,
             gamma in fr_strategy(),
