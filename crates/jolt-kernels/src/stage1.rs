@@ -19,7 +19,7 @@ mod rv64_typed;
 pub use rv64_typed::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 
 pub(crate) const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
-const OUTER_UNISKIP_DEGREE: usize = 9;
+pub(crate) const OUTER_UNISKIP_DEGREE: usize = 9;
 const OUTER_UNISKIP_EXTENDED_SIZE: usize = 19;
 const OUTER_UNISKIP_NUM_COEFFS: usize = 28;
 const OUTER_UNISKIP_DEGREE_BOUND: usize = OUTER_UNISKIP_NUM_COEFFS - 1;
@@ -30,7 +30,8 @@ pub(crate) const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14
 pub(crate) const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
 const OUTER_EQ_CONSTRAINT_ROWS: usize =
     OUTER_FIRST_GROUP_ROWS.len() + OUTER_SECOND_GROUP_ROWS.len();
-const OUTER_UNISKIP_TARGET_COEFFS: [[i64; OUTER_UNISKIP_DOMAIN_SIZE]; OUTER_UNISKIP_DEGREE] = [
+pub(crate) const OUTER_UNISKIP_TARGET_COEFFS: [[i64; OUTER_UNISKIP_DOMAIN_SIZE];
+    OUTER_UNISKIP_DEGREE] = [
     [10, -45, 120, -210, 252, -210, 120, -45, 10, -1],
     [-1, 10, -45, 120, -210, 252, -210, 120, -45, 10],
     [55, -330, 990, -1848, 2310, -1980, 1155, -440, 99, -10],
@@ -519,7 +520,7 @@ impl<'a, F: Field> Stage1OuterR1csData<'a, F> {
         (az, bz)
     }
 
-    fn group_matvecs_all_uniskip_targets(
+    pub(crate) fn group_matvecs_all_uniskip_targets(
         rows: &[usize],
         target_coeff_fields: &[[F; OUTER_UNISKIP_DOMAIN_SIZE]; OUTER_UNISKIP_DEGREE],
         dots: R1csRowDotSlice<'_, F>,

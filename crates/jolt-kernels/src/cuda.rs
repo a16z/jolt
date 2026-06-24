@@ -279,6 +279,18 @@ pub struct RoundPolyTerms<'a> {
     pub degree: usize,
 }
 
+pub struct UniskipInputs<'a> {
+    pub row_dots_a: &'a DeviceFrVec,
+    pub row_dots_b: &'a DeviceFrVec,
+    pub eq_evals: &'a DeviceFrVec,
+    pub first_group_rows: &'a [u32],
+    pub second_group_rows: &'a [u32],
+    pub first_coeffs: &'a [Fr],
+    pub second_coeffs: &'a [Fr],
+    pub row_count: usize,
+    pub degree: usize,
+}
+
 impl CudaKernelContext {
     pub fn new(ordinal: usize) -> Result<Self, CudaError> {
         let ctx = CudaContext::new(ordinal)?;
@@ -553,6 +565,11 @@ impl CudaKernelContext {
         let a_raw = self.stream.clone_dtoh(&a_out)?;
         let b_raw = self.stream.clone_dtoh(&b_out)?;
         Ok((unflatten(&a_raw), unflatten(&b_raw)))
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn uniskip_extended_evals(&self, inputs: UniskipInputs<'_>) -> Result<Vec<Fr>, CudaError> {
+        todo!()
     }
 
     fn map(&self, func: &CudaFunction, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
@@ -1571,6 +1588,92 @@ mod tests {
             let mut scratch = c.upload(&[]).unwrap();
             c.batched_bind(&mut values, &mut scratch, num_buffers, challenge).unwrap();
             prop_assert_eq!(values.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::uniskip_extended_evals is todo!()"]
+        fn uniskip_extended_evals_matches_cpu(
+            log_cycles in 0usize..9,
+            seed in fr_strategy(),
+        ) {
+            use crate::stage1::{
+                Stage1OuterR1csData, OUTER_FIRST_GROUP_ROWS, OUTER_SECOND_GROUP_ROWS,
+                OUTER_UNISKIP_DEGREE, OUTER_UNISKIP_TARGET_COEFFS,
+            };
+            use jolt_r1cs::R1csRowDotSlice;
+
+            const ROW_COUNT: usize = 19;
+            let num_cycles = 1usize << log_cycles;
+            let row_dots_a: Vec<Fr> = (0..num_cycles * ROW_COUNT)
+                .map(|i| seed + Fr::from_u64((i + 1) as u64))
+                .collect();
+            let row_dots_b: Vec<Fr> = (0..num_cycles * ROW_COUNT)
+                .map(|i| seed + Fr::from_u64((i + 7) as u64))
+                .collect();
+            let eq_evals: Vec<Fr> = (0..num_cycles * 2)
+                .map(|i| seed + Fr::from_u64((i + 13) as u64))
+                .collect();
+
+            let target_coeff_fields =
+                OUTER_UNISKIP_TARGET_COEFFS.map(|coefficients| coefficients.map(Fr::from_i64));
+            let mut expected = vec![Fr::zero(); OUTER_UNISKIP_DEGREE];
+            for cycle in 0..num_cycles {
+                let base = cycle * ROW_COUNT;
+                let dots = R1csRowDotSlice {
+                    a: &row_dots_a[base..base + ROW_COUNT],
+                    b: &row_dots_b[base..base + ROW_COUNT],
+                };
+                let first = Stage1OuterR1csData::<Fr>::group_matvecs_all_uniskip_targets(
+                    &OUTER_FIRST_GROUP_ROWS,
+                    &target_coeff_fields,
+                    dots,
+                );
+                let second = Stage1OuterR1csData::<Fr>::group_matvecs_all_uniskip_targets(
+                    &OUTER_SECOND_GROUP_ROWS,
+                    &target_coeff_fields,
+                    dots,
+                );
+                for target in 0..OUTER_UNISKIP_DEGREE {
+                    let (az_g0, bz_g0) = first[target];
+                    let (az_g1, bz_g1) = second[target];
+                    expected[target] += eq_evals[cycle * 2] * (az_g0 * bz_g0);
+                    expected[target] += eq_evals[cycle * 2 + 1] * (az_g1 * bz_g1);
+                }
+            }
+
+            let first_rows: Vec<u32> =
+                OUTER_FIRST_GROUP_ROWS.iter().map(|&r| r as u32).collect();
+            let second_rows: Vec<u32> =
+                OUTER_SECOND_GROUP_ROWS.iter().map(|&r| r as u32).collect();
+            let mut first_coeffs = Vec::new();
+            let mut second_coeffs = Vec::new();
+            for coeffs in &OUTER_UNISKIP_TARGET_COEFFS {
+                for &coeff in &coeffs[..OUTER_FIRST_GROUP_ROWS.len()] {
+                    first_coeffs.push(Fr::from_i64(coeff));
+                }
+                for &coeff in &coeffs[..OUTER_SECOND_GROUP_ROWS.len()] {
+                    second_coeffs.push(Fr::from_i64(coeff));
+                }
+            }
+
+            let c = ctx();
+            let row_dots_a_dev = c.upload(&row_dots_a).unwrap();
+            let row_dots_b_dev = c.upload(&row_dots_b).unwrap();
+            let eq_evals_dev = c.upload(&eq_evals).unwrap();
+            let got = c
+                .uniskip_extended_evals(UniskipInputs {
+                    row_dots_a: &row_dots_a_dev,
+                    row_dots_b: &row_dots_b_dev,
+                    eq_evals: &eq_evals_dev,
+                    first_group_rows: &first_rows,
+                    second_group_rows: &second_rows,
+                    first_coeffs: &first_coeffs,
+                    second_coeffs: &second_coeffs,
+                    row_count: ROW_COUNT,
+                    degree: OUTER_UNISKIP_DEGREE,
+                })
+                .unwrap();
+            prop_assert_eq!(got, expected);
         }
     }
 
