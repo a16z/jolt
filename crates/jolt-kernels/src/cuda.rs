@@ -27,6 +27,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/dense_product.cu"),
     include_str!("cuda/gruen_round_poly.cu"),
     include_str!("cuda/uniskip.cu"),
+    include_str!("cuda/gather8.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -80,6 +81,7 @@ pub struct CudaKernelContext {
     dense_product_pairs: CudaFunction,
     gruen_round_poly_pairs: CudaFunction,
     uniskip_pairs: CudaFunction,
+    gather8_materialize: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -364,6 +366,7 @@ impl CudaKernelContext {
             dense_product_pairs: module.load_function("dense_product_pairs")?,
             gruen_round_poly_pairs: module.load_function("gruen_round_poly_pairs")?,
             uniskip_pairs: module.load_function("uniskip_pairs")?,
+            gather8_materialize: module.load_function("gather8_materialize")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -647,12 +650,65 @@ impl CudaKernelContext {
         Ok((a.to_host()?, b.to_host()?))
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn gather8_materialize(
         &self,
         inputs: Gather8Inputs<'_>,
     ) -> Result<Vec<Vec<Fr>>, CudaError> {
-        todo!()
+        let Gather8Inputs {
+            table_groups,
+            indices,
+            num_chunks,
+            table_len,
+            new_len,
+        } = inputs;
+        let total = num_chunks * new_len;
+        if total == 0 {
+            return Ok((0..num_chunks).map(|_| Vec::new()).collect());
+        }
+        assert_eq!(indices.len(), num_chunks * new_len * 8);
+
+        let group_devs: Vec<DeviceFrVec> = table_groups
+            .iter()
+            .map(|group| self.upload(group))
+            .collect::<Result<_, _>>()?;
+        let indices_dev = self.stream.clone_htod(indices)?;
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+
+        let num_chunks_arg = num_chunks as u64;
+        let table_len_arg = table_len as u64;
+        let new_len_arg = new_len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.gather8_materialize.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(&group_devs[0].buf)
+            .arg(&group_devs[1].buf)
+            .arg(&group_devs[2].buf)
+            .arg(&group_devs[3].buf)
+            .arg(&group_devs[4].buf)
+            .arg(&group_devs[5].buf)
+            .arg(&group_devs[6].buf)
+            .arg(&group_devs[7].buf)
+            .arg(&indices_dev)
+            .arg(&num_chunks_arg)
+            .arg(&table_len_arg)
+            .arg(&new_len_arg);
+        // SAFETY: one thread per (chunk, index) of `total` reads its 8 indices from
+        // `indices` (num_chunks*new_len*8 entries) and gathers from the 8 table-group
+        // buffers (each num_chunks*table_len; idx < table_len since idx is a valid
+        // u8 table position), writing one element to `out` (total entries).
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        let raw = self.stream.clone_dtoh(&out)?;
+        Ok((0..num_chunks)
+            .map(|chunk| unflatten(&raw[chunk * new_len * LIMBS..(chunk + 1) * new_len * LIMBS]))
+            .collect())
     }
 
     pub fn uniskip_extended_evals(&self, inputs: UniskipInputs<'_>) -> Result<Vec<Fr>, CudaError> {
@@ -2204,7 +2260,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::gather8_materialize is todo!()"]
         fn gather8_materialize_matches_cpu(
             num_chunks in 1usize..5,
             log_new_len in 0usize..8,
