@@ -1007,13 +1007,15 @@ mod tests {
             claim_reductions::bytecode, dimensions::JoltFormulaDimensions,
             ra::JoltRaPolynomialLayout,
         },
-        lattice_packed_validity_digest, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId,
-        JoltReadWriteConfig, JoltRelationId,
+        JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltReadWriteConfig,
+        JoltRelationId,
     };
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::{Fr, FromPrimitiveInt};
+    #[cfg(feature = "akita")]
+    use jolt_openings::packing_validity_digest;
     use jolt_openings::{
         BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentLayoutDigest,
         CommitmentScheme, OpeningsError,
@@ -2670,7 +2672,7 @@ mod tests {
             stage8::derive_lattice_packed_validity_requirements(&config, 8, precommitted)
                 .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         config.lattice.packed_witness.validity_digest =
-            Some(lattice_packed_validity_digest(&requirements));
+            Some(packing_validity_digest(&requirements));
         config
     }
 
@@ -2818,7 +2820,7 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         config.lattice.packed_witness.validity_digest =
-            Some(lattice_packed_validity_digest(&requirements));
+            Some(packing_validity_digest(&requirements));
         proof.protocol = config;
         proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
             TestCommitment,

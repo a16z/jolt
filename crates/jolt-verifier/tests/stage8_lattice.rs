@@ -6,16 +6,16 @@ use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode;
 use jolt_claims::protocols::jolt::{
     byte_decode_terms, bytecode_imm_canonical_bytes_requirement, bytecode_validity_requirements,
     formulas::dimensions::REGISTER_ADDRESS_BITS, formulas::ra::JoltRaPolynomialLayout,
-    lattice_packed_validity_digest, program_image_validity_requirement, unsigned_inc_chunk_opening,
-    unsigned_inc_lower_chunk_count, unsigned_inc_lower_value_lattice_view_formula,
-    unsigned_inc_msb_opening, unsigned_inc_validity_requirements, JoltCommittedPolynomial,
-    JoltOpeningId, JoltRelationId, LatticePackedFamilyId, LatticePackedValidityRequirement,
-    LatticePackedViewFormula, LatticePackedViewTerm, TracePolynomialOrder,
+    program_image_validity_requirement, unsigned_inc_chunk_opening, unsigned_inc_lower_chunk_count,
+    unsigned_inc_lower_value_lattice_view_formula, unsigned_inc_msb_opening,
+    unsigned_inc_validity_requirements, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+    TracePolynomialOrder,
 };
 use jolt_field::{FixedByteSize, Fr, FromPrimitiveInt};
 use jolt_openings::{
-    PackingAdviceKind, PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
-    PackingTerm, PackingWitnessLayout, PhysicalView,
+    packing_validity_digest, PackingAdviceKind, PackingAlphabet, PackingFactDomain,
+    PackingFamilyId, PackingFamilySpec, PackingTerm, PackingValidityRequirement,
+    PackingViewFormula, PackingViewTerm, PackingWitnessLayout, PhysicalView,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial, Point};
 use jolt_riscv::CircuitFlags;
@@ -116,19 +116,19 @@ fn bytecode_chunk_opening_point() -> (Vec<Fr>, Vec<Fr>) {
     (point, lane_weights)
 }
 
-fn linear_decoded_terms(formula: &LatticePackedViewFormula<Fr>) -> &[LatticePackedViewTerm<Fr>] {
+fn linear_decoded_terms(formula: &PackingViewFormula<Fr>) -> &[PackingViewTerm<Fr>] {
     match formula {
-        LatticePackedViewFormula::LinearDecoded { terms, .. } => terms,
+        PackingViewFormula::LinearDecoded { terms, .. } => terms,
         _ => panic!("expected linear decoded formula"),
     }
 }
 
 fn find_lattice_term(
-    terms: &[LatticePackedViewTerm<Fr>],
-    family: LatticePackedFamilyId,
+    terms: &[PackingViewTerm<Fr>],
+    family: PackingFamilyId,
     limb: usize,
     symbol: usize,
-) -> &LatticePackedViewTerm<Fr> {
+) -> &PackingViewTerm<Fr> {
     terms
         .iter()
         .find(|term| term.family == family && term.limb == limb && term.symbol == symbol)
@@ -259,7 +259,7 @@ fn validate_validity_config_rejects_mismatched_digest() {
     let schedule = precommitted_schedule(None);
     let requirements = derive_lattice_packed_validity_requirements(&config, 8, &schedule)
         .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
-    let digest = lattice_packed_validity_digest(&requirements);
+    let digest = packing_validity_digest(&requirements);
     config.lattice.packed_witness.validity_digest = Some(digest);
 
     validate_lattice_packed_witness_validity_config(&config, 8, &schedule).unwrap_or_else(
@@ -301,22 +301,13 @@ fn derive_validity_statements_matches_requirement_semantics() {
     ])
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
     let requirements = vec![
-        LatticePackedValidityRequirement::exact_one_hot(
-            LatticePackedFamilyId::ProgramImageInit,
-            8,
-            256,
-        ),
-        LatticePackedValidityRequirement::optional_one_hot(
-            LatticePackedFamilyId::BytecodeLookupSelector { chunk: 0 },
+        PackingValidityRequirement::exact_one_hot(PackingFamilyId::ProgramImageInit, 8, 256),
+        PackingValidityRequirement::optional_one_hot(
+            PackingFamilyId::BytecodeLookupSelector { chunk: 0 },
             1,
             8,
         ),
-        LatticePackedValidityRequirement::boolean_indicator(
-            LatticePackedFamilyId::UnsignedIncMsb,
-            1,
-            2,
-            1,
-        ),
+        PackingValidityRequirement::boolean_indicator(PackingFamilyId::UnsignedIncMsb, 1, 2, 1),
     ];
 
     let statements = derive_lattice_packed_validity_statements(&layout, &requirements)
@@ -385,10 +376,8 @@ fn derive_validity_statements_adds_unsigned_increment_chunk_and_msb_checks() {
 fn derive_validity_statements_adds_bytecode_store_rd_disjointness() {
     let chunk = 2;
     let layout = bytecode_source_validity_layout(chunk, 5);
-    let requirement = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
-        chunk,
-        CircuitFlags::Store as usize,
-    );
+    let requirement =
+        PackingValidityRequirement::bytecode_store_rd_disjoint(chunk, CircuitFlags::Store as usize);
 
     let statements =
         derive_lattice_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
@@ -418,8 +407,8 @@ fn derive_validity_statements_adds_field_element_canonical_bytes() {
         )
     }))
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
-    let requirement = LatticePackedValidityRequirement::field_element_canonical_bytes(
-        LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+    let requirement = PackingValidityRequirement::field_element_canonical_bytes(
+        PackingFamilyId::FieldRdIncByte { index: 0 },
         2,
         257,
     );
@@ -479,11 +468,8 @@ fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
         PackingAlphabet::Fixed { size: 4 },
     )])
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
-    let requirement = LatticePackedValidityRequirement::exact_one_hot(
-        LatticePackedFamilyId::ProgramImageInit,
-        2,
-        4,
-    );
+    let requirement =
+        PackingValidityRequirement::exact_one_hot(PackingFamilyId::ProgramImageInit, 2, 4);
     let statement = LatticePackedValidityStatement {
         requirement,
         kind: LatticePackedValidityStatementKind::CellBooleanity,
@@ -552,7 +538,7 @@ fn validity_batch_builder_lowers_bytecode_store_rd_disjointness_factors() {
     let chunk = 2;
     let layout = bytecode_source_validity_layout(chunk, 3);
     let statement = LatticePackedValidityStatement {
-        requirement: LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
+        requirement: PackingValidityRequirement::bytecode_store_rd_disjoint(
             chunk,
             CircuitFlags::Store as usize,
         ),
@@ -629,8 +615,8 @@ fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
         )
     }))
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
-    let requirement = LatticePackedValidityRequirement::field_element_canonical_bytes(
-        LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+    let requirement = PackingValidityRequirement::field_element_canonical_bytes(
+        PackingFamilyId::FieldRdIncByte { index: 0 },
         2,
         257,
     );
@@ -797,8 +783,8 @@ fn derive_validity_statements_rejects_layout_requirement_mismatch() {
         PackingAlphabet::Bit,
     )])
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
-    let requirements = [LatticePackedValidityRequirement::exact_one_hot(
-        LatticePackedFamilyId::UnsignedIncMsb,
+    let requirements = [PackingValidityRequirement::exact_one_hot(
+        PackingFamilyId::UnsignedIncMsb,
         8,
         256,
     )];
@@ -816,8 +802,8 @@ fn validity_coverage_accepts_bound_decoded_families() {
         JoltCommittedPolynomial::ProgramImageInit,
         JoltRelationId::ProgramImageClaimReduction,
     ));
-    let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-        LatticePackedFamilyId::ProgramImageInit,
+    let formula = PackingViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+        PackingFamilyId::ProgramImageInit,
         0,
     ));
 
@@ -834,8 +820,8 @@ fn validity_coverage_rejects_unbound_decoded_families() {
         JoltCommittedPolynomial::ProgramImageInit,
         JoltRelationId::ProgramImageClaimReduction,
     ));
-    let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-        LatticePackedFamilyId::ProgramImageInit,
+    let formula = PackingViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+        PackingFamilyId::ProgramImageInit,
         0,
     ));
 
@@ -852,12 +838,12 @@ fn validity_coverage_requires_canonical_byte_requirements_for_field_bytes() {
         JoltCommittedPolynomial::BytecodeChunk(0),
         JoltRelationId::BytecodeClaimReduction,
     ));
-    let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-        LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 },
+    let formula = PackingViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+        PackingFamilyId::BytecodeImmBytes { chunk: 0 },
         0,
     ));
-    let one_hot = LatticePackedValidityRequirement::exact_one_hot(
-        LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 },
+    let one_hot = PackingValidityRequirement::exact_one_hot(
+        PackingFamilyId::BytecodeImmBytes { chunk: 0 },
         AkitaField::NUM_BYTES,
         256,
     );
@@ -897,16 +883,16 @@ fn validity_coverage_requires_bytecode_store_rd_disjointness() {
         JoltCommittedPolynomial::BytecodeChunk(0),
         JoltRelationId::BytecodeClaimReduction,
     ));
-    let formula = LatticePackedViewFormula::<Fr>::direct(
-        LatticePackedFamilyId::BytecodeCircuitFlag {
+    let formula = PackingViewFormula::<Fr>::direct(
+        PackingFamilyId::BytecodeCircuitFlag {
             chunk: 0,
             flag: CircuitFlags::Store as usize,
         },
         0,
         1,
     );
-    let store_flag = LatticePackedValidityRequirement::boolean_indicator(
-        LatticePackedFamilyId::BytecodeCircuitFlag {
+    let store_flag = PackingValidityRequirement::boolean_indicator(
+        PackingFamilyId::BytecodeCircuitFlag {
             chunk: 0,
             flag: CircuitFlags::Store as usize,
         },
@@ -914,10 +900,8 @@ fn validity_coverage_requires_bytecode_store_rd_disjointness() {
         2,
         1,
     );
-    let disjoint = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
-        0,
-        CircuitFlags::Store as usize,
-    );
+    let disjoint =
+        PackingValidityRequirement::bytecode_store_rd_disjoint(0, CircuitFlags::Store as usize);
 
     assert!(matches!(
         validate_lattice_view_validity_coverage(
@@ -940,9 +924,9 @@ fn validity_coverage_allows_core_ra_families() {
         JoltCommittedPolynomial::InstructionRa(0),
         JoltRelationId::HammingWeightClaimReduction,
     ));
-    let formula = LatticePackedViewFormula::linear_decoded(vec![LatticePackedViewTerm::new(
+    let formula = PackingViewFormula::linear_decoded(vec![PackingViewTerm::new(
         Fr::from_u64(1),
-        LatticePackedFamilyId::InstructionRa { index: 0 },
+        PackingFamilyId::InstructionRa { index: 0 },
         0,
         0,
     )]);
@@ -954,17 +938,13 @@ fn validity_coverage_allows_core_ra_families() {
 #[test]
 fn validity_coverage_checks_boolean_indicator_symbol() {
     let id = Stage8OpeningId::from(unsigned_inc_msb_opening());
-    let requirement = LatticePackedValidityRequirement::boolean_indicator(
-        LatticePackedFamilyId::UnsignedIncMsb,
-        1,
-        2,
-        1,
-    );
+    let requirement =
+        PackingValidityRequirement::boolean_indicator(PackingFamilyId::UnsignedIncMsb, 1, 2, 1);
 
     validate_lattice_view_validity_coverage(
         &[(
             id,
-            LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1),
+            PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1),
             Vec::new(),
         )],
         std::slice::from_ref(&requirement),
@@ -975,8 +955,8 @@ fn validity_coverage_checks_boolean_indicator_symbol() {
         validate_lattice_view_validity_coverage(
             &[(
                 id,
-                LatticePackedViewFormula::<Fr>::direct(
-                    LatticePackedFamilyId::UnsignedIncMsb,
+                PackingViewFormula::<Fr>::direct(
+                    PackingFamilyId::UnsignedIncMsb,
                     0,
                     0,
                 ),
@@ -1058,10 +1038,10 @@ fn jolt_lattice_resolver_weights_ra_symbols_by_address_point() {
     assert_eq!(formulas[0].0, Stage8OpeningId::from(id));
     assert!(matches!(
         &formulas[0].1,
-        LatticePackedViewFormula::LinearDecoded { terms, .. }
+        PackingViewFormula::LinearDecoded { terms, .. }
             if terms.len() == 4
                 && terms[2].coefficient == expected_weights[2]
-                && terms[2].family == LatticePackedFamilyId::InstructionRa { index: 1 }
+                && terms[2].family == PackingFamilyId::InstructionRa { index: 1 }
                 && terms[2].limb == 0
                 && terms[2].symbol == 2
     ));
@@ -1084,12 +1064,8 @@ fn field_inline_rd_inc_resolves_to_packed_byte_families() {
 
     let terms = linear_decoded_terms(&formulas[0].1);
     assert_eq!(terms.len(), AkitaField::NUM_BYTES * 256);
-    let byte_1_symbol_3 = find_lattice_term(
-        terms,
-        LatticePackedFamilyId::FieldRdIncByte { index: 1 },
-        0,
-        3,
-    );
+    let byte_1_symbol_3 =
+        find_lattice_term(terms, PackingFamilyId::FieldRdIncByte { index: 1 }, 0, 3);
     assert_eq!(byte_1_symbol_3.coefficient, Fr::from_u64(3 * 256));
 }
 
@@ -1118,10 +1094,10 @@ fn jolt_lattice_resolver_keeps_precommitted_finals_out_of_w_pack() {
         .unwrap_or_else(|error| panic!("untrusted advice view should resolve: {error}"));
     assert!(matches!(
         untrusted_formula,
-        LatticePackedViewFormula::LinearDecoded { terms, .. }
+        PackingViewFormula::LinearDecoded { terms, .. }
             if terms.len() == 256
                 && terms[7].coefficient == Fr::from_u64(7)
-                && terms[7].family == (LatticePackedFamilyId::AdviceBytes {
+                && terms[7].family == (PackingFamilyId::AdviceBytes {
                     kind: PackingAdviceKind::Untrusted,
                     index: 0,
                 })
@@ -1158,7 +1134,7 @@ fn jolt_lattice_resolver_lowers_unsigned_increment_chunk_and_msb_outputs() {
     assert_eq!(
         find_lattice_term(
             chunk_terms,
-            LatticePackedFamilyId::UnsignedIncChunk { index: 7 },
+            PackingFamilyId::UnsignedIncChunk { index: 7 },
             0,
             3,
         )
@@ -1174,8 +1150,8 @@ fn jolt_lattice_resolver_lowers_unsigned_increment_chunk_and_msb_outputs() {
             &precommitted_schedule(None),
         )
         .unwrap_or_else(|error| panic!("sign view should resolve: {error}")),
-        LatticePackedViewFormula::Direct {
-            family: LatticePackedFamilyId::UnsignedIncMsb,
+        PackingViewFormula::Direct {
+            family: PackingFamilyId::UnsignedIncMsb,
             limb: 0,
             symbol: 1
         }

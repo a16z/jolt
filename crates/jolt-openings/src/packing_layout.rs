@@ -646,6 +646,8 @@ impl PackingValidityRequirement {
 
 pub type PackingValidityDigest = [u8; 32];
 
+const PACKING_VALIDITY_DIGEST_DOMAIN: &[u8] = b"jolt-claims/lattice-packed-validity/v1";
+
 pub fn packing_validity_digest(
     requirements: &[PackingValidityRequirement],
 ) -> PackingValidityDigest {
@@ -656,7 +658,8 @@ pub fn packing_validity_digest(
     encoded_requirements.sort();
 
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"jolt-claims/lattice-packed-validity/v1");
+    // Preserve the pre-refactor domain separator so existing configs keep matching.
+    bytes.extend_from_slice(PACKING_VALIDITY_DIGEST_DOMAIN);
     write_usize(&mut bytes, encoded_requirements.len());
     for requirement in encoded_requirements {
         bytes.extend_from_slice(&requirement);

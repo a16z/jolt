@@ -332,12 +332,10 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn physical_manifest_resolves_jolt_lattice_view_formulas() {
-        use jolt_claims::protocols::jolt::{
-            byte_decode_terms, LatticePackedFamilyId, LatticePackedViewFormula,
-        };
+        use jolt_claims::protocols::jolt::byte_decode_terms;
         use jolt_openings::{
             PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
-            PackingWitnessLayout,
+            PackingViewFormula, PackingWitnessLayout,
         };
 
         let jolt_id = JoltOpeningId::committed(
@@ -367,8 +365,8 @@ mod tests {
             &layout,
             [(
                 Stage8OpeningId::from(jolt_id),
-                LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-                    LatticePackedFamilyId::BytecodeChunk { index: 0 },
+                PackingViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+                    PackingFamilyId::BytecodeChunk { index: 0 },
                     3,
                 )),
                 vec![Fr::from_u64(1)],
@@ -397,10 +395,9 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn physical_manifest_rejects_missing_jolt_lattice_formula() {
-        use jolt_claims::protocols::jolt::{LatticePackedFamilyId, LatticePackedViewFormula};
         use jolt_openings::{
             PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
-            PackingViewError, PackingWitnessLayout,
+            PackingViewError, PackingViewFormula, PackingWitnessLayout,
         };
 
         let expected_id = JoltOpeningId::committed(
@@ -434,11 +431,7 @@ mod tests {
                 &layout,
                 [(
                     Stage8OpeningId::from(supplied_id),
-                    LatticePackedViewFormula::<Fr>::direct(
-                        LatticePackedFamilyId::UnsignedIncMsb,
-                        0,
-                        1,
-                    ),
+                    PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1,),
                     vec![Fr::from_u64(1)],
                 )],
             ),
@@ -449,10 +442,9 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn physical_manifest_rejects_masked_jolt_lattice_formula() {
-        use jolt_claims::protocols::jolt::LatticePackedViewFormula;
         use jolt_openings::{
             PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
-            PackingViewError, PackingWitnessLayout,
+            PackingViewError, PackingViewFormula, PackingWitnessLayout,
         };
 
         let jolt_id = JoltOpeningId::committed(
@@ -482,7 +474,7 @@ mod tests {
                 &layout,
                 [(
                     Stage8OpeningId::from(jolt_id),
-                    LatticePackedViewFormula::<Fr>::MaskedDecoded,
+                    PackingViewFormula::<Fr>::MaskedDecoded,
                     vec![Fr::from_u64(1)],
                 )],
             ),
