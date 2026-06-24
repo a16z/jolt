@@ -21,7 +21,7 @@ use super::dimensions::{
 
 const OUTER_REMAINDER_DEGREE: usize = 3;
 const PRODUCT_REMAINDER_DEGREE: usize = 3;
-const SHIFT_DEGREE: usize = 2;
+pub(crate) const SHIFT_DEGREE: usize = 2;
 const SPARTAN_OUTER_RV64_ROW_COUNT: usize = 19;
 const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
     [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
@@ -445,38 +445,26 @@ pub fn shift<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    let gamma = shift_challenge(SpartanShiftChallenge::Gamma);
-    let input = opening(next_unexpanded_pc_outer())
-        + gamma.clone() * opening(next_pc_outer())
-        + gamma.clone().pow(2) * opening(next_is_virtual_outer())
-        + gamma.clone().pow(3) * opening(next_is_first_in_sequence_outer())
-        + gamma.clone().pow(4) * (JoltExpr::one() - opening(next_is_noop_product()));
-
-    let output = shift_public(SpartanShiftPublic::EqPlusOneOuter)
-        * (opening(unexpanded_pc_shift())
-            + gamma.clone() * opening(pc_shift())
-            + gamma.clone().pow(2) * opening(is_virtual_shift())
-            + gamma.clone().pow(3) * opening(is_first_in_sequence_shift()))
-        + shift_public(SpartanShiftPublic::EqPlusOneProduct)
-            * gamma.pow(4)
-            * (JoltExpr::one() - opening(is_noop_shift()));
-
+    // Bridge to the symbolic relation (the algebra now lives on `relations::spartan::Shift`).
+    use crate::protocols::jolt::relations::spartan::Shift;
+    use crate::SymbolicSumcheck;
+    let relation = Shift::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::SpartanShift,
-        dimensions.sumcheck(SHIFT_DEGREE),
-        input,
-        output,
+        Shift::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
-fn shift_challenge<F>(id: SpartanShiftChallenge) -> JoltExpr<F>
+pub(crate) fn shift_challenge<F>(id: SpartanShiftChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn shift_public<F>(id: SpartanShiftPublic) -> JoltExpr<F>
+pub(crate) fn shift_public<F>(id: SpartanShiftPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -606,7 +594,7 @@ fn branch_flag_product() -> JoltOpeningId {
     )
 }
 
-fn next_is_noop_product() -> JoltOpeningId {
+pub(crate) fn next_is_noop_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::NextIsNoop,
         JoltRelationId::SpartanProductVirtualization,
@@ -620,48 +608,48 @@ fn virtual_instruction_product() -> JoltOpeningId {
     )
 }
 
-fn next_unexpanded_pc_outer() -> JoltOpeningId {
+pub(crate) fn next_unexpanded_pc_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextUnexpandedPC)
 }
 
-fn next_pc_outer() -> JoltOpeningId {
+pub(crate) fn next_pc_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextPC)
 }
 
-fn next_is_virtual_outer() -> JoltOpeningId {
+pub(crate) fn next_is_virtual_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextIsVirtual)
 }
 
-fn next_is_first_in_sequence_outer() -> JoltOpeningId {
+pub(crate) fn next_is_first_in_sequence_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextIsFirstInSequence)
 }
 
-fn unexpanded_pc_shift() -> JoltOpeningId {
+pub(crate) fn unexpanded_pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::SpartanShift,
     )
 }
 
-fn pc_shift() -> JoltOpeningId {
+pub(crate) fn pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
-fn is_virtual_shift() -> JoltOpeningId {
+pub(crate) fn is_virtual_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
         JoltRelationId::SpartanShift,
     )
 }
 
-fn is_first_in_sequence_shift() -> JoltOpeningId {
+pub(crate) fn is_first_in_sequence_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
         JoltRelationId::SpartanShift,
     )
 }
 
-fn is_noop_shift() -> JoltOpeningId {
+pub(crate) fn is_noop_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
         JoltRelationId::SpartanShift,
