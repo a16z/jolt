@@ -52,23 +52,17 @@ where
         opening(VerifierOpeningId::Jolt(product_uniskip_opening())),
     )?;
 
-    let ram_read_write = StageExpr::<PCS::Field>::new(&relations::ram::ReadWriteChecking::new(
-        read_write_dimensions,
-    ));
-    let product_remainder = StageExpr::<PCS::Field>::new(
-        &relations::spartan::ProductRemainder::new(product_dimensions),
-    );
-    let instruction_reduction = StageExpr::<PCS::Field>::new(
-        &relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions),
-    );
-    let ram_raf = StageExpr::<PCS::Field>::new(&relations::ram::RafEvaluation::new(raf_dimensions));
-    let ram_output =
-        StageExpr::<PCS::Field>::new(&relations::ram::OutputCheck::new(read_write_dimensions));
+    let ram_read_write = relations::ram::ReadWriteChecking::new(read_write_dimensions);
+    let product_remainder = relations::spartan::ProductRemainder::new(product_dimensions);
+    let instruction_reduction =
+        relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions);
+    let ram_raf = relations::ram::RafEvaluation::new(raf_dimensions);
+    let ram_output = relations::ram::OutputCheck::new(read_write_dimensions);
 
     let ram_read_write_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(ram_read_write.spec.rounds)
+        .try_instance_point(ram_read_write.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamReadWriteChecking, error))?;
     let ram_read_write_opening = read_write_dimensions
         .read_write_opening_point(&ram_read_write_point)
@@ -87,7 +81,7 @@ where
     let product_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(product_remainder.spec.rounds)
+        .try_instance_point(product_remainder.spec().rounds)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
         })?;
@@ -115,7 +109,7 @@ where
     let instruction_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(instruction_reduction.spec.rounds)
+        .try_instance_point(instruction_reduction.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_spartan = try_eq_mle(
@@ -144,7 +138,7 @@ where
     let ram_raf_point = input
         .stage2
         .batch_consistency
-        .try_instance_point_at(phase1_offset, ram_raf.spec.rounds)
+        .try_instance_point_at(phase1_offset, ram_raf.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?;
     let ram_raf_address = read_write_dimensions
         .address_opening_point(&ram_raf_point)
@@ -160,7 +154,7 @@ where
     let ram_output_point = input
         .stage2
         .batch_consistency
-        .try_instance_point_at(phase1_offset, ram_output.spec.rounds)
+        .try_instance_point_at(phase1_offset, ram_output.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamOutputCheck, error))?;
     let ram_output_address = read_write_dimensions
         .address_opening_point(&ram_output_point)
@@ -213,31 +207,31 @@ where
 
     let mut batch_claims = vec![
         (
-            ram_read_write.spec.rounds,
-            map_jolt_expr(ram_read_write.input.clone()),
-            map_jolt_expr(ram_read_write.output.clone()),
+            ram_read_write.spec().rounds,
+            map_jolt_expr(ram_read_write.input_expression::<PCS::Field>()),
+            map_jolt_expr(ram_read_write.output_expression::<PCS::Field>()),
         ),
         (
-            product_remainder.spec.rounds,
-            map_jolt_expr(product_remainder.input.clone()),
+            product_remainder.spec().rounds,
+            map_jolt_expr(product_remainder.input_expression::<PCS::Field>()),
             product_remainder_output,
         ),
         (
-            instruction_reduction.spec.rounds,
-            map_jolt_expr(instruction_reduction.input.clone()),
-            map_jolt_expr(instruction_reduction.output.clone()),
+            instruction_reduction.spec().rounds,
+            map_jolt_expr(instruction_reduction.input_expression::<PCS::Field>()),
+            map_jolt_expr(instruction_reduction.output_expression::<PCS::Field>()),
         ),
     ];
     batch_claims.extend([
         (
-            ram_raf.spec.rounds,
-            map_jolt_expr(ram_raf.input.clone()),
-            map_jolt_expr(ram_raf.output.clone()),
+            ram_raf.spec().rounds,
+            map_jolt_expr(ram_raf.input_expression::<PCS::Field>()),
+            map_jolt_expr(ram_raf.output_expression::<PCS::Field>()),
         ),
         (
-            ram_output.spec.rounds,
-            map_jolt_expr(ram_output.input.clone()),
-            map_jolt_expr(ram_output.output.clone()),
+            ram_output.spec().rounds,
+            map_jolt_expr(ram_output.input_expression::<PCS::Field>()),
+            map_jolt_expr(ram_output.output_expression::<PCS::Field>()),
         ),
     ]);
     let coefficients = &input.stage2.batch_consistency.batching_coefficients;
@@ -272,7 +266,7 @@ where
             input.stage2.batch_consistency.max_num_vars,
             input.stage2.batch_consistency.max_degree,
         ),
-        domain_spec(ram_read_write.spec),
+        domain_spec(ram_read_write.spec()),
         input.stage2.batch_consistency.consistency.clone(),
         &input.stage2.batch_output_claims,
         values,

@@ -15,9 +15,8 @@ where
         formula_dimensions.ra_layout,
         input.proof.one_hot_config.committed_chunk_bits(),
     );
-    let hamming_claims = StageExpr::<PCS::Field>::new(
-        &relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions),
-    );
+    let hamming_claims =
+        relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);
     let (trusted_layout, trusted_claims) = advice_address_claim(input, JoltAdviceKind::Trusted);
     let (untrusted_layout, untrusted_claims) =
         advice_address_claim(input, JoltAdviceKind::Untrusted);
@@ -25,19 +24,16 @@ where
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
     let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().and_then(|layout| {
         layout.dimensions().has_address_phase().then(|| {
-            StageExpr::<PCS::Field>::new(&relations::claim_reductions::bytecode::AddressPhase::new(
-                (layout.dimensions(), layout.chunk_count()),
+            relations::claim_reductions::bytecode::AddressPhase::new((
+                layout.dimensions(),
+                layout.chunk_count(),
             ))
         })
     });
     let program_image_reduction_claims =
         program_image_reduction_layout.as_ref().and_then(|layout| {
             layout.dimensions().has_address_phase().then(|| {
-                StageExpr::<PCS::Field>::new(
-                    &relations::claim_reductions::program_image::AddressPhase::new(
-                        layout.dimensions(),
-                    ),
-                )
+                relations::claim_reductions::program_image::AddressPhase::new(layout.dimensions())
             })
         });
 
@@ -50,7 +46,7 @@ where
     let hamming_point = input
         .stage7
         .batch_consistency
-        .try_instance_point(hamming_claims.spec.rounds)
+        .try_instance_point(hamming_claims.spec().rounds)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::HammingWeightClaimReduction, error)
         })?;
@@ -81,48 +77,58 @@ where
     // The stage-7 ZK output no longer carries each address phase's sumcheck point;
     // recompute the prefix-aligned point from the committed consistency, matching
     // `try_instance_point_at(0, rounds)` in the verifier's ZK arm.
-    let address_phase_point = |claim: &StageExpr<PCS::Field>, stage| {
+    let address_phase_point = |spec: JoltSumcheckSpec, stage| {
         input
             .stage7
             .batch_consistency
-            .try_instance_point_at(0, claim.spec.rounds)
+            .try_instance_point_at(0, spec.rounds)
             .map_err(|error| stage_sumcheck_error(stage, error))
     };
     if let (Some(layout), Some(claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
-        let point = address_phase_point(claim, JoltRelationId::AdviceClaimReduction)?;
+        let point = address_phase_point(claim.spec(), JoltRelationId::AdviceClaimReduction)?;
         add_advice_address_publics(input, values, layout, JoltAdviceKind::Trusted, &point)?;
     }
     if let (Some(layout), Some(claim)) = (untrusted_layout.as_ref(), untrusted_claims.as_ref()) {
-        let point = address_phase_point(claim, JoltRelationId::AdviceClaimReduction)?;
+        let point = address_phase_point(claim.spec(), JoltRelationId::AdviceClaimReduction)?;
         add_advice_address_publics(input, values, layout, JoltAdviceKind::Untrusted, &point)?;
     }
     if let (Some(layout), Some(claim)) = (
         bytecode_reduction_layout.as_ref(),
         bytecode_reduction_claims.as_ref(),
     ) {
-        let point = address_phase_point(claim, JoltRelationId::BytecodeClaimReduction)?;
+        let point = address_phase_point(claim.spec(), JoltRelationId::BytecodeClaimReduction)?;
         add_bytecode_reduction_address_publics(input, values, layout, &point)?;
     }
     if let (Some(layout), Some(claim)) = (
         program_image_reduction_layout.as_ref(),
         program_image_reduction_claims.as_ref(),
     ) {
-        let point = address_phase_point(claim, JoltRelationId::ProgramImageClaimReduction)?;
+        let point = address_phase_point(claim.spec(), JoltRelationId::ProgramImageClaimReduction)?;
         add_program_image_reduction_address_publics(input, values, layout, &point)?;
     }
 
-    let mut claims = vec![hamming_claims];
+    let mut specs = vec![hamming_claims.spec()];
+    let mut inputs = vec![hamming_claims.input_expression::<PCS::Field>()];
+    let mut outputs = vec![hamming_claims.output_expression::<PCS::Field>()];
     if let Some(claim) = trusted_claims {
-        claims.push(claim);
+        specs.push(claim.spec());
+        inputs.push(claim.input_expression::<PCS::Field>());
+        outputs.push(claim.output_expression::<PCS::Field>());
     }
     if let Some(claim) = untrusted_claims {
-        claims.push(claim);
+        specs.push(claim.spec());
+        inputs.push(claim.input_expression::<PCS::Field>());
+        outputs.push(claim.output_expression::<PCS::Field>());
     }
     if let Some(claim) = bytecode_reduction_claims {
-        claims.push(claim);
+        specs.push(claim.spec());
+        inputs.push(claim.input_expression::<PCS::Field>());
+        outputs.push(claim.output_expression::<PCS::Field>());
     }
     if let Some(claim) = program_image_reduction_claims {
-        claims.push(claim);
+        specs.push(claim.spec());
+        inputs.push(claim.input_expression::<PCS::Field>());
+        outputs.push(claim.output_expression::<PCS::Field>());
     }
     let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
     let mut output_ids = output_openings.all();
@@ -151,7 +157,9 @@ where
     add_batched_stage(
         builder,
         "stage7.batch",
-        &claims,
+        &specs,
+        &inputs,
+        &outputs,
         &input.stage7.batch_consistency,
         &input.stage7.batch_output_claims,
         values,

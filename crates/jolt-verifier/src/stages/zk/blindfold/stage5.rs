@@ -14,13 +14,10 @@ where
     let log_k = input.checked.ram_K.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
-    let instruction_claims = StageExpr::<PCS::Field>::new(&relations::instruction::ReadRaf::new(
-        formula_dimensions.instruction_read_raf,
-    ));
-    let ram_claims =
-        StageExpr::<PCS::Field>::new(&relations::ram::RaClaimReduction::new(trace_dimensions));
-    let registers_claims =
-        StageExpr::<PCS::Field>::new(&relations::registers::ValEvaluation::new(trace_dimensions));
+    let instruction_claims =
+        relations::instruction::ReadRaf::new(formula_dimensions.instruction_read_raf);
+    let ram_claims = relations::ram::RaClaimReduction::new(trace_dimensions);
+    let registers_claims = relations::registers::ValEvaluation::new(trace_dimensions);
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(InstructionReadRafChallenge::Gamma)),
@@ -31,7 +28,7 @@ where
     let instruction_point = input
         .stage5
         .batch_consistency
-        .try_instance_point(instruction_claims.spec.rounds)
+        .try_instance_point(instruction_claims.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionReadRaf, error))?;
     let instruction_opening = formula_dimensions
         .instruction_read_raf
@@ -89,7 +86,7 @@ where
     let ram_point = input
         .stage5
         .batch_consistency
-        .try_instance_point(ram_claims.spec.rounds)
+        .try_instance_point(ram_claims.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaClaimReduction, error))?;
     let ram_cycle = trace_dimensions
         .cycle_opening_point(&ram_point)
@@ -116,7 +113,7 @@ where
     let registers_point = input
         .stage5
         .batch_consistency
-        .try_instance_point(registers_claims.spec.rounds)
+        .try_instance_point(registers_claims.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_cycle = trace_dimensions
         .cycle_opening_point(&registers_point)
@@ -147,19 +144,19 @@ where
 
     let batch_claims = [
         (
-            instruction_claims.spec.rounds,
-            map_jolt_expr(instruction_claims.input.clone()),
-            map_jolt_expr(instruction_claims.output.clone()),
+            instruction_claims.spec().rounds,
+            map_jolt_expr(instruction_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(instruction_claims.output_expression::<PCS::Field>()),
         ),
         (
-            ram_claims.spec.rounds,
-            map_jolt_expr(ram_claims.input.clone()),
-            map_jolt_expr(ram_claims.output.clone()),
+            ram_claims.spec().rounds,
+            map_jolt_expr(ram_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(ram_claims.output_expression::<PCS::Field>()),
         ),
         (
-            registers_claims.spec.rounds,
-            map_jolt_expr(registers_claims.input.clone()),
-            map_jolt_expr(registers_claims.output.clone()),
+            registers_claims.spec().rounds,
+            map_jolt_expr(registers_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(registers_claims.output_expression::<PCS::Field>()),
         ),
     ];
     let coefficients = &input.stage5.batch_consistency.batching_coefficients;
@@ -194,7 +191,7 @@ where
             input.stage5.batch_consistency.max_num_vars,
             input.stage5.batch_consistency.max_degree,
         ),
-        domain_spec(instruction_claims.spec),
+        domain_spec(instruction_claims.spec()),
         input.stage5.batch_consistency.consistency.clone(),
         &input.stage5.batch_output_claims,
         values,
