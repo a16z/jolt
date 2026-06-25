@@ -22,6 +22,15 @@ use crate::types::{
 pub struct AkitaScheme;
 
 impl AkitaScheme {
+    /// Returns true when the native Akita sparse-ring path can represent a
+    /// unit-valued sparse polynomial with this multilinear dimension.
+    pub fn supports_unit_sparse_dimension(num_vars: usize) -> bool {
+        let Some(domain_size) = 1usize.checked_shl(num_vars as u32) else {
+            return false;
+        };
+        domain_size >= AKITA_D
+    }
+
     pub fn commit_group(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
@@ -39,7 +48,7 @@ impl AkitaScheme {
         )
     }
 
-    pub fn commit_sparse_polynomial(
+    pub(crate) fn commit_sparse_polynomial(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
         polynomial: &AkitaSparsePolynomial,
@@ -53,7 +62,20 @@ impl AkitaScheme {
         )
     }
 
-    pub fn prove_sparse_batch<T, OpeningId, RelationId>(
+    /// Commit a unit-valued sparse polynomial without materializing dense
+    /// evaluations. This exposes the native Akita sparse-ring path; ordinary
+    /// PCS callers should use [`CommitmentScheme::commit`].
+    pub fn commit_unit_sparse_indices(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        num_vars: usize,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let polynomial = AkitaSparsePolynomial::from_jolt_unit_indices(num_vars, indices)?;
+        Self::commit_sparse_polynomial(setup, layout_digest, &polynomial)
+    }
+
+    pub(crate) fn prove_sparse_batch<T, OpeningId, RelationId>(
         setup: &AkitaProverSetup,
         transcript: &mut T,
         statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
@@ -70,6 +92,23 @@ impl AkitaScheme {
             &[&polynomial.native],
             vec![hint],
         )
+    }
+
+    /// Prove a direct batch opening for a unit-valued sparse polynomial without
+    /// materializing dense evaluations.
+    pub fn prove_unit_sparse_batch<T, OpeningId, RelationId>(
+        setup: &AkitaProverSetup,
+        transcript: &mut T,
+        statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+        num_vars: usize,
+        indices: impl IntoIterator<Item = usize>,
+        hint: AkitaProverHint,
+    ) -> Result<AkitaBatchProof, OpeningsError>
+    where
+        T: Transcript<Challenge = AkitaField>,
+    {
+        let polynomial = AkitaSparsePolynomial::from_jolt_unit_indices(num_vars, indices)?;
+        Self::prove_sparse_batch(setup, transcript, statement, &polynomial, hint)
     }
 }
 

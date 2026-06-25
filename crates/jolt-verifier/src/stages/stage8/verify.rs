@@ -197,6 +197,12 @@ where
         });
     }
 
+    let precommitted_coefficients = verify_precommitted_opening_batches::<PCS, _>(
+        setup,
+        transcript,
+        &batch.precommitted_statements,
+        precommitted_proofs,
+    )?;
     let batch_result =
         PCS::verify_batch(setup, transcript, &batch.statement, proof).map_err(|error| {
             VerifierError::FinalOpeningVerificationFailed {
@@ -204,12 +210,7 @@ where
             }
         })?;
     let mut coefficients = batch_result.coefficients;
-    coefficients.extend(verify_precommitted_opening_batches::<PCS, _>(
-        setup,
-        transcript,
-        &batch.precommitted_statements,
-        precommitted_proofs,
-    )?);
+    coefficients.extend(precommitted_coefficients);
 
     Ok(Stage8ClearOutput {
         opening_claims: batch.opening_claims,
@@ -489,12 +490,8 @@ where
         &physical_manifest.openings[..entries.len()],
         &pcs_opening_point,
     )?;
-    let (precommitted_opening_claims, precommitted_statements) = precommitted_clear_statements(
-        &precommitted_entries,
-        stage8_layout_digest(preprocessing),
-        &point,
-        &pcs_opening_point,
-    )?;
+    let (precommitted_opening_claims, precommitted_statements) =
+        precommitted_clear_statements(&precommitted_entries, stage8_layout_digest(preprocessing))?;
     opening_claims.extend(precommitted_opening_claims);
     Ok(Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
         logical_manifest,
