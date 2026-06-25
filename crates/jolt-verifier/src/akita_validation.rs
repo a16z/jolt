@@ -412,9 +412,9 @@ mod tests {
     )]
 
     use super::*;
+    use crate::akita_packing::AkitaPackingScheme;
     use crate::{
         akita::{commit_akita_packing_witness, AkitaPackingProverSetup},
-        akita_packing::AkitaPackingScheme,
         proof::LatticeCommitmentPayload,
         stages::stage8::lattice_protocol_config_for_packed_witness_layout,
     };

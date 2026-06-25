@@ -1,279 +1,98 @@
 use std::collections::BTreeSet;
 
 use jolt_akita::{
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaProverHint,
-    AkitaProverSetup, AkitaScheme, AkitaSetupParams, AkitaSparsePolynomial, AkitaVerifierSetup,
-    AKITA_D,
+    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint, AkitaProverSetup, AkitaScheme,
+    AkitaSparsePolynomial, AKITA_D,
 };
-use jolt_crypto::Commitment;
 use jolt_openings::{
     has_packing_view, packing_witness_source_polynomial, prove_sparse_packing_reduction,
     validate_packing_source_dimension, validate_packing_source_layout, validate_packing_statement,
-    BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackingBatch, PackingBatchProof, PackingProverSetup, PackingSetupParams, PackingSource,
-    PackingVerifierSetup, PackingWitnessLayout, PackingWitnessSource, ZkBatchOpeningScheme,
-    ZkOpeningScheme,
+    BatchOpeningScheme, BatchOpeningStatement, OpeningsError, PackingBatch, PackingBatchProof,
+    PackingProverSetup, PackingSource, PackingWitnessLayout, PackingWitnessSource,
 };
-use jolt_poly::{MultilinearPoly, Polynomial};
-use jolt_transcript::{AppendToTranscript, Label, Transcript};
-use serde::{Deserialize, Serialize};
+use jolt_transcript::Transcript;
 
-type AkitaPackingAdapter = PackingBatch<AkitaScheme, PackingWitnessLayout>;
+pub(crate) type AkitaPackingScheme = PackingBatch<AkitaScheme, PackingWitnessLayout>;
+pub(crate) type AkitaPackingBatchProof = PackingBatchProof<AkitaBatchProof>;
+pub(crate) type AkitaPackingProverSetup =
+    PackingProverSetup<AkitaProverSetup, PackingWitnessLayout>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AkitaPackingScheme;
-
-impl AkitaPackingScheme {
-    pub fn commit_packing_source<S>(
-        setup: &<Self as CommitmentScheme>::ProverSetup,
-        source: &S,
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
-    where
-        S: PackingWitnessSource<AkitaField>,
-    {
-        validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
-        if let Some(polynomial) = packed_source_sparse_polynomial(source)? {
-            return AkitaScheme::commit_sparse_polynomial(
-                &setup.pcs,
-                source.layout().digest,
-                &polynomial,
-            );
-        }
-        let polynomial = packing_witness_source_polynomial(source)?;
-        AkitaScheme::commit_group(&setup.pcs, source.layout().digest, &[polynomial])
+pub(crate) fn commit_packing_source<S>(
+    setup: &AkitaPackingProverSetup,
+    source: &S,
+) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+where
+    S: PackingWitnessSource<AkitaField>,
+{
+    validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
+    if let Some(polynomial) = packed_source_sparse_polynomial(source)? {
+        return AkitaScheme::commit_sparse_polynomial(
+            &setup.pcs,
+            source.layout().digest,
+            &polynomial,
+        );
     }
+    let polynomial = packing_witness_source_polynomial(source)?;
+    AkitaScheme::commit_group(&setup.pcs, source.layout().digest, &[polynomial])
+}
 
-    pub fn prove_packing_source_batch<T, OpeningId, RelationId, S>(
-        setup: &<Self as CommitmentScheme>::ProverSetup,
-        transcript: &mut T,
-        statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-        source: &S,
-        hint: AkitaProverHint,
-    ) -> Result<PackingBatchProof<AkitaBatchProof>, OpeningsError>
-    where
-        T: Transcript<Challenge = AkitaField>,
-        S: PackingWitnessSource<AkitaField>,
-    {
-        validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
-        if let Some(sparse_polynomial) = packed_source_sparse_polynomial(source)? {
-            if !has_packing_view(statement) {
-                let native = AkitaScheme::prove_sparse_batch(
-                    &setup.pcs,
-                    transcript,
-                    statement,
-                    &sparse_polynomial,
-                    hint,
-                )?;
-                return Ok(PackingBatchProof {
-                    reduction: None,
-                    native,
-                });
-            }
-
-            let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
-            let source = AkitaPackingSource(source);
-            let reduction =
-                prove_sparse_packing_reduction(shape.layout, statement, &source, transcript)?;
-            let native_statement = singleton_statement(
-                shape.commitment.clone(),
-                &reduction.opening_point,
-                reduction.opening_eval,
-            );
+pub(crate) fn prove_packing_source_batch<T, OpeningId, RelationId, S>(
+    setup: &AkitaPackingProverSetup,
+    transcript: &mut T,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    source: &S,
+    hint: AkitaProverHint,
+) -> Result<AkitaPackingBatchProof, OpeningsError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
+{
+    validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
+    if let Some(sparse_polynomial) = packed_source_sparse_polynomial(source)? {
+        if !has_packing_view(statement) {
             let native = AkitaScheme::prove_sparse_batch(
                 &setup.pcs,
                 transcript,
-                &native_statement,
+                statement,
                 &sparse_polynomial,
                 hint,
             )?;
             return Ok(PackingBatchProof {
-                reduction: Some(reduction.proof),
+                reduction: None,
                 native,
             });
         }
 
-        let polynomial = packing_witness_source_polynomial(source)?;
-        <Self as BatchOpeningScheme>::prove_batch(
-            setup,
+        let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
+        let source = AkitaPackingSource(source);
+        let reduction =
+            prove_sparse_packing_reduction(shape.layout, statement, &source, transcript)?;
+        let native_statement = singleton_statement(
+            shape.commitment.clone(),
+            &reduction.opening_point,
+            reduction.opening_eval,
+        );
+        let native = AkitaScheme::prove_sparse_batch(
+            &setup.pcs,
             transcript,
-            statement,
-            std::slice::from_ref(&polynomial),
-            vec![hint],
-        )
-    }
-}
-
-impl Commitment for AkitaPackingScheme {
-    type Output = AkitaCommitment;
-}
-
-impl CommitmentScheme for AkitaPackingScheme {
-    type Field = AkitaField;
-    type Proof = PackingBatchProof<AkitaBatchProof>;
-    type ProverSetup = PackingProverSetup<AkitaProverSetup, PackingWitnessLayout>;
-    type VerifierSetup = PackingVerifierSetup<AkitaVerifierSetup, PackingWitnessLayout>;
-    type Polynomial = Polynomial<AkitaField>;
-    type OpeningHint = AkitaProverHint;
-    type SetupParams = PackingSetupParams<AkitaSetupParams, PackingWitnessLayout>;
-
-    fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
-        <AkitaPackingAdapter as CommitmentScheme>::setup(params)
+            &native_statement,
+            &sparse_polynomial,
+            hint,
+        )?;
+        return Ok(PackingBatchProof {
+            reduction: Some(reduction.proof),
+            native,
+        });
     }
 
-    fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        <AkitaPackingAdapter as CommitmentScheme>::verifier_setup(prover_setup)
-    }
-
-    fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
-        _poly: &P,
-        _setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
-        unsupported_dense_packed_path("commit")
-    }
-
-    fn open(
-        _poly: &Self::Polynomial,
-        _point: &[Self::Field],
-        _eval: Self::Field,
-        _setup: &Self::ProverSetup,
-        _hint: Option<Self::OpeningHint>,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
-        unsupported_dense_packed_path("open")
-    }
-
-    fn verify(
-        commitment: &Self::Output,
-        point: &[Self::Field],
-        eval: Self::Field,
-        proof: &Self::Proof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(), OpeningsError> {
-        <AkitaPackingAdapter as CommitmentScheme>::verify(
-            commitment, point, eval, proof, setup, transcript,
-        )
-    }
-
-    fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        eval: &Self::Field,
-    ) {
-        AkitaScheme::bind_opening_inputs(transcript, point, eval);
-    }
-}
-
-impl BatchOpeningScheme for AkitaPackingScheme {
-    fn prove_batch<T, OpeningId, RelationId>(
-        setup: &Self::ProverSetup,
-        transcript: &mut T,
-        statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
-        polynomials: &[Self::Polynomial],
-        hints: Vec<Self::OpeningHint>,
-    ) -> Result<Self::Proof, OpeningsError>
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-        if has_packing_view(statement) {
-            validate_packed_adapter_prover_inputs(setup, statement, polynomials, &hints)?;
-        }
-        <AkitaPackingAdapter as BatchOpeningScheme>::prove_batch(
-            setup,
-            transcript,
-            statement,
-            polynomials,
-            hints,
-        )
-    }
-
-    fn verify_batch<T, OpeningId, RelationId>(
-        setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
-        proof: &Self::Proof,
-    ) -> Result<BatchOpeningResult<Self::Field, Self::Output>, OpeningsError>
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-        if has_packing_view(statement) {
-            validate_packed_adapter_verifier_inputs(setup, statement)?;
-        }
-        <AkitaPackingAdapter as BatchOpeningScheme>::verify_batch(
-            setup, transcript, statement, proof,
-        )
-    }
-}
-
-impl ZkOpeningScheme for AkitaPackingScheme {
-    type HidingCommitment = AkitaHidingCommitment;
-    type Blind = ();
-
-    fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
-        _poly: &P,
-        _setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
-        unsupported_dense_packed_path("commit_zk")
-    }
-
-    fn open_zk(
-        _poly: &Self::Polynomial,
-        _point: &[Self::Field],
-        _eval: Self::Field,
-        _setup: &Self::ProverSetup,
-        _hint: Self::OpeningHint,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        unsupported_dense_packed_path("open_zk")
-    }
-
-    fn verify_zk(
-        _commitment: &Self::Output,
-        _point: &[Self::Field],
-        _proof: &Self::Proof,
-        _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<Self::HidingCommitment, OpeningsError> {
-        Err(transparent_zk_error())
-    }
-
-    fn bind_zk_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        hiding_commitment: &Self::HidingCommitment,
-    ) {
-        transcript.append(&Label(b"akpk_zk_inputs"));
-        append_field_slice(transcript, b"akpk_zk_point", point);
-        hiding_commitment.append_to_transcript(transcript);
-    }
-}
-
-impl ZkBatchOpeningScheme for AkitaPackingScheme {
-    fn prove_batch_zk<T, OpeningId, RelationId>(
-        _setup: &Self::ProverSetup,
-        _transcript: &mut T,
-        _statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId, ()>,
-        _evals: &[Self::Field],
-        _polynomials: &[Self::Polynomial],
-        _hints: Vec<Self::OpeningHint>,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-        Err(transparent_zk_error())
-    }
-
-    fn verify_batch_zk<T, OpeningId, RelationId>(
-        _setup: &Self::VerifierSetup,
-        _transcript: &mut T,
-        _statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId, ()>,
-        _proof: &Self::Proof,
-    ) -> Result<BatchOpeningResult<Self::Field, Self::Output, Self::HidingCommitment>, OpeningsError>
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-        Err(transparent_zk_error())
-    }
+    let polynomial = packing_witness_source_polynomial(source)?;
+    <AkitaPackingScheme as BatchOpeningScheme>::prove_batch(
+        setup,
+        transcript,
+        statement,
+        std::slice::from_ref(&polynomial),
+        vec![hint],
+    )
 }
 
 struct AkitaPackingSource<'a, S>(&'a S);
@@ -298,39 +117,23 @@ struct PackingBatchShape<'a> {
     commitment: AkitaCommitment,
 }
 
-fn validate_packed_adapter_prover_inputs<OpeningId, RelationId>(
-    setup: &<AkitaPackingScheme as CommitmentScheme>::ProverSetup,
+fn validate_packed_source_prover_inputs<'a, OpeningId, RelationId, S>(
+    setup: &'a AkitaPackingProverSetup,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-    polynomials: &[Polynomial<AkitaField>],
-    hints: &[AkitaProverHint],
-) -> Result<(), OpeningsError> {
+    source: &S,
+    hint: &AkitaProverHint,
+) -> Result<PackingBatchShape<'a>, OpeningsError>
+where
+    S: PackingWitnessSource<AkitaField>,
+{
     let shape = validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement)?;
-    if polynomials.len() != 1 {
-        return Err(invalid_batch(format!(
-            "Akita packing proof expects one packed witness polynomial, got {}",
-            polynomials.len()
-        )));
-    }
-    if polynomials[0].num_vars() != shape.commitment.num_vars {
-        return Err(invalid_batch(format!(
-            "Akita packing witness polynomial has {} variables but commitment has {}",
-            polynomials[0].num_vars(),
-            shape.commitment.num_vars
-        )));
-    }
-    if hints.len() != 1 || !hints[0].matches_commitment(&shape.commitment) {
+    validate_packing_source_layout(shape.layout, source)?;
+    if !hint.matches_commitment(&shape.commitment) {
         return Err(invalid_batch(
             "Akita packing proof requires one hint matching the packed witness commitment",
         ));
     }
-    Ok(())
-}
-
-fn validate_packed_adapter_verifier_inputs<OpeningId, RelationId>(
-    setup: &<AkitaPackingScheme as CommitmentScheme>::VerifierSetup,
-    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-) -> Result<(), OpeningsError> {
-    validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement).map(|_| ())
+    Ok(shape)
 }
 
 fn validate_packed_adapter_statement<'a, Setup, OpeningId, RelationId>(
@@ -351,41 +154,12 @@ where
     Ok(PackingBatchShape { layout, commitment })
 }
 
-fn validate_packed_source_prover_inputs<'a, OpeningId, RelationId, S>(
-    setup: &'a <AkitaPackingScheme as CommitmentScheme>::ProverSetup,
-    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-    source: &S,
-    hint: &AkitaProverHint,
-) -> Result<PackingBatchShape<'a>, OpeningsError>
-where
-    S: PackingWitnessSource<AkitaField>,
-{
-    let shape = validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement)?;
-    validate_packing_source_layout(shape.layout, source)?;
-    if !hint.matches_commitment(&shape.commitment) {
-        return Err(invalid_batch(
-            "Akita packing proof requires one hint matching the packed witness commitment",
-        ));
-    }
-    Ok(shape)
-}
-
 trait AkitaPackingSetupShape {
     fn max_num_vars(&self) -> usize;
     fn default_layout_digest(&self) -> [u8; 32];
 }
 
 impl AkitaPackingSetupShape for AkitaProverSetup {
-    fn max_num_vars(&self) -> usize {
-        self.max_num_vars
-    }
-
-    fn default_layout_digest(&self) -> [u8; 32] {
-        self.default_layout_digest
-    }
-}
-
-impl AkitaPackingSetupShape for AkitaVerifierSetup {
     fn max_num_vars(&self) -> usize {
         self.max_num_vars
     }
@@ -520,30 +294,6 @@ fn singleton_statement(
     }
 }
 
-#[expect(
-    clippy::panic,
-    reason = "single-opening trait methods cannot return unsupported packed dense-path errors"
-)]
-fn unsupported_dense_packed_path(operation: &str) -> ! {
-    panic!(
-        "AkitaPackingScheme::{operation} cannot be used for dense proof-owned polynomials; use commit_packing_source/prove_packing_source_batch for W_pack or AkitaScheme direct openings for precommitted objects"
-    )
-}
-
-fn append_field_slice<T>(transcript: &mut T, label: &'static [u8], values: &[AkitaField])
-where
-    T: Transcript<Challenge = AkitaField>,
-{
-    transcript.append(&jolt_transcript::LabelWithCount(label, values.len() as u64));
-    for value in values {
-        value.append_to_transcript(transcript);
-    }
-}
-
 fn invalid_batch(reason: impl Into<String>) -> OpeningsError {
     OpeningsError::InvalidBatch(reason.into())
-}
-
-fn transparent_zk_error() -> OpeningsError {
-    invalid_batch("Akita packing batch openings do not support ZK mode yet")
 }

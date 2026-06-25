@@ -1,7 +1,7 @@
 //! Prover-facing helpers for assembling Akita verifier artifacts.
 
 use crate::{
-    akita_packing::AkitaPackingScheme,
+    akita_packing::{self, AkitaPackingScheme},
     akita_validation::{
         validate_akita_advice_commitment_aliases,
         validate_akita_packing_opening_proof_payload_shape,
@@ -19,10 +19,14 @@ use crate::{
     VerifierError,
 };
 use common::jolt_device::JoltDevice;
-use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint};
+use jolt_akita::{
+    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint, AkitaProverSetup, AkitaScheme,
+    AkitaVerifierSetup,
+};
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::{
-    CommitmentScheme, PackingBatchProof, PackingWitnessLayout, PackingWitnessSource,
+    PackingBatch, PackingBatchProof, PackingProverSetup, PackingVerifierSetup,
+    PackingWitnessLayout, PackingWitnessSource,
 };
 use jolt_transcript::Transcript;
 
@@ -41,11 +45,14 @@ pub use crate::akita_witness::{build_akita_packing_jolt_witness, AkitaPackingJol
 
 pub type AkitaClearVectorCommitment = ClearOnlyVectorCommitment<AkitaField>;
 pub type AkitaPackingBatchProof = PackingBatchProof<AkitaBatchProof>;
-pub type AkitaPackingProverSetup = <AkitaPackingScheme as CommitmentScheme>::ProverSetup;
-pub type AkitaPackingVerifierSetup = <AkitaPackingScheme as CommitmentScheme>::VerifierSetup;
-pub type AkitaVerifierPreprocessing =
-    JoltVerifierPreprocessing<AkitaPackingScheme, AkitaClearVectorCommitment>;
-pub type AkitaJoltProof = JoltProof<AkitaPackingScheme, AkitaClearVectorCommitment>;
+pub type AkitaPackingProverSetup = PackingProverSetup<AkitaProverSetup, PackingWitnessLayout>;
+pub type AkitaPackingVerifierSetup = PackingVerifierSetup<AkitaVerifierSetup, PackingWitnessLayout>;
+pub type AkitaVerifierPreprocessing = JoltVerifierPreprocessing<
+    PackingBatch<AkitaScheme, PackingWitnessLayout>,
+    AkitaClearVectorCommitment,
+>;
+pub type AkitaJoltProof =
+    JoltProof<PackingBatch<AkitaScheme, PackingWitnessLayout>, AkitaClearVectorCommitment>;
 
 #[derive(Clone, Debug)]
 pub struct AkitaPackingWitnessArtifacts {
@@ -98,7 +105,7 @@ where
     let layout = source.layout().clone();
     validate_lattice_packed_witness_layout_config(&protocol, &layout)?;
     let (commitment, hint) =
-        AkitaPackingScheme::commit_packing_source(setup, source).map_err(|error| {
+        akita_packing::commit_packing_source(setup, source).map_err(|error| {
             VerifierError::LatticePackingCommitmentFailed {
                 reason: error.to_string(),
             }

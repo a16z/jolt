@@ -4,7 +4,9 @@ use common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_openings::{BatchOpeningScheme, CommitmentScheme, ZkBatchOpeningScheme};
+use jolt_openings::{
+    BatchOpeningScheme, CommitmentLayoutDigest, CommitmentScheme, ZkBatchOpeningScheme,
+};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::{
@@ -60,7 +62,9 @@ where
     PCS: CommitmentScheme<Field = F>
         + BatchOpeningScheme
         + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript,
+    // Stage 8 still uses shared clear/ZK statement construction; splitting a
+    // ZK-only builder would be broader than this audit helper.
+    PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
