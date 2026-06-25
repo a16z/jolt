@@ -10,13 +10,15 @@ use crate::{
 use jolt_akita::AkitaField;
 #[cfg(feature = "field-inline")]
 use jolt_akita::AKITA_FIELD_MODULUS;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::formulas::lattice as field_lattice;
 use jolt_claims::protocols::jolt::{
     derive_jolt_lattice_packed_validity_requirements, derive_jolt_lattice_packed_witness_layout,
     formulas::ra::JoltRaPolynomialLayout,
     lattice_validity_requirements_for_packed_witness_layout as claims_lattice_validity_requirements_for_packed_witness_layout,
-    layout_has_advice, layout_has_field_rd_inc, packed_family_is_precommitted,
-    AdviceClaimReductionLayout, FieldRdIncPacking, JoltAdviceKind, JoltLatticeLayoutError,
-    JoltLatticePackingInputs, JoltLatticeValidityInputs,
+    layout_has_advice, packed_family_is_precommitted, AdviceClaimReductionLayout,
+    FieldRdIncPacking, JoltAdviceKind, JoltLatticeLayoutError, JoltLatticePackingInputs,
+    JoltLatticeValidityInputs, JoltPackingFamilyId,
 };
 use jolt_field::FixedByteSize;
 use jolt_openings::{
@@ -61,8 +63,14 @@ pub fn derive_lattice_packed_validity_requirements(
 
 pub fn lattice_protocol_config_for_packed_witness_layout(
     layout: &PackingWitnessLayout,
-) -> JoltProtocolConfig {
-    let validity_requirements = lattice_validity_requirements_for_packed_witness_layout(layout);
+) -> Result<JoltProtocolConfig, VerifierError> {
+    let field_rd_inc_byte_width = field_rd_inc_byte_width(layout)?;
+    let mut validity_requirements =
+        lattice_validity_requirements_for_packed_witness_layout(layout)?;
+    extend_layout_derived_field_rd_inc_validity(
+        field_rd_inc_byte_width,
+        &mut validity_requirements,
+    )?;
     let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
     config.lattice = LatticeConfig {
         program_mode: ProgramMode::Committed,
@@ -73,20 +81,21 @@ pub fn lattice_protocol_config_for_packed_witness_layout(
             validity_digest: Some(packing_validity_digest(&validity_requirements)),
         },
         field_inline: FieldInlineLatticeConfig {
-            enabled: layout_has_field_rd_inc(layout),
+            enabled: field_rd_inc_byte_width.is_some(),
         },
         advice: AdviceLatticeConfig {
             trusted: false,
             untrusted: layout_has_advice(layout, PackingAdviceKind::Untrusted),
         },
     };
-    config
+    Ok(config)
 }
 
 pub fn lattice_validity_requirements_for_packed_witness_layout(
     layout: &PackingWitnessLayout,
-) -> Vec<PackingValidityRequirement> {
+) -> Result<Vec<PackingValidityRequirement>, VerifierError> {
     claims_lattice_validity_requirements_for_packed_witness_layout(layout)
+        .map_err(|error| invalid_lattice_config(error.to_string()))
 }
 
 pub fn validate_lattice_packed_witness_validity_config(
@@ -165,6 +174,63 @@ fn field_rd_inc_packing(config: &JoltProtocolConfig) -> Option<FieldRdIncPacking
         .field_inline
         .enabled
         .then(field_rd_inc_packing_config)
+}
+
+fn field_rd_inc_byte_width(layout: &PackingWitnessLayout) -> Result<Option<usize>, VerifierError> {
+    let mut indices = layout
+        .families
+        .iter()
+        .filter_map(
+            |family| match JoltPackingFamilyId::from_physical_id(&family.id) {
+                Some(JoltPackingFamilyId::FieldRdIncByte { index }) => Some(index),
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    if indices.is_empty() {
+        return Ok(None);
+    }
+    indices.sort_unstable();
+    for (expected, index) in indices.iter().copied().enumerate() {
+        if index != expected {
+            return Err(invalid_lattice_config(
+                "lattice field-inline byte families must be contiguous from zero",
+            ));
+        }
+    }
+    Ok(Some(indices.len()))
+}
+
+#[cfg(feature = "field-inline")]
+fn extend_layout_derived_field_rd_inc_validity(
+    byte_width: Option<usize>,
+    requirements: &mut Vec<PackingValidityRequirement>,
+) -> Result<(), VerifierError> {
+    if let Some(byte_width) = byte_width {
+        if byte_width != AkitaField::NUM_BYTES {
+            return Err(invalid_lattice_config(
+                "lattice field-inline byte family count must match the Akita field byte width",
+            ));
+        }
+        requirements.push(field_lattice::field_rd_inc_canonical_bytes_requirement(
+            byte_width,
+            AKITA_FIELD_MODULUS,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "field-inline"))]
+fn extend_layout_derived_field_rd_inc_validity(
+    byte_width: Option<usize>,
+    _requirements: &mut Vec<PackingValidityRequirement>,
+) -> Result<(), VerifierError> {
+    if byte_width.is_some() {
+        return Err(invalid_lattice_config(
+            "lattice field-inline families require the field-inline feature",
+        ));
+    }
+    Ok(())
 }
 
 fn lattice_validity_inputs<'a>(

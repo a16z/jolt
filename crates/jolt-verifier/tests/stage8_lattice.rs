@@ -8,8 +8,8 @@ use jolt_claims::protocols::jolt::{
     formulas::dimensions::REGISTER_ADDRESS_BITS, formulas::ra::JoltRaPolynomialLayout,
     program_image_validity_requirement, unsigned_inc_chunk_opening, unsigned_inc_lower_chunk_count,
     unsigned_inc_lower_value_lattice_view_formula, unsigned_inc_msb_opening,
-    unsigned_inc_validity_requirements, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
-    TracePolynomialOrder,
+    unsigned_inc_validity_requirements, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltPackingFamilyId, JoltRelationId, TracePolynomialOrder,
 };
 use jolt_field::{FixedByteSize, Fr, FromPrimitiveInt};
 use jolt_openings::{
@@ -40,6 +40,10 @@ use jolt_verifier::{
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
+
+fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
+    family.into()
+}
 
 fn lattice_config() -> JoltProtocolConfig {
     let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
@@ -179,16 +183,16 @@ fn bytecode_source_validity_layout(chunk: usize, log_bytecode: usize) -> Packing
     let domain = PackingFactDomain::BytecodeRows { log_bytecode };
     PackingWitnessLayout::new([
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeCircuitFlag {
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag {
                 chunk,
                 flag: CircuitFlags::Store as usize,
-            },
+            }),
             domain,
             1,
             PackingAlphabet::Bit,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }),
             domain,
             1,
             PackingAlphabet::Fixed {
@@ -212,37 +216,52 @@ fn derive_layout_includes_base_lattice_families() {
     .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
     assert!(layout
-        .family(&PackingFamilyId::InstructionRa { index: 0 })
+        .family(&physical(JoltPackingFamilyId::InstructionRa { index: 0 }))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::RamRa { index: 0 })
+        .family(&physical(JoltPackingFamilyId::RamRa { index: 0 }))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::UnsignedIncChunk { index: 7 })
+        .family(&physical(JoltPackingFamilyId::UnsignedIncChunk {
+            index: 7
+        }))
         .is_some());
-    assert!(layout.family(&PackingFamilyId::UnsignedIncMsb).is_some());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeRegisterSelector {
+        .family(&physical(JoltPackingFamilyId::UnsignedIncMsb))
+        .is_some());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::BytecodeRegisterSelector {
             chunk: 0,
             selector: 0,
-        })
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeCircuitFlag {
+            chunk: 0,
+            flag: 0
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeLookupSelector { chunk: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeLookupSelector {
+            chunk: 0
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeUnexpandedPcBytes {
+            chunk: 0
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeImmBytes { chunk: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeImmBytes {
+            chunk: 0
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeChunk { index: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeChunk { index: 0 }))
         .is_none());
-    assert!(layout.family(&PackingFamilyId::ProgramImageInit).is_none());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::ProgramImageInit))
+        .is_none());
     assert_eq!(layout.audit().d_pack, layout.dimension);
 
     let mut matching_config = lattice_config();
@@ -281,19 +300,19 @@ fn validate_validity_config_rejects_mismatched_digest() {
 fn derive_validity_statements_matches_requirement_semantics() {
     let layout = PackingWitnessLayout::new([
         PackingFamilySpec::direct(
-            PackingFamilyId::ProgramImageInit,
+            physical(JoltPackingFamilyId::ProgramImageInit),
             PackingFactDomain::ProgramImageWords { log_words: 2 },
             8,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeLookupSelector { chunk: 0 },
+            physical(JoltPackingFamilyId::BytecodeLookupSelector { chunk: 0 }),
             PackingFactDomain::BytecodeRows { log_bytecode: 3 },
             1,
             PackingAlphabet::Fixed { size: 8 },
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::UnsignedIncMsb,
+            physical(JoltPackingFamilyId::UnsignedIncMsb),
             PackingFactDomain::TraceRows { log_t: 4 },
             1,
             PackingAlphabet::Bit,
@@ -301,13 +320,22 @@ fn derive_validity_statements_matches_requirement_semantics() {
     ])
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
     let requirements = vec![
-        PackingValidityRequirement::exact_one_hot(PackingFamilyId::ProgramImageInit, 8, 256),
+        PackingValidityRequirement::exact_one_hot(
+            physical(JoltPackingFamilyId::ProgramImageInit),
+            8,
+            256,
+        ),
         PackingValidityRequirement::optional_one_hot(
-            PackingFamilyId::BytecodeLookupSelector { chunk: 0 },
+            physical(JoltPackingFamilyId::BytecodeLookupSelector { chunk: 0 }),
             1,
             8,
         ),
-        PackingValidityRequirement::boolean_indicator(PackingFamilyId::UnsignedIncMsb, 1, 2, 1),
+        PackingValidityRequirement::boolean_indicator(
+            physical(JoltPackingFamilyId::UnsignedIncMsb),
+            1,
+            2,
+            1,
+        ),
     ];
 
     let statements = derive_lattice_packed_validity_statements(&layout, &requirements)
@@ -376,8 +404,12 @@ fn derive_validity_statements_adds_unsigned_increment_chunk_and_msb_checks() {
 fn derive_validity_statements_adds_bytecode_store_rd_disjointness() {
     let chunk = 2;
     let layout = bytecode_source_validity_layout(chunk, 5);
-    let requirement =
-        PackingValidityRequirement::bytecode_store_rd_disjoint(chunk, CircuitFlags::Store as usize);
+    let requirement = PackingValidityRequirement::bytecode_store_rd_disjoint(physical(
+        JoltPackingFamilyId::BytecodeCircuitFlag {
+            chunk,
+            flag: CircuitFlags::Store as usize,
+        },
+    ));
 
     let statements =
         derive_lattice_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
@@ -400,7 +432,7 @@ fn derive_validity_statements_adds_bytecode_store_rd_disjointness() {
 fn derive_validity_statements_adds_field_element_canonical_bytes() {
     let layout = PackingWitnessLayout::new((0..2).map(|index| {
         PackingFamilySpec::direct(
-            PackingFamilyId::FieldRdIncByte { index },
+            physical(JoltPackingFamilyId::FieldRdIncByte { index }),
             PackingFactDomain::TraceRows { log_t: 3 },
             1,
             PackingAlphabet::Byte,
@@ -408,7 +440,7 @@ fn derive_validity_statements_adds_field_element_canonical_bytes() {
     }))
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
     let requirement = PackingValidityRequirement::field_element_canonical_bytes(
-        PackingFamilyId::FieldRdIncByte { index: 0 },
+        physical(JoltPackingFamilyId::FieldRdIncByte { index: 0 }),
         2,
         257,
     );
@@ -434,7 +466,7 @@ fn derive_validity_statements_adds_field_element_canonical_bytes() {
 fn derive_validity_statements_adds_bytecode_imm_canonical_bytes() {
     let chunk = 2;
     let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-        PackingFamilyId::BytecodeImmBytes { chunk },
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk }),
         PackingFactDomain::BytecodeRows { log_bytecode: 3 },
         2,
         PackingAlphabet::Byte,
@@ -462,14 +494,17 @@ fn derive_validity_statements_adds_bytecode_imm_canonical_bytes() {
 #[test]
 fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
     let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-        PackingFamilyId::ProgramImageInit,
+        physical(JoltPackingFamilyId::ProgramImageInit),
         PackingFactDomain::ProgramImageWords { log_words: 1 },
         2,
         PackingAlphabet::Fixed { size: 4 },
     )])
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
-    let requirement =
-        PackingValidityRequirement::exact_one_hot(PackingFamilyId::ProgramImageInit, 2, 4);
+    let requirement = PackingValidityRequirement::exact_one_hot(
+        physical(JoltPackingFamilyId::ProgramImageInit),
+        2,
+        4,
+    );
     let statement = LatticePackedValidityStatement {
         requirement,
         kind: LatticePackedValidityStatementKind::CellBooleanity,
@@ -528,7 +563,7 @@ fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
     assert_eq!(terms.len(), 8);
     let limb_weights = EqPolynomial::<Fr>::evals(&point[1..2], None);
     let symbol_weights = EqPolynomial::<Fr>::evals(&point[2..], None);
-    let term = find_physical_term(terms, PackingFamilyId::ProgramImageInit, 1, 3);
+    let term = find_physical_term(terms, physical(JoltPackingFamilyId::ProgramImageInit), 1, 3);
     assert_eq!(term.row_point, vec![Fr::from_u64(2)]);
     assert_eq!(term.coefficient, limb_weights[1] * symbol_weights[3]);
 }
@@ -538,10 +573,12 @@ fn validity_batch_builder_lowers_bytecode_store_rd_disjointness_factors() {
     let chunk = 2;
     let layout = bytecode_source_validity_layout(chunk, 3);
     let statement = LatticePackedValidityStatement {
-        requirement: PackingValidityRequirement::bytecode_store_rd_disjoint(
-            chunk,
-            CircuitFlags::Store as usize,
-        ),
+        requirement: PackingValidityRequirement::bytecode_store_rd_disjoint(physical(
+            JoltPackingFamilyId::BytecodeCircuitFlag {
+                chunk,
+                flag: CircuitFlags::Store as usize,
+            },
+        )),
         kind: LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint,
         num_vars: 3,
         degree: 3,
@@ -581,10 +618,10 @@ fn validity_batch_builder_lowers_bytecode_store_rd_disjointness_factors() {
     assert_eq!(terms.len(), 1);
     assert_eq!(
         terms[0].family,
-        PackingFamilyId::BytecodeCircuitFlag {
+        physical(JoltPackingFamilyId::BytecodeCircuitFlag {
             chunk,
             flag: CircuitFlags::Store as usize
-        }
+        })
         .physical_ref()
     );
     assert_eq!(terms[0].symbol, 1);
@@ -596,7 +633,7 @@ fn validity_batch_builder_lowers_bytecode_store_rd_disjointness_factors() {
     assert_eq!(terms.len(), 1 << REGISTER_ADDRESS_BITS);
     let term = find_physical_term(
         terms,
-        PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+        physical(JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }),
         0,
         (1 << REGISTER_ADDRESS_BITS) - 1,
     );
@@ -608,7 +645,7 @@ fn validity_batch_builder_lowers_bytecode_store_rd_disjointness_factors() {
 fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
     let layout = PackingWitnessLayout::new((0..2).map(|index| {
         PackingFamilySpec::direct(
-            PackingFamilyId::FieldRdIncByte { index },
+            physical(JoltPackingFamilyId::FieldRdIncByte { index }),
             PackingFactDomain::TraceRows { log_t: 2 },
             1,
             PackingAlphabet::Byte,
@@ -616,7 +653,7 @@ fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
     }))
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
     let requirement = PackingValidityRequirement::field_element_canonical_bytes(
-        PackingFamilyId::FieldRdIncByte { index: 0 },
+        physical(JoltPackingFamilyId::FieldRdIncByte { index: 0 }),
         2,
         257,
     );
@@ -662,7 +699,7 @@ fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
     assert_eq!(terms.len(), 254);
     assert_eq!(
         terms[0].family,
-        PackingFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
+        physical(JoltPackingFamilyId::FieldRdIncByte { index: 1 }).physical_ref()
     );
     assert_eq!(terms[0].symbol, 2);
     assert_eq!(terms[253].symbol, 255);
@@ -673,7 +710,7 @@ fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
     assert_eq!(terms.len(), 1);
     assert_eq!(
         terms[0].family,
-        PackingFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
+        physical(JoltPackingFamilyId::FieldRdIncByte { index: 1 }).physical_ref()
     );
     assert_eq!(terms[0].symbol, 1);
 
@@ -683,7 +720,7 @@ fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
     assert_eq!(terms.len(), 255);
     assert_eq!(
         terms[0].family,
-        PackingFamilyId::FieldRdIncByte { index: 0 }.physical_ref()
+        physical(JoltPackingFamilyId::FieldRdIncByte { index: 0 }).physical_ref()
     );
     assert_eq!(terms[0].symbol, 1);
     assert_eq!(terms[254].symbol, 255);
@@ -693,7 +730,7 @@ fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
 fn validity_batch_builder_lowers_bytecode_imm_canonical_byte_factors() {
     let chunk = 2;
     let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-        PackingFamilyId::BytecodeImmBytes { chunk },
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk }),
         PackingFactDomain::BytecodeRows { log_bytecode: 2 },
         2,
         PackingAlphabet::Byte,
@@ -742,7 +779,7 @@ fn validity_batch_builder_lowers_bytecode_imm_canonical_byte_factors() {
     assert_eq!(terms.len(), 254);
     assert_eq!(
         terms[0].family,
-        PackingFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk }).physical_ref()
     );
     assert_eq!(terms[0].limb, 1);
     assert_eq!(terms[0].symbol, 2);
@@ -755,7 +792,7 @@ fn validity_batch_builder_lowers_bytecode_imm_canonical_byte_factors() {
     assert_eq!(terms.len(), 1);
     assert_eq!(
         terms[0].family,
-        PackingFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk }).physical_ref()
     );
     assert_eq!(terms[0].limb, 1);
     assert_eq!(terms[0].symbol, 1);
@@ -766,7 +803,7 @@ fn validity_batch_builder_lowers_bytecode_imm_canonical_byte_factors() {
     assert_eq!(terms.len(), 255);
     assert_eq!(
         terms[0].family,
-        PackingFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk }).physical_ref()
     );
     assert_eq!(terms[0].limb, 0);
     assert_eq!(terms[0].symbol, 1);
@@ -777,14 +814,14 @@ fn validity_batch_builder_lowers_bytecode_imm_canonical_byte_factors() {
 #[test]
 fn derive_validity_statements_rejects_layout_requirement_mismatch() {
     let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-        PackingFamilyId::UnsignedIncMsb,
+        physical(JoltPackingFamilyId::UnsignedIncMsb),
         PackingFactDomain::TraceRows { log_t: 4 },
         1,
         PackingAlphabet::Bit,
     )])
     .unwrap_or_else(|error| panic!("layout should build: {error}"));
     let requirements = [PackingValidityRequirement::exact_one_hot(
-        PackingFamilyId::UnsignedIncMsb,
+        physical(JoltPackingFamilyId::UnsignedIncMsb),
         8,
         256,
     )];
@@ -803,7 +840,7 @@ fn validity_coverage_accepts_bound_decoded_families() {
         JoltRelationId::ProgramImageClaimReduction,
     ));
     let formula = PackingViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-        PackingFamilyId::ProgramImageInit,
+        physical(JoltPackingFamilyId::ProgramImageInit),
         0,
     ));
 
@@ -821,7 +858,7 @@ fn validity_coverage_rejects_unbound_decoded_families() {
         JoltRelationId::ProgramImageClaimReduction,
     ));
     let formula = PackingViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-        PackingFamilyId::ProgramImageInit,
+        physical(JoltPackingFamilyId::ProgramImageInit),
         0,
     ));
 
@@ -839,11 +876,11 @@ fn validity_coverage_requires_canonical_byte_requirements_for_field_bytes() {
         JoltRelationId::BytecodeClaimReduction,
     ));
     let formula = PackingViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-        PackingFamilyId::BytecodeImmBytes { chunk: 0 },
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk: 0 }),
         0,
     ));
     let one_hot = PackingValidityRequirement::exact_one_hot(
-        PackingFamilyId::BytecodeImmBytes { chunk: 0 },
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk: 0 }),
         AkitaField::NUM_BYTES,
         256,
     );
@@ -884,24 +921,28 @@ fn validity_coverage_requires_bytecode_store_rd_disjointness() {
         JoltRelationId::BytecodeClaimReduction,
     ));
     let formula = PackingViewFormula::<Fr>::direct(
-        PackingFamilyId::BytecodeCircuitFlag {
+        physical(JoltPackingFamilyId::BytecodeCircuitFlag {
             chunk: 0,
             flag: CircuitFlags::Store as usize,
-        },
+        }),
         0,
         1,
     );
     let store_flag = PackingValidityRequirement::boolean_indicator(
-        PackingFamilyId::BytecodeCircuitFlag {
+        physical(JoltPackingFamilyId::BytecodeCircuitFlag {
             chunk: 0,
             flag: CircuitFlags::Store as usize,
-        },
+        }),
         1,
         2,
         1,
     );
-    let disjoint =
-        PackingValidityRequirement::bytecode_store_rd_disjoint(0, CircuitFlags::Store as usize);
+    let disjoint = PackingValidityRequirement::bytecode_store_rd_disjoint(physical(
+        JoltPackingFamilyId::BytecodeCircuitFlag {
+            chunk: 0,
+            flag: CircuitFlags::Store as usize,
+        },
+    ));
 
     assert!(matches!(
         validate_lattice_view_validity_coverage(
@@ -926,7 +967,7 @@ fn validity_coverage_allows_core_ra_families() {
     ));
     let formula = PackingViewFormula::linear_decoded(vec![PackingViewTerm::new(
         Fr::from_u64(1),
-        PackingFamilyId::InstructionRa { index: 0 },
+        physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
         0,
         0,
     )]);
@@ -938,13 +979,17 @@ fn validity_coverage_allows_core_ra_families() {
 #[test]
 fn validity_coverage_checks_boolean_indicator_symbol() {
     let id = Stage8OpeningId::from(unsigned_inc_msb_opening());
-    let requirement =
-        PackingValidityRequirement::boolean_indicator(PackingFamilyId::UnsignedIncMsb, 1, 2, 1);
+    let requirement = PackingValidityRequirement::boolean_indicator(
+        physical(JoltPackingFamilyId::UnsignedIncMsb),
+        1,
+        2,
+        1,
+    );
 
     validate_lattice_view_validity_coverage(
         &[(
             id,
-            PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1),
+            PackingViewFormula::<Fr>::direct(physical(JoltPackingFamilyId::UnsignedIncMsb), 0, 1),
             Vec::new(),
         )],
         std::slice::from_ref(&requirement),
@@ -956,7 +1001,7 @@ fn validity_coverage_checks_boolean_indicator_symbol() {
             &[(
                 id,
                 PackingViewFormula::<Fr>::direct(
-                    PackingFamilyId::UnsignedIncMsb,
+                    physical(JoltPackingFamilyId::UnsignedIncMsb),
                     0,
                     0,
                 ),
@@ -985,7 +1030,7 @@ fn derive_layout_uses_unsigned_increment_validity_requirements() {
     for requirement in unsigned_inc_validity_requirements(8)
         .unwrap_or_else(|| panic!("unsigned increment requirements should derive"))
     {
-        let family_id = requirement.family.clone();
+        let family_id = requirement.family;
         let family = layout
             .family(&family_id)
             .unwrap_or_else(|| panic!("validity family {family_id:?} should be present"));
@@ -1007,7 +1052,7 @@ fn derive_layout_excludes_committed_bytecode_source_requirements() {
             .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
 
     for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
-        let family_id = requirement.family.clone();
+        let family_id = requirement.family;
         assert!(layout.family(&family_id).is_none());
         assert!(!validity_requirements.contains(&requirement));
     }
@@ -1041,7 +1086,7 @@ fn jolt_lattice_resolver_weights_ra_symbols_by_address_point() {
         PackingViewFormula::LinearDecoded { terms, .. }
             if terms.len() == 4
                 && terms[2].coefficient == expected_weights[2]
-                && terms[2].family == PackingFamilyId::InstructionRa { index: 1 }
+                && terms[2].family == physical(JoltPackingFamilyId::InstructionRa { index: 1 })
                 && terms[2].limb == 0
                 && terms[2].symbol == 2
     ));
@@ -1064,8 +1109,12 @@ fn field_inline_rd_inc_resolves_to_packed_byte_families() {
 
     let terms = linear_decoded_terms(&formulas[0].1);
     assert_eq!(terms.len(), AkitaField::NUM_BYTES * 256);
-    let byte_1_symbol_3 =
-        find_lattice_term(terms, PackingFamilyId::FieldRdIncByte { index: 1 }, 0, 3);
+    let byte_1_symbol_3 = find_lattice_term(
+        terms,
+        physical(JoltPackingFamilyId::FieldRdIncByte { index: 1 }),
+        0,
+        3,
+    );
     assert_eq!(byte_1_symbol_3.coefficient, Fr::from_u64(3 * 256));
 }
 
@@ -1097,8 +1146,8 @@ fn jolt_lattice_resolver_keeps_precommitted_finals_out_of_w_pack() {
         PackingViewFormula::LinearDecoded { terms, .. }
             if terms.len() == 256
                 && terms[7].coefficient == Fr::from_u64(7)
-                && terms[7].family == (PackingFamilyId::AdviceBytes {
-                    kind: PackingAdviceKind::Untrusted,
+                && terms[7].family == physical(JoltPackingFamilyId::AdviceBytes {
+                    kind: JoltAdviceKind::Untrusted,
                     index: 0,
                 })
                 && terms[7].limb == 0
@@ -1134,7 +1183,7 @@ fn jolt_lattice_resolver_lowers_unsigned_increment_chunk_and_msb_outputs() {
     assert_eq!(
         find_lattice_term(
             chunk_terms,
-            PackingFamilyId::UnsignedIncChunk { index: 7 },
+            physical(JoltPackingFamilyId::UnsignedIncChunk { index: 7 }),
             0,
             3,
         )
@@ -1151,10 +1200,10 @@ fn jolt_lattice_resolver_lowers_unsigned_increment_chunk_and_msb_outputs() {
         )
         .unwrap_or_else(|error| panic!("sign view should resolve: {error}")),
         PackingViewFormula::Direct {
-            family: PackingFamilyId::UnsignedIncMsb,
+            family,
             limb: 0,
             symbol: 1
-        }
+        } if family == physical(JoltPackingFamilyId::UnsignedIncMsb)
     ));
 }
 
@@ -1202,28 +1251,28 @@ fn jolt_lattice_physical_manifest_lowers_supported_ra_view() {
     let expected_weights = EqPolynomial::<Fr>::evals(&point[..2], None);
     let logical = logical_manifest(id, point);
     let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-        PackingFamilyId::InstructionRa { index: 1 },
+        physical(JoltPackingFamilyId::InstructionRa { index: 1 }),
         PackingFactDomain::TraceRows { log_t: 1 },
         1,
         PackingAlphabet::Fixed { size: 4 },
     )])
     .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
 
-    let physical =
+    let physical_manifest =
         jolt_lattice_physical_manifest(&logical, &layout, 2, &precommitted_schedule(None))
             .unwrap_or_else(|error| panic!("physical manifest should resolve: {error}"));
 
-    assert_eq!(physical.layout_digest, layout.digest);
-    assert_eq!(physical.openings[0].id, Stage8OpeningId::from(id));
+    assert_eq!(physical_manifest.layout_digest, layout.digest);
+    assert_eq!(physical_manifest.openings[0].id, Stage8OpeningId::from(id));
     assert!(matches!(
-        &physical.openings[0].view,
+        &physical_manifest.openings[0].view,
         PhysicalView::Packing {
             layout_digest,
             terms
         } if *layout_digest == layout.digest
             && terms.len() == 4
             && terms[2].coefficient == expected_weights[2]
-            && terms[2].family == (PackingFamilyId::InstructionRa { index: 1 }).physical_ref()
+            && terms[2].family == physical(JoltPackingFamilyId::InstructionRa { index: 1 }).physical_ref()
             && terms[2].limb == 0
             && terms[2].symbol == 2
     ));
@@ -1256,7 +1305,7 @@ fn jolt_lattice_physical_manifest_rejects_dense_increment_view() {
         JoltRelationId::IncClaimReduction,
     );
     let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-        PackingFamilyId::UnsignedIncMsb,
+        physical(JoltPackingFamilyId::UnsignedIncMsb),
         PackingFactDomain::TraceRows { log_t: 0 },
         1,
         PackingAlphabet::Bit,
@@ -1302,7 +1351,12 @@ fn jolt_lattice_physical_manifest_resolves_field_inline_rd_inc() {
     let PhysicalView::Packing { terms, .. } = &manifest.openings[0].view else {
         panic!("field rd inc should lower to a packing view");
     };
-    let term = find_physical_term(terms, PackingFamilyId::FieldRdIncByte { index: 1 }, 0, 3);
+    let term = find_physical_term(
+        terms,
+        physical(JoltPackingFamilyId::FieldRdIncByte { index: 1 }),
+        0,
+        3,
+    );
     assert_eq!(term.coefficient, Fr::from_u64(3 * 256));
     assert_eq!(term.row_point, row_point);
 }
@@ -1328,10 +1382,10 @@ fn layout_config_mismatch_rejects() {
 fn layout_config_rejects_precommitted_packed_families() {
     let precommitted_specs = [
         PackingFamilySpec::direct(
-            PackingFamilyId::AdviceBytes {
-                kind: PackingAdviceKind::Trusted,
+            physical(JoltPackingFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Trusted,
                 index: 0,
-            },
+            }),
             PackingFactDomain::AdviceBytes {
                 kind: PackingAdviceKind::Trusted,
                 log_bytes: 1,
@@ -1340,25 +1394,25 @@ fn layout_config_rejects_precommitted_packed_families() {
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeChunk { index: 0 },
+            physical(JoltPackingFamilyId::BytecodeChunk { index: 0 }),
             PackingFactDomain::BytecodeRows { log_bytecode: 1 },
             1,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeCircuitFlag {
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag {
                 chunk: 0,
                 flag: CircuitFlags::Store as usize,
-            },
+            }),
             PackingFactDomain::BytecodeRows { log_bytecode: 1 },
             1,
             PackingAlphabet::Bit,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeRegisterSelector {
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 2,
-            },
+            }),
             PackingFactDomain::BytecodeRows { log_bytecode: 1 },
             1,
             PackingAlphabet::Fixed {
@@ -1366,7 +1420,7 @@ fn layout_config_rejects_precommitted_packed_families() {
             },
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::ProgramImageInit,
+            physical(JoltPackingFamilyId::ProgramImageInit),
             PackingFactDomain::ProgramImageWords { log_words: 1 },
             8,
             PackingAlphabet::Byte,
@@ -1413,10 +1467,10 @@ fn untrusted_advice_layout_requires_precommitted_schedule() {
     )
     .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
     assert!(layout
-        .family(&PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Untrusted,
+        .family(&physical(JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Untrusted,
             index: 0,
-        })
+        }))
         .is_some());
 }
 
@@ -1435,15 +1489,19 @@ fn field_inline_layout_uses_separate_rd_inc_families() {
     )
     .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
-    assert!(layout.family(&PackingFamilyId::UnsignedIncMsb).is_some());
-    assert!(layout.family(&PackingFamilyId::FieldRdIncSign).is_none());
     assert!(layout
-        .family(&PackingFamilyId::FieldRdIncByte { index: 7 })
+        .family(&physical(JoltPackingFamilyId::UnsignedIncMsb))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::FieldRdIncByte {
+        .family(&physical(JoltPackingFamilyId::FieldRdIncSign))
+        .is_none());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::FieldRdIncByte { index: 7 }))
+        .is_some());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::FieldRdIncByte {
             index: AkitaField::NUM_BYTES - 1
-        })
+        }))
         .is_some());
 }
 
@@ -1462,17 +1520,17 @@ fn untrusted_advice_uses_non_trace_domain() {
     .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
     assert!(layout
-        .family(&PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Trusted,
+        .family(&physical(JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Trusted,
             index: 0,
-        })
+        }))
         .is_none());
 
     let untrusted = layout
-        .family(&PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Untrusted,
+        .family(&physical(JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Untrusted,
             index: 0,
-        })
+        }))
         .unwrap_or_else(|| panic!("untrusted advice family should be present"));
     assert!(matches!(
         untrusted.domain,
@@ -1483,18 +1541,24 @@ fn untrusted_advice_uses_non_trace_domain() {
     ));
 
     assert!(layout
-        .family(&PackingFamilyId::BytecodeRegisterSelector {
+        .family(&physical(JoltPackingFamilyId::BytecodeRegisterSelector {
             chunk: 0,
             selector: 0,
-        })
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeLookupSelector { chunk: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeLookupSelector {
+            chunk: 0
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeImmBytes { chunk: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeImmBytes {
+            chunk: 0
+        }))
         .is_none());
-    assert!(layout.family(&PackingFamilyId::ProgramImageInit).is_none());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::ProgramImageInit))
+        .is_none());
 }
 
 #[cfg(feature = "field-inline")]
@@ -1520,44 +1584,57 @@ fn single_packed_witness_layout_includes_all_supported_lattice_families() {
     assert_eq!(audit.cells_by_domain.bytecode_rows, 0);
     assert_eq!(audit.cells_by_domain.program_image_words, 0);
     assert!(audit.cells_by_domain.advice_bytes > 0);
-    assert!(layout.family(&PackingFamilyId::UnsignedIncMsb).is_some());
     assert!(layout
-        .family(&PackingFamilyId::UnsignedIncChunk { index: 7 })
+        .family(&physical(JoltPackingFamilyId::UnsignedIncMsb))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::FieldRdIncByte { index: 0 })
+        .family(&physical(JoltPackingFamilyId::UnsignedIncChunk {
+            index: 7
+        }))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::FieldRdIncByte {
+        .family(&physical(JoltPackingFamilyId::FieldRdIncByte { index: 0 }))
+        .is_some());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::FieldRdIncByte {
             index: AkitaField::NUM_BYTES - 1,
-        })
+        }))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Trusted,
+        .family(&physical(JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Trusted,
             index: 0,
-        })
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Untrusted,
+        .family(&physical(JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Untrusted,
             index: 0,
-        })
+        }))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeRegisterSelector {
+        .family(&physical(JoltPackingFamilyId::BytecodeRegisterSelector {
             chunk: 0,
             selector: 2,
-        })
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeCircuitFlag {
+            chunk: 0,
+            flag: 0
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeLookupSelector { chunk: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeLookupSelector {
+            chunk: 0
+        }))
         .is_none());
     assert!(layout
-        .family(&PackingFamilyId::BytecodeImmBytes { chunk: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeImmBytes {
+            chunk: 0
+        }))
         .is_none());
-    assert!(layout.family(&PackingFamilyId::ProgramImageInit).is_none());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::ProgramImageInit))
+        .is_none());
 }

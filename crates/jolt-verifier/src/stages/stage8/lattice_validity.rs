@@ -387,7 +387,7 @@ pub(crate) fn field_element_canonical_factors(
         if start_symbol < 256 {
             factors.push(FieldCanonicalFactor::Range {
                 byte_index,
-                family: family.clone(),
+                family,
                 limb,
                 start_symbol,
             });
@@ -804,7 +804,7 @@ where
             statement.kind
         )));
     }
-    let family_id = statement.requirement.family.clone();
+    let family_id = statement.requirement.family;
     let shape = validity_statement_shape(layout, statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
     let limb_weights = EqPolynomial::<F>::evals(point_parts.limb, None);
@@ -883,7 +883,7 @@ where
     })?;
     let (family_id, limb) = match &factor {
         FieldCanonicalFactor::Eq { family, limb, .. }
-        | FieldCanonicalFactor::Range { family, limb, .. } => (family.clone(), *limb),
+        | FieldCanonicalFactor::Range { family, limb, .. } => (*family, *limb),
     };
     let family = layout.family(&family_id).ok_or_else(|| {
         invalid_lattice_config(format!(
@@ -941,10 +941,11 @@ where
     F: Field,
 {
     let chunk = bytecode_store_rd_disjoint_chunk(&statement.requirement)?;
-    let store_id = PackingFamilyId::BytecodeCircuitFlag {
+    let store_id: PackingFamilyId = JoltPackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
-    };
+    }
+    .into();
     let store = layout.family(&store_id).ok_or_else(|| {
         invalid_lattice_config(format!(
             "bytecode Store/Rd disjointness requires {store_id:?}"
@@ -969,7 +970,8 @@ where
         0 => vec![PackingTerm::new(F::one(), store_id.physical_ref(), 0, 1)
             .with_row_point(point.to_vec())],
         1 => {
-            let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+            let rd_id: PackingFamilyId =
+                JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }.into();
             let rd = layout.family(&rd_id).ok_or_else(|| {
                 invalid_lattice_config(format!("bytecode Store/Rd disjointness requires {rd_id:?}"))
             })?;

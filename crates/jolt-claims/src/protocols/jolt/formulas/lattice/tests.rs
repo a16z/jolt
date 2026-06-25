@@ -27,6 +27,10 @@ use crate::protocols::jolt::{
     UnsignedIncChunkReconstructionChallenge, UnsignedIncChunkReconstructionPublic,
 };
 
+fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
+    family.into()
+}
+
 #[test]
 fn final_opening_lattice_requirement_marks_increments_as_logical_only() {
     assert_eq!(
@@ -291,7 +295,7 @@ fn unsigned_inc_chunking_rejects_invalid_sizes() {
 fn unsigned_inc_decode_formulas_use_configured_chunks_and_msb() {
     assert_eq!(
         unsigned_inc_msb_lattice_view_formula::<Fr>(),
-        PackingViewFormula::direct(PackingFamilyId::UnsignedIncMsb, 0, 1)
+        PackingViewFormula::direct(physical(JoltPackingFamilyId::UnsignedIncMsb), 0, 1)
     );
 
     let lower = unsigned_inc_lower_value_lattice_view_formula::<Fr>(4)
@@ -299,15 +303,33 @@ fn unsigned_inc_decode_formulas_use_configured_chunks_and_msb() {
     let terms = linear_decoded_terms(&lower);
     assert_eq!(terms.len(), 16 * 16);
     assert_eq!(
-        find_term(terms, PackingFamilyId::UnsignedIncChunk { index: 0 }, 0, 7).coefficient,
+        find_term(
+            terms,
+            physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
+            0,
+            7
+        )
+        .coefficient,
         Fr::from_u64(7)
     );
     assert_eq!(
-        find_term(terms, PackingFamilyId::UnsignedIncChunk { index: 1 }, 0, 3).coefficient,
+        find_term(
+            terms,
+            physical(JoltPackingFamilyId::UnsignedIncChunk { index: 1 }),
+            0,
+            3
+        )
+        .coefficient,
         Fr::from_u64(16 * 3)
     );
     assert_eq!(
-        find_term(terms, PackingFamilyId::UnsignedIncChunk { index: 15 }, 0, 2).coefficient,
+        find_term(
+            terms,
+            physical(JoltPackingFamilyId::UnsignedIncChunk { index: 15 }),
+            0,
+            2
+        )
+        .coefficient,
         Fr::from_u64(1u64 << 60) * Fr::from_u64(2)
     );
 }
@@ -321,7 +343,7 @@ fn unsigned_inc_validity_requirements_cover_chunks_and_msb() {
     assert_eq!(
         requirements[0],
         PackingValidityRequirement::exact_one_hot(
-            PackingFamilyId::UnsignedIncChunk { index: 0 },
+            physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
             1,
             16,
         )
@@ -329,14 +351,19 @@ fn unsigned_inc_validity_requirements_cover_chunks_and_msb() {
     assert_eq!(
         requirements[15],
         PackingValidityRequirement::exact_one_hot(
-            PackingFamilyId::UnsignedIncChunk { index: 15 },
+            physical(JoltPackingFamilyId::UnsignedIncChunk { index: 15 }),
             1,
             16,
         )
     );
     assert_eq!(
         requirements[16],
-        PackingValidityRequirement::boolean_indicator(PackingFamilyId::UnsignedIncMsb, 1, 2, 1,)
+        PackingValidityRequirement::boolean_indicator(
+            physical(JoltPackingFamilyId::UnsignedIncMsb),
+            1,
+            2,
+            1,
+        )
     );
 }
 
@@ -356,28 +383,32 @@ fn lattice_packed_witness_layout_derives_ra_and_increment_families() {
     let fixed_16 = PackingAlphabet::Fixed { size: 16 };
     assert_eq!(
         layout
-            .family(&PackingFamilyId::InstructionRa { index: 1 })
+            .family(&physical(JoltPackingFamilyId::InstructionRa { index: 1 }))
             .unwrap()
             .domain,
         trace
     );
     assert_eq!(
         layout
-            .family(&PackingFamilyId::InstructionRa { index: 1 })
+            .family(&physical(JoltPackingFamilyId::InstructionRa { index: 1 }))
             .unwrap()
             .alphabet,
         fixed_16
     );
     assert!(layout
-        .family(&PackingFamilyId::BytecodeRa { index: 0 })
+        .family(&physical(JoltPackingFamilyId::BytecodeRa { index: 0 }))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::RamRa { index: 0 })
+        .family(&physical(JoltPackingFamilyId::RamRa { index: 0 }))
         .is_some());
     assert!(layout
-        .family(&PackingFamilyId::UnsignedIncChunk { index: 15 })
+        .family(&physical(JoltPackingFamilyId::UnsignedIncChunk {
+            index: 15
+        }))
         .is_some());
-    assert!(layout.family(&PackingFamilyId::UnsignedIncMsb).is_some());
+    assert!(layout
+        .family(&physical(JoltPackingFamilyId::UnsignedIncMsb))
+        .is_some());
 }
 
 #[test]
@@ -418,10 +449,10 @@ fn lattice_packed_witness_layout_includes_field_and_advice_families() {
     assert!(layout_has_advice(&layout, PackingAdviceKind::Untrusted));
     assert_eq!(
         layout
-            .family(&PackingFamilyId::AdviceBytes {
-                kind: PackingAdviceKind::Untrusted,
+            .family(&physical(JoltPackingFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Untrusted,
                 index: 0,
-            })
+            }))
             .unwrap()
             .domain,
         PackingFactDomain::AdviceBytes {
@@ -442,7 +473,7 @@ fn lattice_packed_witness_layout_includes_field_and_advice_families() {
         .unwrap();
     assert!(
         requirements.contains(&PackingValidityRequirement::field_element_canonical_bytes(
-            PackingFamilyId::FieldRdIncByte { index: 0 },
+            physical(JoltPackingFamilyId::FieldRdIncByte { index: 0 }),
             2,
             257,
         ))
@@ -456,19 +487,19 @@ fn lattice_packed_witness_layout_includes_field_and_advice_families() {
 fn layout_derived_validity_marks_bytecode_store_rd_disjointness() {
     let layout = PackingWitnessLayout::new([
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeCircuitFlag {
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag {
                 chunk: 0,
                 flag: CircuitFlags::Store as usize,
-            },
+            }),
             PackingFactDomain::BytecodeRows { log_bytecode: 4 },
             1,
             PackingAlphabet::Bit,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeRegisterSelector {
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 2,
-            },
+            }),
             PackingFactDomain::BytecodeRows { log_bytecode: 4 },
             1,
             PackingAlphabet::Fixed {
@@ -478,32 +509,35 @@ fn layout_derived_validity_marks_bytecode_store_rd_disjointness() {
     ])
     .unwrap();
 
-    let requirements = lattice_validity_requirements_for_packed_witness_layout(&layout);
+    let requirements = lattice_validity_requirements_for_packed_witness_layout(&layout)
+        .expect("layout validity requirements should derive");
     assert!(
         requirements.contains(&PackingValidityRequirement::bytecode_store_rd_disjoint(
-            0,
-            CircuitFlags::Store as usize,
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag {
+                chunk: 0,
+                flag: CircuitFlags::Store as usize,
+            })
         ))
     );
 }
 
 #[test]
 fn precommitted_family_classification_keeps_untrusted_advice_packable() {
-    assert!(packed_family_is_precommitted(
-        &PackingFamilyId::BytecodeChunk { index: 0 }
-    ));
-    assert!(packed_family_is_precommitted(
-        &PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Trusted,
+    assert!(packed_family_is_precommitted(&physical(
+        JoltPackingFamilyId::BytecodeChunk { index: 0 }
+    )));
+    assert!(packed_family_is_precommitted(&physical(
+        JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Trusted,
             index: 0,
         }
-    ));
-    assert!(!packed_family_is_precommitted(
-        &PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Untrusted,
+    )));
+    assert!(!packed_family_is_precommitted(&physical(
+        JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Untrusted,
             index: 0,
         }
-    ));
+    )));
 }
 
 #[test]
@@ -513,8 +547,8 @@ fn base_increment_validity_requirements_do_not_use_field_inline_families() {
 
     assert!(requirements.iter().all(|requirement| {
         !matches!(
-            requirement.family,
-            PackingFamilyId::FieldRdIncByte { .. } | PackingFamilyId::FieldRdIncSign
+            JoltPackingFamilyId::from_physical_id(&requirement.family),
+            Some(JoltPackingFamilyId::FieldRdIncByte { .. } | JoltPackingFamilyId::FieldRdIncSign)
         )
     }));
 }
@@ -522,14 +556,18 @@ fn base_increment_validity_requirements_do_not_use_field_inline_families() {
 #[test]
 fn packed_validity_digest_is_order_stable_and_kind_sensitive() {
     let exact = PackingValidityRequirement::exact_one_hot(
-        PackingFamilyId::UnsignedIncChunk { index: 0 },
+        physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
         1,
         256,
     );
-    let msb =
-        PackingValidityRequirement::boolean_indicator(PackingFamilyId::UnsignedIncMsb, 1, 2, 1);
+    let msb = PackingValidityRequirement::boolean_indicator(
+        physical(JoltPackingFamilyId::UnsignedIncMsb),
+        1,
+        2,
+        1,
+    );
     let optional = PackingValidityRequirement::optional_one_hot(
-        PackingFamilyId::UnsignedIncChunk { index: 0 },
+        physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
         1,
         256,
     );
@@ -556,14 +594,14 @@ fn bytecode_validity_requirements_cover_committed_program_facts() {
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::optional_one_hot(
-            PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }),
             1,
             1 << REGISTER_ADDRESS_BITS,
         ))
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::boolean_indicator(
-            PackingFamilyId::BytecodeCircuitFlag { chunk, flag: 0 },
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag: 0 }),
             1,
             2,
             1,
@@ -571,10 +609,10 @@ fn bytecode_validity_requirements_cover_committed_program_facts() {
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::boolean_indicator(
-            PackingFamilyId::BytecodeInstructionFlag {
+            physical(JoltPackingFamilyId::BytecodeInstructionFlag {
                 chunk,
                 flag: NUM_INSTRUCTION_FLAGS - 1,
-            },
+            }),
             1,
             2,
             1,
@@ -582,14 +620,14 @@ fn bytecode_validity_requirements_cover_committed_program_facts() {
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::optional_one_hot(
-            PackingFamilyId::BytecodeLookupSelector { chunk },
+            physical(JoltPackingFamilyId::BytecodeLookupSelector { chunk }),
             1,
             LookupTableKind::<XLEN>::COUNT.next_power_of_two(),
         ))
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::boolean_indicator(
-            PackingFamilyId::BytecodeRafFlag { chunk },
+            physical(JoltPackingFamilyId::BytecodeRafFlag { chunk }),
             1,
             2,
             1,
@@ -597,22 +635,24 @@ fn bytecode_validity_requirements_cover_committed_program_facts() {
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::exact_one_hot(
-            PackingFamilyId::BytecodeUnexpandedPcBytes { chunk },
+            physical(JoltPackingFamilyId::BytecodeUnexpandedPcBytes { chunk }),
             8,
             256,
         ))
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::exact_one_hot(
-            PackingFamilyId::BytecodeImmBytes { chunk },
+            physical(JoltPackingFamilyId::BytecodeImmBytes { chunk }),
             field_byte_width,
             256,
         ))
     );
     assert!(
         requirements.contains(&PackingValidityRequirement::bytecode_store_rd_disjoint(
-            chunk,
-            CircuitFlags::Store as usize
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag {
+                chunk,
+                flag: CircuitFlags::Store as usize,
+            })
         ))
     );
 }
@@ -622,7 +662,7 @@ fn bytecode_imm_canonical_bytes_requirement_anchors_bytecode_immediates() {
     assert_eq!(
         bytecode_imm_canonical_bytes_requirement(2, 16, 97),
         PackingValidityRequirement::field_element_canonical_bytes(
-            PackingFamilyId::BytecodeImmBytes { chunk: 2 },
+            physical(JoltPackingFamilyId::BytecodeImmBytes { chunk: 2 }),
             16,
             97,
         )
@@ -634,27 +674,35 @@ fn advice_and_program_image_validity_requirements_are_byte_facts() {
     assert_eq!(
         advice_bytes_validity_requirement(JoltAdviceKind::Trusted),
         PackingValidityRequirement::exact_one_hot(
-            PackingFamilyId::AdviceBytes {
-                kind: PackingAdviceKind::Trusted,
+            physical(JoltPackingFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Trusted,
                 index: 0,
-            },
+            }),
             1,
             256,
         )
     );
     assert_eq!(
         program_image_validity_requirement(),
-        PackingValidityRequirement::exact_one_hot(PackingFamilyId::ProgramImageInit, 8, 256,)
+        PackingValidityRequirement::exact_one_hot(
+            physical(JoltPackingFamilyId::ProgramImageInit),
+            8,
+            256,
+        )
     );
 }
 
 #[test]
 fn byte_decode_terms_are_little_endian_symbol_weights() {
-    let terms = byte_decode_terms::<Fr>(PackingFamilyId::BytecodeChunk { index: 0 }, 3);
+    let terms =
+        byte_decode_terms::<Fr>(physical(JoltPackingFamilyId::BytecodeChunk { index: 0 }), 3);
 
     assert_eq!(terms.len(), 256);
     assert_eq!(terms[7].coefficient, Fr::from_u64(7));
-    assert_eq!(terms[7].family, PackingFamilyId::BytecodeChunk { index: 0 });
+    assert_eq!(
+        terms[7].family,
+        physical(JoltPackingFamilyId::BytecodeChunk { index: 0 })
+    );
     assert_eq!(terms[7].limb, 3);
     assert_eq!(terms[7].symbol, 7);
 }
@@ -662,23 +710,50 @@ fn byte_decode_terms_are_little_endian_symbol_weights() {
 #[test]
 fn committed_bytecode_lattice_family_ids_name_lane_classes() {
     assert_ne!(
-        PackingFamilyId::BytecodeRegisterSelector {
+        physical(JoltPackingFamilyId::BytecodeRegisterSelector {
             chunk: 0,
             selector: 0,
-        },
-        PackingFamilyId::BytecodeRegisterSelector {
+        }),
+        physical(JoltPackingFamilyId::BytecodeRegisterSelector {
             chunk: 0,
             selector: 1,
-        }
+        })
     );
     assert_ne!(
-        PackingFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 },
-        PackingFamilyId::BytecodeImmBytes { chunk: 0 }
+        physical(JoltPackingFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 }),
+        physical(JoltPackingFamilyId::BytecodeImmBytes { chunk: 0 })
     );
     assert_ne!(
-        PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 },
-        PackingFamilyId::BytecodeInstructionFlag { chunk: 0, flag: 0 }
+        physical(JoltPackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 }),
+        physical(JoltPackingFamilyId::BytecodeInstructionFlag { chunk: 0, flag: 0 })
     );
+    let circuit_flag = JoltPackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 1 };
+    let other_circuit_flag = JoltPackingFamilyId::BytecodeCircuitFlag { chunk: 1, flag: 0 };
+    assert_ne!(physical(circuit_flag), physical(other_circuit_flag));
+    assert_eq!(
+        JoltPackingFamilyId::from_physical_id(&physical(circuit_flag)),
+        Some(circuit_flag)
+    );
+    assert_eq!(
+        JoltPackingFamilyId::from_physical_id(&physical(other_circuit_flag)),
+        Some(other_circuit_flag)
+    );
+}
+
+#[test]
+fn layout_derived_validity_rejects_non_jolt_family_ids() {
+    let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+        PackingFamilyId::new(0x7465_7374, 1, 0),
+        PackingFactDomain::TraceRows { log_t: 0 },
+        1,
+        PackingAlphabet::Bit,
+    )])
+    .unwrap();
+
+    assert!(matches!(
+        lattice_validity_requirements_for_packed_witness_layout(&layout),
+        Err(JoltLatticeLayoutError::UnsupportedPackingFamily { .. })
+    ));
 }
 
 #[test]
@@ -704,10 +779,10 @@ fn bytecode_chunk_lattice_view_formula_uses_cycle_major_lane_weights() {
     assert_eq!(
         find_term(
             terms,
-            PackingFamilyId::BytecodeRegisterSelector {
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                 chunk: 2,
                 selector: 2
-            },
+            }),
             0,
             5
         )
@@ -717,7 +792,7 @@ fn bytecode_chunk_lattice_view_formula_uses_cycle_major_lane_weights() {
     assert_eq!(
         find_term(
             terms,
-            PackingFamilyId::BytecodeCircuitFlag { chunk: 2, flag: 0 },
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag { chunk: 2, flag: 0 }),
             0,
             1
         )
@@ -727,7 +802,7 @@ fn bytecode_chunk_lattice_view_formula_uses_cycle_major_lane_weights() {
     assert_eq!(
         find_term(
             terms,
-            PackingFamilyId::BytecodeLookupSelector { chunk: 2 },
+            physical(JoltPackingFamilyId::BytecodeLookupSelector { chunk: 2 }),
             0,
             3
         )
@@ -737,7 +812,7 @@ fn bytecode_chunk_lattice_view_formula_uses_cycle_major_lane_weights() {
     assert_eq!(
         find_term(
             terms,
-            PackingFamilyId::BytecodeUnexpandedPcBytes { chunk: 2 },
+            physical(JoltPackingFamilyId::BytecodeUnexpandedPcBytes { chunk: 2 }),
             1,
             7
         )
@@ -745,11 +820,23 @@ fn bytecode_chunk_lattice_view_formula_uses_cycle_major_lane_weights() {
         lane_weights[lane_layout.unexp_pc_idx] * Fr::from_u64(256 * 7)
     );
     assert_eq!(
-        find_term(terms, PackingFamilyId::BytecodeImmBytes { chunk: 2 }, 1, 9).coefficient,
+        find_term(
+            terms,
+            physical(JoltPackingFamilyId::BytecodeImmBytes { chunk: 2 }),
+            1,
+            9
+        )
+        .coefficient,
         lane_weights[lane_layout.imm_idx] * Fr::from_u64(256 * 9)
     );
     assert_eq!(
-        find_term(terms, PackingFamilyId::BytecodeRafFlag { chunk: 2 }, 0, 1).coefficient,
+        find_term(
+            terms,
+            physical(JoltPackingFamilyId::BytecodeRafFlag { chunk: 2 }),
+            0,
+            1
+        )
+        .coefficient,
         lane_weights[lane_layout.raf_flag_idx]
     );
 }
@@ -778,10 +865,10 @@ fn bytecode_chunk_lattice_view_formula_uses_address_major_lane_suffix() {
     assert_eq!(
         find_term(
             terms,
-            PackingFamilyId::BytecodeRegisterSelector {
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                 chunk: 1,
                 selector: 0
-            },
+            }),
             0,
             1
         )
@@ -814,11 +901,12 @@ fn bytecode_chunk_lattice_view_formula_rejects_bad_point_length() {
 
 #[test]
 fn symbol_decode_terms_support_non_byte_alphabets() {
-    let terms = symbol_decode_terms::<Fr>(PackingFamilyId::RamRa { index: 1 }, 0, 4);
+    let family = physical(JoltPackingFamilyId::RamRa { index: 1 });
+    let terms = symbol_decode_terms::<Fr>(family, 0, 4);
 
     assert_eq!(terms.len(), 4);
     assert_eq!(terms[3].coefficient, Fr::from_u64(3));
-    assert_eq!(terms[3].family, PackingFamilyId::RamRa { index: 1 });
+    assert_eq!(terms[3].family, family);
     assert_eq!(terms[3].limb, 0);
     assert_eq!(terms[3].symbol, 3);
 }
@@ -826,14 +914,17 @@ fn symbol_decode_terms_support_non_byte_alphabets() {
 #[test]
 fn weighted_symbol_terms_use_supplied_coefficients() {
     let terms = weighted_symbol_terms(
-        PackingFamilyId::InstructionRa { index: 0 },
+        physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
         2,
         [Fr::from_u64(11), Fr::from_u64(13), Fr::from_u64(17)],
     );
 
     assert_eq!(terms.len(), 3);
     assert_eq!(terms[1].coefficient, Fr::from_u64(13));
-    assert_eq!(terms[1].family, PackingFamilyId::InstructionRa { index: 0 });
+    assert_eq!(
+        terms[1].family,
+        physical(JoltPackingFamilyId::InstructionRa { index: 0 })
+    );
     assert_eq!(terms[1].limb, 2);
     assert_eq!(terms[1].symbol, 1);
 }
@@ -841,7 +932,7 @@ fn weighted_symbol_terms_use_supplied_coefficients() {
 #[test]
 fn weighted_byte_decode_terms_scale_symbols_by_limb_weights() {
     let terms = weighted_byte_decode_terms(
-        PackingFamilyId::BytecodeChunk { index: 2 },
+        physical(JoltPackingFamilyId::BytecodeChunk { index: 2 }),
         [(3, Fr::from_u64(5)), (8, Fr::from_u64(7))],
     );
 
@@ -853,13 +944,14 @@ fn weighted_byte_decode_terms_scale_symbols_by_limb_weights() {
     assert_eq!(terms[256 + 9].limb, 8);
     assert_eq!(
         terms[256 + 9].family,
-        PackingFamilyId::BytecodeChunk { index: 2 }
+        physical(JoltPackingFamilyId::BytecodeChunk { index: 2 })
     );
 }
 
 #[test]
 fn little_endian_byte_decode_terms_weight_limbs_by_place_value() {
-    let terms = little_endian_byte_decode_terms::<Fr>(PackingFamilyId::ProgramImageInit, 2);
+    let terms =
+        little_endian_byte_decode_terms::<Fr>(physical(JoltPackingFamilyId::ProgramImageInit), 2);
 
     assert_eq!(terms.len(), 512);
     assert_eq!(terms[7].coefficient, Fr::from_u64(7));
@@ -868,7 +960,10 @@ fn little_endian_byte_decode_terms_weight_limbs_by_place_value() {
     assert_eq!(terms[256 + 7].coefficient, Fr::from_u64(256 * 7));
     assert_eq!(terms[256 + 7].limb, 1);
     assert_eq!(terms[256 + 7].symbol, 7);
-    assert_eq!(terms[256 + 7].family, PackingFamilyId::ProgramImageInit);
+    assert_eq!(
+        terms[256 + 7].family,
+        physical(JoltPackingFamilyId::ProgramImageInit)
+    );
 }
 
 fn advice_layout(

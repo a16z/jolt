@@ -87,9 +87,7 @@ pub fn weighted_symbol_terms<F>(
     weights
         .into_iter()
         .enumerate()
-        .map(|(symbol, coefficient)| {
-            PackingViewTerm::new(coefficient, family.clone(), limb, symbol)
-        })
+        .map(|(symbol, coefficient)| PackingViewTerm::new(coefficient, family, limb, symbol))
         .collect()
 }
 
@@ -100,11 +98,10 @@ pub fn weighted_byte_decode_terms<F: Field>(
     limb_weights
         .into_iter()
         .flat_map(|(limb, limb_weight)| {
-            let family = family.clone();
             (0..256).map(move |symbol| {
                 PackingViewTerm::new(
                     limb_weight * F::from_u64(symbol as u64),
-                    family.clone(),
+                    family,
                     limb,
                     symbol,
                 )

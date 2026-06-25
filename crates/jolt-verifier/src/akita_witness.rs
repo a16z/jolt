@@ -303,7 +303,7 @@ pub fn build_akita_packing_jolt_witness(
     input: AkitaPackingJoltWitnessInput<'_>,
 ) -> Result<SparsePackingWitness<AkitaField>, VerifierError> {
     validate_akita_jolt_packed_witness_layout(&input.layout)?;
-    let protocol = lattice_protocol_config_for_packed_witness_layout(&input.layout);
+    let protocol = lattice_protocol_config_for_packed_witness_layout(&input.layout)?;
     validate_lattice_packed_witness_layout_config(&protocol, &input.layout)?;
 
     if input.instruction_lookup_indices.len() != input.trace_rows.len() {
@@ -550,6 +550,10 @@ mod tests {
         StoreState,
     };
 
+    fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
+        family.into()
+    }
+
     fn trace_domain() -> PackingFactDomain {
         PackingFactDomain::TraceRows { log_t: 1 }
     }
@@ -593,31 +597,31 @@ mod tests {
     fn packs_trace_ra_and_unsigned_increment_facts() {
         let layout = PackingWitnessLayout::new([
             PackingFamilySpec::direct(
-                PackingFamilyId::InstructionRa { index: 0 },
+                physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
                 trace_domain(),
                 1,
                 PackingAlphabet::Byte,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::BytecodeRa { index: 0 },
+                physical(JoltPackingFamilyId::BytecodeRa { index: 0 }),
                 trace_domain(),
                 1,
                 PackingAlphabet::Byte,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::RamRa { index: 0 },
+                physical(JoltPackingFamilyId::RamRa { index: 0 }),
                 trace_domain(),
                 1,
                 PackingAlphabet::Byte,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::UnsignedIncChunk { index: 0 },
+                physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
                 trace_domain(),
                 1,
                 PackingAlphabet::Byte,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::UnsignedIncMsb,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
                 trace_domain(),
                 1,
                 PackingAlphabet::Bit,
@@ -673,7 +677,7 @@ mod tests {
         assert_eq!(
             get(
                 &witness,
-                PackingFamilyId::InstructionRa { index: 0 },
+                physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
                 0,
                 0,
                 0x7f
@@ -681,28 +685,47 @@ mod tests {
             AkitaField::one()
         );
         assert_eq!(
-            get(&witness, PackingFamilyId::BytecodeRa { index: 0 }, 1, 0, 11),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(&witness, PackingFamilyId::RamRa { index: 0 }, 1, 0, 0x42),
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::BytecodeRa { index: 0 }),
+                1,
+                0,
+                11
+            ),
             AkitaField::one()
         );
         assert_eq!(
             get(
                 &witness,
-                PackingFamilyId::UnsignedIncChunk { index: 0 },
+                physical(JoltPackingFamilyId::RamRa { index: 0 }),
+                1,
+                0,
+                0x42
+            ),
+            AkitaField::one()
+        );
+        assert_eq!(
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
                 0,
                 0,
                 249
             ),
             AkitaField::one()
         );
-        assert!(get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
+        assert!(get(
+            &witness,
+            physical(JoltPackingFamilyId::UnsignedIncMsb),
+            0,
+            0,
+            1
+        )
+        .is_zero());
         assert_eq!(
             get(
                 &witness,
-                PackingFamilyId::UnsignedIncChunk { index: 0 },
+                physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
                 1,
                 0,
                 20
@@ -710,7 +733,13 @@ mod tests {
             AkitaField::one()
         );
         assert_eq!(
-            get(&witness, PackingFamilyId::UnsignedIncMsb, 1, 0, 1),
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
+                1,
+                0,
+                1
+            ),
             AkitaField::one()
         );
     }
@@ -763,7 +792,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     0,
                     0,
                     0
@@ -772,7 +801,13 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
+                0,
+                0,
+                1
+            ),
             AkitaField::one()
         );
     }
@@ -810,7 +845,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     0,
                     0,
                     0
@@ -819,7 +854,13 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
+                0,
+                0,
+                1
+            ),
             AkitaField::one()
         );
     }
@@ -856,7 +897,7 @@ mod tests {
         assert_eq!(
             get(
                 &witness,
-                PackingFamilyId::UnsignedIncChunk { index: 0 },
+                physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
                 0,
                 0,
                 3
@@ -867,7 +908,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     0,
                     0,
                     0
@@ -876,7 +917,13 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
+                0,
+                0,
+                1
+            ),
             AkitaField::one()
         );
     }
@@ -914,7 +961,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     0,
                     0,
                     0
@@ -923,7 +970,13 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
+                0,
+                0,
+                1
+            ),
             AkitaField::one()
         );
     }
@@ -1009,7 +1062,7 @@ mod tests {
         assert_eq!(
             get(
                 &witness,
-                PackingFamilyId::UnsignedIncChunk { index: 0 },
+                physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
                 0,
                 0,
                 249
@@ -1020,7 +1073,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     0,
                     0,
                     255
@@ -1028,7 +1081,14 @@ mod tests {
                 AkitaField::one()
             );
         }
-        assert!(get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
+        assert!(get(
+            &witness,
+            physical(JoltPackingFamilyId::UnsignedIncMsb),
+            0,
+            0,
+            1
+        )
+        .is_zero());
     }
 
     #[test]
@@ -1065,7 +1125,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     0,
                     0,
                     symbol
@@ -1077,7 +1137,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     0,
                     0,
                     0
@@ -1086,7 +1146,13 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(
+                &witness,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
+                0,
+                0,
+                1
+            ),
             AkitaField::one()
         );
     }
@@ -1141,7 +1207,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::FieldRdIncByte { index },
+                    physical(JoltPackingFamilyId::FieldRdIncByte { index }),
                     0,
                     0,
                     byte as usize
@@ -1151,7 +1217,7 @@ mod tests {
         }
         assert!(witness
             .layout()
-            .family(&PackingFamilyId::FieldRdIncSign)
+            .family(&physical(JoltPackingFamilyId::FieldRdIncSign))
             .is_none());
     }
 
@@ -1186,7 +1252,13 @@ mod tests {
 
         for index in 0..AkitaField::NUM_BYTES {
             assert_eq!(
-                get(&witness, PackingFamilyId::FieldRdIncByte { index }, 0, 0, 0),
+                get(
+                    &witness,
+                    physical(JoltPackingFamilyId::FieldRdIncByte { index }),
+                    0,
+                    0,
+                    0
+                ),
                 AkitaField::one()
             );
         }
@@ -1207,10 +1279,10 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackingFamilyId::AdviceBytes {
-                        kind: PackingAdviceKind::Untrusted,
+                    physical(JoltPackingFamilyId::AdviceBytes {
+                        kind: JoltAdviceKind::Untrusted,
                         index: 0,
-                    },
+                    }),
                     row,
                     0,
                     byte as usize
@@ -1221,8 +1293,15 @@ mod tests {
     }
 
     fn advice_layout(kind: PackingAdviceKind) -> PackingWitnessLayout {
+        let jolt_kind = match kind {
+            PackingAdviceKind::Trusted => JoltAdviceKind::Trusted,
+            PackingAdviceKind::Untrusted => JoltAdviceKind::Untrusted,
+        };
         PackingWitnessLayout::new([PackingFamilySpec::direct(
-            PackingFamilyId::AdviceBytes { kind, index: 0 },
+            physical(JoltPackingFamilyId::AdviceBytes {
+                kind: jolt_kind,
+                index: 0,
+            }),
             PackingFactDomain::AdviceBytes { kind, log_bytes: 2 },
             1,
             PackingAlphabet::Byte,
@@ -1233,7 +1312,7 @@ mod tests {
     fn field_rd_inc_layout() -> PackingWitnessLayout {
         PackingWitnessLayout::new((0..AkitaField::NUM_BYTES).map(|index| {
             PackingFamilySpec::direct(
-                PackingFamilyId::FieldRdIncByte { index },
+                physical(JoltPackingFamilyId::FieldRdIncByte { index }),
                 trace_domain(),
                 1,
                 PackingAlphabet::Byte,
@@ -1255,7 +1334,7 @@ mod tests {
         let mut specs = (0..chunk_count)
             .map(|index| {
                 PackingFamilySpec::direct(
-                    PackingFamilyId::UnsignedIncChunk { index },
+                    physical(JoltPackingFamilyId::UnsignedIncChunk { index }),
                     trace_domain(),
                     1,
                     alphabet,
@@ -1263,7 +1342,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         specs.push(PackingFamilySpec::direct(
-            PackingFamilyId::UnsignedIncMsb,
+            physical(JoltPackingFamilyId::UnsignedIncMsb),
             trace_domain(),
             1,
             PackingAlphabet::Bit,

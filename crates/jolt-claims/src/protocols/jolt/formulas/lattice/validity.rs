@@ -90,8 +90,11 @@ pub fn bytecode_validity_requirements(
         field_byte_width,
     ));
     requirements.push(PackingValidityRequirement::bytecode_store_rd_disjoint(
-        chunk,
-        CircuitFlags::Store as usize,
+        JoltPackingFamilyId::BytecodeCircuitFlag {
+            chunk,
+            flag: CircuitFlags::Store as usize,
+        }
+        .into(),
     ));
     requirements
 }

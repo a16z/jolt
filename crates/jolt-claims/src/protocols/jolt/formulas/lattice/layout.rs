@@ -56,6 +56,8 @@ pub enum JoltLatticeLayoutError {
     OneHotChunkSizeTooLarge { log_k_chunk: usize },
     #[error("packed validity requirement alphabet size must be nonzero")]
     ZeroAlphabetSize,
+    #[error("packed witness family {family:?} is not a Jolt lattice family")]
+    UnsupportedPackingFamily { family: PackingFamilyId },
     #[error(transparent)]
     PackingLayout(#[from] PackingLayoutError),
 }
@@ -134,131 +136,136 @@ pub fn derive_jolt_lattice_packed_validity_requirements(
 
 pub fn lattice_validity_requirements_for_packed_witness_layout(
     layout: &PackingWitnessLayout,
-) -> Vec<PackingValidityRequirement> {
-    let mut requirements = layout
-        .families
-        .iter()
-        .filter_map(|family| {
-            let limbs = family.limbs;
-            let alphabet_size = family.alphabet.size();
-            match JoltPackingFamilyId::from_physical_id(&family.id)? {
-                JoltPackingFamilyId::UnsignedIncChunk { index } => {
-                    Some(PackingValidityRequirement::exact_one_hot(
-                        JoltPackingFamilyId::UnsignedIncChunk { index }.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::UnsignedIncMsb => {
-                    Some(PackingValidityRequirement::boolean_indicator(
-                        JoltPackingFamilyId::UnsignedIncMsb.into(),
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                JoltPackingFamilyId::FieldRdIncByte { index } => {
-                    Some(PackingValidityRequirement::exact_one_hot(
-                        JoltPackingFamilyId::FieldRdIncByte { index }.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::AdviceBytes { kind, index } => {
-                    Some(PackingValidityRequirement::exact_one_hot(
-                        JoltPackingFamilyId::AdviceBytes { kind, index }.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-                    Some(PackingValidityRequirement::optional_one_hot(
-                        JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector }.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-                    Some(PackingValidityRequirement::boolean_indicator(
-                        JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag }.into(),
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                JoltPackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
-                    Some(PackingValidityRequirement::boolean_indicator(
-                        JoltPackingFamilyId::BytecodeInstructionFlag { chunk, flag }.into(),
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                JoltPackingFamilyId::BytecodeLookupSelector { chunk } => {
-                    Some(PackingValidityRequirement::optional_one_hot(
-                        JoltPackingFamilyId::BytecodeLookupSelector { chunk }.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::BytecodeRafFlag { chunk } => {
-                    Some(PackingValidityRequirement::boolean_indicator(
-                        JoltPackingFamilyId::BytecodeRafFlag { chunk }.into(),
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                JoltPackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
-                    Some(PackingValidityRequirement::exact_one_hot(
-                        JoltPackingFamilyId::BytecodeUnexpandedPcBytes { chunk }.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::BytecodeImmBytes { chunk } => {
-                    Some(PackingValidityRequirement::exact_one_hot(
-                        JoltPackingFamilyId::BytecodeImmBytes { chunk }.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::ProgramImageInit => {
-                    Some(PackingValidityRequirement::exact_one_hot(
-                        JoltPackingFamilyId::ProgramImageInit.into(),
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                JoltPackingFamilyId::InstructionRa { .. }
-                | JoltPackingFamilyId::BytecodeRa { .. }
-                | JoltPackingFamilyId::RamRa { .. }
-                | JoltPackingFamilyId::FieldRdIncSign
-                | JoltPackingFamilyId::BytecodeChunk { .. } => None,
-            }
-        })
-        .collect::<Vec<_>>();
-
+) -> Result<Vec<PackingValidityRequirement>, JoltLatticeLayoutError> {
+    let mut requirements = Vec::new();
     for family in &layout.families {
-        let Some(JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag }) =
-            JoltPackingFamilyId::from_physical_id(&family.id)
-        else {
-            continue;
+        let limbs = family.limbs;
+        let alphabet_size = family.alphabet.size();
+        let jolt_family = JoltPackingFamilyId::from_physical_id(&family.id)
+            .ok_or(JoltLatticeLayoutError::UnsupportedPackingFamily { family: family.id })?;
+        let requirement = match jolt_family {
+            JoltPackingFamilyId::UnsignedIncChunk { index } => {
+                Some(PackingValidityRequirement::exact_one_hot(
+                    JoltPackingFamilyId::UnsignedIncChunk { index }.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::UnsignedIncMsb => {
+                Some(PackingValidityRequirement::boolean_indicator(
+                    JoltPackingFamilyId::UnsignedIncMsb.into(),
+                    limbs,
+                    alphabet_size,
+                    1,
+                ))
+            }
+            JoltPackingFamilyId::FieldRdIncByte { index } => {
+                Some(PackingValidityRequirement::exact_one_hot(
+                    JoltPackingFamilyId::FieldRdIncByte { index }.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::AdviceBytes { kind, index } => {
+                Some(PackingValidityRequirement::exact_one_hot(
+                    JoltPackingFamilyId::AdviceBytes { kind, index }.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+                Some(PackingValidityRequirement::optional_one_hot(
+                    JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector }.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+                Some(PackingValidityRequirement::boolean_indicator(
+                    JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag }.into(),
+                    limbs,
+                    alphabet_size,
+                    1,
+                ))
+            }
+            JoltPackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+                Some(PackingValidityRequirement::boolean_indicator(
+                    JoltPackingFamilyId::BytecodeInstructionFlag { chunk, flag }.into(),
+                    limbs,
+                    alphabet_size,
+                    1,
+                ))
+            }
+            JoltPackingFamilyId::BytecodeLookupSelector { chunk } => {
+                Some(PackingValidityRequirement::optional_one_hot(
+                    JoltPackingFamilyId::BytecodeLookupSelector { chunk }.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::BytecodeRafFlag { chunk } => {
+                Some(PackingValidityRequirement::boolean_indicator(
+                    JoltPackingFamilyId::BytecodeRafFlag { chunk }.into(),
+                    limbs,
+                    alphabet_size,
+                    1,
+                ))
+            }
+            JoltPackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+                Some(PackingValidityRequirement::exact_one_hot(
+                    JoltPackingFamilyId::BytecodeUnexpandedPcBytes { chunk }.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::BytecodeImmBytes { chunk } => {
+                Some(PackingValidityRequirement::exact_one_hot(
+                    JoltPackingFamilyId::BytecodeImmBytes { chunk }.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::ProgramImageInit => {
+                Some(PackingValidityRequirement::exact_one_hot(
+                    JoltPackingFamilyId::ProgramImageInit.into(),
+                    limbs,
+                    alphabet_size,
+                ))
+            }
+            JoltPackingFamilyId::InstructionRa { .. }
+            | JoltPackingFamilyId::BytecodeRa { .. }
+            | JoltPackingFamilyId::RamRa { .. }
+            | JoltPackingFamilyId::FieldRdIncSign
+            | JoltPackingFamilyId::BytecodeChunk { .. } => None,
         };
-        if flag == CircuitFlags::Store as usize
-            && layout
-                .family(
-                    &JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }.into(),
-                )
-                .is_some()
-        {
-            requirements.push(PackingValidityRequirement::bytecode_store_rd_disjoint(
-                chunk,
-                CircuitFlags::Store as usize,
-            ));
+        if let Some(requirement) = requirement {
+            requirements.push(requirement);
         }
     }
-    requirements
+
+    for family in &layout.families {
+        let jolt_family = JoltPackingFamilyId::from_physical_id(&family.id)
+            .ok_or(JoltLatticeLayoutError::UnsupportedPackingFamily { family: family.id })?;
+        if let JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag } = jolt_family {
+            if flag == CircuitFlags::Store as usize
+                && layout
+                    .family(
+                        &JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }
+                            .into(),
+                    )
+                    .is_some()
+            {
+                requirements.push(PackingValidityRequirement::bytecode_store_rd_disjoint(
+                    JoltPackingFamilyId::BytecodeCircuitFlag {
+                        chunk,
+                        flag: CircuitFlags::Store as usize,
+                    }
+                    .into(),
+                ));
+            }
+        }
+    }
+    Ok(requirements)
 }
 
 pub fn packed_family_is_precommitted(family: &PackingFamilyId) -> bool {
@@ -342,7 +349,7 @@ fn extend_validity_requirement_families(
             continue;
         }
         specs.push(PackingFamilySpec::direct(
-            requirement.family.clone(),
+            requirement.family,
             domain,
             requirement.limbs,
             packed_alphabet_with_size(requirement.alphabet_size)?,

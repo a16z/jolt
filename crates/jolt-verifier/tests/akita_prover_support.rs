@@ -5,14 +5,20 @@
 )]
 
 use common::jolt_device::JoltDevice;
+#[cfg(feature = "field-inline")]
+use jolt_akita::AKITA_FIELD_MODULUS;
 use jolt_akita::{AkitaField, AkitaScheme, AkitaSetupParams};
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::formulas::lattice as field_lattice;
 use jolt_claims::protocols::jolt::formulas::dimensions::REGISTER_ADDRESS_BITS;
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltPackingFamilyId};
 #[cfg(feature = "field-inline")]
 use jolt_field::FixedByteSize;
 use jolt_openings::{
     packing_validity_digest, CommitmentScheme, PackingAdviceKind, PackingAlphabet,
     PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingFamilySpec, PackingProverSetup,
-    PackingVerifierSetup, PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness,
+    PackingValidityRequirement, PackingVerifierSetup, PackingWitnessLayout, PackingWitnessSource,
+    SparsePackingWitness,
 };
 use jolt_riscv::{
     CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NonMemoryState,
@@ -33,16 +39,41 @@ use jolt_verifier::{
     IncrementCommitmentMode, JoltProtocolConfig, ProgramMode, VerifierError,
 };
 
+fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
+    family.into()
+}
+
+#[cfg(feature = "field-inline")]
+fn expected_layout_protocol_validity_requirements(
+    layout: &PackingWitnessLayout,
+) -> Vec<PackingValidityRequirement> {
+    let mut requirements = lattice_validity_requirements_for_packed_witness_layout(layout)
+        .expect("layout validity requirements should derive");
+    requirements.push(field_lattice::field_rd_inc_canonical_bytes_requirement(
+        AkitaField::NUM_BYTES,
+        AKITA_FIELD_MODULUS,
+    ));
+    requirements
+}
+
+#[cfg(not(feature = "field-inline"))]
+fn expected_layout_protocol_validity_requirements(
+    layout: &PackingWitnessLayout,
+) -> Vec<PackingValidityRequirement> {
+    lattice_validity_requirements_for_packed_witness_layout(layout)
+        .expect("layout validity requirements should derive")
+}
+
 fn tiny_layout() -> PackingWitnessLayout {
     let specs = vec![
         PackingFamilySpec::direct(
-            PackingFamilyId::InstructionRa { index: 0 },
+            physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
             PackingFactDomain::TraceRows { log_t: 0 },
             1,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::UnsignedIncMsb,
+            physical(JoltPackingFamilyId::UnsignedIncMsb),
             PackingFactDomain::TraceRows { log_t: 0 },
             1,
             PackingAlphabet::Bit,
@@ -53,7 +84,7 @@ fn tiny_layout() -> PackingWitnessLayout {
         let mut specs = specs;
         specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
             PackingFamilySpec::direct(
-                PackingFamilyId::FieldRdIncByte { index },
+                physical(JoltPackingFamilyId::FieldRdIncByte { index }),
                 PackingFactDomain::TraceRows { log_t: 0 },
                 1,
                 PackingAlphabet::Byte,
@@ -132,7 +163,9 @@ fn akita_packing_setup(
 fn protocol_config_binds_layout_digest_and_dimension() {
     let layout = tiny_layout();
 
-    let config = lattice_protocol_config_for_packed_witness_layout(&layout);
+    let config = lattice_protocol_config_for_packed_witness_layout(&layout)
+        .expect("layout protocol config should derive");
+    let expected_requirements = expected_layout_protocol_validity_requirements(&layout);
 
     assert_eq!(
         config.lattice.packed_witness.layout_digest,
@@ -141,9 +174,7 @@ fn protocol_config_binds_layout_digest_and_dimension() {
     assert_eq!(config.lattice.packed_witness.d_pack, Some(layout.dimension));
     assert_eq!(
         config.lattice.packed_witness.validity_digest,
-        Some(packing_validity_digest(
-            &lattice_validity_requirements_for_packed_witness_layout(&layout)
-        ))
+        Some(packing_validity_digest(&expected_requirements))
     );
     assert_eq!(config.lattice.program_mode, ProgramMode::Committed);
     assert_eq!(
@@ -183,34 +214,34 @@ fn commits_packed_witness_and_returns_verifier_payload() {
 fn commits_jolt_packed_witness_inputs_with_padding() {
     let specs = vec![
         PackingFamilySpec::direct(
-            PackingFamilyId::InstructionRa { index: 0 },
+            physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
             PackingFactDomain::TraceRows { log_t: 1 },
             1,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeRa { index: 0 },
+            physical(JoltPackingFamilyId::BytecodeRa { index: 0 }),
             PackingFactDomain::TraceRows { log_t: 1 },
             1,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::RamRa { index: 0 },
+            physical(JoltPackingFamilyId::RamRa { index: 0 }),
             PackingFactDomain::TraceRows { log_t: 1 },
             1,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::UnsignedIncChunk { index: 0 },
+            physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
             PackingFactDomain::TraceRows { log_t: 1 },
             1,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::AdviceBytes {
-                kind: PackingAdviceKind::Untrusted,
+            physical(JoltPackingFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Untrusted,
                 index: 0,
-            },
+            }),
             PackingFactDomain::AdviceBytes {
                 kind: PackingAdviceKind::Untrusted,
                 log_bytes: 2,
@@ -224,7 +255,7 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
         let mut specs = specs;
         specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
             PackingFamilySpec::direct(
-                PackingFamilyId::FieldRdIncByte { index },
+                physical(JoltPackingFamilyId::FieldRdIncByte { index }),
                 PackingFactDomain::TraceRows { log_t: 1 },
                 1,
                 PackingAlphabet::Byte,
@@ -292,7 +323,7 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
     assert_eq!(
         witness
             .eval_direct_fact(&packed_cell_at(
-                PackingFamilyId::InstructionRa { index: 0 },
+                physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
                 0,
                 0,
                 0xaa,
@@ -303,7 +334,7 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
     assert_eq!(
         witness
             .eval_direct_fact(&packed_cell_at(
-                PackingFamilyId::BytecodeRa { index: 0 },
+                physical(JoltPackingFamilyId::BytecodeRa { index: 0 }),
                 1,
                 0,
                 1,
@@ -314,7 +345,7 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
     assert_eq!(
         witness
             .eval_direct_fact(&packed_cell_at(
-                PackingFamilyId::RamRa { index: 0 },
+                physical(JoltPackingFamilyId::RamRa { index: 0 }),
                 1,
                 0,
                 0x34
@@ -325,7 +356,7 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
     assert_eq!(
         witness
             .eval_direct_fact(&packed_cell_at(
-                PackingFamilyId::UnsignedIncChunk { index: 0 },
+                physical(JoltPackingFamilyId::UnsignedIncChunk { index: 0 }),
                 0,
                 0,
                 3,
@@ -336,10 +367,10 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
     assert_eq!(
         witness
             .eval_direct_fact(&packed_cell_at(
-                PackingFamilyId::AdviceBytes {
-                    kind: PackingAdviceKind::Untrusted,
+                physical(JoltPackingFamilyId::AdviceBytes {
+                    kind: JoltAdviceKind::Untrusted,
                     index: 0,
-                },
+                }),
                 2,
                 0,
                 0,
@@ -353,10 +384,10 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
 fn build_jolt_packed_witness_rejects_precommitted_layout_families() {
     let forbidden_specs = [
         PackingFamilySpec::direct(
-            PackingFamilyId::AdviceBytes {
-                kind: PackingAdviceKind::Trusted,
+            physical(JoltPackingFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Trusted,
                 index: 0,
-            },
+            }),
             PackingFactDomain::AdviceBytes {
                 kind: PackingAdviceKind::Trusted,
                 log_bytes: 0,
@@ -365,16 +396,16 @@ fn build_jolt_packed_witness_rejects_precommitted_layout_families() {
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeChunk { index: 0 },
+            physical(JoltPackingFamilyId::BytecodeChunk { index: 0 }),
             PackingFactDomain::BytecodeRows { log_bytecode: 0 },
             1,
             PackingAlphabet::Byte,
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::BytecodeRegisterSelector {
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 2,
-            },
+            }),
             PackingFactDomain::BytecodeRows { log_bytecode: 0 },
             1,
             PackingAlphabet::Fixed {
@@ -382,7 +413,7 @@ fn build_jolt_packed_witness_rejects_precommitted_layout_families() {
             },
         ),
         PackingFamilySpec::direct(
-            PackingFamilyId::ProgramImageInit,
+            physical(JoltPackingFamilyId::ProgramImageInit),
             PackingFactDomain::ProgramImageWords { log_words: 0 },
             8,
             PackingAlphabet::Byte,
@@ -419,7 +450,8 @@ fn configured_layout_mismatch_rejects_before_commit() {
     let (prover_setup, _) = akita_packing_setup(&layout, 1);
     let source = SparsePackingWitness::try_new(layout.clone(), Vec::new())
         .expect("empty source should build");
-    let mut config = lattice_protocol_config_for_packed_witness_layout(&layout);
+    let mut config = lattice_protocol_config_for_packed_witness_layout(&layout)
+        .expect("layout protocol config should derive");
     config.lattice.packed_witness.layout_digest = Some([9; 32]);
 
     let error = commit_akita_packing_witness_with_config(config, &prover_setup, &source)

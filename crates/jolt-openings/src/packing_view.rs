@@ -3,8 +3,8 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    PackingAdviceKind, PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingLayoutError,
-    PackingTerm, PackingWitnessLayout, PackingWitnessSource, PhysicalView,
+    PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingLayoutError, PackingTerm,
+    PackingWitnessLayout, PackingWitnessSource, PhysicalView,
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
@@ -213,7 +213,7 @@ impl<F: Field> PackingViewFormula<F> {
                 symbol,
             } => {
                 let address = PackingCellAddress {
-                    family: family.clone(),
+                    family: *family,
                     row,
                     limb: *limb,
                     symbol: *symbol,
@@ -223,7 +223,7 @@ impl<F: Field> PackingViewFormula<F> {
             Self::LinearDecoded { terms, .. } | Self::ReducedMasked { terms } => {
                 for term in terms {
                     let address = PackingCellAddress {
-                        family: term.family.clone(),
+                        family: term.family,
                         row,
                         limb: term.limb,
                         symbol: term.symbol,
@@ -285,14 +285,14 @@ impl<F: Field> PackingViewFormula<F> {
         layout: &PackingWitnessLayout,
     ) -> Result<PackingFactDomain, PackingViewError> {
         match self {
-            Self::Direct { family, .. } => layout
-                .family(family)
-                .map(|family| family.domain)
-                .ok_or_else(|| {
-                    PackingViewError::Layout(PackingLayoutError::MissingFamily {
-                        id: family.clone(),
-                    })
-                }),
+            Self::Direct { family, .. } => {
+                layout
+                    .family(family)
+                    .map(|family| family.domain)
+                    .ok_or(PackingViewError::Layout(
+                        PackingLayoutError::MissingFamily { id: *family },
+                    ))
+            }
             Self::LinearDecoded { terms, .. } | Self::ReducedMasked { terms } => {
                 let Some(term) = terms.first() else {
                     return Err(PackingViewError::EmptyLinearView);
@@ -300,11 +300,9 @@ impl<F: Field> PackingViewFormula<F> {
                 layout
                     .family(&term.family)
                     .map(|family| family.domain)
-                    .ok_or_else(|| {
-                        PackingViewError::Layout(PackingLayoutError::MissingFamily {
-                            id: term.family.clone(),
-                        })
-                    })
+                    .ok_or(PackingViewError::Layout(
+                        PackingLayoutError::MissingFamily { id: term.family },
+                    ))
             }
             Self::MaskedDecoded => Err(PackingViewError::MaskedViewRequiresTranslation),
         }
@@ -318,12 +316,12 @@ impl<F: Field> PackingViewFormula<F> {
                 limb,
                 symbol,
             } => {
-                let _ = coefficients.insert((family.clone(), *limb, *symbol), F::one());
+                let _ = coefficients.insert((*family, *limb, *symbol), F::one());
             }
             Self::LinearDecoded { terms, .. } | Self::ReducedMasked { terms } => {
                 for term in terms {
                     *coefficients
-                        .entry((term.family.clone(), term.limb, term.symbol))
+                        .entry((term.family, term.limb, term.symbol))
                         .or_insert_with(F::zero) += term.coefficient;
                 }
             }
@@ -445,12 +443,10 @@ fn validate_term_shape(
 ) -> Result<PackingFactDomain, PackingViewError> {
     let family = layout
         .family(family_id)
-        .ok_or_else(|| PackingLayoutError::MissingFamily {
-            id: family_id.clone(),
-        })?;
+        .ok_or(PackingLayoutError::MissingFamily { id: *family_id })?;
     if limb >= family.limbs || symbol >= family.alphabet.size() {
         return Err(PackingLayoutError::AddressOutOfRange {
-            family: family_id.clone(),
+            family: *family_id,
             row: 0,
             limb,
             symbol,
@@ -531,79 +527,9 @@ fn write_validity(bytes: &mut Vec<u8>, validity: PackingViewValidity) {
 }
 
 fn write_family_id(bytes: &mut Vec<u8>, id: &PackingFamilyId) {
-    match id {
-        PackingFamilyId::InstructionRa { index } => {
-            bytes.push(0);
-            write_usize(bytes, *index);
-        }
-        PackingFamilyId::BytecodeRa { index } => {
-            bytes.push(1);
-            write_usize(bytes, *index);
-        }
-        PackingFamilyId::RamRa { index } => {
-            bytes.push(2);
-            write_usize(bytes, *index);
-        }
-        PackingFamilyId::UnsignedIncChunk { index } => {
-            bytes.push(3);
-            write_usize(bytes, *index);
-        }
-        PackingFamilyId::UnsignedIncMsb => bytes.push(4),
-        PackingFamilyId::FieldRdIncByte { index } => {
-            bytes.push(9);
-            write_usize(bytes, *index);
-        }
-        PackingFamilyId::FieldRdIncSign => bytes.push(10),
-        PackingFamilyId::AdviceBytes { kind, index } => {
-            bytes.push(11);
-            bytes.push(match kind {
-                PackingAdviceKind::Trusted => 0,
-                PackingAdviceKind::Untrusted => 1,
-            });
-            write_usize(bytes, *index);
-        }
-        PackingFamilyId::BytecodeChunk { index } => {
-            bytes.push(12);
-            write_usize(bytes, *index);
-        }
-        PackingFamilyId::ProgramImageInit => bytes.push(13),
-        PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-            bytes.push(15);
-            write_usize(bytes, *chunk);
-            write_usize(bytes, *selector);
-        }
-        PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-            bytes.push(16);
-            write_usize(bytes, *chunk);
-            write_usize(bytes, *flag);
-        }
-        PackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
-            bytes.push(17);
-            write_usize(bytes, *chunk);
-            write_usize(bytes, *flag);
-        }
-        PackingFamilyId::BytecodeLookupSelector { chunk } => {
-            bytes.push(18);
-            write_usize(bytes, *chunk);
-        }
-        PackingFamilyId::BytecodeRafFlag { chunk } => {
-            bytes.push(19);
-            write_usize(bytes, *chunk);
-        }
-        PackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
-            bytes.push(20);
-            write_usize(bytes, *chunk);
-        }
-        PackingFamilyId::BytecodeImmBytes { chunk } => {
-            bytes.push(21);
-            write_usize(bytes, *chunk);
-        }
-        PackingFamilyId::Custom { namespace, index } => {
-            bytes.push(14);
-            bytes.extend_from_slice(&namespace.to_le_bytes());
-            write_usize(bytes, *index);
-        }
-    }
+    bytes.extend_from_slice(&id.namespace.to_le_bytes());
+    bytes.extend_from_slice(&id.id.to_le_bytes());
+    bytes.extend_from_slice(&id.index.to_le_bytes());
 }
 
 fn write_field<F: Field>(bytes: &mut Vec<u8>, value: F) {
@@ -630,6 +556,11 @@ mod tests {
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 
+    const TEST_NAMESPACE: u64 = 0x7465_7374_7669_6577;
+    const BYTE_FAMILY: PackingFamilyId = PackingFamilyId::new(TEST_NAMESPACE, 0, 0);
+    const BIT_FAMILY: PackingFamilyId = PackingFamilyId::new(TEST_NAMESPACE, 1, 0);
+    const PROGRAM_FAMILY: PackingFamilyId = PackingFamilyId::new(TEST_NAMESPACE, 2, 0);
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
     enum OpeningId {
         A,
@@ -648,13 +579,13 @@ mod tests {
     fn byte_layout() -> PackingWitnessLayout {
         PackingWitnessLayout::new([
             PackingFamilySpec::direct(
-                PackingFamilyId::RamRa { index: 0 },
+                BYTE_FAMILY,
                 PackingFactDomain::TraceRows { log_t: 1 },
                 1,
                 PackingAlphabet::Byte,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::UnsignedIncMsb,
+                BIT_FAMILY,
                 PackingFactDomain::TraceRows { log_t: 1 },
                 1,
                 PackingAlphabet::Bit,
@@ -665,7 +596,7 @@ mod tests {
 
     fn byte_decode_terms(family: PackingFamilyId) -> Vec<PackingViewTerm<Fr>> {
         (0..256)
-            .map(|symbol| PackingViewTerm::new(f(symbol as u64), family.clone(), 0, symbol))
+            .map(|symbol| PackingViewTerm::new(f(symbol as u64), family, 0, symbol))
             .collect()
     }
 
@@ -673,14 +604,14 @@ mod tests {
     fn direct_view_translation_matches_packed_eval() {
         let layout = byte_layout();
         let address = PackingCellAddress {
-            family: PackingFamilyId::UnsignedIncMsb,
+            family: BIT_FAMILY,
             row: 1,
             limb: 0,
             symbol: 1,
         };
         let source = SparsePackingWitness::try_from_cells(layout.clone(), [(address, f(1))])
             .expect("source should build");
-        let formula = PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1);
+        let formula = PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 1);
 
         assert_eq!(
             formula.eval_row(&source, 1).expect("view should evaluate"),
@@ -693,7 +624,7 @@ mod tests {
             PhysicalView::Packing { terms, .. }
                 if terms.len() == 1
                     && terms[0].coefficient == f(1)
-                    && terms[0].family == PackingFamilyId::UnsignedIncMsb.physical_ref()
+                    && terms[0].family == BIT_FAMILY.physical_ref()
                     && terms[0].symbol == 1
         ));
     }
@@ -702,17 +633,14 @@ mod tests {
     fn linear_decode_translation_matches_direct_sum() {
         let layout = byte_layout();
         let address = PackingCellAddress {
-            family: PackingFamilyId::RamRa { index: 0 },
+            family: BYTE_FAMILY,
             row: 0,
             limb: 0,
             symbol: 7,
         };
         let source = SparsePackingWitness::try_from_cells(layout.clone(), [(address, f(1))])
             .expect("source should build");
-        let formula =
-            PackingViewFormula::linear_decoded(byte_decode_terms(PackingFamilyId::RamRa {
-                index: 0,
-            }));
+        let formula = PackingViewFormula::linear_decoded(byte_decode_terms(BYTE_FAMILY));
 
         assert_eq!(
             formula.eval_row(&source, 0).expect("view should evaluate"),
@@ -726,7 +654,7 @@ mod tests {
                 if layout_digest == layout.digest
                     && terms.len() == 256
                     && terms[7].coefficient == f(7)
-                    && terms[7].family == (PackingFamilyId::RamRa { index: 0 }).physical_ref()
+                    && terms[7].family == BYTE_FAMILY.physical_ref()
                     && terms[7].symbol == 7
         ));
     }
@@ -735,14 +663,14 @@ mod tests {
     fn direct_view_point_eval_interpolates_rows() {
         let layout = byte_layout();
         let address = PackingCellAddress {
-            family: PackingFamilyId::UnsignedIncMsb,
+            family: BIT_FAMILY,
             row: 1,
             limb: 0,
             symbol: 1,
         };
         let source = SparsePackingWitness::try_from_cells(layout, [(address, f(1))])
             .expect("source should build");
-        let formula = PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1);
+        let formula = PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 1);
         let point = [f(3)];
 
         assert_eq!(
@@ -761,7 +689,7 @@ mod tests {
             [
                 (
                     PackingCellAddress {
-                        family: PackingFamilyId::RamRa { index: 0 },
+                        family: BYTE_FAMILY,
                         row: 0,
                         limb: 0,
                         symbol: 7,
@@ -770,7 +698,7 @@ mod tests {
                 ),
                 (
                     PackingCellAddress {
-                        family: PackingFamilyId::RamRa { index: 0 },
+                        family: BYTE_FAMILY,
                         row: 1,
                         limb: 0,
                         symbol: 11,
@@ -780,10 +708,7 @@ mod tests {
             ],
         )
         .expect("source should build");
-        let formula =
-            PackingViewFormula::linear_decoded(byte_decode_terms(PackingFamilyId::RamRa {
-                index: 0,
-            }));
+        let formula = PackingViewFormula::linear_decoded(byte_decode_terms(BYTE_FAMILY));
         let point = [f(5)];
         let expected = (f(1) - point[0]) * f(7) + point[0] * f(11);
 
@@ -802,7 +727,7 @@ mod tests {
             layout,
             [(
                 PackingCellAddress {
-                    family: PackingFamilyId::UnsignedIncMsb,
+                    family: BIT_FAMILY,
                     row: 1,
                     limb: 0,
                     symbol: 1,
@@ -811,7 +736,7 @@ mod tests {
             )],
         )
         .expect("source should build");
-        let formula = PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1);
+        let formula = PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 1);
 
         assert!(matches!(
             formula.eval_row_point(&source, &[]),
@@ -841,7 +766,7 @@ mod tests {
             [PackingViewEntry::new(
                 OpeningId::A,
                 RelationId::First,
-                PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1),
+                PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 1),
             )],
         )
         .expect("catalog should build");
@@ -850,7 +775,7 @@ mod tests {
             [PackingViewEntry::new(
                 OpeningId::A,
                 RelationId::First,
-                PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 0),
+                PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 0),
             )],
         )
         .expect("catalog should build");
@@ -865,9 +790,7 @@ mod tests {
     #[test]
     fn decoded_view_without_validity_rejects_or_is_not_enabled() {
         let layout = byte_layout();
-        let formula = PackingViewFormula::unchecked_linear_decoded(byte_decode_terms(
-            PackingFamilyId::RamRa { index: 0 },
-        ));
+        let formula = PackingViewFormula::unchecked_linear_decoded(byte_decode_terms(BYTE_FAMILY));
 
         assert!(matches!(
             formula.physical_view(&layout),
@@ -884,12 +807,12 @@ mod tests {
                 PackingViewEntry::new(
                     OpeningId::A,
                     RelationId::Second,
-                    PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 0),
+                    PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 0),
                 ),
                 PackingViewEntry::new(
                     OpeningId::A,
                     RelationId::First,
-                    PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1),
+                    PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 1),
                 ),
             ],
         )
@@ -899,33 +822,31 @@ mod tests {
             catalog
                 .lookup(&OpeningId::A, &RelationId::First)
                 .expect("first relation should exist"),
-            &PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1)
+            &PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 1)
         );
         assert_eq!(
             catalog
                 .lookup(&OpeningId::A, &RelationId::Second)
                 .expect("second relation should exist"),
-            &PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 0)
+            &PackingViewFormula::<Fr>::direct(BIT_FAMILY, 0, 0)
         );
     }
 
     #[test]
     fn bound_precommitted_program_view_formula_validates_against_supplied_layout() {
         let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-            PackingFamilyId::ProgramImageInit,
+            PROGRAM_FAMILY,
             PackingFactDomain::ProgramImageWords { log_words: 2 },
             8,
             PackingAlphabet::Byte,
         )])
         .expect("layout should build");
-        let formula = PackingViewFormula::linear_decoded(byte_decode_terms(
-            PackingFamilyId::ProgramImageInit,
-        ));
+        let formula = PackingViewFormula::linear_decoded(byte_decode_terms(PROGRAM_FAMILY));
 
         formula.validate(&layout).expect("formula should validate");
         assert_eq!(
             layout
-                .family(&PackingFamilyId::ProgramImageInit)
+                .family(&PROGRAM_FAMILY)
                 .expect("program family should exist")
                 .domain,
             PackingFactDomain::ProgramImageWords { log_words: 2 }
