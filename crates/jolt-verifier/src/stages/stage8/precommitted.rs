@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::verify::Stage8OpeningRoute;
 use super::{
     outputs::{Stage8OpeningStatement, Stage8PhysicalOpening},
     verify::Stage8BatchEntry,
@@ -313,6 +315,7 @@ mod tests {
         let entry = Stage8BatchEntry {
             id,
             commitment: &commitment,
+            route: Stage8OpeningRoute::Precommitted,
             opening_claim: Some(Fr::from_u64(7)),
             own_point: vec![Fr::from_u64(2)],
             scale: Fr::from_u64(3),

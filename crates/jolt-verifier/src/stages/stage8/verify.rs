@@ -29,7 +29,7 @@ use jolt_claims::protocols::jolt::{
         lattice as lattice_formulas,
         ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
+    JoltCommittedPolynomial,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -44,6 +44,7 @@ use jolt_transcript::Transcript;
 pub(super) struct Stage8BatchEntry<'a, F: Field, C> {
     pub(super) id: Stage8OpeningId,
     pub(super) commitment: &'a C,
+    pub(super) route: Stage8OpeningRoute,
     /// `None` in ZK mode, where opening claims stay committed.
     pub(super) opening_claim: Option<F>,
     /// Point where this logical opening was produced before Stage 8 embedding.
@@ -51,6 +52,33 @@ pub(super) struct Stage8BatchEntry<'a, F: Field, C> {
     /// Lagrange factor embedding this polynomial's own opening point into the
     /// unified opening point.
     pub(super) scale: F,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stage8OpeningRoute {
+    MainBatch,
+    Precommitted,
+}
+
+struct Stage8EntryTarget<'a, C> {
+    commitment: &'a C,
+    route: Stage8OpeningRoute,
+}
+
+impl<'a, C> Stage8EntryTarget<'a, C> {
+    const fn main_batch(commitment: &'a C) -> Self {
+        Self {
+            commitment,
+            route: Stage8OpeningRoute::MainBatch,
+        }
+    }
+
+    const fn precommitted(commitment: &'a C) -> Self {
+        Self {
+            commitment,
+            route: Stage8OpeningRoute::Precommitted,
+        }
+    }
 }
 
 struct LatticeUnsignedIncFinalOpenings<'a, F: Field> {
@@ -375,6 +403,7 @@ where
                             trusted_advice_commitment,
                             polynomial,
                         )
+                        .map(Stage8EntryTarget::main_batch)
                     },
                     #[cfg(feature = "field-inline")]
                     &commitments.field_inline.field_registers.rd_inc,
@@ -401,8 +430,9 @@ where
                             trusted_advice_commitment,
                             polynomial,
                         )
+                        .map(Stage8EntryTarget::precommitted)
                     } else {
-                        Ok(&payload.packed_witness)
+                        Ok(Stage8EntryTarget::main_batch(&payload.packed_witness))
                     }
                 },
                 #[cfg(feature = "field-inline")]
@@ -416,7 +446,7 @@ where
             )?);
             let (entries, precommitted_entries): (Vec<_>, Vec<_>) = final_entries
                 .into_iter()
-                .partition(|entry| !lattice_precommitted_stage8_opening(entry.id));
+                .partition(|entry| entry.route == Stage8OpeningRoute::MainBatch);
             (entries, precommitted_entries)
         }
     };
@@ -564,7 +594,7 @@ where
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
-fn batch_entries<'a, F, C, CommitmentFor>(
+fn batch_entries<'a, F, C, TargetFor>(
     layout: JoltRaPolynomialLayout,
     committed_bytecode_chunk_count: Option<usize>,
     include_trusted_advice: bool,
@@ -575,12 +605,12 @@ fn batch_entries<'a, F, C, CommitmentFor>(
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
     clear_claims: Option<(&Stage6Claims<F>, &Stage7Claims<F>)>,
     skip_increment_openings: bool,
-    mut commitment_for: CommitmentFor,
+    mut target_for: TargetFor,
     #[cfg(feature = "field-inline")] field_rd_inc_commitment: &'a C,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, C>>, VerifierError>
 where
     F: Field,
-    CommitmentFor: FnMut(JoltCommittedPolynomial) -> Result<&'a C, VerifierError>,
+    TargetFor: FnMut(JoltCommittedPolynomial) -> Result<Stage8EntryTarget<'a, C>, VerifierError>,
 {
     let precommitted_final = |polynomial: JoltCommittedPolynomial| {
         precommitted_finals
@@ -683,10 +713,11 @@ where
                     (opening.point.as_slice(), opening.opening_claim)
                 }
             };
-            let commitment = commitment_for(polynomial)?;
+            let target = target_for(polynomial)?;
             entries.push(Stage8BatchEntry {
                 id: id.into(),
-                commitment,
+                commitment: target.commitment,
+                route: target.route,
                 opening_claim,
                 own_point: own_point.to_vec(),
                 scale: commitment_embedding_scale(opening_point, own_point),
@@ -697,6 +728,7 @@ where
             entries.push(Stage8BatchEntry {
                 id: field_increments::field_rd_inc_reduced_opening().into(),
                 commitment: field_rd_inc_commitment,
+                route: Stage8OpeningRoute::MainBatch,
                 opening_claim: clear_claims.map(|(stage6, _)| {
                     stage6
                         .field_inline
@@ -747,6 +779,7 @@ where
         entries.push(Stage8BatchEntry {
             id: Stage8OpeningId::from(lattice_formulas::unsigned_inc_chunk_opening(index)),
             commitment,
+            route: Stage8OpeningRoute::MainBatch,
             opening_claim: sources.chunk_claims.map(|claims| claims[index]),
             own_point: sources.chunk_point.to_vec(),
             scale: commitment_embedding_scale(opening_point, sources.chunk_point),
@@ -755,6 +788,7 @@ where
     entries.push(Stage8BatchEntry {
         id: Stage8OpeningId::from(lattice_formulas::unsigned_inc_msb_opening()),
         commitment,
+        route: Stage8OpeningRoute::MainBatch,
         opening_claim: sources.msb_claim,
         own_point: sources.msb_point.to_vec(),
         scale: commitment_embedding_scale(opening_point, sources.msb_point),
@@ -840,23 +874,6 @@ fn lattice_requires_precommitted_opening(polynomial: JoltCommittedPolynomial) ->
         JoltCommittedPolynomial::TrustedAdvice
             | JoltCommittedPolynomial::BytecodeChunk(_)
             | JoltCommittedPolynomial::ProgramImageInit
-    )
-}
-
-fn lattice_precommitted_stage8_opening(id: Stage8OpeningId) -> bool {
-    matches!(
-        id,
-        Stage8OpeningId::Jolt(
-            JoltOpeningId::TrustedAdvice {
-                relation: JoltRelationId::AdviceClaimReduction,
-            } | JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Committed(
-                    JoltCommittedPolynomial::BytecodeChunk(_)
-                        | JoltCommittedPolynomial::ProgramImageInit,
-                ),
-                ..
-            },
-        )
     )
 }
 
@@ -1231,7 +1248,7 @@ mod tests {
             &program_image_only,
             None,
             true,
-            |_| Ok(&commitment),
+            |_| Ok(Stage8EntryTarget::main_batch(&commitment)),
             #[cfg(feature = "field-inline")]
             &commitment,
         )
@@ -1259,7 +1276,7 @@ mod tests {
             &bytecode_only,
             None,
             true,
-            |_| Ok(&commitment),
+            |_| Ok(Stage8EntryTarget::main_batch(&commitment)),
             #[cfg(feature = "field-inline")]
             &commitment,
         )
