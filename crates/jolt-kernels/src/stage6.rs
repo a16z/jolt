@@ -1871,7 +1871,7 @@ enum Stage6ProverInstanceState<'a, F: Field> {
     HammingBooleanity(HammingBooleanityStage6State<F>),
     RamRaVirtual(InstructionRaVirtualStage6State<'a, F>),
     InstructionRaVirtual(InstructionRaVirtualStage6State<'a, F>),
-    IncClaimReduction(IncClaimReductionStage6State<F>),
+    IncClaimReduction(Box<IncClaimReductionStage6State<F>>),
     Dense(DenseStage6State<F>),
 }
 
@@ -1896,8 +1896,8 @@ impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
                     .map(Self::HammingBooleanity)
             }
             Stage6Relation::IncClaimReduction => {
-                inc_claim_reduction_state(program, claim, inputs, store, active_scale)
-                    .map(Self::IncClaimReduction)
+                inc_claim_reduction_state(program, claim, inputs, store, active_scale, backend)
+                    .map(|state| Self::IncClaimReduction(Box::new(state)))
             }
             Stage6Relation::RamRaVirtual => {
                 ram_ra_virtual_state(program, claim, inputs, store, active_scale, backend)
@@ -4048,6 +4048,8 @@ struct IncClaimReductionStage6State<F: Field> {
     gamma2: F,
     outputs: [FactorOutput; 2],
     active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaIncState>,
 }
 
 impl<F: Field> IncClaimReductionStage6State<F> {
@@ -4074,6 +4076,30 @@ impl<F: Field> IncClaimReductionStage6State<F> {
                 driver: relation.symbol(),
                 reason: "increment claim-reduction factors have inconsistent lengths",
             });
+        }
+
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(fr_evals) = cuda.round_poly_evals() {
+                if let (Some(e0), Some(e1)) = (
+                    crate::cuda::fr_into::<F>(fr_evals[0]),
+                    crate::cuda::fr_into::<F>(fr_evals[1]),
+                ) {
+                    let mut evals = [e0, e1];
+                    if self.active_scale != F::one() {
+                        evals[0] *= self.active_scale;
+                        evals[1] *= self.active_scale;
+                    }
+                    let poly = UnivariatePoly::from_evals_and_hint(previous_claim, &evals);
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage6 increment claim-reduction input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
         }
 
         let half = len / 2;
@@ -4139,6 +4165,14 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.eq_ram.len() / 2 >= DENSE_BIND_PAR_THRESHOLD {
             rayon::join(
                 || {
@@ -4187,6 +4221,16 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 
     fn factor_eval(&self, factor: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if matches!(factor, 1 | 3) {
+                if let Ok(value) = cuda.factor_first(factor) {
+                    if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                        return Ok(value);
+                    }
+                }
+            }
+        }
         let values = match factor {
             1 => &self.ram_inc,
             3 => &self.rd_inc,
@@ -4207,6 +4251,10 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 
     fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(value) = cuda::inc_final_relation_eval(self) {
+            return Ok(value);
+        }
         let eq_ram = self
             .eq_ram
             .first()
@@ -5843,6 +5891,7 @@ fn inc_claim_reduction_state<F: Field>(
     inputs: &Stage6ProverInputs<'_, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<IncClaimReductionStage6State<F>, Stage6KernelError> {
     let witness = inputs
         .inc_claim_reduction
@@ -5923,14 +5972,24 @@ fn inc_claim_reduction_state<F: Field>(
         eq_rd_combined.len(),
     )?;
 
+    let ram_inc = witness.ram_inc.to_vec();
+    let rd_inc = witness.rd_inc.to_vec();
+    #[cfg(feature = "cuda")]
+    let cuda = if backend == "cuda" {
+        cuda::CudaIncState::new(&eq_ram_combined, &ram_inc, &eq_rd_combined, &rd_inc, gamma2)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "cuda"))]
+    let _ = backend;
     Ok(IncClaimReductionStage6State {
         eq_ram: eq_ram_combined,
         eq_ram_scratch: Vec::new(),
-        ram_inc: witness.ram_inc.to_vec(),
+        ram_inc,
         ram_inc_scratch: Vec::new(),
         eq_rd: eq_rd_combined,
         eq_rd_scratch: Vec::new(),
-        rd_inc: witness.rd_inc.to_vec(),
+        rd_inc,
         rd_inc_scratch: Vec::new(),
         gamma2,
         outputs: [
@@ -5938,6 +5997,8 @@ fn inc_claim_reduction_state<F: Field>(
             factor_output_by_name(program, "stage6.inc_claim_reduction.eval.RdInc", 3)?,
         ],
         active_scale,
+        #[cfg(feature = "cuda")]
+        cuda,
     })
 }
 

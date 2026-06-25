@@ -1,6 +1,89 @@
 use jolt_field::{Field, Fr};
 
-use crate::cuda::Gather8Inputs;
+use crate::cuda::{CudaError, DeviceFrVec, Gather8Inputs, RoundPolyTerms};
+
+pub(crate) struct CudaIncState {
+    eq_ram: DeviceFrVec,
+    ram_inc: DeviceFrVec,
+    eq_rd: DeviceFrVec,
+    rd_inc: DeviceFrVec,
+    scratch: DeviceFrVec,
+    gamma2: Fr,
+}
+
+impl CudaIncState {
+    pub(crate) fn new<F: Field>(
+        eq_ram: &[F],
+        ram_inc: &[F],
+        eq_rd: &[F],
+        rd_inc: &[F],
+        gamma2: F,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        Some(Self {
+            eq_ram: ctx.upload(crate::cuda::as_fr_slice(eq_ram)?).ok()?,
+            ram_inc: ctx.upload(crate::cuda::as_fr_slice(ram_inc)?).ok()?,
+            eq_rd: ctx.upload(crate::cuda::as_fr_slice(eq_rd)?).ok()?,
+            rd_inc: ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
+            scratch: ctx.upload(&[]).ok()?,
+            gamma2: crate::cuda::into_fr(gamma2)?,
+        })
+    }
+
+    pub(crate) fn round_poly_evals(&self) -> Result<[Fr; 2], CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        let factors = [&self.eq_ram, &self.ram_inc, &self.eq_rd, &self.rd_inc];
+        let term_coeffs = [Fr::from(1u64), self.gamma2];
+        let term_factor_offsets = [0u32, 2, 4];
+        let term_factor_indices = [0u32, 1, 2, 3];
+        let evals = ctx.sum_of_products_round_poly(RoundPolyTerms {
+            factors: &factors,
+            term_coeffs: &term_coeffs,
+            term_factor_offsets: &term_factor_offsets,
+            term_factor_indices: &term_factor_indices,
+            degree: 2,
+        })?;
+        Ok([evals[0], evals[1]])
+    }
+
+    pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        for factor in [
+            &mut self.eq_ram,
+            &mut self.ram_inc,
+            &mut self.eq_rd,
+            &mut self.rd_inc,
+        ] {
+            ctx.bind(factor, &mut self.scratch, challenge)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn factor_first(&self, factor: usize) -> Result<Fr, CudaError> {
+        match factor {
+            0 => self.eq_ram.first(),
+            1 => self.ram_inc.first(),
+            2 => self.eq_rd.first(),
+            3 => self.rd_inc.first(),
+            _ => Err(CudaError::Pool),
+        }
+    }
+
+    fn final_relation_eval(&self) -> Result<Fr, CudaError> {
+        let eq_ram = self.eq_ram.first()?;
+        let ram_inc = self.ram_inc.first()?;
+        let eq_rd = self.eq_rd.first()?;
+        let rd_inc = self.rd_inc.first()?;
+        Ok(eq_ram * ram_inc + self.gamma2 * eq_rd * rd_inc)
+    }
+}
+
+pub(crate) fn inc_final_relation_eval<F: Field>(
+    state: &super::IncClaimReductionStage6State<F>,
+) -> Option<F> {
+    let cuda = state.cuda.as_ref()?;
+    crate::cuda::fr_into::<F>(cuda.final_relation_eval().ok()?)
+}
 
 pub(crate) fn materialize_gather8<F: Field, R: AsRef<[Option<u8>]>>(
     table_groups: &[&Vec<Vec<F>>; 8],
