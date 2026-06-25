@@ -24,6 +24,7 @@ use crate::{
 };
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaCommitment, AkitaField};
+use jolt_claims::protocols::jolt::JoltPackingFamilyId;
 use jolt_openings::{
     PackingFamilyId, PackingValidityKind, PackingValidityRequirement, PackingWitnessLayout,
     PackingWitnessSource,
@@ -470,10 +471,11 @@ where
     S: PackingWitnessSource<AkitaField>,
 {
     let chunk = bytecode_store_rd_disjoint_chunk(&statement.requirement)?;
-    let store_id = PackingFamilyId::BytecodeCircuitFlag {
+    let store_id: PackingFamilyId = JoltPackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
-    };
+    }
+    .into();
     let store =
         source
             .layout()
@@ -500,7 +502,8 @@ where
     match factor {
         0 => weighted_direct_symbol_value(source, &store_id, &row_weights, 1),
         1 => {
-            let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+            let rd_id: PackingFamilyId =
+                JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }.into();
             let rd = source.layout().family(&rd_id).ok_or_else(|| {
                 VerifierError::InvalidProtocolConfig {
                     reason: format!("bytecode Store/Rd disjointness requires {rd_id:?}"),
@@ -530,13 +533,15 @@ where
 fn bytecode_store_rd_disjoint_chunk(
     requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
-    let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
+    let Some(JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag }) =
+        JoltPackingFamilyId::from_physical_id(&requirement.family)
+    else {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "bytecode Store/Rd disjointness must be anchored on the Store circuit flag"
                 .to_string(),
         });
     };
-    if *flag != CircuitFlags::Store as usize
+    if flag != CircuitFlags::Store as usize
         || requirement.limbs != 1
         || requirement.alphabet_size != 2
     {
@@ -546,7 +551,7 @@ fn bytecode_store_rd_disjoint_chunk(
                     .to_string(),
         });
     }
-    Ok(*chunk)
+    Ok(chunk)
 }
 
 #[derive(Clone, Copy)]

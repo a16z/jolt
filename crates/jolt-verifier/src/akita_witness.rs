@@ -1,8 +1,11 @@
 use jolt_akita::AkitaField;
-use jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count;
+use jolt_claims::protocols::jolt::{
+    packed_family_is_precommitted, unsigned_inc_lower_chunk_count, JoltAdviceKind,
+    JoltPackingFamilyId,
+};
 use jolt_field::{CanonicalBytes, FromPrimitiveInt};
 use jolt_openings::{
-    PackingAdviceKind, PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingLayoutError,
+    PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingLayoutError,
     PackingWitnessLayout, SparsePackingWitness,
 };
 use jolt_riscv::JoltTraceRow;
@@ -63,19 +66,20 @@ impl JoltPackedWitnessBuilder {
             });
         }
         let instruction_chunks = self.max_trace_family_index(|family| {
-            matches!(family, PackingFamilyId::InstructionRa { .. })
+            matches!(family, JoltPackingFamilyId::InstructionRa { .. })
         });
-        let bytecode_chunks = self
-            .max_trace_family_index(|family| matches!(family, PackingFamilyId::BytecodeRa { .. }));
-        let ram_chunks =
-            self.max_trace_family_index(|family| matches!(family, PackingFamilyId::RamRa { .. }));
+        let bytecode_chunks = self.max_trace_family_index(|family| {
+            matches!(family, JoltPackingFamilyId::BytecodeRa { .. })
+        });
+        let ram_chunks = self
+            .max_trace_family_index(|family| matches!(family, JoltPackingFamilyId::RamRa { .. }));
 
         for (row_index, row) in rows.iter().enumerate() {
             let lookup_index = lookup_index(row_index, row);
             for index in 0..instruction_chunks {
                 let symbol = chunk(lookup_index, index, instruction_chunks, log_k_chunk)?;
                 self.emit_one(
-                    PackingFamilyId::InstructionRa { index },
+                    JoltPackingFamilyId::InstructionRa { index }.into(),
                     row_index,
                     0,
                     symbol,
@@ -85,13 +89,23 @@ impl JoltPackedWitnessBuilder {
             let pc = row.pc() as u128;
             for index in 0..bytecode_chunks {
                 let symbol = chunk(pc, index, bytecode_chunks, log_k_chunk)?;
-                self.emit_one(PackingFamilyId::BytecodeRa { index }, row_index, 0, symbol)?;
+                self.emit_one(
+                    JoltPackingFamilyId::BytecodeRa { index }.into(),
+                    row_index,
+                    0,
+                    symbol,
+                )?;
             }
 
             if let Some(address) = ram_address(row_index, row) {
                 for index in 0..ram_chunks {
                     let symbol = chunk(address as u128, index, ram_chunks, log_k_chunk)?;
-                    self.emit_one(PackingFamilyId::RamRa { index }, row_index, 0, symbol)?;
+                    self.emit_one(
+                        JoltPackingFamilyId::RamRa { index }.into(),
+                        row_index,
+                        0,
+                        symbol,
+                    )?;
                 }
             }
 
@@ -104,10 +118,9 @@ impl JoltPackedWitnessBuilder {
         &mut self,
         bytes: &[u8],
     ) -> Result<&mut Self, JoltPackedWitnessError> {
-        let kind = PackingAdviceKind::Untrusted;
         let domain = "untrusted advice bytes";
         let expected = self
-            .advice_byte_count(kind)?
+            .untrusted_advice_byte_count()?
             .ok_or(JoltPackedWitnessError::MissingDomain { domain })?;
         if bytes.len() != expected {
             return Err(JoltPackedWitnessError::LengthMismatch {
@@ -118,7 +131,11 @@ impl JoltPackedWitnessBuilder {
         }
         for (row, byte) in bytes.iter().copied().enumerate() {
             self.emit_byte(
-                PackingFamilyId::AdviceBytes { kind, index: 0 },
+                JoltPackingFamilyId::AdviceBytes {
+                    kind: JoltAdviceKind::Untrusted,
+                    index: 0,
+                }
+                .into(),
                 row,
                 0,
                 byte,
@@ -154,7 +171,7 @@ impl JoltPackedWitnessBuilder {
 
         if self
             .layout
-            .family(&PackingFamilyId::FieldRdIncByte { index: 0 })
+            .family(&JoltPackingFamilyId::FieldRdIncByte { index: 0 }.into())
             .is_some()
         {
             let rd_delta = if row.rd_index().is_some() {
@@ -165,7 +182,7 @@ impl JoltPackedWitnessBuilder {
             let encoded = AkitaField::from_i128(rd_delta).to_bytes_le_vec();
             for (index, byte) in encoded.into_iter().enumerate() {
                 self.emit_byte(
-                    PackingFamilyId::FieldRdIncByte { index },
+                    JoltPackingFamilyId::FieldRdIncByte { index }.into(),
                     row_index,
                     0,
                     byte,
@@ -196,14 +213,14 @@ impl JoltPackedWitnessBuilder {
         let msb = shifted >> 64;
         for index in 0..chunk_count {
             self.emit_one(
-                PackingFamilyId::UnsignedIncChunk { index },
+                JoltPackingFamilyId::UnsignedIncChunk { index }.into(),
                 row,
                 0,
                 little_endian_chunk(lower, index, log_k_chunk)?,
             )?;
         }
         if msb == 1 {
-            self.emit_one(PackingFamilyId::UnsignedIncMsb, row, 0, 1)?;
+            self.emit_one(JoltPackingFamilyId::UnsignedIncMsb.into(), row, 0, 1)?;
         }
         Ok(())
     }
@@ -248,29 +265,33 @@ impl JoltPackedWitnessBuilder {
         Ok(rows)
     }
 
-    fn advice_byte_count(
-        &self,
-        kind: PackingAdviceKind,
-    ) -> Result<Option<usize>, JoltPackedWitnessError> {
+    fn untrusted_advice_byte_count(&self) -> Result<Option<usize>, JoltPackedWitnessError> {
         let mut rows = None;
         for family in &self.layout.families {
-            if family.id == (PackingFamilyId::AdviceBytes { kind, index: 0 }) {
+            if family.id
+                == (JoltPackingFamilyId::AdviceBytes {
+                    kind: JoltAdviceKind::Untrusted,
+                    index: 0,
+                }
+                .into())
+            {
                 merge_domain_rows(&mut rows, family.domain, "untrusted advice bytes")?;
             }
         }
         Ok(rows)
     }
 
-    fn max_trace_family_index(&self, is_family: impl Fn(&PackingFamilyId) -> bool) -> usize {
+    fn max_trace_family_index(&self, is_family: impl Fn(JoltPackingFamilyId) -> bool) -> usize {
         self.layout
             .families
             .iter()
             .filter(|family| matches!(family.domain, PackingFactDomain::TraceRows { .. }))
-            .filter(|family| is_family(&family.id))
-            .filter_map(|family| match family.id {
-                PackingFamilyId::InstructionRa { index }
-                | PackingFamilyId::BytecodeRa { index }
-                | PackingFamilyId::RamRa { index } => Some(index + 1),
+            .filter_map(|family| JoltPackingFamilyId::from_physical_id(&family.id))
+            .filter(|family| is_family(*family))
+            .filter_map(|family| match family {
+                JoltPackingFamilyId::InstructionRa { index }
+                | JoltPackingFamilyId::BytecodeRa { index }
+                | JoltPackingFamilyId::RamRa { index } => Some(index + 1),
                 _ => None,
             })
             .max()
@@ -313,7 +334,7 @@ fn validate_akita_jolt_packed_witness_layout(
     layout: &PackingWitnessLayout,
 ) -> Result<(), VerifierError> {
     for family in &layout.families {
-        if jolt_packed_witness_family_is_precommitted(&family.id) {
+        if packed_family_is_precommitted(&family.id) {
             return Err(VerifierError::InvalidProtocolConfig {
                 reason: format!(
                     "precommitted family {:?} cannot be included in the lattice packing witness layout",
@@ -325,24 +346,6 @@ fn validate_akita_jolt_packed_witness_layout(
     Ok(())
 }
 
-fn jolt_packed_witness_family_is_precommitted(family: &PackingFamilyId) -> bool {
-    matches!(
-        family,
-        PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Trusted,
-            ..
-        } | PackingFamilyId::BytecodeChunk { .. }
-            | PackingFamilyId::BytecodeRegisterSelector { .. }
-            | PackingFamilyId::BytecodeCircuitFlag { .. }
-            | PackingFamilyId::BytecodeInstructionFlag { .. }
-            | PackingFamilyId::BytecodeLookupSelector { .. }
-            | PackingFamilyId::BytecodeRafFlag { .. }
-            | PackingFamilyId::BytecodeUnexpandedPcBytes { .. }
-            | PackingFamilyId::BytecodeImmBytes { .. }
-            | PackingFamilyId::ProgramImageInit
-    )
-}
-
 fn pack_untrusted_advice_bytes(
     builder: &mut JoltPackedWitnessBuilder,
     bytes: Option<&[u8]>,
@@ -351,11 +354,11 @@ fn pack_untrusted_advice_bytes(
         builder.layout(),
         |id| {
             matches!(
-                id,
-                PackingFamilyId::AdviceBytes {
-                    kind: PackingAdviceKind::Untrusted,
+                JoltPackingFamilyId::from_physical_id(id),
+                Some(JoltPackingFamilyId::AdviceBytes {
+                    kind: JoltAdviceKind::Untrusted,
                     index: 0,
-                }
+                })
             )
         },
         "untrusted advice bytes",
@@ -539,7 +542,9 @@ mod tests {
 
     use super::*;
     use jolt_field::FixedByteSize;
-    use jolt_openings::{PackingAlphabet, PackingFamilySpec, PackingWitnessSource};
+    use jolt_openings::{
+        PackingAdviceKind, PackingAlphabet, PackingFamilySpec, PackingWitnessSource,
+    };
     use jolt_riscv::{
         CapturedState, JoltInstructionKind, JoltInstructionRow, LoadState, NormalizedOperands,
         StoreState,

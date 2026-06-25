@@ -1,9 +1,7 @@
 use jolt_field::Field;
-use jolt_openings::{
-    PackingFamilyId, PackingValidityRequirement, PackingViewFormula, PackingViewTerm,
-};
+use jolt_openings::{PackingValidityRequirement, PackingViewFormula, PackingViewTerm};
 
-use crate::protocols::jolt::weighted_byte_decode_terms;
+use crate::protocols::jolt::{weighted_byte_decode_terms, JoltPackingFamilyId};
 
 pub fn field_rd_inc_lattice_view_formula<F: Field>(byte_width: usize) -> PackingViewFormula<F> {
     PackingViewFormula::linear_decoded(field_rd_inc_byte_terms(byte_width))
@@ -14,7 +12,7 @@ pub fn field_rd_inc_byte_terms<F: Field>(byte_width: usize) -> Vec<PackingViewTe
     let mut place = F::one();
     for index in 0..byte_width {
         terms.extend(weighted_byte_decode_terms(
-            PackingFamilyId::FieldRdIncByte { index },
+            JoltPackingFamilyId::FieldRdIncByte { index }.into(),
             [(0, place)],
         ));
         place *= F::from_u64(256);
@@ -26,7 +24,7 @@ pub fn field_rd_inc_validity_requirements(byte_width: usize) -> Vec<PackingValid
     (0..byte_width)
         .map(|index| {
             PackingValidityRequirement::exact_one_hot(
-                PackingFamilyId::FieldRdIncByte { index },
+                JoltPackingFamilyId::FieldRdIncByte { index }.into(),
                 1,
                 256,
             )
@@ -39,7 +37,7 @@ pub fn field_rd_inc_canonical_bytes_requirement(
     modulus: u128,
 ) -> PackingValidityRequirement {
     PackingValidityRequirement::field_element_canonical_bytes(
-        PackingFamilyId::FieldRdIncByte { index: 0 },
+        JoltPackingFamilyId::FieldRdIncByte { index: 0 }.into(),
         byte_width,
         modulus,
     )
@@ -49,6 +47,7 @@ pub fn field_rd_inc_canonical_bytes_requirement(
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_openings::PackingFamilyId;
 
     #[test]
     fn field_rd_inc_terms_decode_separate_little_endian_byte_families() {

@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::JoltPackingFamilyId;
 use jolt_openings::{
     PackingFamilyId, PackingValidityKind, PackingValidityRequirement, PackingViewFormula,
 };
@@ -90,10 +91,12 @@ fn validate_lattice_term_validity_coverage(
 
 fn core_jolt_ra_family(family: &PackingFamilyId) -> bool {
     matches!(
-        family,
-        PackingFamilyId::InstructionRa { .. }
-            | PackingFamilyId::BytecodeRa { .. }
-            | PackingFamilyId::RamRa { .. }
+        JoltPackingFamilyId::from_physical_id(family),
+        Some(
+            JoltPackingFamilyId::InstructionRa { .. }
+                | JoltPackingFamilyId::BytecodeRa { .. }
+                | JoltPackingFamilyId::RamRa { .. }
+        )
     )
 }
 
@@ -120,8 +123,11 @@ fn requirement_covers_term(
 
 fn term_requires_canonical_bytes(family: &PackingFamilyId) -> bool {
     matches!(
-        family,
-        PackingFamilyId::FieldRdIncByte { .. } | PackingFamilyId::BytecodeImmBytes { .. }
+        JoltPackingFamilyId::from_physical_id(family),
+        Some(
+            JoltPackingFamilyId::FieldRdIncByte { .. }
+                | JoltPackingFamilyId::BytecodeImmBytes { .. }
+        )
     )
 }
 
@@ -133,23 +139,28 @@ fn canonical_requirement_covers_term(
     let Ok(byte_width) = canonical_field_byte_width(requirement) else {
         return false;
     };
-    match (&requirement.family, family) {
+    match (
+        JoltPackingFamilyId::from_physical_id(&requirement.family),
+        JoltPackingFamilyId::from_physical_id(family),
+    ) {
         (
-            PackingFamilyId::FieldRdIncByte { index: 0 },
-            PackingFamilyId::FieldRdIncByte { index },
-        ) => *index < byte_width && limb == 0,
+            Some(JoltPackingFamilyId::FieldRdIncByte { index: 0 }),
+            Some(JoltPackingFamilyId::FieldRdIncByte { index }),
+        ) => index < byte_width && limb == 0,
         (
-            PackingFamilyId::BytecodeImmBytes { chunk: expected },
-            PackingFamilyId::BytecodeImmBytes { chunk },
+            Some(JoltPackingFamilyId::BytecodeImmBytes { chunk: expected }),
+            Some(JoltPackingFamilyId::BytecodeImmBytes { chunk }),
         ) => expected == chunk && limb < byte_width,
         _ => false,
     }
 }
 
 fn term_requires_bytecode_store_rd_disjoint(family: &PackingFamilyId) -> bool {
-    match family {
-        PackingFamilyId::BytecodeCircuitFlag { flag, .. } => *flag == CircuitFlags::Store as usize,
-        PackingFamilyId::BytecodeRegisterSelector { selector, .. } => *selector == 2,
+    match JoltPackingFamilyId::from_physical_id(family) {
+        Some(JoltPackingFamilyId::BytecodeCircuitFlag { flag, .. }) => {
+            flag == CircuitFlags::Store as usize
+        }
+        Some(JoltPackingFamilyId::BytecodeRegisterSelector { selector, .. }) => selector == 2,
         _ => false,
     }
 }
@@ -161,22 +172,22 @@ fn bytecode_store_rd_disjoint_requirement_covers_term(
     let PackingValidityKind::BytecodeStoreRdDisjoint = requirement.kind else {
         return false;
     };
-    let PackingFamilyId::BytecodeCircuitFlag {
+    let Some(JoltPackingFamilyId::BytecodeCircuitFlag {
         chunk: requirement_chunk,
         flag,
-    } = &requirement.family
+    }) = JoltPackingFamilyId::from_physical_id(&requirement.family)
     else {
         return false;
     };
-    if *flag != CircuitFlags::Store as usize {
+    if flag != CircuitFlags::Store as usize {
         return false;
     }
-    match family {
-        PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-            requirement_chunk == chunk && *flag == CircuitFlags::Store as usize
+    match JoltPackingFamilyId::from_physical_id(family) {
+        Some(JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag }) => {
+            requirement_chunk == chunk && flag == CircuitFlags::Store as usize
         }
-        PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-            requirement_chunk == chunk && *selector == 2
+        Some(JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector }) => {
+            requirement_chunk == chunk && selector == 2
         }
         _ => false,
     }
