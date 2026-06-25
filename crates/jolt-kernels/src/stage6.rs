@@ -4849,6 +4849,10 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
     }
 }
 
+/// Gather round-3 tables for use in instruction RA bind.
+// NOTE: This is factored out of the instruction RA bind function so it can be used in CUDA
+// equivalence tests.
+#[inline(always)]
 pub(crate) fn materialize_gather8<F: Field, R: AsRef<[Option<u8>]> + Sync>(
     table_groups: &[&Vec<Vec<F>>; 8],
     indices: &[R],
