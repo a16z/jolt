@@ -18,11 +18,24 @@ pub struct PublicIoMemory {
 }
 
 impl PublicIoMemory {
+    pub fn from_segments(
+        segments: Vec<PublicMemorySegment>,
+        io_mask_start: u128,
+        io_mask_end: u128,
+    ) -> Self {
+        let io_num_vars = io_mask_end.next_power_of_two().max(1).ilog2() as usize;
+        Self {
+            segments,
+            io_mask_start,
+            io_mask_end,
+            io_num_vars,
+        }
+    }
+
     pub fn new(public_io: &JoltDevice) -> Result<Self, MemoryLayoutError> {
         let layout = &public_io.memory_layout;
         let io_mask_start = layout.remapped_word_address(layout.input_start)? as u128;
         let io_mask_end = layout.remapped_word_address(RAM_START_ADDRESS)? as u128;
-        let io_num_vars = io_mask_end.next_power_of_two().max(1).ilog2() as usize;
         let mut segments = Vec::new();
 
         if !public_io.inputs.is_empty() {
@@ -51,12 +64,7 @@ impl PublicIoMemory {
             });
         }
 
-        Ok(Self {
-            segments,
-            io_mask_start,
-            io_mask_end,
-            io_num_vars,
-        })
+        Ok(Self::from_segments(segments, io_mask_start, io_mask_end))
     }
 
     pub fn io_num_vars(&self) -> usize {
