@@ -429,7 +429,7 @@ fn collect_guest_proofs(
             &io_device,
             &proof,
             None,
-            false,
+            proof.claims.is_zk(),
         )
         .is_ok();
         info!("  Verification result: {is_valid}");
@@ -608,7 +608,7 @@ fn run_recursion_proof(
                 &io_device,
                 &proof,
                 None,
-                false,
+                proof.claims.is_zk(),
             )
             .is_ok();
             let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
