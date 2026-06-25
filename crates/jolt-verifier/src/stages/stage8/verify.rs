@@ -125,31 +125,14 @@ where
             if checked.zk {
                 return Err(VerifierError::ExpectedCommittedProof { field: "stage8" });
             }
-            let batch_result = PCS::verify_batch(
+            let output = verify_clear_batch_statement::<PCS, _>(
                 &preprocessing.pcs_setup,
                 transcript,
-                &batch.statement,
+                batch,
                 &proof.joint_opening_proof,
-            )
-            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-                reason: error.to_string(),
-            })?;
-            let mut coefficients = batch_result.coefficients;
-            coefficients.extend(verify_precommitted_opening_batches::<PCS, _>(
-                &preprocessing.pcs_setup,
-                transcript,
-                &batch.precommitted_statements,
                 &proof.lattice_precommitted_opening_proofs,
-            )?);
-
-            Ok(Stage8Output::Clear(Stage8ClearOutput {
-                opening_claims: batch.opening_claims,
-                opening_ids: batch.opening_ids,
-                constraint_coefficients: coefficients,
-                pcs_opening_point: batch.pcs_opening_point,
-                joint_claim: batch_result.reduced_opening,
-                joint_commitment: batch_result.joint_commitment,
-            }))
+            )?;
+            Ok(Stage8Output::Clear(output))
         }
     }
 }
@@ -184,21 +167,48 @@ where
         return Err(VerifierError::ExpectedClearProof { field: "stage8" });
     };
 
-    let batch_result = PCS::verify_batch(
+    verify_clear_batch_statement::<PCS, _>(
         &preprocessing.pcs_setup,
         transcript,
-        &batch.statement,
+        batch,
         &proof.joint_opening_proof,
+        &proof.lattice_precommitted_opening_proofs,
     )
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })?;
+}
+
+fn verify_clear_batch_statement<PCS, T>(
+    setup: &PCS::VerifierSetup,
+    transcript: &mut T,
+    batch: Stage8ClearBatchStatement<PCS::Field, PCS::Output>,
+    proof: &PCS::Proof,
+    precommitted_proofs: &[PCS::Proof],
+) -> Result<Stage8ClearOutput<PCS::Field, PCS::Output>, VerifierError>
+where
+    PCS: BatchOpeningScheme,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    if batch.precommitted_statements.len() != precommitted_proofs.len() {
+        return Err(VerifierError::FinalOpeningVerificationFailed {
+            reason: format!(
+                "expected {} precommitted opening proofs, got {}",
+                batch.precommitted_statements.len(),
+                precommitted_proofs.len()
+            ),
+        });
+    }
+
+    let batch_result =
+        PCS::verify_batch(setup, transcript, &batch.statement, proof).map_err(|error| {
+            VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            }
+        })?;
     let mut coefficients = batch_result.coefficients;
     coefficients.extend(verify_precommitted_opening_batches::<PCS, _>(
-        &preprocessing.pcs_setup,
+        setup,
         transcript,
         &batch.precommitted_statements,
-        &proof.lattice_precommitted_opening_proofs,
+        precommitted_proofs,
     )?);
 
     Ok(Stage8ClearOutput {
@@ -1032,6 +1042,173 @@ mod tests {
 
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_openings::{BatchOpeningResult, OpeningsError};
+    use jolt_poly::{MultilinearPoly, Polynomial};
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct MainProofFailingPcs;
+
+    impl jolt_crypto::Commitment for MainProofFailingPcs {
+        type Output = u64;
+    }
+
+    impl CommitmentScheme for MainProofFailingPcs {
+        type Field = Fr;
+        type Proof = Fr;
+        type ProverSetup = ();
+        type VerifierSetup = ();
+        type Polynomial = Polynomial<Fr>;
+        type OpeningHint = ();
+        type SetupParams = ();
+
+        fn setup(_params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
+            ((), ())
+        }
+
+        fn verifier_setup(_prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
+
+        fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
+            _poly: &P,
+            _setup: &Self::ProverSetup,
+        ) -> (Self::Output, Self::OpeningHint) {
+            (0, ())
+        }
+
+        fn open(
+            _poly: &Self::Polynomial,
+            _point: &[Self::Field],
+            eval: Self::Field,
+            _setup: &Self::ProverSetup,
+            _hint: Option<Self::OpeningHint>,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Self::Proof {
+            eval
+        }
+
+        fn verify(
+            _commitment: &Self::Output,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _proof: &Self::Proof,
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Result<(), OpeningsError> {
+            Ok(())
+        }
+
+        fn bind_opening_inputs(
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _point: &[Self::Field],
+            _eval: &Self::Field,
+        ) {
+        }
+    }
+
+    impl BatchOpeningScheme for MainProofFailingPcs {
+        fn prove_batch<T, OpeningId, RelationId>(
+            _setup: &Self::ProverSetup,
+            _transcript: &mut T,
+            statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+            _polynomials: &[Self::Polynomial],
+            _hints: Vec<Self::OpeningHint>,
+        ) -> Result<Self::Proof, OpeningsError>
+        where
+            T: Transcript<Challenge = Self::Field>,
+        {
+            statement
+                .claims
+                .first()
+                .map(|claim| claim.claim)
+                .ok_or(OpeningsError::VerificationFailed)
+        }
+
+        fn verify_batch<T, OpeningId, RelationId>(
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut T,
+            _statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+            _proof: &Self::Proof,
+        ) -> Result<BatchOpeningResult<Self::Field, Self::Output>, OpeningsError>
+        where
+            T: Transcript<Challenge = Self::Field>,
+        {
+            Err(OpeningsError::InvalidBatch(
+                "main packed proof was checked first".to_string(),
+            ))
+        }
+    }
+
+    #[test]
+    fn clear_batch_rejects_precommitted_count_before_main_proof() {
+        let id = final_opening_id(JoltCommittedPolynomial::RdInc).into();
+        let point = vec![Fr::from_u64(2)];
+        let statement = BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point.clone(),
+            layout_digest: [0; 32],
+            claims: vec![BatchOpeningClaim {
+                id,
+                relation: id,
+                commitment: 7,
+                claim: Fr::from_u64(5),
+                view: PhysicalView::Direct,
+                scale: Fr::from_u64(1),
+            }],
+        };
+        let batch = Stage8ClearBatchStatement {
+            logical_manifest: Stage8LogicalManifest {
+                openings: vec![Stage8LogicalOpening {
+                    id,
+                    point: point.clone(),
+                    claim: Some(Fr::from_u64(5)),
+                    scale: Fr::from_u64(1),
+                }],
+                pcs_opening_point: Point::high_to_low(point.clone()),
+            },
+            physical_manifest: Stage8PhysicalManifest::direct(
+                &Stage8LogicalManifest {
+                    openings: Vec::new(),
+                    pcs_opening_point: Point::high_to_low(point.clone()),
+                },
+                [0; 32],
+            ),
+            opening_ids: vec![id],
+            opening_claims: Vec::new(),
+            pcs_opening_point: Point::high_to_low(point.clone()),
+            statement: statement.clone(),
+            precommitted_statements: vec![statement],
+        };
+        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"stage8-count-precheck");
+
+        let error = verify_clear_batch_statement::<MainProofFailingPcs, _>(
+            &(),
+            &mut transcript,
+            batch.clone(),
+            &Fr::from_u64(99),
+            &[],
+        )
+        .expect_err("missing precommitted proof should reject before main packed proof");
+
+        assert!(matches!(
+            error,
+            VerifierError::FinalOpeningVerificationFailed { reason }
+                if reason.contains("expected 1 precommitted opening proofs, got 0")
+        ));
+
+        let error = verify_clear_batch_statement::<MainProofFailingPcs, _>(
+            &(),
+            &mut transcript,
+            batch,
+            &Fr::from_u64(99),
+            &[Fr::from_u64(1), Fr::from_u64(2)],
+        )
+        .expect_err("extra precommitted proof should reject before main packed proof");
+
+        assert!(matches!(
+            error,
+            VerifierError::FinalOpeningVerificationFailed { reason }
+                if reason.contains("expected 1 precommitted opening proofs, got 2")
+        ));
+    }
 
     #[test]
     fn committed_program_batch_entries_require_final_openings() {

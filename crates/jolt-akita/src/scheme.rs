@@ -417,6 +417,71 @@ mod tests {
         .expect_err("changed direct commitment digest should reject");
     }
 
+    #[test]
+    fn sparse_native_polynomial_batch_opening_roundtrips_and_binds_commitment() {
+        let num_vars = 6;
+        let setup_params = AkitaSetupParams::new(num_vars, 1, [19; 32]);
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params);
+        let unit_indices = [0, 3, 17];
+        let sparse = AkitaSparsePolynomial::from_jolt_unit_indices(num_vars, unit_indices)
+            .expect("sparse polynomial should build");
+        let (commitment, hint) =
+            AkitaScheme::commit_sparse_polynomial(&prover_setup, [23; 32], &sparse)
+                .expect("sparse commitment should build");
+        let mut dense = vec![AkitaField::zero(); 1 << num_vars];
+        for index in unit_indices {
+            dense[index] = AkitaField::one();
+        }
+        let point = (0..num_vars)
+            .map(|index| AkitaField::from_u64(index as u64 + 2))
+            .collect::<Vec<_>>();
+        let claim = Polynomial::new(dense).evaluate(&point);
+        let statement = BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest: commitment.layout_digest,
+            claims: vec![BatchOpeningClaim {
+                id: (),
+                relation: (),
+                commitment: commitment.clone(),
+                claim,
+                view: PhysicalView::Direct,
+                scale: AkitaField::one(),
+            }],
+        };
+
+        let mut prover_transcript = RecordingTranscript::new(b"akita-sparse-native");
+        let proof = AkitaScheme::prove_sparse_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &sparse,
+            hint,
+        )
+        .expect("sparse proof should prove");
+        assert_eq!(proof.commitment, commitment);
+
+        let mut verifier_transcript = RecordingTranscript::new(b"akita-sparse-native");
+        let _result = AkitaScheme::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("sparse proof should verify");
+
+        let mut tampered_proof = proof;
+        tampered_proof.commitment.layout_digest = [42; 32];
+        let mut verifier_transcript = RecordingTranscript::new(b"akita-sparse-native");
+        let _error = AkitaScheme::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &tampered_proof,
+        )
+        .expect_err("tampered proof commitment should reject");
+    }
+
     fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
         haystack
             .windows(needle.len())

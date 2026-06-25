@@ -135,6 +135,11 @@ impl StableZkProofShape {
         let JoltProofClaims::Zk { blindfold_proof } = &case.proof.claims else {
             panic!("ZK statistical fixture must carry a BlindFold proof");
         };
+        let commitments = case
+            .proof
+            .commitments
+            .as_dory()
+            .expect("ZK statistical fixture must use Dory commitments");
 
         Self {
             public_io: case.public_io.clone(),
@@ -145,9 +150,9 @@ impl StableZkProofShape {
             one_hot_config: case.proof.one_hot_config,
             trace_polynomial_order: case.proof.trace_polynomial_order,
             commitment_shape: CommitmentShape {
-                instruction_ra: case.proof.commitments.ra.instruction.len(),
-                ram_ra: case.proof.commitments.ra.ram.len(),
-                bytecode_ra: case.proof.commitments.ra.bytecode.len(),
+                instruction_ra: commitments.ra.instruction.len(),
+                ram_ra: commitments.ra.ram.len(),
+                bytecode_ra: commitments.ra.bytecode.len(),
                 has_untrusted_advice: case.proof.untrusted_advice_commitment.is_some(),
             },
             stage_shapes: committed_stage_shapes(&case.proof.stages),
@@ -279,15 +284,16 @@ fn collect_jolt_proof_statistics(
     let JoltProofClaims::Zk { blindfold_proof } = &proof.claims else {
         panic!("ZK statistical fixture must carry a BlindFold proof");
     };
+    let commitments = proof
+        .commitments
+        .as_dory()
+        .expect("ZK statistical fixture must use Dory commitments");
 
-    tracker.record_append("pcs.commitment.rd_inc", &proof.commitments.rd_inc);
-    tracker.record_append("pcs.commitment.ram_inc", &proof.commitments.ram_inc);
-    tracker.record_append_positions(
-        "pcs.commitment.instruction_ra",
-        &proof.commitments.ra.instruction,
-    );
-    tracker.record_append_positions("pcs.commitment.ram_ra", &proof.commitments.ra.ram);
-    tracker.record_append_positions("pcs.commitment.bytecode_ra", &proof.commitments.ra.bytecode);
+    tracker.record_append("pcs.commitment.rd_inc", &commitments.rd_inc);
+    tracker.record_append("pcs.commitment.ram_inc", &commitments.ram_inc);
+    tracker.record_append_positions("pcs.commitment.instruction_ra", &commitments.ra.instruction);
+    tracker.record_append_positions("pcs.commitment.ram_ra", &commitments.ra.ram);
+    tracker.record_append_positions("pcs.commitment.bytecode_ra", &commitments.ra.bytecode);
     if let Some(commitment) = &proof.untrusted_advice_commitment {
         tracker.record_append("pcs.commitment.untrusted_advice", commitment);
     }

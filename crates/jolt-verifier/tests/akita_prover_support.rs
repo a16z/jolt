@@ -25,18 +25,19 @@ use jolt_riscv::{
     NormalizedOperands, StoreState,
 };
 use jolt_verifier::{
-    akita::{
+    prover_support::{
         build_akita_packing_jolt_witness, commit_akita_packing_jolt_witness,
-        commit_akita_packing_witness, commit_akita_packing_witness_with_config, verify_akita_clear,
-        AkitaJoltProof, AkitaPackingBatchProof, AkitaPackingJoltWitnessInput,
-        AkitaPackingProverSetup, AkitaPackingValidityProofArtifacts, AkitaPackingVerifierSetup,
-        AkitaPackingWitnessArtifacts, AkitaVerifierPreprocessing,
+        commit_akita_packing_witness, commit_akita_packing_witness_with_config,
+        AkitaPackingBatchProof, AkitaPackingJoltWitnessInput, AkitaPackingProverSetup,
+        AkitaPackingValidityProofArtifacts, AkitaPackingVerifierSetup,
+        AkitaPackingWitnessArtifacts,
     },
     stages::stage8::{
         lattice_protocol_config_for_packed_witness_layout,
         lattice_validity_requirements_for_packed_witness_layout,
     },
-    IncrementCommitmentMode, JoltProtocolConfig, ProgramMode, VerifierError,
+    verify_akita_clear, AkitaJoltProof, AkitaVerifierPreprocessing, IncrementCommitmentMode,
+    JoltProtocolConfig, ProgramMode, VerifierError,
 };
 
 fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
@@ -480,7 +481,7 @@ fn akita_clear_verifier_surface_is_nameable() {
         &AkitaPackingWitnessArtifacts,
         &SparsePackingWitness<AkitaField>,
     ) -> Result<AkitaPackingBatchProof, VerifierError>;
-    let _prove: ProveFn = jolt_verifier::akita::prove_akita_jolt_final_openings::<
+    let _prove: ProveFn = jolt_verifier::prover_support::prove_akita_jolt_final_openings::<
         TestTranscript,
         SparsePackingWitness<AkitaField>,
     >;
@@ -493,8 +494,9 @@ fn akita_clear_verifier_surface_is_nameable() {
         &AkitaPackingWitnessArtifacts,
         &SparsePackingWitness<AkitaField>,
     ) -> Result<AkitaPackingValidityProofArtifacts, VerifierError>;
-    let _prove_validity: ProveValidityFn = jolt_verifier::akita::prove_akita_jolt_packed_validity::<
-        TestTranscript,
-        SparsePackingWitness<AkitaField>,
-    >;
+    let _prove_validity: ProveValidityFn =
+        jolt_verifier::prover_support::prove_akita_jolt_packed_validity::<
+            TestTranscript,
+            SparsePackingWitness<AkitaField>,
+        >;
 }
