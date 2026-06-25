@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::JoltFormulaDimensions, instruction, ram, registers},
+    geometry::{dimensions::JoltFormulaDimensions, instruction, ram, registers},
     relations, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;

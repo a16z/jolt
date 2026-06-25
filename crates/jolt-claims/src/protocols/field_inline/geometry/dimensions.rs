@@ -1,6 +1,6 @@
 use jolt_field::Field;
 
-use crate::protocols::jolt::formulas::dimensions::JoltFormulaPointError;
+use crate::protocols::jolt::geometry::dimensions::JoltFormulaPointError;
 
 pub const FIELD_REGISTERS_ADDRESS_BITS: usize = super::super::FIELD_REGISTERS_LOG_K;
 

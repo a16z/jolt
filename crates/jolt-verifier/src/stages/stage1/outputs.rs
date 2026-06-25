@@ -3,7 +3,7 @@
 use std::collections::{btree_map::Entry, BTreeMap};
 
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::{outer_opening, SpartanOuterDimensions},
+    geometry::spartan::{outer_opening, SpartanOuterDimensions},
     JoltRelationId, JoltVirtualPolynomial,
 };
 use jolt_field::Field;

@@ -1,7 +1,7 @@
 //! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
 
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::TraceDimensions, relations, JoltRelationId,
+    geometry::dimensions::TraceDimensions, relations, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;

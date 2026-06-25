@@ -1,9 +1,9 @@
 //! Opening-claim projection for verifier-native prover proofs.
 #[cfg(any(feature = "prover-fixtures", test))]
-use jolt_claims::protocols::jolt::formulas::spartan::SpartanOuterDimensions;
+use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
     self as native,
-    formulas::{
+    geometry::{
         booleanity, bytecode,
         claim_reductions::registers as registers_claim_reduction,
         claim_reductions::{

@@ -13,7 +13,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::ReadWriteDimensions, ram::RamRafEvaluationDimensions},
+    geometry::{dimensions::ReadWriteDimensions, ram::RamRafEvaluationDimensions},
     JoltPublicId, JoltRelationId, RamRafEvaluationPublic,
 };
 use jolt_claims::SymbolicSumcheck;

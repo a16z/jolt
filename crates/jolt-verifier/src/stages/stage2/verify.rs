@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         dimensions::TraceDimensions, ram::RamRafEvaluationDimensions,
         spartan::SpartanProductDimensions,
     },

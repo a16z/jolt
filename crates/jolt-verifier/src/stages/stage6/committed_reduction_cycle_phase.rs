@@ -18,7 +18,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::bytecode::BytecodeOutputWeightInputs, AdviceClaimReductionLayout,
+    geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs, AdviceClaimReductionLayout,
     BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, JoltAdviceKind, JoltChallengeId,
     JoltRelationId, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };

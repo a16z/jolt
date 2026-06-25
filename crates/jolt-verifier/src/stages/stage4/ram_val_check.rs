@@ -15,7 +15,7 @@
 //! the input claim; their staged points are carried for completeness.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         claim_reductions::program_image,
         dimensions::TraceDimensions,
         ram::{self, RamValCheckInit, RamValCheckInitContribution},

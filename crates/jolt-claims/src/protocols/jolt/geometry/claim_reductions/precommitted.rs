@@ -501,7 +501,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use crate::protocols::jolt::formulas::dimensions::TracePolynomialOrder;
+    use crate::protocols::jolt::geometry::dimensions::TracePolynomialOrder;
     use jolt_field::{Fr, FromPrimitiveInt, Invertible};
 
     #[test]

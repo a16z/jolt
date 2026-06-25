@@ -9,7 +9,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::committed_address_chunks, ram::RamRaVirtualizationDimensions},
+    geometry::{dimensions::committed_address_chunks, ram::RamRaVirtualizationDimensions},
     JoltPublicId, JoltRelationId, RamRaVirtualizationPublic,
 };
 use jolt_claims::SymbolicSumcheck;

@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::claim_reductions::registers::{
+use crate::protocols::jolt::geometry::claim_reductions::registers::{
     rd_write_value_reduced, rd_write_value_spartan, rs1_value_reduced, rs1_value_spartan,
     rs2_value_reduced, rs2_value_spartan,
 };

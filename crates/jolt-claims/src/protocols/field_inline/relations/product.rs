@@ -3,7 +3,7 @@
 use jolt_field::RingCore;
 
 use crate::opening;
-use crate::protocols::field_inline::formulas::product::{
+use crate::protocols::field_inline::geometry::product::{
     field_product_opening, field_rs1_value_product, field_rs2_value_product,
 };
 use crate::protocols::field_inline::{
@@ -49,7 +49,7 @@ impl SymbolicSumcheck for FieldProduct {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::field_inline::formulas::product::{
+    use crate::protocols::field_inline::geometry::product::{
         field_inv_product_opening, field_product_input_openings, field_product_output_openings,
         field_rd_value_product, selected_product_lanes, selected_product_remainder_output_openings,
         selected_product_uniskip_input_openings, FieldRegistersProductLane,

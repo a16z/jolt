@@ -11,7 +11,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions,
+    geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions,
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
     JoltPublicId, JoltRelationId,
 };

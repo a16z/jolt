@@ -13,7 +13,7 @@ use crate::support::{tamper_manifest, verifier_fixtures::VerifierFixtureCase};
 use crate::support::proof_claims::{offset_opening_claim, opening_claim, upsert_opening_claim};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         booleanity, bytecode,
         claim_reductions::{
             advice, hamming_weight, increments, instruction as instruction_claim_reduction,

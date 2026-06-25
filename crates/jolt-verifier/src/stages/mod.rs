@@ -1,9 +1,9 @@
 //! Typed verifier stage entry points.
 
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::{advice, bytecode, program_image},
-    formulas::dimensions::JoltFormulaDimensions,
-    formulas::error::JoltFormulaPointError,
+    geometry::claim_reductions::{advice, bytecode, program_image},
+    geometry::dimensions::JoltFormulaDimensions,
+    geometry::error::JoltFormulaPointError,
     AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
     PrecommittedClaimReduction, ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };

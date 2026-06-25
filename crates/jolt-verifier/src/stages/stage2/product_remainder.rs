@@ -13,7 +13,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::SpartanProductDimensions, JoltPublicId, JoltRelationId,
+    geometry::spartan::SpartanProductDimensions, JoltPublicId, JoltRelationId,
     SpartanProductVirtualizationPublic,
 };
 use jolt_claims::SymbolicSumcheck;

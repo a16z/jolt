@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
+    geometry::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
     JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;

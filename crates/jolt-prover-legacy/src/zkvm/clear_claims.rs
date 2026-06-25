@@ -2,7 +2,7 @@
 
 use jolt_claims::protocols::jolt::{
     self as jolt,
-    formulas::{
+    geometry::{
         booleanity, bytecode,
         claim_reductions::registers as registers_claim_reduction,
         claim_reductions::{

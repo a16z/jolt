@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::TraceDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
     RamHammingBooleanityPublic,
 };
 use jolt_claims::SymbolicSumcheck;

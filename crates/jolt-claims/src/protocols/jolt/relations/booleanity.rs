@@ -3,7 +3,7 @@
 use jolt_field::RingCore;
 
 use crate::opening;
-use crate::protocols::jolt::formulas::booleanity::{
+use crate::protocols::jolt::geometry::booleanity::{
     booleanity_address_phase_opening, booleanity_cycle_output, BooleanityDimensions,
 };
 use crate::protocols::jolt::{JoltExpr, JoltRelationId, JoltSumcheckSpec};
@@ -119,7 +119,7 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::ra::JoltRaPolynomialLayout;
+    use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use crate::protocols::jolt::{
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltCommittedPolynomial,
         JoltOpeningId, JoltPublicId, JoltSumcheckSpec,

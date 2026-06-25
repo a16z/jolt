@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain, JoltSumcheckSpec,
+    geometry::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain, JoltSumcheckSpec,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::FromPrimitiveInt;

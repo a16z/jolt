@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::field_inline::formulas::registers::{
+use crate::protocols::field_inline::geometry::registers::{
     field_rd_inc_read_write, field_rd_inc_val_evaluation, field_rd_value_claim,
     field_rd_wa_read_write, field_rd_wa_val_evaluation, field_registers_val_read_write,
     field_rs1_ra_read_write, field_rs1_value_claim, field_rs2_ra_read_write, field_rs2_value_claim,
@@ -106,7 +106,7 @@ impl SymbolicSumcheck for ValEvaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::field_inline::formulas::registers::{
+    use crate::protocols::field_inline::geometry::registers::{
         read_write_checking_input_openings, val_evaluation_input_openings,
         val_evaluation_output_openings,
     };

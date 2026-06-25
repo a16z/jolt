@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::claim_reductions::bytecode::{
+use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     assert_valid_chunk_count, bytecode_val_stage_opening, cycle_phase_intermediate_opening,
     final_output_expr, NUM_BYTECODE_VAL_STAGES,
 };
@@ -102,7 +102,7 @@ impl SymbolicSumcheck for AddressPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::claim_reductions::bytecode::final_bytecode_chunk_opening;
+    use crate::protocols::jolt::geometry::claim_reductions::bytecode::final_bytecode_chunk_opening;
     use crate::protocols::jolt::BytecodeClaimReductionPublic;
     use jolt_field::{Fr, FromPrimitiveInt};
 

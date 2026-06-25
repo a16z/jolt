@@ -1,11 +1,11 @@
-pub mod formulas;
+pub mod geometry;
 pub mod relations;
 
 mod config;
 mod ids;
 
 pub use config::{FieldInlineConfig, FieldInlineRepresentation, FIELD_REGISTERS_LOG_K};
-pub use formulas::dimensions::{
+pub use geometry::dimensions::{
     FieldInlineSumcheckSpec, FieldRegistersReadWriteDimensions,
     FieldRegistersReadWriteOpeningPoint, FieldRegistersTraceDimensions,
 };

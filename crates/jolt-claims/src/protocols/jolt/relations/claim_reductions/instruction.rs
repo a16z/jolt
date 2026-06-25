@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::claim_reductions::instruction::{
+use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     left_instruction_input_reduced, left_instruction_input_spartan, left_lookup_operand_reduced,
     left_lookup_operand_spartan, lookup_output_reduced, lookup_output_spartan,
     right_instruction_input_reduced, right_instruction_input_spartan, right_lookup_operand_reduced,

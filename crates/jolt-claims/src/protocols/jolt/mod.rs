@@ -1,9 +1,9 @@
-pub mod formulas;
+pub mod geometry;
 pub mod relations;
 
 mod ids;
 
-pub use formulas::{
+pub use geometry::{
     claim_reductions::advice::AdviceClaimReductionLayout,
     claim_reductions::bytecode::BytecodeClaimReductionLayout,
     claim_reductions::precommitted::{

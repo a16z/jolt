@@ -9,7 +9,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::instruction::InstructionReadRafDimensions, InstructionReadRafChallenge,
+    geometry::instruction::InstructionReadRafDimensions, InstructionReadRafChallenge,
     InstructionReadRafPublic, JoltChallengeId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;

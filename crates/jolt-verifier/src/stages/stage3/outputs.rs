@@ -1,7 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 3 verification.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{bytecode, claim_reductions::registers as registers_claim_reduction, instruction},
+    geometry::{bytecode, claim_reductions::registers as registers_claim_reduction, instruction},
     JoltRelationId,
 };
 use jolt_field::Field;

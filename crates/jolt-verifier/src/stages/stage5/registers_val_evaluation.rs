@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
+    geometry::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
     JoltPublicId, JoltRelationId, RegistersValEvaluationPublic,
 };
 use jolt_claims::SymbolicSumcheck;

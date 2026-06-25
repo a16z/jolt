@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::claim_reductions::hamming_weight::{
+use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
     booleanity_claim, hamming_weight_claim, reduced_claim, virtualization_claim,
     HammingWeightClaimReductionDimensions,
 };
@@ -72,9 +72,9 @@ impl SymbolicSumcheck for ClaimReduction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::claim_reductions::hamming_weight::ram_hamming_weight;
-    use crate::protocols::jolt::formulas::dimensions::JoltFormulaDimensionsError;
-    use crate::protocols::jolt::formulas::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
+    use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::ram_hamming_weight;
+    use crate::protocols::jolt::geometry::dimensions::JoltFormulaDimensionsError;
+    use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn layout(

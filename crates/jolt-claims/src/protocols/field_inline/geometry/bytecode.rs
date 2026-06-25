@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::super::FieldInlineOpFlag;
-use crate::protocols::jolt::formulas::dimensions::JoltFormulaPointError;
+use crate::protocols::jolt::geometry::dimensions::JoltFormulaPointError;
 
 pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 8] = [
     FieldInlineOpFlag::Add,

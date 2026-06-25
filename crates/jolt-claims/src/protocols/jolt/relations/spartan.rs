@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::spartan::{
+use crate::protocols::jolt::geometry::spartan::{
     branch_flag_product, is_first_in_sequence_shift, is_noop_shift, is_virtual_shift,
     jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_first_in_sequence_outer, next_is_noop_product, next_is_virtual_outer, next_pc_outer,

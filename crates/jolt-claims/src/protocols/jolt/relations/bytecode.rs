@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::bytecode::{
+use crate::protocols::jolt::geometry::bytecode::{
     bytecode_read_raf_address_phase_opening, pc_spartan_outer, pc_spartan_shift,
     read_raf_cycle_output, read_raf_cycle_output_committed, stage1_claim, stage2_claim,
     stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
@@ -171,7 +171,7 @@ impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::bytecode::{
+    use crate::protocols::jolt::geometry::bytecode::{
         bytecode_ra, imm_instruction_input, imm_spartan_outer, instruction_flag_input,
         instruction_flag_product, instruction_flag_shift, instruction_raf_flag, op_flag_product,
         op_flag_shift, rd_wa_read_write, rd_wa_val_evaluation, rs1_ra_read_write,

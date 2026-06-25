@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         claim_reductions::{
             advice,
             bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},

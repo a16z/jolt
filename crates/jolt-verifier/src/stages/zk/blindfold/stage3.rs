@@ -94,7 +94,7 @@ where
 
     let instruction_outputs = instruction::input_virtualization_output_openings();
     let register_outputs =
-        jolt_claims::protocols::jolt::formulas::claim_reductions::registers::claim_reduction_output_openings();
+        jolt_claims::protocols::jolt::geometry::claim_reductions::registers::claim_reduction_output_openings();
     let output_ids = vec![
         shift_output_openings()[0],
         shift_output_openings()[1],

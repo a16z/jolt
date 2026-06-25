@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 2 verification.
 
-use jolt_claims::protocols::jolt::{formulas::instruction, JoltRelationId};
+use jolt_claims::protocols::jolt::{geometry::instruction, JoltRelationId};
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};

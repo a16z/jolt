@@ -8,7 +8,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
+    geometry::dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
     JoltChallengeId, JoltPublicId, JoltRelationId, RegistersReadWriteChallenge,
     RegistersReadWritePublic,
 };

@@ -20,7 +20,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         bytecode::{
             self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafDimensions,
             BytecodeReadRafEvaluationInputs,

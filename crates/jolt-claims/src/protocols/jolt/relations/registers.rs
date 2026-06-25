@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::registers::{
+use crate::protocols::jolt::geometry::registers::{
     rd_inc_read_write, rd_inc_val_evaluation, rd_wa_read_write, rd_wa_val_evaluation,
     rd_write_value_claim, registers_val_read_write, rs1_ra_read_write, rs1_value_claim,
     rs2_ra_read_write, rs2_value_claim,

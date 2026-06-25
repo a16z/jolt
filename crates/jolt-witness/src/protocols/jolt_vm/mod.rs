@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use jolt_claims::protocols::jolt::{
-    formulas::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
+    geometry::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltOpeningId,
     JoltPolynomialId, JoltPublicId, JoltVirtualPolynomial,
 };

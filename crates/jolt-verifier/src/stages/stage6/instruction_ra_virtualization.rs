@@ -9,7 +9,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         dimensions::committed_address_chunks, instruction::InstructionRaVirtualizationDimensions,
     },
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltChallengeId,

@@ -8,7 +8,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::TraceDimensions, IncClaimReductionChallenge, IncClaimReductionPublic,
+    geometry::dimensions::TraceDimensions, IncClaimReductionChallenge, IncClaimReductionPublic,
     JoltChallengeId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;

@@ -9,7 +9,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::ReadWriteDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::ReadWriteDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
     RamReadWriteChallenge, RamReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;

@@ -15,7 +15,7 @@
 //! `expected_output`.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         booleanity::BooleanityDimensions, bytecode::BytecodeReadRafDimensions,
         dimensions::TraceDimensions, instruction::InstructionRaVirtualizationDimensions,
         ram::RamRaVirtualizationDimensions,

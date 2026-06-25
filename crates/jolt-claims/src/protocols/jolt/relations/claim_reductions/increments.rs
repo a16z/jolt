@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::claim_reductions::increments::{
+use crate::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_read_write, ram_inc_reduced, ram_inc_val_check, rd_inc_read_write, rd_inc_reduced,
     rd_inc_val_evaluation,
 };

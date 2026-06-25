@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::claim_reductions::program_image::{
+use crate::protocols::jolt::geometry::claim_reductions::program_image::{
     cycle_phase_program_image_opening, final_output_expr, ram_val_check_contribution_opening,
 };
 use crate::protocols::jolt::{
@@ -89,7 +89,7 @@ impl SymbolicSumcheck for AddressPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::claim_reductions::program_image::final_program_image_opening;
+    use crate::protocols::jolt::geometry::claim_reductions::program_image::final_program_image_opening;
     use crate::protocols::jolt::ProgramImageClaimReductionPublic;
     use jolt_field::{Fr, FromPrimitiveInt};
 

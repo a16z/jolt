@@ -59,7 +59,7 @@ use jolt_claims::protocols::jolt::relations;
 use jolt_claims::{
     opening,
     protocols::jolt::{
-        formulas::{
+        geometry::{
             booleanity::{self, BooleanityDimensions},
             bytecode::{
                 self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafEvaluationInputs,

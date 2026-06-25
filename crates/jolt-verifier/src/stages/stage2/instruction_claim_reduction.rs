@@ -17,7 +17,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::TraceDimensions, InstructionClaimReductionChallenge,
+    geometry::dimensions::TraceDimensions, InstructionClaimReductionChallenge,
     InstructionClaimReductionPublic, JoltChallengeId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;

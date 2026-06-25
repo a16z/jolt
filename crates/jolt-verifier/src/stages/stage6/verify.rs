@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         booleanity::{self, BooleanityDimensions},
         bytecode::{self, BytecodeReadRafDimensions},
         claim_reductions::{
@@ -1852,7 +1852,7 @@ where
         reason: error.to_string(),
     })?;
     let committed_program_claims = if checked.precommitted.bytecode.is_some() {
-        jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
+        jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
     } else {
         0
     };

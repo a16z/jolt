@@ -3,7 +3,7 @@
 use jolt_field::RingCore;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 
-use crate::protocols::jolt::formulas::instruction::{
+use crate::protocols::jolt::geometry::instruction::{
     committed_instruction_ra_product, eq_table_value, imm, instruction_ra_product,
     instruction_raf_flag, left_instruction_input_product, left_lookup_operand_reduced,
     left_operand_is_pc, left_operand_is_rs1, lookup_output_reduced, lookup_table_flag,
@@ -173,7 +173,7 @@ impl SymbolicSumcheck for RaVirtualization {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::instruction::instruction_ra;
+    use crate::protocols::jolt::geometry::instruction::instruction_ra;
     use crate::protocols::jolt::{
         JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId,
         JoltVirtualPolynomial,

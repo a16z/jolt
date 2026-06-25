@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::claim_reductions::advice::{
+use crate::protocols::jolt::geometry::claim_reductions::advice::{
     cycle_phase_advice_opening, final_advice_opening, ram_val_check_advice_opening,
 };
 use crate::protocols::jolt::{

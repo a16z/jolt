@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::formulas::dimensions::FieldRegistersReadWriteDimensions;
+use super::geometry::dimensions::FieldRegistersReadWriteDimensions;
 
 pub const FIELD_REGISTERS_LOG_K: usize = 4;
 

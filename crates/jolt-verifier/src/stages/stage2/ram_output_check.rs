@@ -13,7 +13,7 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::ReadWriteDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::ReadWriteDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
     RamOutputCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;

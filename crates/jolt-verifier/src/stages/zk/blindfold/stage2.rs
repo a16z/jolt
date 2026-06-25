@@ -181,7 +181,7 @@ where
         product_remainder_output_openings().to_vec(),
     ));
     let instruction_outputs =
-        jolt_claims::protocols::jolt::formulas::claim_reductions::instruction::claim_reduction_output_openings();
+        jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::claim_reduction_output_openings();
     output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[1]));
     output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[2]));
     output_ids.extend(map_jolt_opening_ids(

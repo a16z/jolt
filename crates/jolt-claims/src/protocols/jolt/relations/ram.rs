@@ -2,7 +2,7 @@
 
 use jolt_field::RingCore;
 
-use crate::protocols::jolt::formulas::ram::{
+use crate::protocols::jolt::geometry::ram::{
     committed_ram_ra_product, ram_address_spartan, ram_hamming_weight, ram_inc, ram_inc_val_check,
     ram_ra, ram_ra_claim_reduction, ram_ra_raf_evaluation, ram_ra_val_check, ram_read_value,
     ram_val, ram_val_final, ram_write_value, RamRaVirtualizationDimensions,
@@ -320,7 +320,7 @@ impl SymbolicSumcheck for RamValCheck {
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::ram::{
+    use crate::protocols::jolt::geometry::ram::{
         committed_ram_ra, RamRaClaimReductionPublicValues,
     };
     use crate::protocols::jolt::{JoltChallengeId, JoltPublicId};
@@ -815,12 +815,12 @@ mod tests {
 
     /// The remodel's soundness anchor: the `Public`-symbol input expression must
     /// evaluate to the same value the pre-remodel baked-constant decomposition did
-    /// (proven equal to the full-init formula in `formulas::ram`'s tests). With
+    /// (proven equal to the full-init formula in `geometry::ram`'s tests). With
     /// `InitEval = public_eval` and `InitSelector = neg_selector`, the
     /// `public·opening` term equals the old `constant·opening` term.
     #[test]
     fn ram_val_check_symbolic_evaluates_like_decomposed_init() {
-        use crate::protocols::jolt::formulas::ram::val_check_advice_opening;
+        use crate::protocols::jolt::geometry::ram::val_check_advice_opening;
         use crate::protocols::jolt::JoltAdviceKind;
 
         let public_eval = Fr::from_u64(3);

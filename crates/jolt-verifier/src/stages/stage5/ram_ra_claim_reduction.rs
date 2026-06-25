@@ -10,7 +10,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::TraceDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
     RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
