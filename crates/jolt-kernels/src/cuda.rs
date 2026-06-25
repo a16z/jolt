@@ -1232,9 +1232,23 @@ impl CudaKernelContext {
         terms: RoundPolyTerms<'_>,
     ) -> Result<Vec<Fr>, CudaError> {
         use jolt_field::Field;
-        use num_traits::Zero;
         let degree = terms.degree;
         assert!(degree >= 1, "round poly degree must be >= 1");
+        // Evaluation points {0, 2, 3, ..., degree}: index 0 is x=0, index e>=1 is x=e+1.
+        let points: Vec<Fr> = (0..degree)
+            .map(|e| Fr::from_u64(if e == 0 { 0 } else { (e + 1) as u64 }))
+            .collect();
+        self.sum_of_products_round_poly_at(terms, &points)
+    }
+
+    pub fn sum_of_products_round_poly_at(
+        &self,
+        terms: RoundPolyTerms<'_>,
+        points: &[Fr],
+    ) -> Result<Vec<Fr>, CudaError> {
+        use num_traits::Zero;
+        let num_evals = points.len();
+        assert!(num_evals >= 1, "round poly needs at least one eval point");
         let pair_stride = terms.factors[0].len() / 2;
         for factor in terms.factors {
             assert_eq!(
@@ -1244,7 +1258,7 @@ impl CudaKernelContext {
             );
         }
         if pair_stride == 0 {
-            return Ok(vec![Fr::zero(); degree]);
+            return Ok(vec![Fr::zero(); num_evals]);
         }
 
         let mut packed: CudaSlice<u64> =
@@ -1257,16 +1271,12 @@ impl CudaKernelContext {
             )?;
         }
 
-        // Evaluation points {0, 2, 3, ..., degree}: index 0 is x=0, index e>=1 is x=e+1.
-        let points: Vec<Fr> = (0..degree)
-            .map(|e| Fr::from_u64(if e == 0 { 0 } else { (e + 1) as u64 }))
-            .collect();
-        let points_dev = self.upload(&points)?;
+        let points_dev = self.upload(points)?;
         let coeffs_dev = self.upload(terms.term_coeffs)?;
         let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
         let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
 
-        let tuple = degree * LIMBS;
+        let tuple = num_evals * LIMBS;
         // Cap the block so the per-thread tuple accumulators fit in 48 KB shared memory;
         // the tree reduce needs a power-of-two block, so take the largest such <= cap.
         let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
@@ -1278,7 +1288,7 @@ impl CudaKernelContext {
 
         let pair_stride_arg = pair_stride as u64;
         let num_terms_arg = terms.term_coeffs.len() as u32;
-        let degree_arg = degree as u32;
+        let num_evals_arg = num_evals as u32;
         let half_arg = pair_stride as u64;
         let cfg = LaunchConfig {
             grid_dim: (blocks, 1, 1),
@@ -1296,10 +1306,10 @@ impl CudaKernelContext {
             .arg(&indices_dev)
             .arg(&pair_stride_arg)
             .arg(&num_terms_arg)
-            .arg(&degree_arg)
+            .arg(&num_evals_arg)
             .arg(&half_arg);
         // SAFETY: one thread per row reads its pair from each packed factor and the
-        // term tables (bounded by offsets), writing one `degree`-tuple per block;
+        // term tables (bounded by offsets), writing one `num_evals`-tuple per block;
         // shared memory holds `block` tuples as configured above.
         let _ = unsafe { launch.launch(cfg) }?;
 
@@ -1315,7 +1325,7 @@ impl CudaKernelContext {
             };
             let f = self.round_poly_reduce.clone();
             let mut launch = self.stream.launch_builder(&f);
-            let _ = launch.arg(&mut out).arg(&buf).arg(&degree_arg).arg(&len_arg);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&num_evals_arg).arg(&len_arg);
             // SAFETY: each block reads up to `block` tuples from `buf` (len total) and
             // writes one tuple to `out`; shared memory holds `block` tuples.
             let _ = unsafe { launch.launch(cfg) }?;
@@ -1325,7 +1335,7 @@ impl CudaKernelContext {
 
         let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
         self.stream.synchronize()?;
-        Ok((0..degree)
+        Ok((0..num_evals)
             .map(|e| limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]]))
             .collect())
     }
