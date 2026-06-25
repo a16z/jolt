@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 
 #[cfg(feature = "cuda")]
-pub mod cuda;
+pub(crate) mod cuda;
 mod rv64_typed;
 pub use rv64_typed::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 
