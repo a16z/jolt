@@ -81,6 +81,7 @@ impl BatchedSumcheck {
         let mut batched_claim: F = initial_batched_claim;
 
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
         let two_inv = F::from_u64(2).inverse().unwrap();
 
         for round in 0..max_num_rounds {
@@ -119,10 +120,11 @@ impl BatchedSumcheck {
 
             let compressed_poly = batched_univariate_poly.compress();
 
-            // Write the prover's round polynomial into the NARG (prover-only payload).
-            // The self-delimiting frame lets the verifier read back the exact (possibly
-            // round-varying) number of coefficients.
-            transcript.write_slice(&compressed_poly.coeffs_except_linear_term);
+            // The live verifier bridge is structured (Option-A): clear coefficients are
+            // proof fields, so both sides absorb the same slice instead of reading it
+            // back from the NARG.
+            transcript.absorb_slice(&compressed_poly.coeffs_except_linear_term);
+            compressed_polys.push(compressed_poly);
             let r_j = transcript.challenge_optimized();
             r_sumcheck.push(r_j);
 
@@ -179,7 +181,11 @@ impl BatchedSumcheck {
 
         opening_accumulator.flush_to_transcript(transcript);
 
-        (ClearSumcheckProof::new(), r_sumcheck, initial_batched_claim)
+        (
+            ClearSumcheckProof::new(compressed_polys),
+            r_sumcheck,
+            initial_batched_claim,
+        )
     }
 
     /// Prove a batched sumcheck with Pedersen commitments (ZK mode).
@@ -539,25 +545,21 @@ impl BatchedSumcheck {
 
 /// Clear (non-ZK) sumcheck proof.
 ///
-/// Under the NARG (Option B) the round-polynomial coefficients live in the NARG
-/// byte-string, not in this struct — the prover writes them via `write_slice` and
-/// the verifier reads them back with `read_slice`. The struct is a mode marker (the
-/// `SumcheckInstanceProof::Clear` variant) carrying no data.
+/// The prover carries round-polynomial coefficients so the structured modular
+/// verifier bridge can replay the same Spongefish transcript.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 pub struct ClearSumcheckProof<F: JoltField> {
-    _marker: PhantomData<F>,
+    pub compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
 impl<F: JoltField> ClearSumcheckProof<F> {
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
+    pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> Self {
+        Self { compressed_polys }
     }
 
-    /// Verify this standard sumcheck by reading each round polynomial back from the
-    /// NARG and evaluating it — the math is identical to the cleartext path; only the
-    /// source of the coefficients changed (NARG instead of a struct field).
+    /// Verify this standard sumcheck. Structured proofs replay each round as a
+    /// shared absorb; an empty proof remains a fallback for old full-NARG
+    /// experiments that read round polynomials from the NARG.
     pub fn verify(
         &self,
         claim: F,
@@ -565,16 +567,29 @@ impl<F: JoltField> ClearSumcheckProof<F> {
         degree_bound: usize,
         transcript: &mut impl VerifierFs<F>,
     ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
+        if !self.compressed_polys.is_empty() && self.compressed_polys.len() != num_rounds {
+            return Err(ProofVerifyError::InvalidInputLength(
+                num_rounds,
+                self.compressed_polys.len(),
+            ));
+        }
+
         let mut e = claim;
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
 
-        for _ in 0..num_rounds {
-            // Read the prover's round polynomial back from the NARG and reconstruct it.
-            let coeffs_except_linear_term: Vec<F> = transcript
-                .read_slice()
-                .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
-            let poly = CompressedUniPoly {
-                coeffs_except_linear_term,
+        for round in 0..num_rounds {
+            let narg_poly;
+            let poly = if let Some(poly) = self.compressed_polys.get(round) {
+                transcript.absorb_slice(&poly.coeffs_except_linear_term);
+                poly
+            } else {
+                let coeffs_except_linear_term: Vec<F> = transcript
+                    .read_slice()
+                    .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+                narg_poly = CompressedUniPoly {
+                    coeffs_except_linear_term,
+                };
+                &narg_poly
             };
 
             let poly_degree = poly.degree();
@@ -776,10 +791,10 @@ impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize for SumcheckInstanc
 impl<F: JoltField, C: JoltCurve<F = F>> SumcheckInstanceProof<F, C> {
     /// Create a standard (non-ZK) sumcheck proof.
     ///
-    /// The `Clear` variant is a data-free marker: the round polynomials are
-    /// written to (and read back from) the NARG, not stored in the proof struct.
+    /// The `Clear` variant carries round polynomials for the structured
+    /// verifier bridge; an empty value is only used by old full-NARG tests.
     pub fn new_standard() -> Self {
-        Self::Clear(ClearSumcheckProof::new())
+        Self::Clear(ClearSumcheckProof::new(Vec::new()))
     }
 
     /// Create a ZK sumcheck proof with only commitments and polynomial degrees.
@@ -824,9 +839,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> SumcheckInstanceProof<F, C> {
 
     pub fn num_rounds(&self) -> usize {
         match self {
-            // Clear round count lives in the NARG, not the struct; the verifier derives
-            // it from the sumcheck instances (this is only read on the ZK path).
-            Self::Clear(_) => 0,
+            Self::Clear(proof) => proof.compressed_polys.len(),
             Self::Zk(proof) => proof.round_commitments.len(),
         }
     }

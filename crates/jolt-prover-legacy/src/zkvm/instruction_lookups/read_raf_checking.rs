@@ -1595,8 +1595,9 @@ mod tests {
             prover_transcript,
         );
 
-        // The verifier replays the prover's NARG: build its transcript over the
-        // prover-produced byte-string and re-derive the same `r_cycle` in order.
+        // Build a verifier transcript with the same initial state and re-derive
+        // the same `r_cycle` in order. Clear sumcheck rounds are structured proof
+        // fields on this split, so the NARG is normally empty.
         let narg = prover_transcript.narg_string().to_vec();
         let mut verifier_transcript =
             jolt_transcript::verifier_transcript(&[], [0u8; 32], Blake2b512::default(), &narg);
@@ -1649,10 +1650,7 @@ mod tests {
 
         assert_eq!(r_sumcheck, r_sumcheck_verif);
 
-        // Malleability guard: the verifier must have consumed the prover's entire
-        // NARG. Without this, a prover that wrote extra/trailing round-poly frames
-        // would still pass (verify reads its expected frames in order) — this catches
-        // a write/read count desync that the challenge-equality assert cannot.
+        // Compatibility guard for any caller that still writes NARG frames.
         jolt_transcript::VerifierTranscript::<Blake2b512>::check_eof(verifier_transcript)
             .expect("verifier must fully consume the NARG (no trailing prover messages)");
     }

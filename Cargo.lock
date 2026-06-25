@@ -2845,6 +2845,7 @@ dependencies = [
  "thiserror 2.0.18",
 ]
 
+[[package]]
 name = "jolt-crypto"
 version = "0.1.0"
 dependencies = [
@@ -3247,7 +3248,6 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
- "light-poseidon",
  "memory-stats",
  "num",
  "num-derive 0.4.2",
@@ -6031,7 +6031,7 @@ checksum = "7f51141f0144afcfb88571b29aa160006e63d56ffaaa16d364be382aaa73d61c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 2.0.118",
 ]
 
 [[package]]

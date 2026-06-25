@@ -2,7 +2,12 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_transcript::{prover_transcript, DuplexSpongeInterface, ProverState};
+use jolt_verifier::{
+    stages::{CommittedProgramSchedule, PrecommittedSchedule},
+    CheckedInputs,
+};
 use rand::rngs::StdRng;
 use std::marker::PhantomData;
 #[cfg(not(target_arch = "wasm32"))]
@@ -115,7 +120,7 @@ use crate::{
         bytecode::read_raf_checking::{
             BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
         },
-        compute_final_opening_point, fiat_shamir_instance,
+        compute_final_opening_point,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::InstructionReadRafSumcheckProver,
@@ -218,6 +223,29 @@ pub struct JoltCpuProver<
     _curve: std::marker::PhantomData<C>,
 }
 
+fn verifier_read_write_config(config: &ReadWriteConfig) -> JoltReadWriteConfig {
+    JoltReadWriteConfig {
+        ram_rw_phase1_num_rounds: config.ram_rw_phase1_num_rounds,
+        ram_rw_phase2_num_rounds: config.ram_rw_phase2_num_rounds,
+        registers_rw_phase1_num_rounds: config.registers_rw_phase1_num_rounds,
+        registers_rw_phase2_num_rounds: config.registers_rw_phase2_num_rounds,
+    }
+}
+
+fn verifier_one_hot_config(config: &crate::zkvm::config::OneHotConfig) -> JoltOneHotConfig {
+    JoltOneHotConfig {
+        log_k_chunk: config.log_k_chunk,
+        lookups_ra_virtual_log_k_chunk: config.lookups_ra_virtual_log_k_chunk,
+    }
+}
+
+fn verifier_trace_polynomial_order(layout: DoryLayout) -> TracePolynomialOrder {
+    match layout {
+        DoryLayout::CycleMajor => TracePolynomialOrder::CycleMajor,
+        DoryLayout::AddressMajor => TracePolynomialOrder::AddressMajor,
+    }
+}
+
 impl<
         'a,
         F: JoltField,
@@ -313,6 +341,55 @@ where
                 !self.program_io.untrusted_advice.is_empty(),
             ),
         )
+    }
+
+    fn checked_inputs_for_preamble(
+        &self,
+        trace_polynomial_order: TracePolynomialOrder,
+        one_hot_config: JoltOneHotConfig,
+    ) -> CheckedInputs {
+        let memory_layout = &self.program_io.memory_layout;
+        let committed_program = self.preprocessing.is_committed_mode().then(|| {
+            let program_image_start_index = memory_layout
+                .remapped_word_address(self.preprocessing.shared.program_meta.min_bytecode_address)
+                .expect("committed program image address must fit verifier memory layout");
+            CommittedProgramSchedule {
+                bytecode_len: self.preprocessing.shared.program_meta.bytecode_len,
+                bytecode_chunk_count: self.preprocessing.shared.bytecode_chunk_count,
+                program_image_len_words: self
+                    .preprocessing
+                    .shared
+                    .program_meta
+                    .program_image_len_words,
+                program_image_start_index: program_image_start_index as usize,
+            }
+        });
+        let trusted_advice_commitment_present = self.advice.trusted_advice_commitment.is_some();
+        let untrusted_advice_commitment_present = !self.program_io.untrusted_advice.is_empty();
+        let precommitted = PrecommittedSchedule::new(
+            trace_polynomial_order,
+            self.trace.len().log_2(),
+            one_hot_config.committed_chunk_bits(),
+            trusted_advice_commitment_present
+                .then_some(memory_layout.max_trusted_advice_size as usize),
+            untrusted_advice_commitment_present
+                .then_some(memory_layout.max_untrusted_advice_size as usize),
+            committed_program,
+        )
+        .expect("prover inputs must produce a valid precommitted schedule");
+
+        CheckedInputs {
+            public_io: self.program_io.clone(),
+            zk: cfg!(feature = "zk"),
+            trace_length: self.trace.len(),
+            ram_K: self.one_hot_params.ram_k,
+            entry_address: self.preprocessing.shared.program_meta.entry_address,
+            preprocessing_digest: self.preprocessing.shared.digest(),
+            trusted_advice_commitment_present,
+            vc_capacity: cfg!(feature = "zk")
+                .then_some(common::constants::MAX_BLINDFOLD_GENERATORS),
+            precommitted,
+        }
     }
 
     pub fn gen_from_trace(
@@ -448,23 +525,23 @@ where
 
         #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
-        // A.1: bind the public statement into the transcript `instance`
-        // (`Blake2b(statement)`, @mmaker's #1455 mandate) rather than scatter-absorbing it.
-        // The placeholder transcript built in `gen_from_trace` is unused before this point,
-        // so rebuilding it here — now that the dory layout is known — is sound. The verifier
-        // recomputes the identical instance from the proof's public tail (O1).
-        let preprocessing_digest = self.preprocessing.shared.digest();
-        let instance = fiat_shamir_instance(
-            &self.program_io,
-            self.one_hot_params.ram_k,
-            self.trace.len(),
-            self.preprocessing.shared.program_meta.entry_address,
-            &self.rw_config,
-            &self.one_hot_params.to_config(),
-            DoryGlobals::get_layout(),
-            &preprocessing_digest,
+        // The current modular verifier uses the structured Option-A transcript:
+        // zero Spongefish instance, then an explicit public preamble absorb. Keep
+        // the prover bridge byte-for-byte aligned with that path.
+        let trace_polynomial_order = verifier_trace_polynomial_order(DoryGlobals::get_layout());
+        let rw_config = verifier_read_write_config(&self.rw_config);
+        let one_hot_config = verifier_one_hot_config(&self.one_hot_params.to_config());
+        let checked = self.checked_inputs_for_preamble(trace_polynomial_order, one_hot_config);
+        self.transcript = prover_transcript(b"Jolt", [0u8; 32], H::default());
+        jolt_verifier::absorb_transcript_preamble(
+            &checked,
+            jolt_verifier::ProofTranscriptConfig::new(
+                rw_config,
+                one_hot_config,
+                trace_polynomial_order,
+            ),
+            &mut self.transcript,
         );
-        self.transcript = prover_transcript(b"Jolt", instance, H::default());
 
         tracing::info!(
             "bytecode size: {}",
@@ -543,8 +620,9 @@ where
             );
         }
 
-        // The NARG byte-string is the prover-only proof payload (sumcheck/uniskip round
-        // polynomials) written via `prover_message` across all stages.
+        // Retained compatibility/debug NARG. On this split's live structured
+        // verifier bridge, clear round polynomials are proof fields and are
+        // transcript-bound with shared absorbs.
         let narg = self.transcript.narg_string().to_vec();
 
         #[cfg(test)]
@@ -2236,7 +2314,9 @@ where
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
-        self.transcript.absorb(&claims);
+        for claim in &claims {
+            crate::transcript_msgs::absorb_jolt_field(&mut self.transcript, claim);
+        }
         let gamma_powers: Vec<F> = self.transcript.challenge_powers(claims.len());
         #[cfg(feature = "zk")]
         let constraint_coeffs: Vec<F> = gamma_powers
@@ -3500,9 +3580,7 @@ mod tests {
             match proof {
                 // Under `--features host,zk` the muldiv prover emits only `Zk` proofs
                 // (`prove_sumcheck`/`prove_uniskip` select the `prove_zk` path), so this arm is
-                // unreachable here. The `Clear` round polynomials live in the NARG, not the struct
-                // (DEV-27) — if ever needed, replay the NARG like `BatchedSumcheck::verify`; do NOT
-                // re-add a `compressed_polys` field.
+                // unreachable here.
                 SumcheckInstanceProof::Clear(_) => {
                     unreachable!("muldiv in ZK mode produces only Zk sumcheck proofs")
                 }

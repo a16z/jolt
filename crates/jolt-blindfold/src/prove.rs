@@ -811,7 +811,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        transcript.absorb_field_slice(compressed.coeffs_except_linear_term());
+        absorb_legacy_field_vec(transcript, compressed.coeffs_except_linear_term());
         let challenge = transcript.challenge();
         running_sum = round_poly.evaluate(challenge);
         az.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -888,7 +888,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        transcript.absorb_field_slice(compressed.coeffs_except_linear_term());
+        absorb_legacy_field_vec(transcript, compressed.coeffs_except_linear_term());
         let challenge = transcript.challenge();
         running_sum = round_poly.evaluate(challenge);
         l_w.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -1031,10 +1031,6 @@ where
     )
 }
 
-#[expect(
-    clippy::ptr_arg,
-    reason = "matches verifier-side CanonicalSerialize Vec absorption exactly"
-)]
 fn append_relaxed_instance<F, C, T>(
     transcript: &mut T,
     u: F,
@@ -1061,8 +1057,21 @@ fn append_vector_opening<F, T>(
     F: Field,
     T: FsAbsorb,
 {
-    transcript.absorb_field_slice(&opening.combined_vector);
+    absorb_legacy_field_vec(transcript, &opening.combined_vector);
     transcript.absorb_field(&opening.combined_blinding);
+}
+
+fn absorb_legacy_field_vec<F, T>(transcript: &mut T, values: &[F])
+where
+    F: Field,
+    T: FsAbsorb,
+{
+    let mut bytes = Vec::with_capacity(8 + values.len() * F::NUM_BYTES);
+    bytes.extend_from_slice(&(values.len() as u64).to_le_bytes());
+    for value in values {
+        bytes.extend_from_slice(&value.to_bytes_le_vec());
+    }
+    transcript.absorb_bytes(&bytes);
 }
 
 fn random_rows<F, R>(row_count: usize, row_len: usize, rng: &mut R) -> Vec<Vec<F>>

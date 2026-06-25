@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::{
     JoltSumcheckDomain,
 };
 use jolt_field::Field;
-use jolt_transcript::{FsAbsorb, FsChallenge};
+use jolt_transcript::FsAbsorb;
 
 use crate::VerifierError;
 
@@ -244,6 +244,7 @@ mod tests {
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_riscv::{CircuitFlags, CIRCUIT_FLAGS};
+    use jolt_transcript::FsChallenge;
     use jolt_verifier_derive::{InputClaims, OutputClaims};
 
     fn fr(value: u64) -> Fr {

@@ -39,7 +39,8 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+            check_relation_boolean_hypercube, zip_openings, OpeningClaim, OutputClaims,
+            SumcheckInstance,
         },
         stage1::Stage1Output,
         zk::committed,
@@ -644,8 +645,14 @@ where
                     .instruction_claim_reduction
                     .right_lookup_operand,
             );
-            transcript.absorb_field(&claims.batch_outputs.ram_raf_evaluation);
-            transcript.absorb_field(&claims.batch_outputs.ram_output_check);
+            claims
+                .batch_outputs
+                .ram_raf_evaluation
+                .append_openings(transcript);
+            claims
+                .batch_outputs
+                .ram_output_check
+                .append_openings(transcript);
 
             let public = Stage2PublicOutput {
                 product_uniskip_challenge,

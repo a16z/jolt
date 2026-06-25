@@ -16,7 +16,4 @@ pub use ram_val_check::{
 pub use registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
 };
-pub use verify::{
-    append_ram_val_check_gamma_domain_separator, stage4_expected_final_claim,
-    stage4_output_claims_with_points, verify,
-};
+pub use verify::{stage4_expected_final_claim, stage4_output_claims_with_points, verify};

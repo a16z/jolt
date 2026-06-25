@@ -13,7 +13,7 @@ use jolt_claims::{challenge, constant, opening, public, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
-use jolt_field::{FixedBytes, Fr, FromPrimitiveInt, Invertible};
+use jolt_field::{CanonicalBytes, FixedByteSize, FixedBytes, Fr, FromPrimitiveInt, Invertible};
 use jolt_poly::{CompressedPoly, EqPolynomial};
 use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
@@ -1418,7 +1418,7 @@ fn append_vector_opening(
     transcript: &mut impl FsAbsorb,
     opening: &jolt_crypto::VectorCommitmentOpening<F>,
 ) {
-    transcript.absorb_field_slice(&opening.combined_vector);
+    absorb_legacy_field_vec(transcript, &opening.combined_vector);
     transcript.absorb_field(&opening.combined_blinding);
 }
 
@@ -1638,9 +1638,7 @@ fn prove_slow_sumcheck(
         let mut compressed = Vec::with_capacity(degree);
         compressed.push(coefficients[0]);
         compressed.extend_from_slice(&coefficients[2..]);
-        // One message for the whole compressed coefficient vector, matching
-        // jolt-sumcheck's verifier (`absorb_field_slice(coeffs_except_linear_term)`).
-        transcript.absorb_field_slice(&compressed);
+        absorb_legacy_field_vec(transcript, &compressed);
         let challenge = transcript.challenge();
         running_sum = eval_poly(&coefficients, challenge);
         prefix.push(challenge);
@@ -1653,6 +1651,15 @@ fn prove_slow_sumcheck(
         },
         point: prefix,
     }
+}
+
+fn absorb_legacy_field_vec(transcript: &mut impl FsAbsorb, values: &[F]) {
+    let mut bytes = Vec::with_capacity(8 + values.len() * F::NUM_BYTES);
+    bytes.extend_from_slice(&(values.len() as u64).to_le_bytes());
+    for value in values {
+        bytes.extend_from_slice(&value.to_bytes_le_vec());
+    }
+    transcript.absorb_bytes(&bytes);
 }
 
 fn interpolate_zero_to_degree(values: &[F]) -> Vec<F> {

@@ -3,7 +3,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpeni
 use jolt_field::{Field, FieldCore, RingAccumulator, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim};
+use jolt_sumcheck::{CompressedSumcheckProof, EvaluationClaim, SumcheckClaim, SumcheckError};
 use jolt_transcript::{FsAbsorb, FsTranscript};
 
 use crate::{
@@ -152,9 +152,7 @@ where
 
         let tau = transcript.challenge_vector(num_vars);
         let claim = SumcheckClaim::new(num_vars, OUTER_SUMCHECK_DEGREE, F::zero());
-        let outer = proof
-            .outer_sumcheck
-            .verify(&claim, BooleanHypercube, transcript)
+        let outer = verify_legacy_compressed_sumcheck(&proof.outer_sumcheck, &claim, transcript)
             .map_err(|source| VerificationError::OuterSumcheck { source })?;
 
         let (row_point, entry_point) = outer.point.split_at(row_vars);
@@ -412,10 +410,9 @@ where
             });
         }
         let inner_claim = SumcheckClaim::new(num_vars, INNER_SUMCHECK_DEGREE, claim);
-        let inner = proof
-            .inner_sumcheck
-            .verify(&inner_claim, BooleanHypercube, transcript)
-            .map_err(|source| VerificationError::InnerSumcheck { source })?;
+        let inner =
+            verify_legacy_compressed_sumcheck(&proof.inner_sumcheck, &inner_claim, transcript)
+                .map_err(|source| VerificationError::InnerSumcheck { source })?;
 
         let (row_point, entry_point) = inner.point.split_at(row_vars);
         let w_ry = VC::verify_committed_rows(
@@ -451,8 +448,61 @@ where
     F: Field,
     T: FsAbsorb,
 {
-    transcript.absorb_field_slice(&opening.combined_vector);
+    absorb_legacy_field_vec(transcript, &opening.combined_vector);
     transcript.absorb_field(&opening.combined_blinding);
+}
+
+fn verify_legacy_compressed_sumcheck<F, T>(
+    proof: &CompressedSumcheckProof<F>,
+    claim: &SumcheckClaim<F>,
+    transcript: &mut T,
+) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+where
+    F: Field,
+    T: FsTranscript<F>,
+{
+    if proof.round_polynomials.len() != claim.num_vars {
+        return Err(SumcheckError::WrongNumberOfRounds {
+            expected: claim.num_vars,
+            got: proof.round_polynomials.len(),
+        });
+    }
+
+    let mut running_sum = claim.claimed_sum;
+    let mut challenges = Vec::with_capacity(claim.num_vars);
+
+    for (round, round_proof) in proof.round_polynomials.iter().enumerate() {
+        let coeffs = round_proof.coeffs_except_linear_term();
+        if coeffs.len() > claim.degree {
+            return Err(SumcheckError::DegreeBoundExceeded {
+                got: coeffs.len(),
+                max: claim.degree,
+            });
+        }
+        if coeffs.is_empty() {
+            return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
+        }
+
+        absorb_legacy_field_vec(transcript, coeffs);
+        let challenge = transcript.challenge();
+        running_sum = round_proof.evaluate_with_hint(running_sum, challenge);
+        challenges.push(challenge);
+    }
+
+    Ok(EvaluationClaim::new(challenges, running_sum))
+}
+
+fn absorb_legacy_field_vec<F, T>(transcript: &mut T, values: &[F])
+where
+    F: Field,
+    T: FsAbsorb,
+{
+    let mut bytes = Vec::with_capacity(8 + values.len() * F::NUM_BYTES);
+    bytes.extend_from_slice(&(values.len() as u64).to_le_bytes());
+    for value in values {
+        bytes.extend_from_slice(&value.to_bytes_le_vec());
+    }
+    transcript.absorb_bytes(&bytes);
 }
 
 fn public_contributions<F>(

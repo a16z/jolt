@@ -13,7 +13,7 @@ use crate::{
         CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
-    transcript_msgs::{FsAbsorb, ProverFs, VerifierFs},
+    transcript_msgs::{absorb_jolt_field, absorb_jolt_field_slice, FsAbsorb, ProverFs, VerifierFs},
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
 use ark_bn254::{G1Affine, G1Projective};
@@ -96,8 +96,8 @@ pub fn bind_opening_inputs<F: JoltField, T: FsAbsorb>(
     }
     // Both the opening point (sumcheck challenges) and the claimed evaluation are
     // shared: the verifier already holds them before reading the proof → `absorb`.
-    transcript.absorb(&point_scalars);
-    transcript.absorb(opening);
+    absorb_jolt_field_slice(transcript, &point_scalars);
+    absorb_jolt_field(transcript, opening);
 }
 
 #[cfg(feature = "zk")]
@@ -111,7 +111,7 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, T: FsAbsorb>(
         let scalar: F = (*point).into();
         point_scalars.push(scalar);
     }
-    transcript.absorb(&point_scalars);
+    absorb_jolt_field_slice(transcript, &point_scalars);
 
     transcript.absorb(y_com);
 }

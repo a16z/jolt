@@ -2,21 +2,8 @@
 pub use jolt_prover_legacy::host;
 #[cfg(feature = "host")]
 pub use jolt_prover_legacy::zkvm::{prover::JoltProverPreprocessing, RV64IMACProver};
-#[cfg(all(feature = "host", feature = "transcript-poseidon"))]
-pub type ProofTranscript = jolt_prover_legacy::transcripts::PoseidonTranscript;
-#[cfg(all(feature = "host", feature = "transcript-keccak"))]
-pub type ProofTranscript = jolt_prover_legacy::transcripts::KeccakTranscript;
-#[cfg(all(feature = "host", feature = "transcript-blake2b"))]
-pub type ProofTranscript = jolt_prover_legacy::transcripts::Blake2bTranscript;
-#[cfg(all(
-    feature = "host",
-    not(any(
-        feature = "transcript-poseidon",
-        feature = "transcript-keccak",
-        feature = "transcript-blake2b"
-    ))
-))]
-pub type ProofTranscript = jolt_prover_legacy::transcripts::Blake2bTranscript;
+#[cfg(feature = "host")]
+pub type ProofTranscript = jolt_prover_legacy::zkvm::RV64IMACSponge;
 #[cfg(feature = "host")]
 pub use jolt_program::execution::{
     ExecutionBackend, OwnedTrace, TraceError, TraceInputs, TraceOutput, TraceSource,
@@ -46,7 +33,7 @@ pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 #[cfg(feature = "host")]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(feature = "host")]
-pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
+pub type VerifierTranscript = jolt_transcript::Blake2b512;
 #[cfg(feature = "host")]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
@@ -64,7 +51,7 @@ pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
+pub type VerifierTranscript = jolt_transcript::Blake2b512;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;

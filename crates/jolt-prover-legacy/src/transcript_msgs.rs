@@ -21,14 +21,10 @@
 //!   restores legacy `transcripts/poseidon.rs` so Poseidon works end-to-end and never hits its
 //!   `unimplemented!()` `challenge_u128`.
 //!
-//! **What actually crosses the NARG:** prover-only payload — the witness-polynomial
-//! commitments frame, the untrusted-advice presence frame, the sumcheck/uniskip round
-//! polynomials (or their ZK commitments), and the per-field BlindFold values — is
-//! `write_slice`/`read_slice` through the NARG. *Shared* values (flushed opening claims,
-//! trusted/preprocessing commitments) are `absorb`'d ([`public_message`]); the dory
-//! `joint_opening_proof` and — in non-ZK mode — the `opening_claims` stay **structured
-//! proof fields** (see `JoltProof::narg` in `proof_serialization.rs` for the full
-//! inventory).
+//! This module still exposes `write_slice`/`read_slice` for full-NARG experiments, but
+//! the live modular verifier bridge in this split is structured (Option-A): clear
+//! sumcheck/uni-skip round data and non-ZK opening claims stay in proof fields, while
+//! shared transcript inputs are `absorb`'d ([`public_message`]) on both sides.
 //!
 //! Three concerns, three traits:
 //! - [`FsChallenge`] — squeezed verifier randomness; implemented per sponge type for
@@ -56,12 +52,46 @@ use rand::{CryptoRng, RngCore};
 
 use crate::field::JoltField;
 
+#[expect(
+    clippy::expect_used,
+    reason = "CanonicalSerialize into a Vec is infallible"
+)]
+pub fn absorb_jolt_field<T, F>(transcript: &mut T, value: &F)
+where
+    T: FsAbsorb,
+    F: JoltField,
+{
+    let mut buf = Vec::with_capacity(value.compressed_size());
+    value
+        .serialize_compressed(&mut buf)
+        .expect("CanonicalSerialize into a Vec is infallible");
+    transcript.absorb_bytes(&buf);
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "CanonicalSerialize into a Vec is infallible"
+)]
+pub fn absorb_jolt_field_slice<T, F>(transcript: &mut T, values: &[F])
+where
+    T: FsAbsorb,
+    F: JoltField,
+{
+    let mut buf = Vec::with_capacity(values.iter().map(CanonicalSerialize::compressed_size).sum());
+    for value in values {
+        value
+            .serialize_compressed(&mut buf)
+            .expect("CanonicalSerialize into a Vec is infallible");
+    }
+    transcript.absorb_bytes(&buf);
+}
+
 // ─── WIRE-FORMAT — FOLLOW-UP DECISION (read this before changing the codec) ─────────────
 //
 // Every NARG message below is transported as ONE anonymous length-prefixed byte blob
-// (`BytesMsg(CanonicalSerialize)`), regardless of the value's kind. This is the host *bridge*
-// choice: DRY (a single codec path) and adequate while only ONE kind of value crosses the NARG
-// — the sumcheck/uniskip round polynomials. History: typed per-kind wrappers
+// (`BytesMsg(CanonicalSerialize)`), regardless of the value's kind. This is the retained
+// full-NARG helper choice: DRY (a single codec path) and adequate while only one experimental
+// value kind crosses the NARG. History: typed per-kind wrappers
 // (`FieldMsg` / `FieldVecMsg` / `Blob`) once existed (DEV-12) and were deliberately collapsed
 // into this single `BytesMsg` path for less redundancy (DEV-16). Trade-off: the wire format is
 // now anonymous — type identity is recovered only by read-order + the deserialize target, not by

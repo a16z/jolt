@@ -19,6 +19,7 @@ use jolt_field::{FixedBytes, Fr};
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_transcript::{prover_transcript, Blake2b512, FsAbsorb, FsChallenge};
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]

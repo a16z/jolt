@@ -56,10 +56,14 @@ pub(crate) struct JoltProofParts<
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     #[cfg(not(feature = "zk"))]
     pub opening_claims: ProverOpeningClaims<F>,
-    /// Spongefish NARG byte-string: the prover-only proof payload — the sumcheck/uniskip
-    /// round polynomials — that the verifier replays via `prover_message`. Opening claims
-    /// are NOT in the NARG: they are shared values (`absorb`'d on both sides), and in
-    /// non-ZK mode are carried structurally in `opening_claims` above.
+    /// Spongefish NARG byte-string retained for compatibility with full-NARG
+    /// experiments. The live modular verifier bridge for this split is structured:
+    /// clear round polynomials and non-ZK opening claims are carried in proof
+    /// fields, while shared transcript inputs are `absorb`'d on both sides.
+    #[expect(
+        dead_code,
+        reason = "retained for the prover-legacy Spongefish NARG proof-parts path; the modular verifier bridge converts structured fields"
+    )]
     pub narg: Vec<u8>,
     pub trace_length: usize,
     pub ram_K: usize,

@@ -140,12 +140,14 @@ pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
 ) -> UniSkipFirstRoundProof<F> {
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
-    // Write the full first-round polynomial into the NARG and derive r0.
-    transcript.write_slice(&uni_poly.coeffs);
+    // The live verifier bridge is structured (Option-A): clear coefficients are
+    // proof fields, so both sides absorb the same slice instead of reading it
+    // back from the NARG.
+    transcript.absorb_slice(&uni_poly.coeffs);
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
     opening_accumulator.flush_to_transcript(transcript);
-    UniSkipFirstRoundProof::new()
+    UniSkipFirstRoundProof::new(uni_poly)
 }
 
 /// ZK variant: commits to coefficients instead of revealing them.
@@ -219,35 +221,23 @@ pub fn prove_uniskip_round_zk<
     ZkUniSkipFirstRoundProof::new(commitment, poly_degree, output_claims_commitments)
 }
 
-/// Mode marker for a univariate-skip first round (non-ZK).
+/// Proof marker for a univariate-skip first round (non-ZK).
 ///
-/// Under the NARG the full first-round polynomial lives in the NARG byte-string,
-/// not in this struct — the prover writes it via `write_slice` and the verifier
-/// reads it back with `read_slice`.
-///
-/// ⚠️ ZK-MIGRATION NOTE (parallel to `ClearSumcheckProof`; see DEV-27): do NOT re-add a
-/// `uni_poly` field. The first-round poly is in the NARG (Option B). The ZK path uses the
-/// separate [`ZkUniSkipFirstRoundProof`] (Pedersen commitment + degree), NOT this struct,
-/// and the only code that ever read the old `uni_poly` was `poly_degree()` — now
-/// `unreachable!()` on the `Standard` arm (only the `Zk` variant carries a degree). If the
-/// ZK migration ever needs the Standard first-round coeffs, read them from the NARG
-/// (`read_slice`), do not restore the field. (Unlike `compressed_polys`, there is currently
-/// no lingering cfg(zk) reader of this field, so nothing here blocks the zk build.)
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
+/// The prover carries the full first-round polynomial so the structured modular
+/// verifier bridge can replay the same Spongefish transcript.
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct UniSkipFirstRoundProof<F: JoltField> {
-    _marker: PhantomData<F>,
+    pub uni_poly: UniPoly<F>,
 }
 
 impl<F: JoltField> UniSkipFirstRoundProof<F> {
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
+    pub fn new(uni_poly: UniPoly<F>) -> Self {
+        Self { uni_poly }
     }
 
-    /// Verify only the univariate-skip first round by reading the polynomial back
-    /// from the NARG. The checks (degree, symmetric-domain sum, evaluation) are
-    /// identical to the cleartext path; only the source of the polynomial changed.
+    /// Verify only the univariate-skip first round. Structured proofs replay the
+    /// polynomial as a shared absorb; the empty marker is retained as a fallback
+    /// for old full-NARG experiments that read the polynomial from the NARG.
     pub fn verify<
         const N: usize,
         const FIRST_ROUND_POLY_NUM_COEFFS: usize,
@@ -260,20 +250,25 @@ impl<F: JoltField> UniSkipFirstRoundProof<F> {
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
 
-        // Read the full first-round polynomial back from the NARG and derive r0.
-        let coeffs: Vec<F> = transcript
-            .read_slice()
-            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?;
+        let uni_poly = if self.uni_poly.coeffs.is_empty() {
+            let coeffs: Vec<F> = transcript
+                .read_slice()
+                .map_err(|_| ProofVerifyError::UniSkipVerificationError)?;
+            UniPoly::from_coeff(coeffs)
+        } else {
+            transcript.absorb_slice(&self.uni_poly.coeffs);
+            self.uni_poly.clone()
+        };
+
         // The first-round polynomial has a fixed coefficient count; reject a frame of
         // any other length before it reaches `check_sum_evals` (which indexes by
         // `FIRST_ROUND_POLY_NUM_COEFFS` and assumes exactly that many coefficients).
-        if coeffs.len() != FIRST_ROUND_POLY_NUM_COEFFS {
+        if uni_poly.coeffs.len() != FIRST_ROUND_POLY_NUM_COEFFS {
             return Err(ProofVerifyError::InvalidInputLength(
                 FIRST_ROUND_POLY_NUM_COEFFS,
-                coeffs.len(),
+                uni_poly.coeffs.len(),
             ));
         }
-        let uni_poly = UniPoly::from_coeff(coeffs);
         if uni_poly.degree() > degree_bound {
             return Err(ProofVerifyError::InvalidInputLength(
                 degree_bound,
@@ -420,8 +415,8 @@ impl<F: JoltField, C: JoltCurve<F = F>> UniSkipFirstRoundProofVariant<F, C> {
     ///
     /// Only queried for ZK proofs (`verify_blindfold`, `cfg(feature = "zk")`),
     /// where the variant is always `Zk`. A `Standard` proof's first-round poly
-    /// lives in the NARG (no in-struct coefficients), and BlindFold never runs
-    /// against it, so that arm is unreachable.
+    /// is irrelevant because BlindFold never runs against it, so that arm is
+    /// unreachable.
     pub fn poly_degree(&self) -> usize {
         match self {
             Self::Standard(_) => {

@@ -22,7 +22,7 @@ use crate::{
 use crate::{
     field::JoltField, poly::commitment::commitment_scheme::CommitmentScheme,
     poly::commitment::dory::DoryLayout, poly::opening_proof::ProverOpeningAccumulator,
-    transcript_msgs::AbsorbFs,
+    transcript_msgs::FsAbsorb,
 };
 
 // Compile-time error if multiple transcript features are enabled
