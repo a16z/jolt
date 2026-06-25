@@ -121,7 +121,7 @@ jobs:
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -149,7 +149,7 @@ jobs:
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -220,7 +220,7 @@ jobs:
 
       - name: Cache wasm-pack
         id: cache-wasm-pack
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/wasm-pack
           key: wasm-pack-0.13.1
