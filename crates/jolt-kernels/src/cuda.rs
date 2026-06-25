@@ -336,6 +336,12 @@ pub struct HammingRoundPolyInputs<'a> {
     pub scale: Fr,
 }
 
+pub struct HammingBooleanityInputs<'a> {
+    pub hamming_weight: &'a DeviceFrVec,
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -659,6 +665,14 @@ impl CudaKernelContext {
             num_cycles,
         )?;
         Ok((a.to_host()?, b.to_host()?))
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn hamming_booleanity_round_poly(
+        &self,
+        inputs: HammingBooleanityInputs<'_>,
+    ) -> Result<[Fr; 2], CudaError> {
+        todo!()
     }
 
     pub fn hamming_round_poly(
@@ -2491,6 +2505,57 @@ mod tests {
                 })
                 .unwrap();
             let got = UnivariatePoly::from_evals_and_hint(previous_claim, &evals);
+            prop_assert_eq!(got.coefficients(), expected.coefficients());
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::hamming_booleanity_round_poly is todo!()"]
+        fn hamming_booleanity_round_poly_matches_cpu(
+            num_vars in 1usize..10,
+            previous_claim in fr_strategy(),
+            scale in fr_strategy(),
+            point_seed in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            use crate::stage6::{FactorOutput, HammingBooleanityStage6State};
+            use crate::stage6::Stage6Relation;
+
+            let len = 1usize << num_vars;
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| point_seed + Fr::from_u64(i as u64))
+                .collect();
+            let hamming_weight: Vec<Fr> =
+                (0..len).map(|j| seed + Fr::from_u64((j + 1) as u64)).collect();
+            let output = FactorOutput {
+                name: "test",
+                oracle: "test",
+                factor: 0,
+            };
+            let state = HammingBooleanityStage6State::new(
+                &point,
+                hamming_weight.clone(),
+                output,
+                scale,
+                3,
+            )
+            .unwrap();
+            let expected = state
+                .round_poly(previous_claim, Stage6Relation::HammingBooleanity)
+                .unwrap();
+
+            let c = ctx();
+            let hamming_dev = c.upload(&hamming_weight).unwrap();
+            let e_in = c.upload(state.eq.e_in_current()).unwrap();
+            let e_out = c.upload(state.eq.e_out_current()).unwrap();
+            let q = c
+                .hamming_booleanity_round_poly(HammingBooleanityInputs {
+                    hamming_weight: &hamming_dev,
+                    e_in: &e_in,
+                    e_out: &e_out,
+                })
+                .unwrap();
+            let mut got = state.eq.gruen_poly_deg_3(q[0], q[1], previous_claim);
+            got *= scale;
             prop_assert_eq!(got.coefficients(), expected.coefficients());
         }
     }

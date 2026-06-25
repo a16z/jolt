@@ -3906,16 +3906,16 @@ fn scale_booleanity_tables<F: Field>(tables: &[Vec<F>], scalar: F) -> Vec<Vec<F>
         .collect()
 }
 
-struct HammingBooleanityStage6State<F: Field> {
-    eq: GruenSplitEqPolynomial<F>,
-    hamming_weight: Vec<F>,
+pub(crate) struct HammingBooleanityStage6State<F: Field> {
+    pub(crate) eq: GruenSplitEqPolynomial<F>,
+    pub(crate) hamming_weight: Vec<F>,
     hamming_weight_scratch: Vec<F>,
     output: FactorOutput,
-    active_scale: F,
+    pub(crate) active_scale: F,
 }
 
 impl<F: Field> HammingBooleanityStage6State<F> {
-    fn new(
+    pub(crate) fn new(
         point: &[F],
         hamming_weight: Vec<F>,
         output: FactorOutput,
@@ -3942,7 +3942,7 @@ impl<F: Field> HammingBooleanityStage6State<F> {
         })
     }
 
-    fn round_poly(
+    pub(crate) fn round_poly(
         &self,
         previous_claim: F,
         relation: Stage6Relation,
@@ -4309,10 +4309,10 @@ pub(crate) struct DenseTerm<F: Field> {
 }
 
 #[derive(Clone, Copy)]
-struct FactorOutput {
-    name: &'static str,
-    oracle: &'static str,
-    factor: usize,
+pub(crate) struct FactorOutput {
+    pub(crate) name: &'static str,
+    pub(crate) oracle: &'static str,
+    pub(crate) factor: usize,
 }
 
 impl<F: Field> DenseStage6State<F> {
