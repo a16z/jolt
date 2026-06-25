@@ -1,5 +1,4 @@
 use jolt_field::{Field, RingCore};
-use jolt_poly::{EqPolynomial, Polynomial};
 
 use crate::{challenge, opening, public};
 
@@ -164,16 +163,8 @@ pub fn raf_evaluation_output_openings() -> [JoltOpeningId; 1] {
     [ram_ra_raf_evaluation()]
 }
 
-pub fn raf_evaluation_input_openings() -> [JoltOpeningId; 1] {
-    [ram_address_spartan()]
-}
-
 pub fn output_check_output_openings() -> [JoltOpeningId; 1] {
     [ram_val_final()]
-}
-
-pub fn stage2_terminal_output_openings() -> [JoltOpeningId; 2] {
-    [ram_ra_raf_evaluation(), ram_val_final()]
 }
 
 pub fn val_check_input_openings() -> [JoltOpeningId; 2] {
@@ -189,38 +180,6 @@ pub fn val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
         JoltAdviceKind::Trusted => JoltOpeningId::trusted_advice(JoltRelationId::RamValCheck),
         JoltAdviceKind::Untrusted => JoltOpeningId::untrusted_advice(JoltRelationId::RamValCheck),
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamRafEvaluationPublicValues<F: Field> {
-    pub unmap_address: F,
-}
-
-impl<F: Field> RamRafEvaluationPublicValues<F> {
-    pub fn value(&self, id: RamRafEvaluationPublic) -> F {
-        match id {
-            RamRafEvaluationPublic::UnmapAddress => self.unmap_address,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamOutputCheckPublicValues<F: Field> {
-    pub eq_io_mask: F,
-    pub neg_eq_io_mask_val_io: F,
-}
-
-impl<F: Field> RamOutputCheckPublicValues<F> {
-    pub fn value(&self, id: RamOutputCheckPublic) -> F {
-        match id {
-            RamOutputCheckPublic::EqIoMask => self.eq_io_mask,
-            RamOutputCheckPublic::NegEqIoMaskValIo => self.neg_eq_io_mask_val_io,
-        }
-    }
-}
-
-pub fn ra_claim_reduction_input_openings() -> [JoltOpeningId; 3] {
-    [ram_ra_raf_evaluation(), ram_ra(), ram_ra_val_check()]
 }
 
 pub fn ra_claim_reduction_output_openings() -> [JoltOpeningId; 1] {
@@ -244,25 +203,6 @@ impl<F: Field> RamRaClaimReductionPublicValues<F> {
     }
 }
 
-pub fn ra_virtualization_eq_cycle_polynomial<F>(ram_reduced_cycle: &[F]) -> Polynomial<F>
-where
-    F: Field,
-{
-    let eq_point = ram_reduced_cycle.iter().rev().copied().collect::<Vec<_>>();
-    Polynomial::new(EqPolynomial::<F>::evals(&eq_point, None))
-}
-
-pub fn hamming_booleanity_eq_cycle_polynomial<F>(stage1_cycle_binding: &[F]) -> Polynomial<F>
-where
-    F: Field,
-{
-    Polynomial::new(EqPolynomial::<F>::evals(stage1_cycle_binding, None))
-}
-
-pub fn ra_virtualization_input_openings() -> [JoltOpeningId; 1] {
-    [ram_ra_claim_reduction()]
-}
-
 pub fn ra_virtualization_output_openings(
     dimensions: RamRaVirtualizationDimensions,
 ) -> Vec<JoltOpeningId> {
@@ -275,34 +215,8 @@ pub fn ra_virtualization_committed_ram_ra_opening(index: usize) -> JoltOpeningId
     committed_ram_ra(index)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamRaVirtualizationPublicValues<F: Field> {
-    pub eq_cycle: F,
-}
-
-impl<F: Field> RamRaVirtualizationPublicValues<F> {
-    pub fn value(&self, id: RamRaVirtualizationPublic) -> F {
-        match id {
-            RamRaVirtualizationPublic::EqCycle => self.eq_cycle,
-        }
-    }
-}
-
 pub fn hamming_booleanity_output_openings() -> [JoltOpeningId; 1] {
     [ram_hamming_weight()]
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamHammingBooleanityPublicValues<F: Field> {
-    pub eq_cycle: F,
-}
-
-impl<F: Field> RamHammingBooleanityPublicValues<F> {
-    pub fn value(&self, id: RamHammingBooleanityPublic) -> F {
-        match id {
-            RamHammingBooleanityPublic::EqCycle => self.eq_cycle,
-        }
-    }
 }
 
 pub(crate) fn read_write_challenge<F>(id: RamReadWriteChallenge) -> JoltExpr<F>
@@ -461,8 +375,6 @@ pub(crate) fn ram_hamming_weight() -> JoltOpeningId {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::EqPolynomial;
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 4, 2, 1)
@@ -489,37 +401,5 @@ mod tests {
                     panic!("large RAM RAF evaluation dimensions was rejected: {err}")
                 });
         assert_eq!(large_dimensions.phase3_cycle_rounds(), usize::MAX);
-    }
-
-    #[test]
-    fn stage2_terminal_openings_are_ram_raf_then_output_check() {
-        assert_eq!(
-            stage2_terminal_output_openings(),
-            [
-                raf_evaluation_output_openings()[0],
-                output_check_output_openings()[0]
-            ]
-        );
-    }
-
-    #[test]
-    fn ra_virtualization_eq_cycle_polynomial_reverses_reduced_cycle() {
-        let reduced_cycle = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
-        let eq_point = vec![Fr::from_u64(5), Fr::from_u64(3), Fr::from_u64(2)];
-
-        assert_eq!(
-            ra_virtualization_eq_cycle_polynomial(&reduced_cycle).evals(),
-            EqPolynomial::<Fr>::evals(&eq_point, None)
-        );
-    }
-
-    #[test]
-    fn hamming_booleanity_eq_cycle_polynomial_uses_stage1_cycle_binding() {
-        let cycle_binding = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
-
-        assert_eq!(
-            hamming_booleanity_eq_cycle_polynomial(&cycle_binding).evals(),
-            EqPolynomial::<Fr>::evals(&cycle_binding, None)
-        );
     }
 }

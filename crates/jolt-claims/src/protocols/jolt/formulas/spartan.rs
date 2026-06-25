@@ -334,16 +334,6 @@ pub fn product_remainder_output_openings() -> [JoltOpeningId; 8] {
     ]
 }
 
-pub fn shift_input_openings() -> [JoltOpeningId; 5] {
-    [
-        next_unexpanded_pc_outer(),
-        next_pc_outer(),
-        next_is_virtual_outer(),
-        next_is_first_in_sequence_outer(),
-        next_is_noop_product(),
-    ]
-}
-
 pub fn shift_output_openings() -> [JoltOpeningId; 5] {
     [
         unexpanded_pc_shift(),
@@ -410,24 +400,6 @@ where
     public(JoltPublicId::from(
         SpartanProductVirtualizationPublic::TauKernel,
     ))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SpartanProductPublicValues<F: Field> {
-    pub lagrange_weights: [F; PRODUCT_UNISKIP_DOMAIN_SIZE],
-    pub tau_kernel: F,
-}
-
-impl<F: Field> SpartanProductPublicValues<F> {
-    pub fn value(&self, id: SpartanProductVirtualizationPublic) -> Option<F> {
-        match id {
-            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index)
-            | SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
-                self.lagrange_weights.get(index).copied()
-            }
-            SpartanProductVirtualizationPublic::TauKernel => Some(self.tau_kernel),
-        }
-    }
 }
 
 pub fn product_uniskip_opening() -> JoltOpeningId {

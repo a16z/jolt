@@ -1,8 +1,6 @@
 use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
-use jolt_poly::{
-    boolean_index_msb, eq_index_msb, EqPolynomial, IdentityPolynomial, MultilinearEvaluation,
-};
+use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{
     instructions::Noop, CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker,
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
@@ -57,37 +55,6 @@ impl BytecodeReadRafDimensions {
     pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t, self.committed_ra_polys + 1)
     }
-
-    pub fn opening_point<F: Field>(
-        self,
-        challenges: &[F],
-    ) -> Result<BytecodeReadRafOpeningPoint<F>, JoltFormulaPointError> {
-        let expected = self.log_k + self.log_t;
-        if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-                expected,
-                got: challenges.len(),
-            });
-        }
-
-        let (r_address, r_cycle) = challenges.split_at(self.log_k);
-        let r_address = r_address.iter().rev().copied().collect::<Vec<_>>();
-        let r_cycle = r_cycle.iter().rev().copied().collect::<Vec<_>>();
-        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
-
-        Ok(BytecodeReadRafOpeningPoint {
-            r_address,
-            r_cycle,
-            opening_point,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafOpeningPoint<F: Field> {
-    pub r_address: Vec<F>,
-    pub r_cycle: Vec<F>,
-    pub opening_point: Vec<F>,
 }
 
 pub(crate) fn read_raf_cycle_output<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
@@ -131,65 +98,6 @@ where
         + gamma.pow(STAGES + 2) * bytecode_public(BytecodeReadRafPublic::Entry);
 
     output + raf_coeff * bytecode_ra_product(dimensions)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafInputOpenings {
-    pub spartan_outer: BytecodeReadRafSpartanOuterOpenings,
-    pub spartan_product: BytecodeReadRafSpartanProductOpenings,
-    pub instruction_input: BytecodeReadRafInstructionInputOpenings,
-    pub spartan_shift: BytecodeReadRafSpartanShiftOpenings,
-    pub registers_read_write: BytecodeReadRafRegistersReadWriteOpenings,
-    pub registers_val_evaluation: BytecodeReadRafRegistersValEvaluationOpenings,
-    pub spartan_outer_pc: JoltOpeningId,
-    pub spartan_shift_pc: JoltOpeningId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafSpartanOuterOpenings {
-    pub unexpanded_pc: JoltOpeningId,
-    pub imm: JoltOpeningId,
-    pub op_flags: Vec<(CircuitFlags, JoltOpeningId)>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafSpartanProductOpenings {
-    pub jump: JoltOpeningId,
-    pub branch: JoltOpeningId,
-    pub write_lookup_output_to_rd: JoltOpeningId,
-    pub virtual_instruction: JoltOpeningId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafInstructionInputOpenings {
-    pub imm: JoltOpeningId,
-    pub unexpanded_pc_from_shift: JoltOpeningId,
-    pub left_operand_is_rs1_value: JoltOpeningId,
-    pub left_operand_is_pc: JoltOpeningId,
-    pub right_operand_is_rs2_value: JoltOpeningId,
-    pub right_operand_is_imm: JoltOpeningId,
-    pub is_noop_from_shift: JoltOpeningId,
-    pub virtual_instruction_from_shift: JoltOpeningId,
-    pub is_first_in_sequence_from_shift: JoltOpeningId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafSpartanShiftOpenings {
-    pub unexpanded_pc: JoltOpeningId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafRegistersReadWriteOpenings {
-    pub rd_wa: JoltOpeningId,
-    pub rs1_ra: JoltOpeningId,
-    pub rs2_ra: JoltOpeningId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafRegistersValEvaluationOpenings {
-    pub rd_wa: JoltOpeningId,
-    pub instruction_raf_flag: JoltOpeningId,
-    pub lookup_table_flags: Vec<(LookupTableKind<XLEN>, JoltOpeningId)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,21 +235,6 @@ pub struct BytecodeReadRafEvaluationInputs<'a, F> {
     pub stage5_gammas: &'a [F],
 }
 
-pub struct BytecodeReadRafBooleanEvaluationInputs<'a, F> {
-    pub bytecode: &'a [JoltInstructionRow],
-    pub r_address: &'a [F],
-    pub r_cycle: &'a [F],
-    pub stage_cycle_points: [&'a [F]; 5],
-    pub register_read_write_point: &'a [F],
-    pub register_val_evaluation_point: &'a [F],
-    pub entry_bytecode_index: usize,
-    pub stage1_gammas: &'a [F],
-    pub stage2_gammas: &'a [F],
-    pub stage3_gammas: &'a [F],
-    pub stage4_gammas: &'a [F],
-    pub stage5_gammas: &'a [F],
-}
-
 pub struct BytecodeReadRafStageValueInputs<'a, F> {
     pub bytecode: &'a [JoltInstructionRow],
     pub register_read_write_point: &'a [F],
@@ -351,12 +244,6 @@ pub struct BytecodeReadRafStageValueInputs<'a, F> {
     pub stage3_gammas: &'a [F],
     pub stage4_gammas: &'a [F],
     pub stage5_gammas: &'a [F],
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafAddressPhaseIdentityCoefficients<F> {
-    pub stage1: F,
-    pub stage3: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -402,33 +289,6 @@ where
             )
         })
         .collect()
-}
-
-pub fn read_raf_address_phase_identity_coefficients<F>(
-    bytecode_gamma_powers: &[F],
-) -> Result<BytecodeReadRafAddressPhaseIdentityCoefficients<F>, JoltFormulaPointError>
-where
-    F: Field,
-{
-    require_len(bytecode_gamma_powers, 8)?;
-    Ok(BytecodeReadRafAddressPhaseIdentityCoefficients {
-        stage1: bytecode_gamma_powers[5],
-        stage3: bytecode_gamma_powers[4],
-    })
-}
-
-pub fn read_raf_address_phase_stage_values<F>(
-    mut row_values: [F; 5],
-    row_index: usize,
-    coefficients: BytecodeReadRafAddressPhaseIdentityCoefficients<F>,
-) -> [F; 5]
-where
-    F: Field,
-{
-    let identity = F::from_u64(row_index as u64);
-    row_values[0] += coefficients.stage1 * identity;
-    row_values[2] += coefficients.stage3 * identity;
-    row_values
 }
 
 pub fn read_raf_public_values<F>(
@@ -491,71 +351,6 @@ where
         spartan_shift_raf,
         entry,
     })
-}
-
-pub fn read_raf_public_values_at_boolean_point<F>(
-    inputs: BytecodeReadRafBooleanEvaluationInputs<'_, F>,
-) -> Result<Option<BytecodeReadRafPublicValues<F>>, JoltFormulaPointError>
-where
-    F: Field,
-{
-    require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
-    require_len(inputs.stage2_gammas, 4)?;
-    require_len(inputs.stage3_gammas, 9)?;
-    require_len(inputs.stage4_gammas, 3)?;
-    require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
-
-    let expected_domain = 1usize << inputs.r_address.len();
-    if inputs.bytecode.len() != expected_domain {
-        return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
-            expected: expected_domain,
-            got: inputs.bytecode.len(),
-        });
-    }
-
-    let Some(address_index) = boolean_index_msb(inputs.r_address) else {
-        return Ok(None);
-    };
-    let Some(cycle_index) = boolean_index_msb(inputs.r_cycle) else {
-        return Ok(None);
-    };
-
-    let register_eq = read_raf_register_eq_evals(
-        inputs.register_read_write_point,
-        inputs.register_val_evaluation_point,
-    );
-    let mut stage_values = read_raf_row_values::<F>(
-        &inputs.bytecode[address_index],
-        &register_eq.read_write,
-        &register_eq.val_evaluation,
-        inputs.stage1_gammas,
-        inputs.stage2_gammas,
-        inputs.stage3_gammas,
-        inputs.stage4_gammas,
-        inputs.stage5_gammas,
-    );
-
-    for (stage_value, stage_cycle_point) in stage_values.iter_mut().zip(inputs.stage_cycle_points) {
-        *stage_value *= eq_index_msb(stage_cycle_point, cycle_index as u128);
-    }
-
-    let identity = IdentityPolynomial::new(inputs.r_address.len()).evaluate(inputs.r_address);
-    let spartan_outer_raf =
-        identity * eq_index_msb(inputs.stage_cycle_points[0], cycle_index as u128);
-    let spartan_shift_raf =
-        identity * eq_index_msb(inputs.stage_cycle_points[2], cycle_index as u128);
-    let entry = if address_index == inputs.entry_bytecode_index && cycle_index == 0 {
-        F::one()
-    } else {
-        F::zero()
-    };
-
-    Ok(Some(BytecodeReadRafPublicValues {
-        stage_values,
-        spartan_outer_raf,
-        spartan_shift_raf,
-        entry,
-    }))
 }
 
 #[expect(
@@ -646,57 +441,6 @@ fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
         .and_then(|register| eq.get(register as usize))
         .copied()
         .unwrap_or_else(F::zero)
-}
-
-pub fn read_raf_input_openings() -> BytecodeReadRafInputOpenings {
-    BytecodeReadRafInputOpenings {
-        spartan_outer: BytecodeReadRafSpartanOuterOpenings {
-            unexpanded_pc: unexpanded_pc_spartan_outer(),
-            imm: imm_spartan_outer(),
-            op_flags: CIRCUIT_FLAGS
-                .into_iter()
-                .map(|flag| (flag, op_flag_spartan_outer(flag)))
-                .collect(),
-        },
-        spartan_product: BytecodeReadRafSpartanProductOpenings {
-            jump: op_flag_product(CircuitFlags::Jump),
-            branch: instruction_flag_product(InstructionFlags::Branch),
-            write_lookup_output_to_rd: op_flag_product(CircuitFlags::WriteLookupOutputToRD),
-            virtual_instruction: op_flag_product(CircuitFlags::VirtualInstruction),
-        },
-        instruction_input: BytecodeReadRafInstructionInputOpenings {
-            imm: imm_instruction_input(),
-            unexpanded_pc_from_shift: unexpanded_pc_spartan_shift(),
-            left_operand_is_rs1_value: instruction_flag_input(
-                InstructionFlags::LeftOperandIsRs1Value,
-            ),
-            left_operand_is_pc: instruction_flag_input(InstructionFlags::LeftOperandIsPC),
-            right_operand_is_rs2_value: instruction_flag_input(
-                InstructionFlags::RightOperandIsRs2Value,
-            ),
-            right_operand_is_imm: instruction_flag_input(InstructionFlags::RightOperandIsImm),
-            is_noop_from_shift: instruction_flag_shift(InstructionFlags::IsNoop),
-            virtual_instruction_from_shift: op_flag_shift(CircuitFlags::VirtualInstruction),
-            is_first_in_sequence_from_shift: op_flag_shift(CircuitFlags::IsFirstInSequence),
-        },
-        spartan_shift: BytecodeReadRafSpartanShiftOpenings {
-            unexpanded_pc: unexpanded_pc_spartan_shift(),
-        },
-        registers_read_write: BytecodeReadRafRegistersReadWriteOpenings {
-            rd_wa: rd_wa_read_write(),
-            rs1_ra: rs1_ra_read_write(),
-            rs2_ra: rs2_ra_read_write(),
-        },
-        registers_val_evaluation: BytecodeReadRafRegistersValEvaluationOpenings {
-            rd_wa: rd_wa_val_evaluation(),
-            instruction_raf_flag: instruction_raf_flag(),
-            lookup_table_flags: LookupTableKind::<XLEN>::iter()
-                .map(|table| (table, lookup_table_flag(table)))
-                .collect(),
-        },
-        spartan_outer_pc: pc_spartan_outer(),
-        spartan_shift_pc: pc_spartan_shift(),
-    }
 }
 
 pub fn read_raf_output_openings(
@@ -949,39 +693,11 @@ pub(crate) fn bytecode_ra(index: usize) -> JoltOpeningId {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic)]
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::EqPolynomial;
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
-
-    fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
-        BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    #[test]
-    fn read_raf_opening_point_matches_core_order() {
-        let point = BytecodeReadRafDimensions::new(3, 2, 1)
-            .opening_point(&(1..=5).map(Fr::from_u64).collect::<Vec<_>>())
-            .unwrap_or_else(|error| panic!("bytecode read-raf point should normalize: {error}"));
-
-        assert_eq!(point.r_address, vec![Fr::from_u64(2), Fr::from_u64(1)]);
-        assert_eq!(
-            point.r_cycle,
-            vec![Fr::from_u64(5), Fr::from_u64(4), Fr::from_u64(3)]
-        );
-        assert_eq!(
-            point.opening_point,
-            vec![
-                Fr::from_u64(2),
-                Fr::from_u64(1),
-                Fr::from_u64(5),
-                Fr::from_u64(4),
-                Fr::from_u64(3),
-            ]
-        );
-    }
 
     #[test]
     fn read_raf_register_eq_evals_builds_register_address_tables() {
@@ -1063,191 +779,5 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(stage_values, expected);
-    }
-
-    #[test]
-    fn read_raf_address_phase_identity_coefficients_select_gamma_offsets() {
-        let gamma_powers = (0..8)
-            .map(|value| Fr::from_u64(value as u64 + 1))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            read_raf_address_phase_identity_coefficients(&gamma_powers),
-            Ok(BytecodeReadRafAddressPhaseIdentityCoefficients {
-                stage1: gamma_powers[5],
-                stage3: gamma_powers[4],
-            })
-        );
-        assert_eq!(
-            read_raf_address_phase_identity_coefficients::<Fr>(&gamma_powers[..7]),
-            Err(JoltFormulaPointError::ChallengeLengthMismatch {
-                expected: 8,
-                got: 7
-            })
-        );
-    }
-
-    #[test]
-    fn read_raf_address_phase_stage_values_add_identity_terms() {
-        let row_values = [
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(7),
-            Fr::from_u64(11),
-        ];
-        let coefficients = BytecodeReadRafAddressPhaseIdentityCoefficients {
-            stage1: Fr::from_u64(13),
-            stage3: Fr::from_u64(17),
-        };
-
-        assert_eq!(
-            read_raf_address_phase_stage_values(row_values, 3, coefficients),
-            [
-                Fr::from_u64(2) + Fr::from_u64(13) * Fr::from_u64(3),
-                Fr::from_u64(3),
-                Fr::from_u64(5) + Fr::from_u64(17) * Fr::from_u64(3),
-                Fr::from_u64(7),
-                Fr::from_u64(11),
-            ]
-        );
-    }
-
-    #[test]
-    fn read_raf_helpers_expose_typed_openings() {
-        let input = read_raf_input_openings();
-        let output = read_raf_output_openings(dimensions(2));
-
-        assert_eq!(
-            input.spartan_outer.unexpanded_pc,
-            unexpanded_pc_spartan_outer()
-        );
-        assert_eq!(input.spartan_outer.imm, imm_spartan_outer());
-        assert_eq!(input.spartan_outer.op_flags.len(), NUM_CIRCUIT_FLAGS);
-        assert_eq!(
-            input.spartan_product.jump,
-            op_flag_product(CircuitFlags::Jump)
-        );
-        assert_eq!(
-            input.spartan_product.branch,
-            instruction_flag_product(InstructionFlags::Branch)
-        );
-        assert_eq!(
-            input.registers_val_evaluation.lookup_table_flags,
-            LookupTableKind::<XLEN>::iter()
-                .map(|table| (table, lookup_table_flag(table)))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(output.bytecode_ra, vec![bytecode_ra(0), bytecode_ra(1)]);
-        assert_eq!(
-            read_raf_consistency_openings(),
-            [(
-                unexpanded_pc_spartan_shift(),
-                unexpanded_pc_instruction_input()
-            )]
-        );
-    }
-
-    #[test]
-    fn read_raf_public_values_evaluate_bytecode_rows() {
-        let bytecode = vec![
-            JoltInstructionRow {
-                instruction_kind: JoltInstructionKind::ADD,
-                address: 9,
-                operands: NormalizedOperands {
-                    rs1: Some(0),
-                    rs2: Some(0),
-                    rd: Some(0),
-                    imm: 4,
-                },
-                virtual_sequence_remaining: None,
-                is_first_in_sequence: false,
-                is_compressed: false,
-            },
-            JoltInstructionRow::default(),
-        ];
-        let one = Fr::from_u64(1);
-        let zero = Fr::from_u64(0);
-        let r_address = [zero];
-        let r_cycle = [zero];
-        let stage_cycle_points = [&r_cycle[..]; 5];
-        let stage1_gammas = vec![one; 2 + NUM_CIRCUIT_FLAGS];
-        let stage5_gammas = vec![one; 2 + LookupTableKind::<XLEN>::COUNT];
-        let public_values = read_raf_public_values::<Fr>(BytecodeReadRafEvaluationInputs {
-            bytecode: &bytecode,
-            r_address: &r_address,
-            r_cycle: &r_cycle,
-            stage_cycle_points,
-            register_read_write_point: &[],
-            register_val_evaluation_point: &[],
-            entry_bytecode_index: 0,
-            stage1_gammas: &stage1_gammas,
-            stage2_gammas: &[one; 4],
-            stage3_gammas: &[one; 9],
-            stage4_gammas: &[one; 3],
-            stage5_gammas: &stage5_gammas,
-        })
-        .unwrap_or_else(|error| panic!("bytecode public values should evaluate: {error}"));
-
-        assert_eq!(
-            public_values.stage_values,
-            [
-                Fr::from_u64(15),
-                Fr::from_u64(1),
-                Fr::from_u64(15),
-                Fr::from_u64(3),
-                Fr::from_u64(3),
-            ]
-        );
-        assert_eq!(public_values.spartan_outer_raf, zero);
-        assert_eq!(public_values.spartan_shift_raf, zero);
-        assert_eq!(public_values.entry, one);
-
-        let direct =
-            read_raf_public_values_at_boolean_point::<Fr>(BytecodeReadRafBooleanEvaluationInputs {
-                bytecode: &bytecode,
-                r_address: &r_address,
-                r_cycle: &r_cycle,
-                stage_cycle_points,
-                register_read_write_point: &[],
-                register_val_evaluation_point: &[],
-                entry_bytecode_index: 0,
-                stage1_gammas: &stage1_gammas,
-                stage2_gammas: &[one; 4],
-                stage3_gammas: &[one; 9],
-                stage4_gammas: &[one; 3],
-                stage5_gammas: &stage5_gammas,
-            })
-            .unwrap_or_else(|error| panic!("boolean point helper should evaluate: {error}"));
-
-        assert_eq!(direct, Some(public_values));
-    }
-
-    #[test]
-    fn read_raf_boolean_public_values_skip_non_boolean_points() {
-        let one = Fr::from_u64(1);
-        let two = Fr::from_u64(2);
-        let zero = Fr::from_u64(0);
-        let bytecode = vec![JoltInstructionRow::default(), JoltInstructionRow::default()];
-        let stage1_gammas = vec![one; 2 + NUM_CIRCUIT_FLAGS];
-        let stage5_gammas = vec![one; 2 + LookupTableKind::<XLEN>::COUNT];
-        let direct =
-            read_raf_public_values_at_boolean_point::<Fr>(BytecodeReadRafBooleanEvaluationInputs {
-                bytecode: &bytecode,
-                r_address: &[two],
-                r_cycle: &[zero],
-                stage_cycle_points: [&[zero][..]; 5],
-                register_read_write_point: &[],
-                register_val_evaluation_point: &[],
-                entry_bytecode_index: 0,
-                stage1_gammas: &stage1_gammas,
-                stage2_gammas: &[one; 4],
-                stage3_gammas: &[one; 9],
-                stage4_gammas: &[one; 3],
-                stage5_gammas: &stage5_gammas,
-            })
-            .unwrap_or_else(|error| panic!("boolean point helper should evaluate: {error}"));
-
-        assert_eq!(direct, None);
     }
 }

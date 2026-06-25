@@ -1,18 +1,12 @@
-use jolt_field::{Field, RingCore};
+use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
-use jolt_riscv::{JoltInstructionRow, NUM_CIRCUIT_FLAGS};
+use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{challenge, opening, Expr};
-
-use super::super::{
-    FieldInlineOpFlag, FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
-};
-use crate::protocols::jolt::formulas::bytecode as jolt_bytecode;
+use super::super::FieldInlineOpFlag;
 use crate::protocols::jolt::formulas::dimensions::JoltFormulaPointError;
-use crate::protocols::jolt::{BytecodeReadRafChallenge, JoltChallengeId};
 
 pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 8] = [
     FieldInlineOpFlag::Add,
@@ -29,17 +23,6 @@ pub const FIELD_INLINE_BYTECODE_STAGE1_GAMMA_COUNT: usize =
     2 + NUM_CIRCUIT_FLAGS + FIELD_INLINE_BYTECODE_STAGE1_FLAGS.len();
 pub const FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT: usize = 6;
 pub const FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS: usize = 1;
-
-const FIELD_ADD_TAG: u16 = 0x0100;
-const FIELD_SUB_TAG: u16 = 0x0101;
-const FIELD_MUL_TAG: u16 = 0x0102;
-const FIELD_INV_TAG: u16 = 0x0103;
-const FIELD_ASSERT_EQ_TAG: u16 = 0x0104;
-const FIELD_LOAD_FROM_X_TAG: u16 = 0x0105;
-const FIELD_STORE_TO_X_TAG: u16 = 0x0106;
-const FIELD_LOAD_IMM_TAG: u16 = 0x0107;
-
-pub type FieldInlineBytecodeExpr<F> = Expr<F, FieldInlineOpeningId, (), JoltChallengeId>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldInlineBytecodeRow {
@@ -169,22 +152,6 @@ pub fn validate_bytecode_rows(
     Ok(())
 }
 
-pub fn bytecode_transcript_bytes(
-    bytecode: &[FieldInlineBytecodeRow],
-    field_register_log_k: usize,
-) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(16 + bytecode.len() * 7);
-    bytes.extend_from_slice(&(field_register_log_k as u64).to_le_bytes());
-    bytes.extend_from_slice(&(bytecode.len() as u64).to_le_bytes());
-    for row in bytecode {
-        encode_operand(row.operands.rd, &mut bytes);
-        encode_operand(row.operands.rs1, &mut bytes);
-        encode_operand(row.operands.rs2, &mut bytes);
-        bytes.push(row.flags.transcript_bits());
-    }
-    bytes
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafPublicValues<F: Field> {
     pub stage_values: [F; 5],
@@ -203,103 +170,6 @@ pub struct FieldInlineBytecodeReadRafEvaluationInputs<'a, F> {
     pub stage1_gammas: &'a [F],
     pub stage4_gammas: &'a [F],
     pub stage5_gammas: &'a [F],
-}
-
-pub fn read_raf_input_extension<F>() -> FieldInlineBytecodeExpr<F>
-where
-    F: RingCore,
-{
-    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
-
-    stage1_claim() + gamma.clone().pow(3) * stage4_claim() + gamma.pow(4) * stage5_claim::<F>()
-}
-
-pub fn base_jolt_bytecode_row(row: &JoltInstructionRow) -> JoltInstructionRow {
-    let mut row = *row;
-    // Keep this helper usable by verifier-only field-inline builds that do not
-    // enable the field-inline `jolt-riscv` enum variants.
-    match row.instruction_kind.tag().0 {
-        FIELD_LOAD_FROM_X_TAG => {
-            row.operands.rd = None;
-            row.operands.rs2 = None;
-        }
-        FIELD_STORE_TO_X_TAG => {
-            row.operands.rs1 = None;
-            row.operands.rs2 = None;
-        }
-        FIELD_ADD_TAG..=FIELD_ASSERT_EQ_TAG | FIELD_LOAD_IMM_TAG => {
-            row.operands.rd = None;
-            row.operands.rs1 = None;
-            row.operands.rs2 = None;
-        }
-        _ => {}
-    }
-    row
-}
-
-pub fn field_inline_bytecode_row(instruction: &JoltInstructionRow) -> FieldInlineBytecodeRow {
-    let operands = FieldInlineBytecodeOperands {
-        rd: instruction.operands.rd,
-        rs1: instruction.operands.rs1,
-        rs2: instruction.operands.rs2,
-    };
-    let mut row = FieldInlineBytecodeRow::default();
-    match instruction.instruction_kind.tag().0 {
-        FIELD_ADD_TAG => {
-            row.operands = operands;
-            row.flags.add = true;
-        }
-        FIELD_SUB_TAG => {
-            row.operands = operands;
-            row.flags.sub = true;
-        }
-        FIELD_MUL_TAG => {
-            row.operands = operands;
-            row.flags.mul = true;
-        }
-        FIELD_INV_TAG => {
-            row.operands = FieldInlineBytecodeOperands {
-                rd: instruction.operands.rd,
-                rs1: instruction.operands.rs1,
-                rs2: None,
-            };
-            row.flags.inv = true;
-        }
-        FIELD_ASSERT_EQ_TAG => {
-            row.operands = FieldInlineBytecodeOperands {
-                rd: None,
-                rs1: instruction.operands.rs1,
-                rs2: instruction.operands.rs2,
-            };
-            row.flags.assert_eq = true;
-        }
-        FIELD_LOAD_FROM_X_TAG => {
-            row.operands = FieldInlineBytecodeOperands {
-                rd: instruction.operands.rd,
-                rs1: None,
-                rs2: None,
-            };
-            row.flags.load_from_x = true;
-        }
-        FIELD_STORE_TO_X_TAG => {
-            row.operands = FieldInlineBytecodeOperands {
-                rd: None,
-                rs1: instruction.operands.rs1,
-                rs2: None,
-            };
-            row.flags.store_to_x = true;
-        }
-        FIELD_LOAD_IMM_TAG => {
-            row.operands = FieldInlineBytecodeOperands {
-                rd: instruction.operands.rd,
-                rs1: None,
-                rs2: None,
-            };
-            row.flags.load_imm = true;
-        }
-        _ => {}
-    }
-    row
 }
 
 pub fn read_raf_public_values<F>(
@@ -364,19 +234,6 @@ where
     Ok(FieldInlineBytecodeReadRafPublicValues { stage_values })
 }
 
-pub fn merge_read_raf_public_values<F: Field>(
-    bytecode_public_values: &mut jolt_bytecode::BytecodeReadRafPublicValues<F>,
-    field_values: FieldInlineBytecodeReadRafPublicValues<F>,
-) {
-    for (stage_value, field_value) in bytecode_public_values
-        .stage_values
-        .iter_mut()
-        .zip(field_values.stage_values)
-    {
-        *stage_value += field_value;
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafRegisterEqEvals<F> {
     pub read_write: Vec<F>,
@@ -429,55 +286,6 @@ where
             )
         })
         .collect()
-}
-
-pub fn read_raf_input_openings() -> [FieldInlineOpeningId; 12] {
-    [
-        field_op_flag_spartan_outer(FieldInlineOpFlag::Add),
-        field_op_flag_spartan_outer(FieldInlineOpFlag::Sub),
-        field_op_flag_spartan_outer(FieldInlineOpFlag::Mul),
-        field_op_flag_spartan_outer(FieldInlineOpFlag::Inv),
-        field_op_flag_spartan_outer(FieldInlineOpFlag::AssertEq),
-        field_op_flag_spartan_outer(FieldInlineOpFlag::LoadFromX),
-        field_op_flag_spartan_outer(FieldInlineOpFlag::StoreToX),
-        field_op_flag_spartan_outer(FieldInlineOpFlag::LoadImm),
-        field_rd_wa_read_write(),
-        field_rs1_ra_read_write(),
-        field_rs2_ra_read_write(),
-        field_rd_wa_val_evaluation(),
-    ]
-}
-
-fn stage1_claim<F>() -> FieldInlineBytecodeExpr<F>
-where
-    F: RingCore,
-{
-    let beta = bytecode_challenge(BytecodeReadRafChallenge::Stage1Gamma);
-    let mut claim = FieldInlineBytecodeExpr::zero();
-    for (index, flag) in FIELD_INLINE_BYTECODE_STAGE1_FLAGS.into_iter().enumerate() {
-        claim = claim
-            + beta.clone().pow(2 + NUM_CIRCUIT_FLAGS + index)
-                * opening(field_op_flag_spartan_outer(flag));
-    }
-    claim
-}
-
-fn stage4_claim<F>() -> FieldInlineBytecodeExpr<F>
-where
-    F: RingCore,
-{
-    let beta = bytecode_challenge(BytecodeReadRafChallenge::Stage4Gamma);
-    beta.clone().pow(3) * opening(field_rd_wa_read_write())
-        + beta.clone().pow(4) * opening(field_rs1_ra_read_write())
-        + beta.pow(5) * opening(field_rs2_ra_read_write())
-}
-
-fn stage5_claim<F>() -> FieldInlineBytecodeExpr<F>
-where
-    F: RingCore,
-{
-    let beta = bytecode_challenge(BytecodeReadRafChallenge::Stage5Gamma);
-    beta.pow(2 + LookupTableKind::<XLEN>::COUNT) * opening(field_rd_wa_val_evaluation())
 }
 
 pub fn read_raf_row_values<F>(
@@ -613,58 +421,6 @@ fn require_len<F>(values: &[F], expected: usize) -> Result<(), FieldInlineByteco
     Ok(())
 }
 
-fn encode_operand(register: Option<u8>, bytes: &mut Vec<u8>) {
-    if let Some(register) = register {
-        bytes.push(1);
-        bytes.push(register);
-    } else {
-        bytes.push(0);
-        bytes.push(0);
-    }
-}
-
-fn bytecode_challenge<F>(id: BytecodeReadRafChallenge) -> FieldInlineBytecodeExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-fn field_op_flag_spartan_outer(flag: FieldInlineOpFlag) -> FieldInlineOpeningId {
-    FieldInlineOpeningId::virtual_polynomial(
-        FieldInlineVirtualPolynomial::FieldOpFlag(flag),
-        FieldInlineRelationId::FieldRegistersSpartanOuter,
-    )
-}
-
-fn field_rs1_ra_read_write() -> FieldInlineOpeningId {
-    FieldInlineOpeningId::virtual_polynomial(
-        FieldInlineVirtualPolynomial::FieldRs1Ra,
-        FieldInlineRelationId::FieldRegistersReadWriteChecking,
-    )
-}
-
-fn field_rs2_ra_read_write() -> FieldInlineOpeningId {
-    FieldInlineOpeningId::virtual_polynomial(
-        FieldInlineVirtualPolynomial::FieldRs2Ra,
-        FieldInlineRelationId::FieldRegistersReadWriteChecking,
-    )
-}
-
-fn field_rd_wa_read_write() -> FieldInlineOpeningId {
-    FieldInlineOpeningId::virtual_polynomial(
-        FieldInlineVirtualPolynomial::FieldRdWa,
-        FieldInlineRelationId::FieldRegistersReadWriteChecking,
-    )
-}
-
-fn field_rd_wa_val_evaluation() -> FieldInlineOpeningId {
-    FieldInlineOpeningId::virtual_polynomial(
-        FieldInlineVirtualPolynomial::FieldRdWa,
-        FieldInlineRelationId::FieldRegistersValEvaluation,
-    )
-}
-
 #[cfg(test)]
 #[expect(clippy::panic)]
 mod tests {
@@ -672,21 +428,6 @@ mod tests {
     use jolt_poly::EqPolynomial;
 
     use super::*;
-
-    #[test]
-    fn input_extension_uses_field_inline_openings_and_bytecode_challenges() {
-        let expr = read_raf_input_extension::<Fr>();
-        assert_eq!(expr.required_openings(), read_raf_input_openings().to_vec());
-        assert_eq!(
-            expr.required_challenges(),
-            vec![
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
-            ]
-        );
-    }
 
     #[test]
     fn read_raf_register_eq_evals_builds_field_register_address_tables() {
@@ -811,47 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn merge_read_raf_public_values_adds_field_stage_values() {
-        let mut public_values = jolt_bytecode::BytecodeReadRafPublicValues {
-            stage_values: [
-                Fr::from_u64(2),
-                Fr::from_u64(3),
-                Fr::from_u64(5),
-                Fr::from_u64(7),
-                Fr::from_u64(11),
-            ],
-            spartan_outer_raf: Fr::from_u64(13),
-            spartan_shift_raf: Fr::from_u64(17),
-            entry: Fr::from_u64(19),
-        };
-        let field_values = FieldInlineBytecodeReadRafPublicValues {
-            stage_values: [
-                Fr::from_u64(23),
-                Fr::from_u64(29),
-                Fr::from_u64(31),
-                Fr::from_u64(37),
-                Fr::from_u64(41),
-            ],
-        };
-
-        merge_read_raf_public_values(&mut public_values, field_values);
-
-        assert_eq!(
-            public_values.stage_values,
-            [
-                Fr::from_u64(25),
-                Fr::from_u64(32),
-                Fr::from_u64(36),
-                Fr::from_u64(44),
-                Fr::from_u64(52),
-            ]
-        );
-        assert_eq!(public_values.spartan_outer_raf, Fr::from_u64(13));
-        assert_eq!(public_values.spartan_shift_raf, Fr::from_u64(17));
-        assert_eq!(public_values.entry, Fr::from_u64(19));
-    }
-
-    #[test]
     fn rejects_missing_operands_for_active_field_row() {
         let rows = [FieldInlineBytecodeRow {
             flags: FieldInlineBytecodeFlags {
@@ -893,23 +593,5 @@ mod tests {
                 field_register_count: 16
             })
         ));
-    }
-
-    #[test]
-    fn transcript_bytes_bind_field_bytecode_payload() {
-        let mut rows = vec![FieldInlineBytecodeRow {
-            operands: FieldInlineBytecodeOperands {
-                rd: Some(1),
-                ..FieldInlineBytecodeOperands::default()
-            },
-            flags: FieldInlineBytecodeFlags {
-                load_imm: true,
-                ..FieldInlineBytecodeFlags::default()
-            },
-        }];
-        let original = bytecode_transcript_bytes(&rows, 4);
-        rows[0].operands.rd = Some(2);
-
-        assert_ne!(original, bytecode_transcript_bytes(&rows, 4));
     }
 }

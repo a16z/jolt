@@ -4,8 +4,7 @@ use crate::{challenge, opening, public};
 
 use super::super::super::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
-    JoltVirtualPolynomial,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
@@ -43,71 +42,6 @@ impl HammingWeightClaimReductionDimensions {
         let mut r_address = challenges.iter().rev().copied().collect::<Vec<_>>();
         r_address.extend_from_slice(r_cycle);
         Ok(r_address)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HammingWeightClaimReductionInputOpenings {
-    pub ram_hamming_weight: JoltOpeningId,
-    pub booleanity: Vec<JoltOpeningId>,
-    pub virtualization: Vec<JoltOpeningId>,
-}
-
-pub fn claim_reduction_input_openings(
-    dimensions: HammingWeightClaimReductionDimensions,
-) -> HammingWeightClaimReductionInputOpenings {
-    HammingWeightClaimReductionInputOpenings {
-        ram_hamming_weight: ram_hamming_weight(),
-        booleanity: dimensions
-            .layout
-            .polynomials()
-            .map(booleanity_claim)
-            .collect(),
-        virtualization: dimensions
-            .layout
-            .polynomials()
-            .map(virtualization_claim)
-            .collect(),
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HammingWeightClaimReductionCommittedPolynomials {
-    pub instruction_ra: Vec<JoltCommittedPolynomial>,
-    pub bytecode_ra: Vec<JoltCommittedPolynomial>,
-    pub ram_ra: Vec<JoltCommittedPolynomial>,
-}
-
-impl HammingWeightClaimReductionCommittedPolynomials {
-    pub fn all(&self) -> Vec<JoltCommittedPolynomial> {
-        self.instruction_ra
-            .iter()
-            .chain(&self.bytecode_ra)
-            .chain(&self.ram_ra)
-            .copied()
-            .collect()
-    }
-}
-
-pub fn claim_reduction_committed_polynomials(
-    dimensions: HammingWeightClaimReductionDimensions,
-) -> HammingWeightClaimReductionCommittedPolynomials {
-    let mut instruction_ra = Vec::with_capacity(dimensions.layout.instruction());
-    let mut bytecode_ra = Vec::with_capacity(dimensions.layout.bytecode());
-    let mut ram_ra = Vec::with_capacity(dimensions.layout.ram());
-
-    for polynomial in dimensions.layout.polynomials() {
-        match polynomial {
-            JoltRaPolynomial::Instruction(_) => instruction_ra.push(polynomial.committed()),
-            JoltRaPolynomial::Bytecode(_) => bytecode_ra.push(polynomial.committed()),
-            JoltRaPolynomial::Ram(_) => ram_ra.push(polynomial.committed()),
-        }
-    }
-
-    HammingWeightClaimReductionCommittedPolynomials {
-        instruction_ra,
-        bytecode_ra,
-        ram_ra,
     }
 }
 
@@ -219,80 +153,11 @@ mod tests {
         JoltRaPolynomialLayout::new(instruction, bytecode, ram)
     }
 
-    fn dimensions(layout: JoltRaPolynomialLayout) -> HammingWeightClaimReductionDimensions {
-        HammingWeightClaimReductionDimensions::new(layout, 8)
-    }
-
     fn dimensions_with_log_k_chunk(
         layout: JoltRaPolynomialLayout,
         log_k_chunk: usize,
     ) -> HammingWeightClaimReductionDimensions {
         HammingWeightClaimReductionDimensions::new(layout, log_k_chunk)
-    }
-
-    #[test]
-    fn opening_helpers_enumerate_layout_polynomials() -> Result<(), JoltFormulaDimensionsError> {
-        let layout = layout(1, 1, 1)?;
-
-        let instruction = JoltRaPolynomial::Instruction(0);
-        let bytecode = JoltRaPolynomial::Bytecode(0);
-        let ram = JoltRaPolynomial::Ram(0);
-
-        let input_openings = claim_reduction_input_openings(dimensions(layout));
-        assert_eq!(input_openings.ram_hamming_weight, ram_hamming_weight());
-        assert_eq!(
-            input_openings.booleanity,
-            vec![
-                booleanity_claim(instruction),
-                booleanity_claim(bytecode),
-                booleanity_claim(ram),
-            ]
-        );
-        assert_eq!(
-            input_openings.virtualization,
-            vec![
-                virtualization_claim(instruction),
-                virtualization_claim(bytecode),
-                virtualization_claim(ram),
-            ]
-        );
-        let output_openings = claim_reduction_output_openings(dimensions(layout));
-        assert_eq!(
-            output_openings.instruction_ra,
-            vec![reduced_claim(instruction)]
-        );
-        assert_eq!(output_openings.bytecode_ra, vec![reduced_claim(bytecode)]);
-        assert_eq!(output_openings.ram_ra, vec![reduced_claim(ram)]);
-        assert_eq!(
-            output_openings.all(),
-            vec![
-                reduced_claim(instruction),
-                reduced_claim(bytecode),
-                reduced_claim(ram),
-            ]
-        );
-        let committed_polynomials = claim_reduction_committed_polynomials(dimensions(layout));
-        assert_eq!(
-            committed_polynomials.instruction_ra,
-            vec![JoltCommittedPolynomial::InstructionRa(0)]
-        );
-        assert_eq!(
-            committed_polynomials.bytecode_ra,
-            vec![JoltCommittedPolynomial::BytecodeRa(0)]
-        );
-        assert_eq!(
-            committed_polynomials.ram_ra,
-            vec![JoltCommittedPolynomial::RamRa(0)]
-        );
-        assert_eq!(
-            committed_polynomials.all(),
-            vec![
-                JoltCommittedPolynomial::InstructionRa(0),
-                JoltCommittedPolynomial::BytecodeRa(0),
-                JoltCommittedPolynomial::RamRa(0),
-            ]
-        );
-        Ok(())
     }
 
     #[test]

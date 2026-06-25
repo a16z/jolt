@@ -16,18 +16,6 @@ pub fn claim_reduction_output_openings() -> [FieldInlineOpeningId; 1] {
     [field_rd_inc_reduced()]
 }
 
-pub fn field_rd_inc_read_write_opening() -> FieldInlineOpeningId {
-    field_rd_inc_read_write()
-}
-
-pub fn field_rd_inc_val_evaluation_opening() -> FieldInlineOpeningId {
-    field_rd_inc_val_evaluation()
-}
-
-pub fn field_rd_inc_reduced_opening() -> FieldInlineOpeningId {
-    field_rd_inc_reduced()
-}
-
 pub(crate) fn inc_challenge<F>(id: FieldRegistersIncClaimReductionChallenge) -> FieldInlineExpr<F>
 where
     F: RingCore,

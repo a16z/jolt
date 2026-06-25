@@ -2,7 +2,6 @@ use std::num::NonZeroUsize;
 
 use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
-use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_riscv::InstructionFlags;
 
 use crate::{challenge, opening, public};
@@ -24,22 +23,6 @@ pub struct InstructionReadRafDimensions {
     log_t: usize,
     instruction_address_bits: usize,
     num_virtual_ra_polys: NonZeroUsize,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct InstructionReadRafAddressLayout {
-    address_bits: usize,
-    virtual_ra_chunk_bits: usize,
-}
-
-impl InstructionReadRafAddressLayout {
-    pub const fn address_bits(self) -> usize {
-        self.address_bits
-    }
-
-    pub const fn virtual_ra_chunk_bits(self) -> usize {
-        self.virtual_ra_chunk_bits
-    }
 }
 
 impl InstructionReadRafDimensions {
@@ -65,42 +48,6 @@ impl InstructionReadRafDimensions {
 
     pub fn num_virtual_ra_polys(self) -> usize {
         self.num_virtual_ra_polys.get()
-    }
-
-    pub fn address_layout(
-        self,
-    ) -> Result<InstructionReadRafAddressLayout, JoltFormulaDimensionsError> {
-        let virtual_ra_count = self.num_virtual_ra_polys();
-        if !self
-            .instruction_address_bits
-            .is_multiple_of(virtual_ra_count)
-        {
-            return Err(JoltFormulaDimensionsError::NotDivisible {
-                value_name: "instruction_address_bits",
-                value: self.instruction_address_bits,
-                divisor_name: "instruction virtual RA polynomial count",
-                divisor: virtual_ra_count,
-            });
-        }
-        Ok(InstructionReadRafAddressLayout {
-            address_bits: self.instruction_address_bits,
-            virtual_ra_chunk_bits: self.instruction_address_bits / virtual_ra_count,
-        })
-    }
-
-    pub fn u128_address_layout(
-        self,
-    ) -> Result<InstructionReadRafAddressLayout, JoltFormulaDimensionsError> {
-        let layout = self.address_layout()?;
-        if layout.address_bits > u128::BITS as usize {
-            return Err(JoltFormulaDimensionsError::Exceeds {
-                value_name: "instruction_address_bits",
-                value: layout.address_bits,
-                max_name: "u128::BITS",
-                max: u128::BITS as usize,
-            });
-        }
-        Ok(layout)
     }
 
     pub fn sumcheck(self) -> JoltSumcheckSpec {
@@ -236,13 +183,6 @@ impl TryFrom<(usize, usize, usize)> for InstructionRaVirtualizationDimensions {
     }
 }
 
-pub fn input_virtualization_input_openings() -> [JoltOpeningId; 2] {
-    [
-        right_instruction_input_product(),
-        left_instruction_input_product(),
-    ]
-}
-
 pub fn input_virtualization_output_openings() -> [JoltOpeningId; 8] {
     [
         right_operand_is_rs2(),
@@ -323,18 +263,6 @@ pub fn read_raf_instruction_raf_flag_opening() -> JoltOpeningId {
     instruction_raf_flag()
 }
 
-pub fn ra_virtualization_eq_cycle_polynomial<F>(instruction_read_raf_cycle: &[F]) -> Polynomial<F>
-where
-    F: Field,
-{
-    let eq_point = instruction_read_raf_cycle
-        .iter()
-        .rev()
-        .copied()
-        .collect::<Vec<_>>();
-    Polynomial::new(EqPolynomial::<F>::evals(&eq_point, None))
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstructionRaVirtualizationOutputOpenings {
     pub committed_instruction_ra_by_virtual: Vec<Vec<JoltOpeningId>>,
@@ -348,14 +276,6 @@ impl InstructionRaVirtualizationOutputOpenings {
             .copied()
             .collect()
     }
-}
-
-pub fn ra_virtualization_input_openings(
-    dimensions: InstructionRaVirtualizationDimensions,
-) -> Vec<JoltOpeningId> {
-    (0..dimensions.num_virtual_ra_polys())
-        .map(ra_virtualization_instruction_ra_opening)
-        .collect()
 }
 
 pub fn ra_virtualization_output_openings(
@@ -373,10 +293,6 @@ pub fn ra_virtualization_output_openings(
     InstructionRaVirtualizationOutputOpenings {
         committed_instruction_ra_by_virtual,
     }
-}
-
-pub fn ra_virtualization_instruction_ra_opening(index: usize) -> JoltOpeningId {
-    instruction_ra(index)
 }
 
 pub fn ra_virtualization_committed_instruction_ra_opening(index: usize) -> JoltOpeningId {
@@ -616,49 +532,11 @@ pub(crate) fn imm() -> JoltOpeningId {
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::EqPolynomial;
 
     #[test]
     fn read_raf_rejects_empty_dimensions() {
         assert!(InstructionReadRafDimensions::try_from((5, 128, 0)).is_err());
         assert!(InstructionReadRafDimensions::try_from((5, 0, 1)).is_err());
-    }
-
-    #[test]
-    fn read_raf_address_layout_derives_virtual_ra_chunk_bits() {
-        let layout = InstructionReadRafDimensions::try_from((5, 128, 4))
-            .unwrap_or_else(|err| panic!("test read-RAF dimensions should be valid: {err}"))
-            .address_layout()
-            .unwrap_or_else(|err| panic!("address layout should derive: {err}"));
-
-        assert_eq!(layout.address_bits(), 128);
-        assert_eq!(layout.virtual_ra_chunk_bits(), 32);
-    }
-
-    #[test]
-    fn read_raf_address_layout_rejects_invalid_widths() {
-        assert_eq!(
-            InstructionReadRafDimensions::try_from((5, 130, 4))
-                .unwrap_or_else(|err| panic!("test read-RAF dimensions should be valid: {err}"))
-                .address_layout(),
-            Err(JoltFormulaDimensionsError::NotDivisible {
-                value_name: "instruction_address_bits",
-                value: 130,
-                divisor_name: "instruction virtual RA polynomial count",
-                divisor: 4,
-            })
-        );
-        assert_eq!(
-            InstructionReadRafDimensions::try_from((5, 192, 4))
-                .unwrap_or_else(|err| panic!("test read-RAF dimensions should be valid: {err}"))
-                .u128_address_layout(),
-            Err(JoltFormulaDimensionsError::Exceeds {
-                value_name: "instruction_address_bits",
-                value: 192,
-                max_name: "u128::BITS",
-                max: 128,
-            })
-        );
     }
 
     #[test]
@@ -703,16 +581,5 @@ mod tests {
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 0, 1)).is_err());
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, 0)).is_err());
         assert!(InstructionRaVirtualizationDimensions::try_from((5, usize::MAX, 2)).is_err());
-    }
-
-    #[test]
-    fn ra_virtualization_eq_cycle_polynomial_reverses_read_raf_cycle() {
-        let read_raf_cycle = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
-        let eq_point = vec![Fr::from_u64(5), Fr::from_u64(3), Fr::from_u64(2)];
-
-        assert_eq!(
-            ra_virtualization_eq_cycle_polynomial(&read_raf_cycle).evals(),
-            EqPolynomial::<Fr>::evals(&eq_point, None)
-        );
     }
 }

@@ -17,13 +17,6 @@ pub fn claim_reduction_output_openings() -> [JoltOpeningId; 5] {
     ]
 }
 
-pub fn stage2_claim_reduction_output_openings() -> [JoltOpeningId; 2] {
-    [
-        left_lookup_operand_reduced(),
-        right_lookup_operand_reduced(),
-    ]
-}
-
 pub fn claim_reduction_input_openings() -> [JoltOpeningId; 5] {
     [
         lookup_output_spartan(),
@@ -135,19 +128,4 @@ pub(crate) fn right_instruction_input_reduced() -> JoltOpeningId {
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::InstructionClaimReduction,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stage2_claim_reduction_openings_are_reduced_lookup_operands() {
-        let output_openings = claim_reduction_output_openings();
-
-        assert_eq!(
-            stage2_claim_reduction_output_openings(),
-            [output_openings[1], output_openings[2]]
-        );
-    }
 }
