@@ -11,13 +11,14 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{
-    verifier_transcript, DuplexSpongeInterface, FsAbsorb, FsTranscript, VerifierState,
+    serialize_slice, verifier_transcript, BytesMsg, DuplexSpongeInterface, FsAbsorb, FsTranscript,
+    VerifierState, VerifierTranscript,
 };
 
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
     preprocessing::JoltVerifierPreprocessing,
-    proof::{JoltCommitments, JoltProof},
+    proof::{proof_commitments_payload_order, JoltCommitments, JoltProof},
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
@@ -63,7 +64,7 @@ where
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: CanonicalSerialize + HomomorphicCommitment<F>,
+    PCS::Output: CanonicalSerialize + Clone + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     H: DuplexSpongeInterface<U = u8> + Default,
@@ -80,17 +81,10 @@ where
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
 
-    // Option-A symmetric model: no NARG. Construct the transcript with a zero
-    // instance digest and absorb the public preamble explicitly afterwards,
-    // preserving the model's self-consistency.
-    let mut transcript = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &[]);
+    let mut transcript = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &proof.narg);
     absorb_preamble(&checked, proof, &mut transcript);
-    absorb_commitments(
-        preprocessing,
-        proof,
-        trusted_advice_commitment,
-        &mut transcript,
-    );
+    read_and_check_proof_commitments_from_narg(proof, &mut transcript)?;
+    absorb_preprocessing_commitments(preprocessing, trusted_advice_commitment, &mut transcript);
 
     // Built once for the whole verification and shared by the stages that read the
     // RA layout (5–8), instead of each rebuilding the same dimensions.
@@ -179,6 +173,7 @@ where
             .map_err(|error| VerifierError::BlindFoldVerificationFailed {
                 reason: error.to_string(),
             })?;
+        VerifierTranscript::<H>::check_eof(transcript).map_err(|_| VerifierError::MalformedNarg)?;
         return Ok(());
     }
 
@@ -186,7 +181,7 @@ where
         return Err(VerifierError::ExpectedClearProof { field: "stage8" });
     };
 
-    Ok(())
+    VerifierTranscript::<H>::check_eof(transcript).map_err(|_| VerifierError::MalformedNarg)
 }
 
 /// Verifier state captured immediately before stage 1, after input validation
@@ -203,20 +198,20 @@ pub struct PreStage1VerifierState<T> {
 /// config checks, then preamble + commitment absorption — and returns the
 /// pre-stage-1 state. WARNING: the absorption order here must stay identical to
 /// [`verify`] or the prover and verifier transcripts diverge.
-pub fn verify_until_stage1<PCS, VC, H, ZkProof>(
+pub fn verify_until_stage1<'a, PCS, VC, H, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &'a JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
-) -> Result<PreStage1VerifierState<VerifierState<'static, H>>, VerifierError>
+) -> Result<PreStage1VerifierState<VerifierState<'a, H>>, VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: CanonicalSerialize,
+    PCS::Output: CanonicalSerialize + Clone,
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: CanonicalSerialize,
     H: DuplexSpongeInterface<U = u8> + Default,
-    for<'a> VerifierState<'a, H>: FsTranscript<PCS::Field>,
+    for<'tx> VerifierState<'tx, H>: FsTranscript<PCS::Field>,
 {
     let checked = validate_inputs(
         preprocessing,
@@ -228,14 +223,10 @@ where
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
 
-    let mut transcript = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &[]);
+    let mut transcript = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &proof.narg);
     absorb_preamble(&checked, proof, &mut transcript);
-    absorb_commitments(
-        preprocessing,
-        proof,
-        trusted_advice_commitment,
-        &mut transcript,
-    );
+    read_and_check_proof_commitments_from_narg(proof, &mut transcript)?;
+    absorb_preprocessing_commitments(preprocessing, trusted_advice_commitment, &mut transcript);
 
     Ok(PreStage1VerifierState {
         checked,
@@ -514,9 +505,8 @@ pub fn absorb_transcript_preamble<T>(
     );
 }
 
-pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
+pub(crate) fn absorb_preprocessing_commitments<PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
 ) where
@@ -525,12 +515,9 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     VC: VectorCommitment<Field = PCS::Field>,
     T: FsTranscript<PCS::Field>,
 {
-    absorb_transcript_commitments(
-        &proof.commitments,
-        proof.untrusted_advice_commitment.as_ref(),
-        trusted_advice_commitment,
-        transcript,
-    );
+    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
+        transcript.absorb(trusted_advice_commitment);
+    }
     if let Some(committed) = preprocessing.program.committed() {
         for commitment in &committed.bytecode_chunk_commitments {
             transcript.absorb(commitment);
@@ -539,11 +526,49 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     }
 }
 
+fn read_and_check_proof_commitments_from_narg<PCS, VC, ZkProof, H>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    transcript: &mut VerifierState<'_, H>,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: CanonicalSerialize + Clone,
+    VC: VectorCommitment<Field = PCS::Field>,
+    H: DuplexSpongeInterface<U = u8>,
+{
+    let commitments = read_narg_frame(transcript)?;
+    let expected_commitments = proof_commitments_payload_order(&proof.commitments);
+    if commitments != serialize_slice(&expected_commitments) {
+        return Err(VerifierError::MalformedNarg);
+    }
+
+    let untrusted_advice = read_narg_frame(transcript)?;
+    let expected_untrusted = proof
+        .untrusted_advice_commitment
+        .as_ref()
+        .map_or_else(Vec::new, |commitment| vec![commitment.clone()]);
+    if untrusted_advice != serialize_slice(&expected_untrusted) {
+        return Err(VerifierError::MalformedNarg);
+    }
+
+    Ok(())
+}
+
+fn read_narg_frame<H>(transcript: &mut VerifierState<'_, H>) -> Result<Vec<u8>, VerifierError>
+where
+    H: DuplexSpongeInterface<U = u8>,
+{
+    VerifierTranscript::<H>::prover_message::<BytesMsg>(transcript)
+        .map(|bytes| bytes.0)
+        .map_err(|_| VerifierError::MalformedNarg)
+}
+
 /// Absorbs the proof-derived polynomial commitments (increment, one-hot `ra`,
 /// and optional advice commitments) in the consensus-critical order. WARNING:
 /// this covers only the commitments carried by the proof itself; committed
 /// program-image commitments live in the preprocessing and are absorbed
-/// separately by [`absorb_commitments`] immediately after this call.
+/// separately by [`absorb_preprocessing_commitments`] immediately after this
+/// call.
 pub fn absorb_transcript_commitments<C, T>(
     commitments: &JoltCommitments<C>,
     untrusted_advice_commitment: Option<&C>,
@@ -971,6 +996,27 @@ mod tests {
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false, true),
             Err(VerifierError::InvalidVectorCommitmentCapacity { got: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn verify_until_stage1_rejects_missing_narg_prefix() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.narg.clear();
+
+        assert!(matches!(
+            verify_until_stage1::<
+                TestPcs,
+                Pedersen<Bn254G1>,
+                jolt_transcript::Blake2b512,
+                jolt_blindfold::BlindFoldProof<Fr, Bn254G1>,
+            >(&preprocessing, &public_io, &proof, None, false),
+            Err(VerifierError::MalformedNarg)
         ));
     }
 

@@ -2,12 +2,13 @@
 //! (jolt-crypto / jolt-openings / jolt-sumcheck / jolt-hyperkzg / jolt-dory /
 //! jolt-blindfold / jolt-verifier).
 //!
-//! These crates are **symmetric** (the spec's "Option-A" shape): a value is
-//! `absorb`'d on *both* the (test-)prover and the verifier side and never
-//! written to a NARG. There is intentionally **no** `prover_message` /
-//! `check_eof` here — the modular verify paths consume a *structured* proof
-//! and re-absorb its values to derive challenges. The malleability guard lives
-//! at the structured-proof deserialize boundary, outside this surface.
+//! These traits are **symmetric** (the spec's "Option-A" shape): a value is
+//! `absorb`'d on *both* the (test-)prover and verifier side. Most modular
+//! protocol crates still consume structured proof fields through this surface.
+//! The top-level `jolt-verifier` wrapper can additionally use
+//! [`VerifierTranscript`](crate::VerifierTranscript) directly for proof bytes
+//! that have moved into Spongefish NARG frames, then hand the same transcript
+//! back to these traits for the remaining structured paths.
 //!
 //! This is the field-agnostic sibling of jolt-core's internal
 //! [`transcript_msgs`](../../jolt-core/src/transcript_msgs.rs) vocabulary: it

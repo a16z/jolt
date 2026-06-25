@@ -14,6 +14,9 @@ pub enum VerifierError {
         got: JoltProtocolConfig,
     },
 
+    #[error("proof NARG is malformed or inconsistent with structured compatibility fields")]
+    MalformedNarg,
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

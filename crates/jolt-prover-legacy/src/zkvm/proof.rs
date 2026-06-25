@@ -8,7 +8,6 @@
 use crate::zkvm::clear_claims::build_clear_claims;
 pub use jolt_verifier::VerifierError;
 use jolt_verifier::{
-    config::JoltProtocolConfig,
     preprocessing::{
         CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
     },
@@ -416,11 +415,15 @@ where
     F: ProofField,
     C: ProofCurve<F>,
     PCS: ProofCommitmentScheme<F>,
+    <PCS::VerifierPcs as VerifierCommitment>::Output: ark_serialize::CanonicalSerialize + Clone,
     H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
     let commitments =
         convert_proof_commitments::<F, PCS>(proof.commitments, one_hot_config, proof.ram_K)?;
+    let untrusted_advice_commitment = proof
+        .untrusted_advice_commitment
+        .map(PCS::commitment_into_verifier);
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: convert_uniskip(proof.stage1_uni_skip_first_round_proof),
         stage1_sumcheck_proof: convert_sumcheck(proof.stage1_sumcheck_proof),
@@ -434,24 +437,21 @@ where
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
     };
 
-    Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+    Ok(JoltProof::new(
         commitments,
         stages,
-        joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),
-        untrusted_advice_commitment: proof
-            .untrusted_advice_commitment
-            .map(PCS::commitment_into_verifier),
-        claims: JoltProofClaims::Clear(convert_opening_claims(
+        PCS::opening_proof_into_verifier(proof.joint_opening_proof),
+        untrusted_advice_commitment,
+        JoltProofClaims::Clear(convert_opening_claims(
             proof.opening_claims,
             proof.trace_length,
         )),
-        trace_length: proof.trace_length,
-        ram_K: proof.ram_K,
-        rw_config: convert_read_write_config(proof.rw_config),
+        proof.trace_length,
+        proof.ram_K,
+        convert_read_write_config(proof.rw_config),
         one_hot_config,
-        trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
-    })
+        convert_trace_polynomial_order(proof.dory_layout),
+    ))
 }
 
 #[cfg(feature = "zk")]
@@ -472,11 +472,15 @@ where
     F: ProofField,
     C: ProofCurve<F>,
     PCS: ProofCommitmentScheme<F>,
+    <PCS::VerifierPcs as VerifierCommitment>::Output: ark_serialize::CanonicalSerialize + Clone,
     H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
     let commitments =
         convert_proof_commitments::<F, PCS>(proof.commitments, one_hot_config, proof.ram_K)?;
+    let untrusted_advice_commitment = proof
+        .untrusted_advice_commitment
+        .map(PCS::commitment_into_verifier);
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: convert_uniskip(proof.stage1_uni_skip_first_round_proof),
         stage1_sumcheck_proof: convert_sumcheck(proof.stage1_sumcheck_proof),
@@ -490,23 +494,20 @@ where
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
     };
 
-    Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(true),
+    Ok(JoltProof::new(
         commitments,
         stages,
-        joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),
-        untrusted_advice_commitment: proof
-            .untrusted_advice_commitment
-            .map(PCS::commitment_into_verifier),
-        claims: JoltProofClaims::Zk {
+        PCS::opening_proof_into_verifier(proof.joint_opening_proof),
+        untrusted_advice_commitment,
+        JoltProofClaims::Zk {
             blindfold_proof: prover_blindfold_proof_into_verifier::<F, C>(&proof.blindfold_proof),
         },
-        trace_length: proof.trace_length,
-        ram_K: proof.ram_K,
-        rw_config: convert_read_write_config(proof.rw_config),
+        proof.trace_length,
+        proof.ram_K,
+        convert_read_write_config(proof.rw_config),
         one_hot_config,
-        trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
-    })
+        convert_trace_polynomial_order(proof.dory_layout),
+    ))
 }
 
 fn convert_uniskip<F, C>(

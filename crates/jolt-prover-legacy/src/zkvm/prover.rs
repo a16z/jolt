@@ -620,9 +620,9 @@ where
             );
         }
 
-        // Retained compatibility/debug NARG. On this split's live structured
-        // verifier bridge, clear round polynomials are proof fields and are
-        // transcript-bound with shared absorbs.
+        // Internal prover NARG. The proof bridge exports the prefix currently
+        // consumed by the modular verifier; the remaining stage frames are kept
+        // here until those verifier paths are made NARG-native too.
         let narg = self.transcript.narg_string().to_vec();
 
         #[cfg(test)]
@@ -695,6 +695,7 @@ where
         F: crate::zkvm::proof::ProofField,
         C: crate::zkvm::proof::ProofCurve<F>,
         PCS: crate::zkvm::proof::ProofCommitmentScheme<F>,
+        <PCS::VerifierPcs as jolt_crypto::Commitment>::Output: CanonicalSerialize + Clone,
     {
         let (proof, debug_info) = self.prove_parts();
         let proof = crate::zkvm::proof::proof_parts_into_verifier(proof)?;
@@ -866,16 +867,18 @@ where
             (commitments, hint_map)
         };
 
-        // Append commitments to transcript
-        for commitment in &commitments {
-            self.transcript.absorb(commitment);
-        }
+        // Witness commitments are prover-only proof payload. Write them as one
+        // NARG frame; the modular verifier reads the same frame before stage 1.
+        self.transcript.write_slice(&commitments);
 
         (commitments, hint_map)
     }
 
     fn generate_and_commit_untrusted_advice(&mut self) -> Option<PCS::Commitment> {
         if self.program_io.untrusted_advice.is_empty() {
+            // Always write the advice presence frame so the verifier consumes one
+            // fixed NARG position whether advice is present or absent.
+            self.transcript.write_slice::<PCS::Commitment>(&[]);
             return None;
         }
 
@@ -899,7 +902,8 @@ where
             DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript.absorb(&commitment);
+        self.transcript
+            .write_slice(std::slice::from_ref(&commitment));
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);

@@ -1,5 +1,6 @@
 //! Verifier-owned proof model types.
 
+use ark_serialize::CanonicalSerialize;
 use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -7,6 +8,7 @@ use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::{serialize_slice, BytesMsg, Encoding};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -30,6 +32,10 @@ pub struct JoltProof<
     VC: VectorCommitment<Field = PCS::Field>,
 {
     pub protocol: JoltProtocolConfig,
+    /// Spongefish NARG frames consumed by the modular verifier. This is being
+    /// expanded incrementally as the split verifier moves away from structured
+    /// proof fields.
+    pub narg: Vec<u8>,
     pub commitments: JoltCommitments<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
@@ -62,10 +68,15 @@ where
         rw_config: JoltReadWriteConfig,
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
-    ) -> Self {
+    ) -> Self
+    where
+        PCS::Output: CanonicalSerialize + Clone,
+    {
         let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
+        let narg = verifier_narg_prefix(&commitments, untrusted_advice_commitment.as_ref());
         Self {
             protocol,
+            narg,
             commitments,
             stages,
             joint_opening_proof,
@@ -180,4 +191,41 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+}
+
+fn append_narg_frame<T: CanonicalSerialize>(narg: &mut Vec<u8>, values: &[T]) {
+    let frame = BytesMsg(serialize_slice(values));
+    narg.extend_from_slice(frame.encode().as_ref());
+}
+
+pub(crate) fn verifier_narg_prefix<C>(
+    commitments: &JoltCommitments<C>,
+    untrusted_advice: Option<&C>,
+) -> Vec<u8>
+where
+    C: CanonicalSerialize + Clone,
+{
+    let mut narg = Vec::new();
+    append_narg_frame(&mut narg, &proof_commitments_payload_order(commitments));
+    match untrusted_advice {
+        Some(commitment) => append_narg_frame(&mut narg, std::slice::from_ref(commitment)),
+        None => append_narg_frame::<C>(&mut narg, &[]),
+    }
+    narg
+}
+
+pub(crate) fn proof_commitments_payload_order<C: Clone>(
+    commitments: &JoltCommitments<C>,
+) -> Vec<C> {
+    let mut ordered = Vec::with_capacity(
+        2 + commitments.ra.instruction.len()
+            + commitments.ra.ram.len()
+            + commitments.ra.bytecode.len(),
+    );
+    ordered.push(commitments.rd_inc.clone());
+    ordered.push(commitments.ram_inc.clone());
+    ordered.extend(commitments.ra.instruction.iter().cloned());
+    ordered.extend(commitments.ra.ram.iter().cloned());
+    ordered.extend(commitments.ra.bytecode.iter().cloned());
+    ordered
 }

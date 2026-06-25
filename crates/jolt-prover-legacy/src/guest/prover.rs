@@ -68,6 +68,8 @@ pub fn prove<
 >
 where
     ProverState<H, StdRng>: ProverFs<F>,
+    <PCS::VerifierPcs as jolt_crypto::Commitment>::Output:
+        ark_serialize::CanonicalSerialize + Clone,
 {
     use crate::zkvm::prover::JoltCpuProver;
 
