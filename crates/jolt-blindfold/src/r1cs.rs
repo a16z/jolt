@@ -623,7 +623,7 @@ mod tests {
                 1,
                 1,
                 &[(1, 2)],
-                opening(Opening::Input) * public(Public::Scale) + challenge(0),
+                opening(Opening::Input) * public(Public::Scale) + challenge(0usize),
                 constant(Fr::from_u64(11)),
             )],
             Vec::new(),

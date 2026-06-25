@@ -3,15 +3,15 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::formulas::bytecode::{
-    bytecode_challenge, bytecode_read_raf_address_phase_opening, pc_spartan_outer,
-    pc_spartan_shift, read_raf_cycle_output, read_raf_cycle_output_committed, stage1_claim,
-    stage2_claim, stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
+    bytecode_read_raf_address_phase_opening, pc_spartan_outer, pc_spartan_shift,
+    read_raf_cycle_output, read_raf_cycle_output_committed, stage1_claim, stage2_claim,
+    stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
 };
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
     JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{challenge, opening, SymbolicSumcheck};
 
 /// The full bytecode read-RAF sumcheck: folds the five staged claims plus the
 /// Spartan outer/shift PC openings against the bytecode-table cycle output.
@@ -39,7 +39,7 @@ impl SymbolicSumcheck for ReadRaf {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
+        let gamma = challenge(BytecodeReadRafChallenge::Gamma);
 
         gamma.clone().pow(7)
             + stage1_claim()
@@ -82,7 +82,7 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
+        let gamma = challenge(BytecodeReadRafChallenge::Gamma);
 
         gamma.clone().pow(7)
             + stage1_claim()

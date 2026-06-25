@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn expression_ops_build_sum_of_products() {
         let expr: Expr<Fr, Opening> =
-            opening(Opening::A) * opening(Opening::B) + challenge(0) * opening(Opening::A) - 3;
+            opening(Opening::A) * opening(Opening::B) + challenge(0usize) * opening(Opening::A) - 3;
 
         assert_eq!(expr.terms.len(), 3);
         assert_eq!(expr.required_openings(), vec![Opening::A, Opening::B]);

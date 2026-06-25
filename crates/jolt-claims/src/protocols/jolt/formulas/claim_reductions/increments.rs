@@ -1,25 +1,4 @@
-use jolt_field::RingCore;
-
-use crate::{challenge, public};
-
-use super::super::super::{
-    IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltCommittedPolynomial,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
-};
-
-pub(crate) fn inc_challenge<F>(id: IncClaimReductionChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn inc_public<F>(id: IncClaimReductionPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
+use super::super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 
 pub fn claim_reduction_input_openings() -> [JoltOpeningId; 4] {
     [

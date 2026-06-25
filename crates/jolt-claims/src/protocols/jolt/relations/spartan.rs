@@ -9,14 +9,14 @@ use crate::protocols::jolt::formulas::spartan::{
     next_unexpanded_pc_outer, outer_opening, outer_uniskip_opening, pc_shift,
     product_outer_opening, product_should_branch_outer_opening, product_should_jump_outer_opening,
     product_tau_kernel, product_uniskip_opening, product_uniskip_weight, product_weight,
-    right_instruction_input_product, shift_challenge, shift_public, unexpanded_pc_shift,
-    SpartanOuterDimensions, SpartanProductDimensions, SHIFT_DEGREE,
+    right_instruction_input_product, unexpanded_pc_shift, SpartanOuterDimensions,
+    SpartanProductDimensions, SHIFT_DEGREE,
 };
 use crate::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
     SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
 };
-use crate::{opening, public, SymbolicSumcheck};
+use crate::{challenge, opening, public, SymbolicSumcheck};
 
 /// The Spartan shift sumcheck: relates each `Next*` column from the outer
 /// sumcheck (and `next_is_noop` from the product remainder) to the shifted
@@ -46,7 +46,7 @@ impl SymbolicSumcheck for Shift {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = shift_challenge(SpartanShiftChallenge::Gamma);
+        let gamma = challenge(SpartanShiftChallenge::Gamma);
         opening(next_unexpanded_pc_outer())
             + gamma.clone() * opening(next_pc_outer())
             + gamma.clone().pow(2) * opening(next_is_virtual_outer())
@@ -55,13 +55,13 @@ impl SymbolicSumcheck for Shift {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = shift_challenge(SpartanShiftChallenge::Gamma);
-        shift_public(SpartanShiftPublic::EqPlusOneOuter)
+        let gamma = challenge(SpartanShiftChallenge::Gamma);
+        public(SpartanShiftPublic::EqPlusOneOuter)
             * (opening(unexpanded_pc_shift())
                 + gamma.clone() * opening(pc_shift())
                 + gamma.clone().pow(2) * opening(is_virtual_shift())
                 + gamma.clone().pow(3) * opening(is_first_in_sequence_shift()))
-            + shift_public(SpartanShiftPublic::EqPlusOneProduct)
+            + public(SpartanShiftPublic::EqPlusOneProduct)
                 * gamma.pow(4)
                 * (JoltExpr::one() - opening(is_noop_shift()))
     }

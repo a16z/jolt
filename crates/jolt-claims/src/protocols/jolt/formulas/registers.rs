@@ -1,17 +1,4 @@
-use jolt_field::RingCore;
-
-use crate::{challenge, public};
-
-use super::super::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltRelationId, JoltVirtualPolynomial, RegistersReadWriteChallenge, RegistersReadWritePublic,
-    RegistersValEvaluationPublic,
-};
-use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions};
-
-pub const fn read_write_checking_sumcheck(dimensions: ReadWriteDimensions) -> JoltSumcheckSpec {
-    dimensions.read_write_sumcheck()
-}
+use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial};
 
 pub fn read_write_checking_input_openings() -> [JoltOpeningId; 3] {
     [rd_write_value_claim(), rs1_value_claim(), rs2_value_claim()]
@@ -33,27 +20,6 @@ pub fn val_evaluation_input_openings() -> [JoltOpeningId; 1] {
 
 pub fn val_evaluation_output_openings() -> [JoltOpeningId; 2] {
     [rd_inc_val_evaluation(), rd_wa_val_evaluation()]
-}
-
-pub(crate) fn read_write_challenge<F>(id: RegistersReadWriteChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn read_write_public<F>(id: RegistersReadWritePublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn val_evaluation_public<F>(id: RegistersValEvaluationPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 pub(crate) fn rd_write_value_claim() -> JoltOpeningId {

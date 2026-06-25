@@ -285,7 +285,7 @@ mod tests {
         sources.insert_public(Public::Offset, Fr::from_u64(4));
 
         let expression: Expr<Fr, Opening, Public> =
-            opening(Opening::A) * opening(Opening::B) + challenge(0) * public(Public::Offset);
+            opening(Opening::A) * opening(Opening::B) + challenge(0usize) * public(Public::Offset);
 
         assert_claim_expr_eq(&mut builder, &expression, out, &mut sources)
             .expect("expression lowers");
@@ -428,7 +428,7 @@ mod tests {
     fn missing_challenge_is_typed_error() {
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening>::new();
-        let expression: Expr<Fr, Opening> = challenge(2);
+        let expression: Expr<Fr, Opening> = challenge(2usize);
 
         let error = lower_claim_expr(&mut builder, &expression, &mut sources)
             .expect_err("challenge is missing");

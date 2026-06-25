@@ -1,15 +1,12 @@
 use jolt_field::{Field, RingCore};
 
-use crate::{challenge, opening, public};
+use crate::opening;
 
 use super::super::{
-    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId,
-    JoltPublicId, JoltRelationId, JoltVirtualPolynomial, RamHammingBooleanityPublic,
-    RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
-    RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic,
-    RamValCheckPublic,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
+    JoltVirtualPolynomial, RamRaClaimReductionPublic, RamValCheckPublic,
 };
-use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions, TraceDimensions};
+use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RamRafEvaluationDimensions(ReadWriteDimensions);
@@ -147,10 +144,6 @@ impl<F> RamValCheckInitContribution<F> {
     }
 }
 
-pub const fn val_check_sumcheck(dimensions: TraceDimensions) -> JoltSumcheckSpec {
-    dimensions.sumcheck(3)
-}
-
 pub fn read_write_checking_output_openings() -> [JoltOpeningId; 3] {
     [ram_val(), ram_ra(), ram_inc()]
 }
@@ -217,62 +210,6 @@ pub fn ra_virtualization_committed_ram_ra_opening(index: usize) -> JoltOpeningId
 
 pub fn hamming_booleanity_output_openings() -> [JoltOpeningId; 1] {
     [ram_hamming_weight()]
-}
-
-pub(crate) fn read_write_challenge<F>(id: RamReadWriteChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn read_write_public<F>(id: RamReadWritePublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn ra_claim_reduction_challenge<F>(id: RamRaClaimReductionChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn ra_virtualization_public<F>(id: RamRaVirtualizationPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn hamming_booleanity_public<F>(id: RamHammingBooleanityPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn raf_evaluation_public<F>(id: RamRafEvaluationPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn output_check_public<F>(id: RamOutputCheckPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn ra_claim_reduction_public<F>(id: RamRaClaimReductionPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 pub(crate) fn committed_ram_ra_product<F>(dimensions: RamRaVirtualizationDimensions) -> JoltExpr<F>

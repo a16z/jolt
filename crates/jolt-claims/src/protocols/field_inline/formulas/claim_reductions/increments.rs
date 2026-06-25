@@ -1,11 +1,5 @@
-use jolt_field::RingCore;
-
-use crate::{challenge, public};
-
 use super::super::super::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlinePublicId, FieldInlineRelationId, FieldRegistersIncClaimReductionChallenge,
-    FieldRegistersIncClaimReductionPublic,
+    FieldInlineCommittedPolynomial, FieldInlineOpeningId, FieldInlineRelationId,
 };
 
 pub fn claim_reduction_input_openings() -> [FieldInlineOpeningId; 2] {
@@ -14,20 +8,6 @@ pub fn claim_reduction_input_openings() -> [FieldInlineOpeningId; 2] {
 
 pub fn claim_reduction_output_openings() -> [FieldInlineOpeningId; 1] {
     [field_rd_inc_reduced()]
-}
-
-pub(crate) fn inc_challenge<F>(id: FieldRegistersIncClaimReductionChallenge) -> FieldInlineExpr<F>
-where
-    F: RingCore,
-{
-    challenge(FieldInlineChallengeId::from(id))
-}
-
-pub(crate) fn inc_public<F>(id: FieldRegistersIncClaimReductionPublic) -> FieldInlineExpr<F>
-where
-    F: RingCore,
-{
-    public(FieldInlinePublicId::from(id))
 }
 
 pub(crate) fn field_rd_inc_read_write() -> FieldInlineOpeningId {

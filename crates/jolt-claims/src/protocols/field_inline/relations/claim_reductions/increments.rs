@@ -3,15 +3,14 @@
 use jolt_field::RingCore;
 
 use crate::protocols::field_inline::formulas::claim_reductions::increments::{
-    field_rd_inc_read_write, field_rd_inc_reduced, field_rd_inc_val_evaluation, inc_challenge,
-    inc_public,
+    field_rd_inc_read_write, field_rd_inc_reduced, field_rd_inc_val_evaluation,
 };
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic, FieldRegistersTraceDimensions,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{challenge, opening, public, SymbolicSumcheck};
 
 /// Reduces the two `FieldRdInc` openings (read/write and val-evaluation) to a
 /// single reduced `FieldRdInc` opening, folding by `eta` and weighting by the
@@ -40,16 +39,16 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let eta = inc_challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
+        let eta = challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
 
         opening(field_rd_inc_read_write()) + eta * opening(field_rd_inc_val_evaluation())
     }
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let eta = inc_challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
+        let eta = challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
 
-        let output_coeff = inc_public(FieldRegistersIncClaimReductionPublic::EqReadWrite)
-            + eta * inc_public(FieldRegistersIncClaimReductionPublic::EqValEvaluation);
+        let output_coeff = public(FieldRegistersIncClaimReductionPublic::EqReadWrite)
+            + eta * public(FieldRegistersIncClaimReductionPublic::EqValEvaluation);
         output_coeff * opening(field_rd_inc_reduced())
     }
 }

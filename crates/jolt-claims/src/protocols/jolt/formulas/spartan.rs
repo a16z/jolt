@@ -7,12 +7,11 @@ use jolt_poly::{
 };
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 
-use crate::{challenge, public};
+use crate::public;
 
 use super::super::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
-    SpartanOuterPublic, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
-    SpartanShiftPublic,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
+    SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
 use super::dimensions::{
     JoltSumcheckSpec, OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
@@ -342,20 +341,6 @@ pub fn shift_output_openings() -> [JoltOpeningId; 5] {
         is_first_in_sequence_shift(),
         is_noop_shift(),
     ]
-}
-
-pub(crate) fn shift_challenge<F>(id: SpartanShiftChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn shift_public<F>(id: SpartanShiftPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 fn check_linear_form_len(expected: usize, got: usize) -> Result<(), SpartanOuterClaimError> {

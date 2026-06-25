@@ -3,16 +3,14 @@
 use jolt_field::RingCore;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 
-use crate::opening;
 use crate::protocols::jolt::formulas::instruction::{
-    committed_instruction_ra_product, eq_table_value, imm, input_challenge, input_public,
-    instruction_ra_product, instruction_raf_flag, left_instruction_input_product,
-    left_lookup_operand_reduced, left_operand_is_pc, left_operand_is_rs1, lookup_output_reduced,
-    lookup_table_flag, ra_virtualization_challenge, ra_virtualization_public, read_raf_challenge,
-    read_raf_public, right_instruction_input_product, right_lookup_operand_reduced,
-    right_operand_is_imm, right_operand_is_rs2, rs1_value, rs2_value, unexpanded_pc,
-    weighted_instruction_ra_sum, InstructionRaVirtualizationDimensions,
-    InstructionReadRafDimensions, INPUT_VIRTUALIZATION_DEGREE,
+    committed_instruction_ra_product, eq_table_value, imm, instruction_ra_product,
+    instruction_raf_flag, left_instruction_input_product, left_lookup_operand_reduced,
+    left_operand_is_pc, left_operand_is_rs1, lookup_output_reduced, lookup_table_flag,
+    right_instruction_input_product, right_lookup_operand_reduced, right_operand_is_imm,
+    right_operand_is_rs2, rs1_value, rs2_value, unexpanded_pc, weighted_instruction_ra_sum,
+    InstructionRaVirtualizationDimensions, InstructionReadRafDimensions,
+    INPUT_VIRTUALIZATION_DEGREE,
 };
 use crate::protocols::jolt::{
     InstructionInputChallenge, InstructionInputPublic, InstructionRaVirtualizationChallenge,
@@ -20,6 +18,7 @@ use crate::protocols::jolt::{
     JoltExpr, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
+use crate::{challenge, opening, public};
 
 /// The instruction input-virtualization sumcheck: relates the left/right
 /// instruction-input products from the product sumcheck to the per-operand
@@ -49,23 +48,23 @@ impl SymbolicSumcheck for InputVirtualization {
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         opening(right_instruction_input_product())
-            + input_challenge(InstructionInputChallenge::Gamma)
+            + challenge(InstructionInputChallenge::Gamma)
                 * opening(left_instruction_input_product())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        input_public(InstructionInputPublic::EqProduct)
+        public(InstructionInputPublic::EqProduct)
             * opening(right_operand_is_rs2())
             * opening(rs2_value())
-            + input_public(InstructionInputPublic::EqProduct)
+            + public(InstructionInputPublic::EqProduct)
                 * opening(right_operand_is_imm())
                 * opening(imm())
-            + input_public(InstructionInputPublic::EqProduct)
-                * input_challenge(InstructionInputChallenge::Gamma)
+            + public(InstructionInputPublic::EqProduct)
+                * challenge(InstructionInputChallenge::Gamma)
                 * opening(left_operand_is_rs1())
                 * opening(rs1_value())
-            + input_public(InstructionInputPublic::EqProduct)
-                * input_challenge(InstructionInputChallenge::Gamma)
+            + public(InstructionInputPublic::EqProduct)
+                * challenge(InstructionInputChallenge::Gamma)
                 * opening(left_operand_is_pc())
                 * opening(unexpanded_pc())
     }
@@ -98,7 +97,7 @@ impl SymbolicSumcheck for ReadRaf {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = read_raf_challenge(InstructionReadRafChallenge::Gamma);
+        let gamma = challenge(InstructionReadRafChallenge::Gamma);
         opening(lookup_output_reduced())
             + gamma.clone() * opening(left_lookup_operand_reduced())
             + gamma.pow(2) * opening(right_lookup_operand_reduced())
@@ -110,14 +109,14 @@ impl SymbolicSumcheck for ReadRaf {
 
         for table in LookupTableKind::<XLEN>::iter() {
             output = output
-                + read_raf_public(eq_table_value(table))
+                + public(eq_table_value(table))
                     * ra_product.clone()
                     * opening(lookup_table_flag(table));
         }
 
         output = output
-            + read_raf_public(InstructionReadRafPublic::EqRafConstant) * ra_product.clone()
-            + read_raf_public(InstructionReadRafPublic::EqRafFlag)
+            + public(InstructionReadRafPublic::EqRafConstant) * ra_product.clone()
+            + public(InstructionReadRafPublic::EqRafFlag)
                 * ra_product
                 * opening(instruction_raf_flag());
 
@@ -152,13 +151,13 @@ impl SymbolicSumcheck for RaVirtualization {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = ra_virtualization_challenge(InstructionRaVirtualizationChallenge::Gamma);
+        let gamma = challenge(InstructionRaVirtualizationChallenge::Gamma);
         weighted_instruction_ra_sum(self.shape, gamma)
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = ra_virtualization_challenge(InstructionRaVirtualizationChallenge::Gamma);
-        let eq_cycle = ra_virtualization_public(InstructionRaVirtualizationPublic::EqCycle);
+        let gamma = challenge(InstructionRaVirtualizationChallenge::Gamma);
+        let eq_cycle = public(InstructionRaVirtualizationPublic::EqCycle);
         let mut output = JoltExpr::zero();
         for virtual_index in 0..self.shape.num_virtual_ra_polys() {
             output = output

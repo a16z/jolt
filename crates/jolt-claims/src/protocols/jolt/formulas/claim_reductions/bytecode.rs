@@ -14,12 +14,11 @@ use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
-use crate::{challenge, opening, public};
+use crate::{opening, public};
 
 use super::super::super::{
-    BytecodeClaimReductionChallenge, BytecodeClaimReductionPublic, JoltChallengeId,
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
-    JoltVirtualPolynomial,
+    BytecodeClaimReductionPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId,
+    JoltRelationId, JoltVirtualPolynomial,
 };
 use super::super::dimensions::{
     log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
@@ -541,13 +540,6 @@ pub fn final_bytecode_chunk_opening(chunk_idx: usize) -> JoltOpeningId {
         JoltCommittedPolynomial::BytecodeChunk(chunk_idx),
         JoltRelationId::BytecodeClaimReduction,
     )
-}
-
-pub(crate) fn bytecode_challenge<F>(id: BytecodeClaimReductionChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
 }
 
 /// Backstop for the formula constructors that take a raw chunk count without

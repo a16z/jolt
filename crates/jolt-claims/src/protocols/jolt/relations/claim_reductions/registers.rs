@@ -3,14 +3,14 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::formulas::claim_reductions::registers::{
-    rd_write_value_reduced, rd_write_value_spartan, reduction_challenge, reduction_public,
-    rs1_value_reduced, rs1_value_spartan, rs2_value_reduced, rs2_value_spartan,
+    rd_write_value_reduced, rd_write_value_spartan, rs1_value_reduced, rs1_value_spartan,
+    rs2_value_reduced, rs2_value_spartan,
 };
 use crate::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{challenge, opening, public, SymbolicSumcheck};
 
 /// Batches the Spartan-outer register openings (`RdWriteValue`, `Rs1Value`,
 /// `Rs2Value`) by `gamma` and reduces them to the registers-claim-reduction
@@ -39,7 +39,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = reduction_challenge(RegistersClaimReductionChallenge::Gamma);
+        let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
 
         opening(rd_write_value_spartan())
             + gamma.clone() * opening(rs1_value_spartan())
@@ -47,8 +47,8 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = reduction_challenge(RegistersClaimReductionChallenge::Gamma);
-        let eq_spartan = reduction_public(RegistersClaimReductionPublic::EqSpartan);
+        let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
+        let eq_spartan = public(RegistersClaimReductionPublic::EqSpartan);
 
         eq_spartan.clone() * opening(rd_write_value_reduced())
             + eq_spartan.clone() * gamma.clone() * opening(rs1_value_reduced())

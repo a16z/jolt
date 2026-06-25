@@ -3,14 +3,14 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::formulas::claim_reductions::increments::{
-    inc_challenge, inc_public, ram_inc_read_write, ram_inc_reduced, ram_inc_val_check,
-    rd_inc_read_write, rd_inc_reduced, rd_inc_val_evaluation,
+    ram_inc_read_write, ram_inc_reduced, ram_inc_val_check, rd_inc_read_write, rd_inc_reduced,
+    rd_inc_val_evaluation,
 };
 use crate::protocols::jolt::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId,
     JoltPublicId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{challenge, opening, public, SymbolicSumcheck};
 
 /// Batches the RAM/register increment openings (`RamInc` read-write and
 /// val-check, `RdInc` read-write and val-evaluation) by `gamma` and reduces
@@ -39,7 +39,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = inc_challenge(IncClaimReductionChallenge::Gamma);
+        let gamma = challenge(IncClaimReductionChallenge::Gamma);
 
         opening(ram_inc_read_write())
             + gamma.clone() * opening(ram_inc_val_check())
@@ -48,12 +48,12 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = inc_challenge(IncClaimReductionChallenge::Gamma);
+        let gamma = challenge(IncClaimReductionChallenge::Gamma);
 
-        let ram_output_coeff = inc_public(IncClaimReductionPublic::EqRamReadWrite)
-            + gamma.clone() * inc_public(IncClaimReductionPublic::EqRamValCheck);
-        let rd_output_coeff = inc_public(IncClaimReductionPublic::EqRegistersReadWrite)
-            + gamma.clone() * inc_public(IncClaimReductionPublic::EqRegistersValEvaluation);
+        let ram_output_coeff = public(IncClaimReductionPublic::EqRamReadWrite)
+            + gamma.clone() * public(IncClaimReductionPublic::EqRamValCheck);
+        let rd_output_coeff = public(IncClaimReductionPublic::EqRegistersReadWrite)
+            + gamma.clone() * public(IncClaimReductionPublic::EqRegistersValEvaluation);
         ram_output_coeff * opening(ram_inc_reduced())
             + gamma.pow(2) * rd_output_coeff * opening(rd_inc_reduced())
     }

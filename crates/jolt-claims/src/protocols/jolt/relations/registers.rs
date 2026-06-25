@@ -2,18 +2,17 @@
 
 use jolt_field::RingCore;
 
-use crate::opening;
 use crate::protocols::jolt::formulas::registers::{
     rd_inc_read_write, rd_inc_val_evaluation, rd_wa_read_write, rd_wa_val_evaluation,
-    rd_write_value_claim, read_write_challenge, read_write_checking_sumcheck, read_write_public,
-    registers_val_read_write, rs1_ra_read_write, rs1_value_claim, rs2_ra_read_write,
-    rs2_value_claim, val_evaluation_public,
+    rd_write_value_claim, registers_val_read_write, rs1_ra_read_write, rs1_value_claim,
+    rs2_ra_read_write, rs2_value_claim,
 };
 use crate::protocols::jolt::{
     JoltExpr, JoltRelationId, JoltSumcheckSpec, ReadWriteDimensions, RegistersReadWriteChallenge,
     RegistersReadWritePublic, RegistersValEvaluationPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
+use crate::{challenge, opening, public};
 
 /// The registers read/write checking sumcheck: relates the read-value claims
 /// (`RdWriteValue`, `Rs1Value`, `Rs2Value`) folded by `gamma` to the register
@@ -38,19 +37,19 @@ impl SymbolicSumcheck for ReadWriteChecking {
     }
 
     fn spec(&self) -> JoltSumcheckSpec {
-        read_write_checking_sumcheck(self.shape)
+        self.shape.read_write_sumcheck()
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = read_write_challenge(RegistersReadWriteChallenge::Gamma);
+        let gamma = challenge(RegistersReadWriteChallenge::Gamma);
         opening(rd_write_value_claim())
             + gamma.clone() * opening(rs1_value_claim())
             + gamma.clone().pow(2) * opening(rs2_value_claim())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = read_write_challenge(RegistersReadWriteChallenge::Gamma);
-        let eq_cycle = read_write_public(RegistersReadWritePublic::EqCycle);
+        let gamma = challenge(RegistersReadWriteChallenge::Gamma);
+        let eq_cycle = public(RegistersReadWritePublic::EqCycle);
         eq_cycle.clone() * opening(rd_wa_read_write()) * opening(rd_inc_read_write())
             + eq_cycle.clone() * opening(rd_wa_read_write()) * opening(registers_val_read_write())
             + eq_cycle.clone()
@@ -94,7 +93,7 @@ impl SymbolicSumcheck for ValEvaluation {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        val_evaluation_public(RegistersValEvaluationPublic::LtCycle)
+        public(RegistersValEvaluationPublic::LtCycle)
             * opening(rd_inc_val_evaluation())
             * opening(rd_wa_val_evaluation())
     }
@@ -262,7 +261,7 @@ mod tests {
         );
         assert_eq!(
             relation.spec(),
-            read_write_checking_sumcheck(read_write_dimensions())
+            read_write_dimensions().read_write_sumcheck()
         );
         assert_eq!(
             relation.required_openings::<Fr>(),

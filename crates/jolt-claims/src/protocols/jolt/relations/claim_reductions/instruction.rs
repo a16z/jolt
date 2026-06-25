@@ -4,7 +4,7 @@ use jolt_field::RingCore;
 
 use crate::protocols::jolt::formulas::claim_reductions::instruction::{
     left_instruction_input_reduced, left_instruction_input_spartan, left_lookup_operand_reduced,
-    left_lookup_operand_spartan, lookup_output_reduced, lookup_output_spartan, reduction_public,
+    left_lookup_operand_spartan, lookup_output_reduced, lookup_output_spartan,
     right_instruction_input_reduced, right_instruction_input_spartan, right_lookup_operand_reduced,
     right_lookup_operand_spartan, weighted_claims,
 };
@@ -12,7 +12,7 @@ use crate::protocols::jolt::{
     InstructionClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
     JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::SymbolicSumcheck;
+use crate::{public, SymbolicSumcheck};
 
 /// Batches the Spartan-outer instruction-lookup openings (lookup output, left/
 /// right lookup operands, left/right instruction inputs) by `gamma` and reduces
@@ -51,7 +51,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        reduction_public(InstructionClaimReductionPublic::EqSpartan)
+        public(InstructionClaimReductionPublic::EqSpartan)
             * weighted_claims(
                 lookup_output_reduced(),
                 left_lookup_operand_reduced(),

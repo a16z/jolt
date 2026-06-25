@@ -3,14 +3,14 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::formulas::claim_reductions::bytecode::{
-    assert_valid_chunk_count, bytecode_challenge, bytecode_val_stage_opening,
-    cycle_phase_intermediate_opening, final_output_expr, NUM_BYTECODE_VAL_STAGES,
+    assert_valid_chunk_count, bytecode_val_stage_opening, cycle_phase_intermediate_opening,
+    final_output_expr, NUM_BYTECODE_VAL_STAGES,
 };
 use crate::protocols::jolt::{
     BytecodeClaimReductionChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
     JoltRelationId, JoltSumcheckSpec, PrecommittedReductionDimensions,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{challenge, opening, SymbolicSumcheck};
 
 /// `(two-phase dimensions, chunk count)` shape shared by the committed-bytecode
 /// cycle- and address-phase reductions.
@@ -45,7 +45,7 @@ impl SymbolicSumcheck for CyclePhase {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let eta = bytecode_challenge(BytecodeClaimReductionChallenge::Eta);
+        let eta = challenge(BytecodeClaimReductionChallenge::Eta);
         let mut input = JoltExpr::zero();
         for stage in 0..NUM_BYTECODE_VAL_STAGES {
             input = input + eta.clone().pow(stage) * opening(bytecode_val_stage_opening(stage));

@@ -4,15 +4,14 @@ use jolt_field::RingCore;
 
 use crate::protocols::field_inline::formulas::claim_reductions::registers::{
     field_rd_value_reduced, field_rd_value_spartan, field_rs1_value_reduced,
-    field_rs1_value_spartan, field_rs2_value_reduced, field_rs2_value_spartan, reduction_challenge,
-    reduction_public,
+    field_rs1_value_spartan, field_rs2_value_reduced, field_rs2_value_spartan,
 };
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic, FieldRegistersTraceDimensions,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{challenge, opening, public, SymbolicSumcheck};
 
 /// Batches the native field-register Spartan-outer openings (`FieldRdValue`,
 /// `FieldRs1Value`, `FieldRs2Value`) by `gamma` and reduces them to the
@@ -41,7 +40,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = reduction_challenge(FieldRegistersClaimReductionChallenge::Gamma);
+        let gamma = challenge(FieldRegistersClaimReductionChallenge::Gamma);
 
         opening(field_rd_value_spartan())
             + gamma.clone() * opening(field_rs1_value_spartan())
@@ -49,8 +48,8 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = reduction_challenge(FieldRegistersClaimReductionChallenge::Gamma);
-        let eq_spartan = reduction_public(FieldRegistersClaimReductionPublic::EqSpartan);
+        let gamma = challenge(FieldRegistersClaimReductionChallenge::Gamma);
+        let eq_spartan = public(FieldRegistersClaimReductionPublic::EqSpartan);
 
         eq_spartan.clone() * opening(field_rd_value_reduced())
             + eq_spartan.clone() * gamma.clone() * opening(field_rs1_value_reduced())

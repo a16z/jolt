@@ -4,13 +4,10 @@ use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::InstructionFlags;
 
-use crate::{challenge, opening, public};
+use crate::opening;
 
-use super::super::InstructionRaVirtualizationChallenge;
 use super::super::{
-    InstructionInputChallenge, InstructionInputPublic, InstructionRaVirtualizationPublic,
-    InstructionReadRafChallenge, InstructionReadRafPublic, JoltChallengeId,
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
+    InstructionReadRafPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec};
@@ -297,50 +294,6 @@ pub fn ra_virtualization_output_openings(
 
 pub fn ra_virtualization_committed_instruction_ra_opening(index: usize) -> JoltOpeningId {
     committed_instruction_ra(index)
-}
-
-pub(crate) fn input_challenge<F>(id: InstructionInputChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn input_public<F>(id: InstructionInputPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn read_raf_challenge<F>(id: InstructionReadRafChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn read_raf_public<F>(id: InstructionReadRafPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
-pub(crate) fn ra_virtualization_challenge<F>(
-    id: InstructionRaVirtualizationChallenge,
-) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn ra_virtualization_public<F>(id: InstructionRaVirtualizationPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 pub(crate) fn eq_table_value(table: LookupTableKind<XLEN>) -> InstructionReadRafPublic {

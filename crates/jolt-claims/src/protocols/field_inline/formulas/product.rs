@@ -1,11 +1,4 @@
 use super::super::{FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial};
-use super::dimensions::{FieldInlineSumcheckSpec, FieldRegistersTraceDimensions};
-
-pub const fn field_product_sumcheck(
-    dimensions: FieldRegistersTraceDimensions,
-) -> FieldInlineSumcheckSpec {
-    dimensions.sumcheck(2)
-}
 
 pub fn field_product_input_openings() -> [FieldInlineOpeningId; 1] {
     [field_product_opening()]

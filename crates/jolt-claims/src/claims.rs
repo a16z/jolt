@@ -205,23 +205,23 @@ impl<F, O, P: Clone + Eq, C> Expr<F, O, P, C> {
 }
 
 /// Builds an opening source expression.
-pub fn opening<F: RingCore, O, P, C>(id: O) -> Expr<F, O, P, C> {
+pub fn opening<F: RingCore, O, P, C>(id: impl Into<O>) -> Expr<F, O, P, C> {
     Expr {
-        terms: vec![Term::source(Source::Opening(id))],
+        terms: vec![Term::source(Source::Opening(id.into()))],
     }
 }
 
 /// Builds a Fiat-Shamir challenge source expression.
-pub fn challenge<F: RingCore, O, P, C>(id: C) -> Expr<F, O, P, C> {
+pub fn challenge<F: RingCore, O, P, C>(id: impl Into<C>) -> Expr<F, O, P, C> {
     Expr {
-        terms: vec![Term::source(Source::Challenge(id))],
+        terms: vec![Term::source(Source::Challenge(id.into()))],
     }
 }
 
 /// Builds a named public-value source expression.
-pub fn public<F: RingCore, O, P, C>(id: P) -> Expr<F, O, P, C> {
+pub fn public<F: RingCore, O, P, C>(id: impl Into<P>) -> Expr<F, O, P, C> {
     Expr {
-        terms: vec![Term::source(Source::Public(id))],
+        terms: vec![Term::source(Source::Public(id.into()))],
     }
 }
 
@@ -256,7 +256,7 @@ mod tests {
     fn expression_evaluates_with_resolvers() {
         let expr: Expr<Fr, Opening> =
             constant(Fr::from_u64(2)) * opening(Opening::A) * opening(Opening::B)
-                + challenge(1) * opening(Opening::A)
+                + challenge(1usize) * opening(Opening::A)
                 - constant(Fr::from_u64(5));
 
         let value = expr.evaluate_without_public(

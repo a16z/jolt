@@ -1,11 +1,8 @@
 use jolt_field::{Field, RingCore};
 
-use crate::{challenge, opening, public};
+use crate::opening;
 
-use super::super::super::{
-    HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
-};
+use super::super::super::{JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial};
 use super::super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 
@@ -83,20 +80,6 @@ pub fn claim_reduction_output_openings(
         bytecode_ra,
         ram_ra,
     }
-}
-
-pub(crate) fn hamming_weight_challenge<F>(id: HammingWeightClaimReductionChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn hamming_weight_public<F>(id: HammingWeightClaimReductionPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 pub(crate) fn hamming_weight_claim<F>(polynomial: JoltRaPolynomial) -> JoltExpr<F>

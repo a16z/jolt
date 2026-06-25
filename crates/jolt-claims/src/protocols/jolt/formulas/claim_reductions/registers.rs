@@ -1,11 +1,4 @@
-use jolt_field::RingCore;
-
-use crate::{challenge, public};
-
-use super::super::super::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
-    RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
-};
+use super::super::super::{JoltOpeningId, JoltRelationId, JoltVirtualPolynomial};
 
 pub fn claim_reduction_input_openings() -> [JoltOpeningId; 3] {
     [
@@ -21,20 +14,6 @@ pub fn claim_reduction_output_openings() -> [JoltOpeningId; 3] {
         rs1_value_reduced(),
         rs2_value_reduced(),
     ]
-}
-
-pub(crate) fn reduction_challenge<F>(id: RegistersClaimReductionChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn reduction_public<F>(id: RegistersClaimReductionPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 pub(crate) fn rd_write_value_spartan() -> JoltOpeningId {

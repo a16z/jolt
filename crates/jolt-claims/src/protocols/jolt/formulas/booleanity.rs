@@ -3,8 +3,8 @@ use jolt_field::RingCore;
 use crate::{challenge, opening, public};
 
 use super::super::{
-    BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltRelationId, JoltVirtualPolynomial,
+    BooleanityChallenge, BooleanityPublic, JoltExpr, JoltOpeningId, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use super::dimensions::JoltSumcheckSpec;
 use super::ra::JoltRaPolynomialLayout;
@@ -42,8 +42,8 @@ pub(crate) fn booleanity_cycle_output<F>(dimensions: BooleanityDimensions) -> Jo
 where
     F: RingCore,
 {
-    let gamma = booleanity_challenge(BooleanityChallenge::Gamma);
-    let eq_address_cycle = booleanity_public(BooleanityPublic::EqAddressCycle);
+    let gamma = challenge(BooleanityChallenge::Gamma);
+    let eq_address_cycle = public(BooleanityPublic::EqAddressCycle);
     let mut output = JoltExpr::zero();
 
     for (i, opening_id) in booleanity_output_openings(dimensions.layout)
@@ -55,20 +55,6 @@ where
     }
 
     eq_address_cycle * output
-}
-
-fn booleanity_challenge<F>(id: BooleanityChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-fn booleanity_public<F>(id: BooleanityPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 pub fn booleanity_output_openings(layout: JoltRaPolynomialLayout) -> Vec<JoltOpeningId> {

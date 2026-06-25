@@ -1,10 +1,10 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening, public};
+use crate::{challenge, opening};
 
 use super::super::super::{
-    InstructionClaimReductionChallenge, InstructionClaimReductionPublic, JoltChallengeId, JoltExpr,
-    JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
+    InstructionClaimReductionChallenge, JoltExpr, JoltOpeningId, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 
 pub fn claim_reduction_output_openings() -> [JoltOpeningId; 5] {
@@ -37,27 +37,13 @@ pub(crate) fn weighted_claims<F>(
 where
     F: RingCore,
 {
-    let gamma = reduction_challenge(InstructionClaimReductionChallenge::Gamma);
+    let gamma = challenge(InstructionClaimReductionChallenge::Gamma);
 
     opening(lookup_output)
         + gamma.clone() * opening(left_lookup_operand)
         + gamma.clone().pow(2) * opening(right_lookup_operand)
         + gamma.clone().pow(3) * opening(left_instruction_input)
         + gamma.pow(4) * opening(right_instruction_input)
-}
-
-pub(crate) fn reduction_challenge<F>(id: InstructionClaimReductionChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-pub(crate) fn reduction_public<F>(id: InstructionClaimReductionPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
 }
 
 pub(crate) fn lookup_output_spartan() -> JoltOpeningId {

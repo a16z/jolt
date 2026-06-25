@@ -3,14 +3,14 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::formulas::claim_reductions::hamming_weight::{
-    booleanity_claim, hamming_weight_challenge, hamming_weight_claim, hamming_weight_public,
-    reduced_claim, virtualization_claim, HammingWeightClaimReductionDimensions,
+    booleanity_claim, hamming_weight_claim, reduced_claim, virtualization_claim,
+    HammingWeightClaimReductionDimensions,
 };
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
     JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{challenge, opening, public, SymbolicSumcheck};
 
 /// Batches each RA polynomial's hamming-weight, booleanity, and virtualization
 /// claims by powers of `gamma` and reduces them to the per-polynomial
@@ -39,7 +39,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = hamming_weight_challenge(HammingWeightClaimReductionChallenge::Gamma);
+        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut input = JoltExpr::zero();
 
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
@@ -53,15 +53,15 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = hamming_weight_challenge(HammingWeightClaimReductionChallenge::Gamma);
+        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut output = JoltExpr::zero();
 
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             let output_coeff = gamma.clone().pow(3 * i)
                 + gamma.clone().pow(3 * i + 1)
-                    * hamming_weight_public(HammingWeightClaimReductionPublic::EqBooleanity)
+                    * public(HammingWeightClaimReductionPublic::EqBooleanity)
                 + gamma.clone().pow(3 * i + 2)
-                    * hamming_weight_public(HammingWeightClaimReductionPublic::EqVirtualization(i));
+                    * public(HammingWeightClaimReductionPublic::EqVirtualization(i));
             output = output + output_coeff * opening(reduced_claim(polynomial));
         }
 

@@ -4,7 +4,7 @@ use jolt_field::RingCore;
 
 use crate::opening;
 use crate::protocols::field_inline::formulas::product::{
-    field_product_opening, field_product_sumcheck, field_rs1_value_product, field_rs2_value_product,
+    field_product_opening, field_rs1_value_product, field_rs2_value_product,
 };
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
@@ -34,7 +34,7 @@ impl SymbolicSumcheck for FieldProduct {
     }
 
     fn spec(&self) -> FieldInlineSumcheckSpec {
-        field_product_sumcheck(self.shape)
+        self.shape.sumcheck(2)
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -68,7 +68,7 @@ mod tests {
             FieldProduct::id(),
             FieldInlineRelationId::FieldRegistersProduct
         );
-        assert_eq!(relation.spec(), field_product_sumcheck(dimensions()));
+        assert_eq!(relation.spec(), dimensions().sumcheck(2));
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             field_product_input_openings().to_vec()

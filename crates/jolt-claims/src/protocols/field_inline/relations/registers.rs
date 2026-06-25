@@ -2,12 +2,10 @@
 
 use jolt_field::RingCore;
 
-use crate::opening;
 use crate::protocols::field_inline::formulas::registers::{
     field_rd_inc_read_write, field_rd_inc_val_evaluation, field_rd_value_claim,
     field_rd_wa_read_write, field_rd_wa_val_evaluation, field_registers_val_read_write,
     field_rs1_ra_read_write, field_rs1_value_claim, field_rs2_ra_read_write, field_rs2_value_claim,
-    read_write_challenge, read_write_checking_sumcheck, read_write_public, val_evaluation_public,
 };
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
@@ -16,6 +14,7 @@ use crate::protocols::field_inline::{
     FieldRegistersTraceDimensions, FieldRegistersValEvaluationPublic,
 };
 use crate::SymbolicSumcheck;
+use crate::{challenge, opening, public};
 
 /// The native field-register read/write checking sumcheck: relates the read-value
 /// claims (`FieldRdValue`, `FieldRs1Value`, `FieldRs2Value`) folded by `gamma` to
@@ -40,19 +39,19 @@ impl SymbolicSumcheck for ReadWriteChecking {
     }
 
     fn spec(&self) -> FieldInlineSumcheckSpec {
-        read_write_checking_sumcheck(self.shape)
+        self.shape.read_write_sumcheck()
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = read_write_challenge(FieldRegistersReadWriteChallenge::Gamma);
+        let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
         opening(field_rd_value_claim())
             + gamma.clone() * opening(field_rs1_value_claim())
             + gamma.clone().pow(2) * opening(field_rs2_value_claim())
     }
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = read_write_challenge(FieldRegistersReadWriteChallenge::Gamma);
-        let eq_cycle = read_write_public(FieldRegistersReadWritePublic::EqCycle);
+        let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
+        let eq_cycle = public(FieldRegistersReadWritePublic::EqCycle);
         eq_cycle.clone() * opening(field_rd_wa_read_write()) * opening(field_rd_inc_read_write())
             + eq_cycle.clone()
                 * opening(field_rd_wa_read_write())
@@ -98,7 +97,7 @@ impl SymbolicSumcheck for ValEvaluation {
     }
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        val_evaluation_public(FieldRegistersValEvaluationPublic::LtCycle)
+        public(FieldRegistersValEvaluationPublic::LtCycle)
             * opening(field_rd_inc_val_evaluation())
             * opening(field_rd_wa_val_evaluation())
     }
@@ -131,7 +130,7 @@ mod tests {
         );
         assert_eq!(
             relation.spec(),
-            read_write_checking_sumcheck(read_write_dimensions())
+            read_write_dimensions().read_write_sumcheck()
         );
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),

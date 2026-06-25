@@ -1,20 +1,7 @@
-use jolt_field::RingCore;
-
-use crate::{challenge, public};
-
 use super::super::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlinePublicId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
-    FieldRegistersReadWriteChallenge, FieldRegistersReadWritePublic,
-    FieldRegistersValEvaluationPublic,
+    FieldInlineCommittedPolynomial, FieldInlineOpeningId, FieldInlineRelationId,
+    FieldInlineVirtualPolynomial,
 };
-use super::dimensions::{FieldInlineSumcheckSpec, FieldRegistersReadWriteDimensions};
-
-pub const fn read_write_checking_sumcheck(
-    dimensions: FieldRegistersReadWriteDimensions,
-) -> FieldInlineSumcheckSpec {
-    dimensions.read_write_sumcheck()
-}
 
 pub fn read_write_checking_input_openings() -> [FieldInlineOpeningId; 3] {
     [
@@ -40,27 +27,6 @@ pub fn val_evaluation_input_openings() -> [FieldInlineOpeningId; 1] {
 
 pub fn val_evaluation_output_openings() -> [FieldInlineOpeningId; 2] {
     [field_rd_inc_val_evaluation(), field_rd_wa_val_evaluation()]
-}
-
-pub(crate) fn read_write_challenge<F>(id: FieldRegistersReadWriteChallenge) -> FieldInlineExpr<F>
-where
-    F: RingCore,
-{
-    challenge(FieldInlineChallengeId::from(id))
-}
-
-pub(crate) fn read_write_public<F>(id: FieldRegistersReadWritePublic) -> FieldInlineExpr<F>
-where
-    F: RingCore,
-{
-    public(FieldInlinePublicId::from(id))
-}
-
-pub(crate) fn val_evaluation_public<F>(id: FieldRegistersValEvaluationPublic) -> FieldInlineExpr<F>
-where
-    F: RingCore,
-{
-    public(FieldInlinePublicId::from(id))
 }
 
 pub(crate) fn field_rd_value_claim() -> FieldInlineOpeningId {

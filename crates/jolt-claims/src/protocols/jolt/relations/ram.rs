@@ -3,12 +3,10 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::formulas::ram::{
-    committed_ram_ra_product, hamming_booleanity_public, output_check_public,
-    ra_claim_reduction_challenge, ra_claim_reduction_public, ra_virtualization_public,
-    raf_evaluation_public, ram_address_spartan, ram_hamming_weight, ram_inc, ram_inc_val_check,
+    committed_ram_ra_product, ram_address_spartan, ram_hamming_weight, ram_inc, ram_inc_val_check,
     ram_ra, ram_ra_claim_reduction, ram_ra_raf_evaluation, ram_ra_val_check, ram_read_value,
-    ram_val, ram_val_final, ram_write_value, read_write_challenge, read_write_public,
-    val_check_sumcheck, RamRaVirtualizationDimensions, RamRafEvaluationDimensions,
+    ram_val, ram_val_final, ram_write_value, RamRaVirtualizationDimensions,
+    RamRafEvaluationDimensions,
 };
 use crate::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
@@ -48,17 +46,17 @@ impl SymbolicSumcheck for ReadWriteChecking {
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         opening(ram_read_value())
-            + read_write_challenge(RamReadWriteChallenge::Gamma) * opening(ram_write_value())
+            + challenge(RamReadWriteChallenge::Gamma) * opening(ram_write_value())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        read_write_public(RamReadWritePublic::EqCycle) * opening(ram_ra()) * opening(ram_val())
-            + read_write_public(RamReadWritePublic::EqCycle)
-                * read_write_challenge(RamReadWriteChallenge::Gamma)
+        public(RamReadWritePublic::EqCycle) * opening(ram_ra()) * opening(ram_val())
+            + public(RamReadWritePublic::EqCycle)
+                * challenge(RamReadWriteChallenge::Gamma)
                 * opening(ram_ra())
                 * opening(ram_val())
-            + read_write_public(RamReadWritePublic::EqCycle)
-                * read_write_challenge(RamReadWriteChallenge::Gamma)
+            + public(RamReadWritePublic::EqCycle)
+                * challenge(RamReadWriteChallenge::Gamma)
                 * opening(ram_ra())
                 * opening(ram_inc())
     }
@@ -95,8 +93,7 @@ impl SymbolicSumcheck for RafEvaluation {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        raf_evaluation_public(RamRafEvaluationPublic::UnmapAddress)
-            * opening(ram_ra_raf_evaluation())
+        public(RamRafEvaluationPublic::UnmapAddress) * opening(ram_ra_raf_evaluation())
     }
 }
 
@@ -131,8 +128,8 @@ impl SymbolicSumcheck for OutputCheck {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        output_check_public(RamOutputCheckPublic::EqIoMask) * opening(ram_val_final())
-            + output_check_public(RamOutputCheckPublic::NegEqIoMaskValIo)
+        public(RamOutputCheckPublic::EqIoMask) * opening(ram_val_final())
+            + public(RamOutputCheckPublic::NegEqIoMaskValIo)
     }
 }
 
@@ -163,18 +160,17 @@ impl SymbolicSumcheck for RaClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = ra_claim_reduction_challenge(RamRaClaimReductionChallenge::Gamma);
+        let gamma = challenge(RamRaClaimReductionChallenge::Gamma);
         opening(ram_ra_raf_evaluation())
             + gamma.clone() * opening(ram_ra())
             + gamma.clone().pow(2) * opening(ram_ra_val_check())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = ra_claim_reduction_challenge(RamRaClaimReductionChallenge::Gamma);
-        (ra_claim_reduction_public(RamRaClaimReductionPublic::EqCycleRaf)
-            + gamma.clone()
-                * ra_claim_reduction_public(RamRaClaimReductionPublic::EqCycleReadWrite)
-            + gamma.pow(2) * ra_claim_reduction_public(RamRaClaimReductionPublic::EqCycleValCheck))
+        let gamma = challenge(RamRaClaimReductionChallenge::Gamma);
+        (public(RamRaClaimReductionPublic::EqCycleRaf)
+            + gamma.clone() * public(RamRaClaimReductionPublic::EqCycleReadWrite)
+            + gamma.pow(2) * public(RamRaClaimReductionPublic::EqCycleValCheck))
             * opening(ram_ra_claim_reduction())
     }
 }
@@ -210,8 +206,7 @@ impl SymbolicSumcheck for RaVirtualization {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        ra_virtualization_public(RamRaVirtualizationPublic::EqCycle)
-            * committed_ram_ra_product(self.shape)
+        public(RamRaVirtualizationPublic::EqCycle) * committed_ram_ra_product(self.shape)
     }
 }
 
@@ -246,7 +241,7 @@ impl SymbolicSumcheck for HammingBooleanity {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let eq_cycle = hamming_booleanity_public(RamHammingBooleanityPublic::EqCycle);
+        let eq_cycle = public(RamHammingBooleanityPublic::EqCycle);
         let h = opening(ram_hamming_weight());
         eq_cycle * (h.clone() * h.clone() - h)
     }
@@ -300,7 +295,7 @@ impl SymbolicSumcheck for RamValCheck {
     }
 
     fn spec(&self) -> JoltSumcheckSpec {
-        val_check_sumcheck(self.shape.dimensions)
+        self.shape.dimensions.sumcheck(3)
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -793,7 +788,7 @@ mod tests {
         });
 
         assert_eq!(RamValCheck::id(), JoltRelationId::RamValCheck);
-        assert_eq!(relation.spec(), val_check_sumcheck(trace_dimensions()));
+        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
         // Full-init form (no committed contributions): only the read-write and
         // output-check openings on the input side.
         assert_eq!(
