@@ -56,10 +56,10 @@ pub(crate) struct JoltProofParts<
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     #[cfg(not(feature = "zk"))]
     pub opening_claims: ProverOpeningClaims<F>,
-    /// Spongefish NARG byte-string retained for compatibility with full-NARG
-    /// experiments. The live modular verifier bridge for this split is structured:
-    /// clear round polynomials and non-ZK opening claims are carried in proof
-    /// fields, while shared transcript inputs are `absorb`'d on both sides.
+    /// Spongefish NARG byte-string produced by the legacy prover. Some prover-only
+    /// round payloads are written here, but the live modular verifier bridge for
+    /// this split is still structured: it converts the retained proof fields into
+    /// `jolt-verifier`'s proof model and does not export or consume this NARG.
     #[expect(
         dead_code,
         reason = "retained for the prover-legacy Spongefish NARG proof-parts path; the modular verifier bridge converts structured fields"

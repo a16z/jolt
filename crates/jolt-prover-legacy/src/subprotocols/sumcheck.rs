@@ -120,10 +120,11 @@ impl BatchedSumcheck {
 
             let compressed_poly = batched_univariate_poly.compress();
 
-            // The live verifier bridge is structured (Option-A): clear coefficients are
-            // proof fields, so both sides absorb the same slice instead of reading it
-            // back from the NARG.
-            transcript.absorb_slice(&compressed_poly.coeffs_except_linear_term);
+            // Write the clear round polynomial into the prover-side NARG. The split
+            // modular verifier bridge still retains this structured proof field and
+            // replays it with `absorb_slice`; `write_slice` is byte-identical to
+            // `absorb_slice` for the sponge state, but also records a NARG frame.
+            transcript.write_slice(&compressed_poly.coeffs_except_linear_term);
             compressed_polys.push(compressed_poly);
             let r_j = transcript.challenge_optimized();
             r_sumcheck.push(r_j);
@@ -278,10 +279,11 @@ impl BatchedSumcheck {
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
-            // Round commitments are prover-only but carried in the structured `ZkSumcheckProof`
-            // (hybrid: commitments stay structured proof fields), so both sides `absorb` them —
-            // matching `ZkSumcheckProof::verify_transcript_only`. They are NOT written to the NARG.
-            transcript.absorb(&commitment);
+            // Round commitments are prover-only, so record them in the prover-side NARG.
+            // The modular verifier bridge still carries the same commitments structurally
+            // and replays them with `absorb`; for a single commitment this is the same
+            // sponge message as `write_slice(&[commitment])`.
+            transcript.write_slice(std::slice::from_ref(&commitment));
 
             let r_j = transcript.challenge_optimized();
             r_sumcheck.push(r_j);
@@ -335,6 +337,10 @@ impl BatchedSumcheck {
             .collect();
         let (output_claims_commitments, output_claims_blindings): (Vec<_>, Vec<_>) =
             oc_committed.into_iter().unzip();
+        // Keep the output-claim commitments in the structured bridge for now. The
+        // modular verifier absorbs this as a `Vec`, whose bytes are not the same as
+        // the slice frame used by `write_slice`; moving it into the NARG requires the
+        // verifier proof model to read the same frame.
         transcript.absorb(&output_claims_commitments);
 
         let output_constraints: Vec<_> = sumcheck_instances
@@ -546,7 +552,9 @@ impl BatchedSumcheck {
 /// Clear (non-ZK) sumcheck proof.
 ///
 /// The prover carries round-polynomial coefficients so the structured modular
-/// verifier bridge can replay the same Spongefish transcript.
+/// verifier bridge can replay the same Spongefish transcript. The prover also
+/// writes these coefficients into its internal NARG; the exported modular proof
+/// still consumes the retained structured field.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
 pub struct ClearSumcheckProof<F: JoltField> {
     pub compressed_polys: Vec<CompressedUniPoly<F>>,
@@ -558,8 +566,8 @@ impl<F: JoltField> ClearSumcheckProof<F> {
     }
 
     /// Verify this standard sumcheck. Structured proofs replay each round as a
-    /// shared absorb; an empty proof remains a fallback for old full-NARG
-    /// experiments that read round polynomials from the NARG.
+    /// shared absorb; an empty proof remains a fallback for full-NARG readers
+    /// that read round polynomials from the NARG.
     pub fn verify(
         &self,
         claim: F,

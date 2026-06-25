@@ -140,10 +140,11 @@ pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
 ) -> UniSkipFirstRoundProof<F> {
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
-    // The live verifier bridge is structured (Option-A): clear coefficients are
-    // proof fields, so both sides absorb the same slice instead of reading it
-    // back from the NARG.
-    transcript.absorb_slice(&uni_poly.coeffs);
+    // Write the clear first-round polynomial into the prover-side NARG. The split
+    // modular verifier bridge still retains this structured proof field and
+    // replays it with `absorb_slice`; `write_slice` is byte-identical to
+    // `absorb_slice` for the sponge state, but also records a NARG frame.
+    transcript.write_slice(&uni_poly.coeffs);
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
     opening_accumulator.flush_to_transcript(transcript);
@@ -175,9 +176,11 @@ pub fn prove_uniskip_round_zk<
     let blinding = F::random(rng);
     let commitment = pedersen_gens.commit(&uni_poly.coeffs, &blinding);
 
-    // Commitment is prover-only but carried in the structured `ZkUniSkipFirstRoundProof`
-    // (hybrid), so both sides `absorb` it — matching `ZkUniSkipFirstRoundProof::verify_transcript`.
-    transcript.absorb(&commitment);
+    // Commitment is prover-only, so record it in the prover-side NARG. The modular
+    // verifier bridge still carries the same commitment structurally and replays it
+    // with `absorb`; for a single commitment this is the same sponge message as
+    // `write_slice(&[commitment])`.
+    transcript.write_slice(std::slice::from_ref(&commitment));
 
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
@@ -191,6 +194,10 @@ pub fn prove_uniskip_round_zk<
         .collect();
     let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
     let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
+    // Keep the output-claim commitments in the structured bridge for now. The
+    // modular verifier absorbs this as a `Vec`, whose bytes are not the same as
+    // the slice frame used by `write_slice`; moving it into the NARG requires the
+    // verifier proof model to read the same frame.
     transcript.absorb(&output_claims_commitments);
 
     let input_constraint = instance.get_params().input_claim_constraint();
@@ -224,7 +231,9 @@ pub fn prove_uniskip_round_zk<
 /// Proof marker for a univariate-skip first round (non-ZK).
 ///
 /// The prover carries the full first-round polynomial so the structured modular
-/// verifier bridge can replay the same Spongefish transcript.
+/// verifier bridge can replay the same Spongefish transcript. The prover also
+/// writes this polynomial into its internal NARG; the exported modular proof
+/// still consumes the retained structured field.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct UniSkipFirstRoundProof<F: JoltField> {
     pub uni_poly: UniPoly<F>,
@@ -237,7 +246,7 @@ impl<F: JoltField> UniSkipFirstRoundProof<F> {
 
     /// Verify only the univariate-skip first round. Structured proofs replay the
     /// polynomial as a shared absorb; the empty marker is retained as a fallback
-    /// for old full-NARG experiments that read the polynomial from the NARG.
+    /// for full-NARG readers that read the polynomial from the NARG.
     pub fn verify<
         const N: usize,
         const FIRST_ROUND_POLY_NUM_COEFFS: usize,

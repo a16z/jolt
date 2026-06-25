@@ -21,10 +21,11 @@
 //!   restores legacy `transcripts/poseidon.rs` so Poseidon works end-to-end and never hits its
 //!   `unimplemented!()` `challenge_u128`.
 //!
-//! This module still exposes `write_slice`/`read_slice` for full-NARG experiments, but
-//! the live modular verifier bridge in this split is structured (Option-A): clear
-//! sumcheck/uni-skip round data and non-ZK opening claims stay in proof fields, while
-//! shared transcript inputs are `absorb`'d ([`public_message`]) on both sides.
+//! This module exposes `write_slice`/`read_slice` for the prover-side NARG path. In
+//! the current split, the exported modular verifier proof is still structured: the
+//! prover may write byte-identical round payloads into its internal NARG, but
+//! [`proof_parts_into_verifier`](crate::zkvm::proof::proof_parts_into_verifier)
+//! converts the retained structured fields into `jolt-verifier`'s proof model.
 //!
 //! Three concerns, three traits:
 //! - [`FsChallenge`] — squeezed verifier randomness; implemented per sponge type for
@@ -379,6 +380,42 @@ mod tests {
         let read: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
         assert_eq!(read, scalars);
         VerifierTranscript::<Bl>::check_eof(v).unwrap();
+    }
+
+    /// `write_slice` must be transcript-state identical to `absorb_slice`, and
+    /// for a single value to `absorb`.
+    ///
+    /// This lets the prover put clear round polynomials and single commitments
+    /// into its internal NARG while the split modular verifier bridge continues
+    /// to replay retained structured values with `absorb_slice`.
+    #[test]
+    fn write_slice_absorbs_like_absorb_slice() {
+        let mut r = test_rng();
+        let scalars: Vec<Fr> = (0..5).map(|_| Fr::random(&mut r)).collect();
+
+        let instance = [11u8; 32];
+        let mut public = prover_transcript(SESSION, instance, Bl::default());
+        public.absorb_slice(&scalars);
+
+        let mut prover = prover_transcript(SESSION, instance, Bl::default());
+        ProverFs::<Fr>::write_slice(&mut prover, &scalars);
+        assert!(!prover.narg_string().is_empty());
+
+        let public_next = FsChallenge::<Fr>::challenge_field(&mut public);
+        let prover_next = FsChallenge::<Fr>::challenge_field(&mut prover);
+        assert_eq!(public_next, prover_next);
+
+        let single = Fr::random(&mut r);
+        let instance = [12u8; 32];
+        let mut public = prover_transcript(SESSION, instance, Bl::default());
+        public.absorb(&single);
+
+        let mut prover = prover_transcript(SESSION, instance, Bl::default());
+        ProverFs::<Fr>::write_slice(&mut prover, std::slice::from_ref(&single));
+
+        let public_next = FsChallenge::<Fr>::challenge_field(&mut public);
+        let prover_next = FsChallenge::<Fr>::challenge_field(&mut prover);
+        assert_eq!(public_next, prover_next);
     }
 
     /// Mirrors a batched non-ZK sumcheck (`BatchedSumcheck::prove`/`verify`):
