@@ -418,27 +418,45 @@ mod tests {
         proof::LatticeCommitmentPayload,
         stages::stage8::lattice_protocol_config_for_packed_witness_layout,
     };
+    use jolt_claims::protocols::jolt::JoltPackingFamilyId;
     use jolt_openings::{
         CommitmentScheme, PackingAlphabet, PackingCellAddress, PackingFactDomain, PackingFamilyId,
         PackingFamilySpec, PackingSetupParams, SparsePackingWitness,
     };
 
+    fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
+        family.into()
+    }
+
     fn tiny_layout() -> PackingWitnessLayout {
-        PackingWitnessLayout::new([
+        let specs = vec![
             PackingFamilySpec::direct(
-                PackingFamilyId::InstructionRa { index: 0 },
+                physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
                 PackingFactDomain::TraceRows { log_t: 0 },
                 1,
                 PackingAlphabet::Byte,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::UnsignedIncMsb,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
                 PackingFactDomain::TraceRows { log_t: 0 },
                 1,
                 PackingAlphabet::Bit,
             ),
-        ])
-        .expect("layout should build")
+        ];
+        #[cfg(feature = "field-inline")]
+        let specs = {
+            let mut specs = specs;
+            specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
+                PackingFamilySpec::direct(
+                    physical(JoltPackingFamilyId::FieldRdIncByte { index }),
+                    PackingFactDomain::TraceRows { log_t: 0 },
+                    1,
+                    PackingAlphabet::Byte,
+                )
+            }));
+            specs
+        };
+        PackingWitnessLayout::new(specs).expect("layout should build")
     }
 
     fn packed_cell(family: PackingFamilyId, symbol: usize) -> PackingCellAddress {
@@ -489,7 +507,8 @@ mod tests {
     fn akita_verifier_setup_binds_protocol_config() {
         let layout = tiny_layout();
         let (_, verifier_setup) = akita_packing_setup(&layout, 1);
-        let config = lattice_protocol_config_for_packed_witness_layout(&layout);
+        let config = lattice_protocol_config_for_packed_witness_layout(&layout)
+            .expect("layout protocol config should derive");
 
         validate_akita_verifier_setup_config(&verifier_setup, &config)
             .expect("setup should match generated Akita protocol config");
@@ -535,7 +554,7 @@ mod tests {
             .expect("setup should match generated Akita packing layout");
 
         let other_layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
-            PackingFamilyId::InstructionRa { index: 1 },
+            physical(JoltPackingFamilyId::InstructionRa { index: 1 }),
             PackingFactDomain::TraceRows { log_t: 0 },
             1,
             PackingAlphabet::Byte,
@@ -683,11 +702,11 @@ mod tests {
             layout.clone(),
             [
                 (
-                    packed_cell(PackingFamilyId::InstructionRa { index: 0 }, 7),
+                    packed_cell(physical(JoltPackingFamilyId::InstructionRa { index: 0 }), 7),
                     AkitaField::one(),
                 ),
                 (
-                    packed_cell(PackingFamilyId::UnsignedIncMsb, 1),
+                    packed_cell(physical(JoltPackingFamilyId::UnsignedIncMsb), 1),
                     AkitaField::one(),
                 ),
             ],
@@ -697,11 +716,11 @@ mod tests {
             layout.clone(),
             [
                 (
-                    packed_cell(PackingFamilyId::InstructionRa { index: 0 }, 8),
+                    packed_cell(physical(JoltPackingFamilyId::InstructionRa { index: 0 }), 8),
                     AkitaField::one(),
                 ),
                 (
-                    packed_cell(PackingFamilyId::UnsignedIncMsb, 0),
+                    packed_cell(physical(JoltPackingFamilyId::UnsignedIncMsb), 0),
                     AkitaField::one(),
                 ),
             ],

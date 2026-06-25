@@ -83,7 +83,7 @@ pub fn commit_akita_packing_witness<S>(
 where
     S: PackingWitnessSource<AkitaField>,
 {
-    let protocol = lattice_protocol_config_for_packed_witness_layout(source.layout());
+    let protocol = lattice_protocol_config_for_packed_witness_layout(source.layout())?;
     commit_akita_packing_witness_with_config(protocol, setup, source)
 }
 

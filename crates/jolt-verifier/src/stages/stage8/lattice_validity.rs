@@ -1,5 +1,7 @@
 use crate::{config::JoltProtocolConfig, stages::PrecommittedSchedule, VerifierError};
-use jolt_claims::protocols::jolt::formulas::dimensions::REGISTER_ADDRESS_BITS;
+use jolt_claims::protocols::jolt::{
+    formulas::dimensions::REGISTER_ADDRESS_BITS, JoltPackingFamilyId,
+};
 use jolt_field::Field;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
@@ -174,10 +176,11 @@ fn validate_bytecode_store_rd_disjoint_layout(
     requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
     let chunk = bytecode_store_rd_disjoint_chunk(requirement)?;
-    let store_id = PackingFamilyId::BytecodeCircuitFlag {
+    let store_id: PackingFamilyId = JoltPackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
-    };
+    }
+    .into();
     let store = layout.family(&store_id).ok_or_else(|| {
         invalid_lattice_config(format!(
             "bytecode Store/Rd disjointness requires {store_id:?}"
@@ -189,7 +192,8 @@ fn validate_bytecode_store_rd_disjoint_layout(
         ));
     }
 
-    let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+    let rd_id: PackingFamilyId =
+        JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }.into();
     let rd = layout.family(&rd_id).ok_or_else(|| {
         invalid_lattice_config(format!("bytecode Store/Rd disjointness requires {rd_id:?}"))
     })?;
@@ -213,12 +217,14 @@ fn validate_bytecode_store_rd_disjoint_layout(
 fn bytecode_store_rd_disjoint_chunk(
     requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
-    let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
+    let Some(JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag }) =
+        JoltPackingFamilyId::from_physical_id(&requirement.family)
+    else {
         return Err(invalid_lattice_config(
             "bytecode Store/Rd disjointness must be anchored on the Store circuit flag",
         ));
     };
-    if *flag != CircuitFlags::Store as usize
+    if flag != CircuitFlags::Store as usize
         || requirement.limbs != 1
         || requirement.alphabet_size != 2
     {
@@ -226,7 +232,7 @@ fn bytecode_store_rd_disjoint_chunk(
             "bytecode Store/Rd disjointness must be anchored on a boolean Store circuit flag",
         ));
     }
-    Ok(*chunk)
+    Ok(chunk)
 }
 
 fn validate_field_element_canonical_bytes_layout(
@@ -240,9 +246,9 @@ fn validate_field_element_canonical_bytes_layout(
         ));
     }
 
-    match &requirement.family {
-        PackingFamilyId::FieldRdIncByte { index: 0 } => {
-            let first_id = PackingFamilyId::FieldRdIncByte { index: 0 };
+    match JoltPackingFamilyId::from_physical_id(&requirement.family) {
+        Some(JoltPackingFamilyId::FieldRdIncByte { index: 0 }) => {
+            let first_id: PackingFamilyId = JoltPackingFamilyId::FieldRdIncByte { index: 0 }.into();
             let first = layout.family(&first_id).ok_or_else(|| {
                 invalid_lattice_config(
                     "field-element canonical-byte validity requires FieldRdIncByte[0]",
@@ -260,7 +266,8 @@ fn validate_field_element_canonical_bytes_layout(
             })?;
             let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
             for index in 1..byte_width {
-                let family_id = PackingFamilyId::FieldRdIncByte { index };
+                let family_id: PackingFamilyId =
+                    JoltPackingFamilyId::FieldRdIncByte { index }.into();
                 let family = layout.family(&family_id).ok_or_else(|| {
                     invalid_lattice_config(format!(
                         "field-element canonical-byte validity requires {family_id:?}"
@@ -277,8 +284,8 @@ fn validate_field_element_canonical_bytes_layout(
             }
             Ok(row_vars)
         }
-        PackingFamilyId::BytecodeImmBytes { chunk } => {
-            let family_id = PackingFamilyId::BytecodeImmBytes { chunk: *chunk };
+        Some(JoltPackingFamilyId::BytecodeImmBytes { chunk }) => {
+            let family_id: PackingFamilyId = JoltPackingFamilyId::BytecodeImmBytes { chunk }.into();
             let family = layout.family(&family_id).ok_or_else(|| {
                 invalid_lattice_config(format!(
                     "field-element canonical-byte validity requires {family_id:?}"
@@ -338,12 +345,13 @@ fn canonical_field_byte_location(
             "field-element canonical-byte index {byte_index} is outside byte width {byte_width}",
         )));
     }
-    match &requirement.family {
-        PackingFamilyId::FieldRdIncByte { index: 0 } => {
-            Ok((PackingFamilyId::FieldRdIncByte { index: byte_index }, 0))
-        }
-        PackingFamilyId::BytecodeImmBytes { chunk } => Ok((
-            PackingFamilyId::BytecodeImmBytes { chunk: *chunk },
+    match JoltPackingFamilyId::from_physical_id(&requirement.family) {
+        Some(JoltPackingFamilyId::FieldRdIncByte { index: 0 }) => Ok((
+            JoltPackingFamilyId::FieldRdIncByte { index: byte_index }.into(),
+            0,
+        )),
+        Some(JoltPackingFamilyId::BytecodeImmBytes { chunk }) => Ok((
+            JoltPackingFamilyId::BytecodeImmBytes { chunk }.into(),
             byte_index,
         )),
         _ => Err(invalid_lattice_config(format!(
@@ -379,7 +387,7 @@ pub(crate) fn field_element_canonical_factors(
         if start_symbol < 256 {
             factors.push(FieldCanonicalFactor::Range {
                 byte_index,
-                family: family.clone(),
+                family,
                 limb,
                 start_symbol,
             });
@@ -796,7 +804,7 @@ where
             statement.kind
         )));
     }
-    let family_id = statement.requirement.family.clone();
+    let family_id = statement.requirement.family;
     let shape = validity_statement_shape(layout, statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
     let limb_weights = EqPolynomial::<F>::evals(point_parts.limb, None);
@@ -875,7 +883,7 @@ where
     })?;
     let (family_id, limb) = match &factor {
         FieldCanonicalFactor::Eq { family, limb, .. }
-        | FieldCanonicalFactor::Range { family, limb, .. } => (family.clone(), *limb),
+        | FieldCanonicalFactor::Range { family, limb, .. } => (*family, *limb),
     };
     let family = layout.family(&family_id).ok_or_else(|| {
         invalid_lattice_config(format!(
@@ -933,10 +941,11 @@ where
     F: Field,
 {
     let chunk = bytecode_store_rd_disjoint_chunk(&statement.requirement)?;
-    let store_id = PackingFamilyId::BytecodeCircuitFlag {
+    let store_id: PackingFamilyId = JoltPackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
-    };
+    }
+    .into();
     let store = layout.family(&store_id).ok_or_else(|| {
         invalid_lattice_config(format!(
             "bytecode Store/Rd disjointness requires {store_id:?}"
@@ -961,7 +970,8 @@ where
         0 => vec![PackingTerm::new(F::one(), store_id.physical_ref(), 0, 1)
             .with_row_point(point.to_vec())],
         1 => {
-            let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+            let rd_id: PackingFamilyId =
+                JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }.into();
             let rd = layout.family(&rd_id).ok_or_else(|| {
                 invalid_lattice_config(format!("bytecode Store/Rd disjointness requires {rd_id:?}"))
             })?;

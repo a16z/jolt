@@ -24,6 +24,7 @@ use crate::{
 };
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaCommitment, AkitaField};
+use jolt_claims::protocols::jolt::JoltPackingFamilyId;
 use jolt_openings::{
     PackingFamilyId, PackingValidityKind, PackingValidityRequirement, PackingWitnessLayout,
     PackingWitnessSource,
@@ -258,7 +259,7 @@ fn validity_opening_value<S>(
 where
     S: PackingWitnessSource<AkitaField>,
 {
-    let family_id = statement.requirement.family.clone();
+    let family_id = statement.requirement.family;
     let shape = validity_statement_shape(source.layout(), statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
     let row_weights = EqPolynomial::<AkitaField>::evals(point_parts.row, None);
@@ -470,10 +471,11 @@ where
     S: PackingWitnessSource<AkitaField>,
 {
     let chunk = bytecode_store_rd_disjoint_chunk(&statement.requirement)?;
-    let store_id = PackingFamilyId::BytecodeCircuitFlag {
+    let store_id: PackingFamilyId = JoltPackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
-    };
+    }
+    .into();
     let store =
         source
             .layout()
@@ -500,7 +502,8 @@ where
     match factor {
         0 => weighted_direct_symbol_value(source, &store_id, &row_weights, 1),
         1 => {
-            let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+            let rd_id: PackingFamilyId =
+                JoltPackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 }.into();
             let rd = source.layout().family(&rd_id).ok_or_else(|| {
                 VerifierError::InvalidProtocolConfig {
                     reason: format!("bytecode Store/Rd disjointness requires {rd_id:?}"),
@@ -530,13 +533,15 @@ where
 fn bytecode_store_rd_disjoint_chunk(
     requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
-    let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
+    let Some(JoltPackingFamilyId::BytecodeCircuitFlag { chunk, flag }) =
+        JoltPackingFamilyId::from_physical_id(&requirement.family)
+    else {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "bytecode Store/Rd disjointness must be anchored on the Store circuit flag"
                 .to_string(),
         });
     };
-    if *flag != CircuitFlags::Store as usize
+    if flag != CircuitFlags::Store as usize
         || requirement.limbs != 1
         || requirement.alphabet_size != 2
     {
@@ -546,7 +551,7 @@ fn bytecode_store_rd_disjoint_chunk(
                     .to_string(),
         });
     }
-    Ok(*chunk)
+    Ok(chunk)
 }
 
 #[derive(Clone, Copy)]
@@ -764,14 +769,19 @@ mod tests {
             dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
             ra::JoltRaPolynomialLayout,
         },
+        JoltAdviceKind,
     };
     use jolt_field::FixedByteSize;
     use jolt_openings::{
-        packing_validity_digest, CommitmentScheme, PackingAdviceKind, PackingAlphabet,
-        PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
-        PackingSetupParams, PackingValidityKind, PackingValidityRequirement, SparsePackingWitness,
+        packing_validity_digest, CommitmentScheme, PackingAlphabet, PackingCellAddress,
+        PackingFactDomain, PackingFamilyId, PackingFamilySpec, PackingSetupParams,
+        PackingValidityKind, PackingValidityRequirement, SparsePackingWitness,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
+
+    fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
+        family.into()
+    }
 
     fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()
@@ -987,7 +997,8 @@ mod tests {
             &requirements,
             &jolt_akita::AKITA_FIELD_MODULUS.to_le_bytes(),
         );
-        let mut config = lattice_protocol_config_for_packed_witness_layout(&layout);
+        let mut config = lattice_protocol_config_for_packed_witness_layout(&layout)
+            .expect("layout protocol config should derive");
         config.lattice.packed_witness.validity_digest =
             Some(packing_validity_digest(&requirements));
         let params = akita_packing_params(&layout, 1);
@@ -1051,11 +1062,10 @@ mod tests {
         let statement = statements
             .iter()
             .find(|statement| {
-                matches!(
-                    statement.requirement.family,
-                    PackingFamilyId::FieldRdIncByte { index: 0 }
-                ) && statement.kind
-                    == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
+                statement.requirement.family
+                    == physical(JoltPackingFamilyId::FieldRdIncByte { index: 0 })
+                    && statement.kind
+                        == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
             })
             .expect("FieldRdInc canonical-byte statement should exist");
         let point = vec![AkitaField::zero(); statement.num_vars];
@@ -1076,11 +1086,10 @@ mod tests {
         let statement = statements
             .iter()
             .find(|statement| {
-                matches!(
-                    statement.requirement.family,
-                    PackingFamilyId::BytecodeImmBytes { chunk: 0 }
-                ) && statement.kind
-                    == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
+                statement.requirement.family
+                    == physical(JoltPackingFamilyId::BytecodeImmBytes { chunk: 0 })
+                    && statement.kind
+                        == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
             })
             .expect("bytecode immediate canonical-byte statement should exist");
         let point = vec![AkitaField::zero(); statement.num_vars];
@@ -1093,24 +1102,24 @@ mod tests {
     #[test]
     fn packed_validity_value_detects_malformed_advice_byte_onehot() {
         let (layout, statements) = small_validity_context();
-        let family = PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Untrusted,
+        let family = physical(JoltPackingFamilyId::AdviceBytes {
+            kind: JoltAdviceKind::Untrusted,
             index: 0,
-        };
+        });
         let source = SparsePackingWitness::try_from_cells(
             layout,
             [
-                (packed_cell_at(family.clone(), 0, 0, 7), AkitaField::one()),
+                (packed_cell_at(family, 0, 0, 7), AkitaField::one()),
                 (packed_cell_at(family, 0, 0, 8), AkitaField::one()),
             ],
         )
         .expect("malformed advice source should build");
         let statement = validity_statement(
             &statements,
-            PackingFamilyId::AdviceBytes {
-                kind: PackingAdviceKind::Untrusted,
+            physical(JoltPackingFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Untrusted,
                 index: 0,
-            },
+            }),
             LatticePackedValidityStatementKind::ExactOneHotRowSum,
         );
 
@@ -1123,24 +1132,24 @@ mod tests {
     #[test]
     fn packed_validity_value_detects_malformed_bytecode_optional_selector() {
         let (layout, statements, _) = small_bytecode_validity_context();
-        let family = PackingFamilyId::BytecodeRegisterSelector {
+        let family = physical(JoltPackingFamilyId::BytecodeRegisterSelector {
             chunk: 0,
             selector: 0,
-        };
+        });
         let source = SparsePackingWitness::try_from_cells(
             layout,
             [
-                (packed_cell_at(family.clone(), 0, 0, 3), AkitaField::one()),
+                (packed_cell_at(family, 0, 0, 3), AkitaField::one()),
                 (packed_cell_at(family, 0, 0, 4), AkitaField::one()),
             ],
         )
         .expect("malformed bytecode selector source should build");
         let statement = validity_statement(
             &statements,
-            PackingFamilyId::BytecodeRegisterSelector {
+            physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 0,
-            },
+            }),
             LatticePackedValidityStatementKind::OptionalOneHotRowSum,
         );
 
@@ -1154,7 +1163,7 @@ mod tests {
     fn packed_validity_value_detects_malformed_bytecode_boolean_flag() {
         let (layout, statements, _) = small_bytecode_validity_context();
         let flag = CircuitFlags::Store as usize;
-        let family = PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag };
+        let family = physical(JoltPackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag });
         let source = SparsePackingWitness::try_from_cells(
             layout,
             [(packed_cell_at(family, 0, 0, 1), af(2))],
@@ -1162,7 +1171,7 @@ mod tests {
         .expect("malformed bytecode flag source should build");
         let statement = validity_statement(
             &statements,
-            PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag },
+            physical(JoltPackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag }),
             LatticePackedValidityStatementKind::BooleanIndicator,
         );
 
@@ -1224,10 +1233,10 @@ mod tests {
     ) {
         let specs = vec![
             PackingFamilySpec::direct(
-                PackingFamilyId::BytecodeRegisterSelector {
+                physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                     chunk: 0,
                     selector: 0,
-                },
+                }),
                 PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
                 PackingAlphabet::Fixed {
@@ -1235,10 +1244,10 @@ mod tests {
                 },
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::BytecodeRegisterSelector {
+                physical(JoltPackingFamilyId::BytecodeRegisterSelector {
                     chunk: 0,
                     selector: 2,
-                },
+                }),
                 PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
                 PackingAlphabet::Fixed {
@@ -1246,16 +1255,16 @@ mod tests {
                 },
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::BytecodeCircuitFlag {
+                physical(JoltPackingFamilyId::BytecodeCircuitFlag {
                     chunk: 0,
                     flag: CircuitFlags::Store as usize,
-                },
+                }),
                 PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
                 PackingAlphabet::Bit,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::BytecodeImmBytes { chunk: 0 },
+                physical(JoltPackingFamilyId::BytecodeImmBytes { chunk: 0 }),
                 PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 AkitaField::NUM_BYTES,
                 PackingAlphabet::Byte,
@@ -1266,7 +1275,7 @@ mod tests {
             let mut specs = specs;
             specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
                 PackingFamilySpec::direct(
-                    PackingFamilyId::FieldRdIncByte { index },
+                    physical(JoltPackingFamilyId::FieldRdIncByte { index }),
                     PackingFactDomain::TraceRows { log_t: 0 },
                     1,
                     PackingAlphabet::Byte,
@@ -1276,7 +1285,8 @@ mod tests {
         };
         let layout =
             PackingWitnessLayout::new(specs).expect("manual bytecode validity layout should build");
-        let mut requirements = lattice_validity_requirements_for_packed_witness_layout(&layout);
+        let mut requirements = lattice_validity_requirements_for_packed_witness_layout(&layout)
+            .expect("layout validity requirements should derive");
         requirements.push(bytecode_imm_canonical_bytes_requirement(
             0,
             AkitaField::NUM_BYTES,
@@ -1337,9 +1347,11 @@ mod tests {
         requirements: &[PackingValidityRequirement],
         bytes: &[u8],
     ) -> SparsePackingWitness<AkitaField> {
-        validity_source_with_symbols(layout, requirements, |family, _| match family {
-            PackingFamilyId::FieldRdIncByte { index } => bytes[*index] as usize,
-            _ => 0,
+        validity_source_with_symbols(layout, requirements, |family, _| {
+            match JoltPackingFamilyId::from_physical_id(family) {
+                Some(JoltPackingFamilyId::FieldRdIncByte { index }) => bytes[index] as usize,
+                _ => 0,
+            }
         })
     }
 
@@ -1348,9 +1360,11 @@ mod tests {
         requirements: &[PackingValidityRequirement],
         bytes: &[u8],
     ) -> SparsePackingWitness<AkitaField> {
-        validity_source_with_symbols(layout, requirements, |family, limb| match family {
-            PackingFamilyId::BytecodeImmBytes { .. } => bytes[limb] as usize,
-            _ => 0,
+        validity_source_with_symbols(layout, requirements, |family, limb| {
+            match JoltPackingFamilyId::from_physical_id(family) {
+                Some(JoltPackingFamilyId::BytecodeImmBytes { .. }) => bytes[limb] as usize,
+                _ => 0,
+            }
         })
     }
 
@@ -1361,7 +1375,7 @@ mod tests {
     ) -> SparsePackingWitness<AkitaField> {
         let mut cells = Vec::new();
         for requirement in requirements {
-            let family_id = requirement.family.clone();
+            let family_id = requirement.family;
             let family = layout
                 .family(&family_id)
                 .expect("validity family should exist");
@@ -1374,7 +1388,7 @@ mod tests {
                     let symbol = symbol_for(&requirement.family, limb);
                     cells.push((
                         PackingCellAddress {
-                            family: family_id.clone(),
+                            family: family_id,
                             row,
                             limb,
                             symbol,

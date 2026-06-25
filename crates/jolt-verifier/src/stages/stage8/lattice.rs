@@ -9,14 +9,14 @@ use jolt_claims::protocols::field_inline::{
 use jolt_claims::protocols::jolt::{
     byte_decode_terms, unsigned_inc_msb_lattice_view_formula, unsigned_inc_msb_opening,
     weighted_symbol_terms, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltPolynomialId, JoltRelationId,
+    JoltPackingFamilyId, JoltPolynomialId, JoltRelationId,
 };
 use jolt_field::Field;
 #[cfg(feature = "field-inline")]
 use jolt_field::FixedByteSize;
 use jolt_openings::{
-    PackingAdviceKind, PackingFamilyId, PackingValidityRequirement, PackingViewError,
-    PackingViewFormula, PackingWitnessLayout,
+    PackingFamilyId, PackingValidityRequirement, PackingViewError, PackingViewFormula,
+    PackingWitnessLayout,
 };
 use jolt_poly::EqPolynomial;
 
@@ -292,7 +292,7 @@ where
             JoltCommittedPolynomial::InstructionRa(index),
             JoltRelationId::HammingWeightClaimReduction,
         ) => ra_lattice_view_formula(
-            PackingFamilyId::InstructionRa { index },
+            JoltPackingFamilyId::InstructionRa { index }.into(),
             point,
             log_k_chunk,
         ),
@@ -301,14 +301,14 @@ where
             JoltRelationId::HammingWeightClaimReduction,
         ) => {
             ra_lattice_view_formula(
-                PackingFamilyId::BytecodeRa { index },
+                JoltPackingFamilyId::BytecodeRa { index }.into(),
                 point,
                 log_k_chunk,
             )
         }
         (JoltCommittedPolynomial::RamRa(index), JoltRelationId::HammingWeightClaimReduction) => {
             ra_lattice_view_formula(
-                PackingFamilyId::RamRa { index },
+                JoltPackingFamilyId::RamRa { index }.into(),
                 point,
                 log_k_chunk,
             )
@@ -373,7 +373,7 @@ where
         )));
     }
     ra_lattice_view_formula(
-        PackingFamilyId::UnsignedIncChunk { index },
+        JoltPackingFamilyId::UnsignedIncChunk { index }.into(),
         point,
         log_k_chunk,
     )
@@ -410,19 +410,9 @@ where
     F: Field,
 {
     PackingViewFormula::linear_decoded(byte_decode_terms(
-        PackingFamilyId::AdviceBytes {
-            kind: packing_advice_kind(kind),
-            index: 0,
-        },
+        JoltPackingFamilyId::AdviceBytes { kind, index: 0 }.into(),
         0,
     ))
-}
-
-fn packing_advice_kind(kind: JoltAdviceKind) -> PackingAdviceKind {
-    match kind {
-        JoltAdviceKind::Trusted => PackingAdviceKind::Trusted,
-        JoltAdviceKind::Untrusted => PackingAdviceKind::Untrusted,
-    }
 }
 
 fn power_of_two_log(value: usize, name: &'static str) -> Result<usize, VerifierError> {

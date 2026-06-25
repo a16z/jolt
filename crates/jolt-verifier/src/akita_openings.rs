@@ -429,7 +429,8 @@ mod tests {
     };
     use jolt_akita::{AkitaScheme, AkitaSetupParams, AKITA_FIELD_MODULUS};
     use jolt_claims::protocols::jolt::{
-        unsigned_inc_msb_opening, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+        unsigned_inc_msb_opening, JoltCommittedPolynomial, JoltOpeningId, JoltPackingFamilyId,
+        JoltRelationId,
     };
     use jolt_field::FixedByteSize;
     use jolt_openings::{
@@ -440,22 +441,39 @@ mod tests {
     use jolt_poly::Point;
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
+    fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
+        family.into()
+    }
+
     fn tiny_layout() -> jolt_openings::PackingWitnessLayout {
-        jolt_openings::PackingWitnessLayout::new([
+        let specs = vec![
             PackingFamilySpec::direct(
-                PackingFamilyId::InstructionRa { index: 0 },
+                physical(JoltPackingFamilyId::InstructionRa { index: 0 }),
                 PackingFactDomain::TraceRows { log_t: 0 },
                 1,
                 PackingAlphabet::Byte,
             ),
             PackingFamilySpec::direct(
-                PackingFamilyId::UnsignedIncMsb,
+                physical(JoltPackingFamilyId::UnsignedIncMsb),
                 PackingFactDomain::TraceRows { log_t: 0 },
                 1,
                 PackingAlphabet::Bit,
             ),
-        ])
-        .expect("layout should build")
+        ];
+        #[cfg(feature = "field-inline")]
+        let specs = {
+            let mut specs = specs;
+            specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
+                PackingFamilySpec::direct(
+                    physical(JoltPackingFamilyId::FieldRdIncByte { index }),
+                    PackingFactDomain::TraceRows { log_t: 0 },
+                    1,
+                    PackingAlphabet::Byte,
+                )
+            }));
+            specs
+        };
+        jolt_openings::PackingWitnessLayout::new(specs).expect("layout should build")
     }
 
     fn packed_cell(family: PackingFamilyId, symbol: usize) -> PackingCellAddress {
@@ -486,16 +504,13 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
-        let instruction_family = PackingFamilyId::InstructionRa { index: 0 };
-        let sign_family = PackingFamilyId::UnsignedIncMsb;
+        let instruction_family = physical(JoltPackingFamilyId::InstructionRa { index: 0 });
+        let sign_family = physical(JoltPackingFamilyId::UnsignedIncMsb);
         let source = SparsePackingWitness::try_from_cells(
             layout.clone(),
             [
-                (
-                    packed_cell(instruction_family.clone(), 7),
-                    AkitaField::one(),
-                ),
-                (packed_cell(sign_family.clone(), 1), AkitaField::one()),
+                (packed_cell(instruction_family, 7), AkitaField::one()),
+                (packed_cell(sign_family, 1), AkitaField::one()),
             ],
         )
         .expect("source should build");
@@ -687,10 +702,10 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
-        let sign_family = PackingFamilyId::UnsignedIncMsb;
+        let sign_family = physical(JoltPackingFamilyId::UnsignedIncMsb);
         let source = SparsePackingWitness::try_from_cells(
             layout.clone(),
-            [(packed_cell(sign_family.clone(), 1), AkitaField::one())],
+            [(packed_cell(sign_family, 1), AkitaField::one())],
         )
         .expect("source should build");
         let artifact = commit_akita_packing_witness(&prover_setup, &source)

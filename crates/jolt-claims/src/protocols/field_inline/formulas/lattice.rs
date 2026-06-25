@@ -1,9 +1,7 @@
 use jolt_field::Field;
-use jolt_openings::{
-    PackingFamilyId, PackingValidityRequirement, PackingViewFormula, PackingViewTerm,
-};
+use jolt_openings::{PackingValidityRequirement, PackingViewFormula, PackingViewTerm};
 
-use crate::protocols::jolt::weighted_byte_decode_terms;
+use crate::protocols::jolt::{weighted_byte_decode_terms, JoltPackingFamilyId};
 
 pub fn field_rd_inc_lattice_view_formula<F: Field>(byte_width: usize) -> PackingViewFormula<F> {
     PackingViewFormula::linear_decoded(field_rd_inc_byte_terms(byte_width))
@@ -14,7 +12,7 @@ pub fn field_rd_inc_byte_terms<F: Field>(byte_width: usize) -> Vec<PackingViewTe
     let mut place = F::one();
     for index in 0..byte_width {
         terms.extend(weighted_byte_decode_terms(
-            PackingFamilyId::FieldRdIncByte { index },
+            JoltPackingFamilyId::FieldRdIncByte { index }.into(),
             [(0, place)],
         ));
         place *= F::from_u64(256);
@@ -26,7 +24,7 @@ pub fn field_rd_inc_validity_requirements(byte_width: usize) -> Vec<PackingValid
     (0..byte_width)
         .map(|index| {
             PackingValidityRequirement::exact_one_hot(
-                PackingFamilyId::FieldRdIncByte { index },
+                JoltPackingFamilyId::FieldRdIncByte { index }.into(),
                 1,
                 256,
             )
@@ -39,7 +37,7 @@ pub fn field_rd_inc_canonical_bytes_requirement(
     modulus: u128,
 ) -> PackingValidityRequirement {
     PackingValidityRequirement::field_element_canonical_bytes(
-        PackingFamilyId::FieldRdIncByte { index: 0 },
+        JoltPackingFamilyId::FieldRdIncByte { index: 0 }.into(),
         byte_width,
         modulus,
     )
@@ -58,7 +56,7 @@ mod tests {
         assert_eq!(terms[7].coefficient, Fr::from_u64(7));
         assert_eq!(
             terms[7].family,
-            PackingFamilyId::FieldRdIncByte { index: 0 }
+            JoltPackingFamilyId::FieldRdIncByte { index: 0 }.into()
         );
         assert_eq!(terms[7].limb, 0);
         assert_eq!(terms[7].symbol, 7);
@@ -67,7 +65,7 @@ mod tests {
         assert_eq!(second_byte.coefficient, Fr::from_u64(3 * 256));
         assert_eq!(
             second_byte.family,
-            PackingFamilyId::FieldRdIncByte { index: 1 }
+            JoltPackingFamilyId::FieldRdIncByte { index: 1 }.into()
         );
         assert_eq!(second_byte.limb, 0);
         assert_eq!(second_byte.symbol, 3);
@@ -79,12 +77,12 @@ mod tests {
             field_rd_inc_validity_requirements(2),
             vec![
                 PackingValidityRequirement::exact_one_hot(
-                    PackingFamilyId::FieldRdIncByte { index: 0 },
+                    JoltPackingFamilyId::FieldRdIncByte { index: 0 }.into(),
                     1,
                     256,
                 ),
                 PackingValidityRequirement::exact_one_hot(
-                    PackingFamilyId::FieldRdIncByte { index: 1 },
+                    JoltPackingFamilyId::FieldRdIncByte { index: 1 }.into(),
                     1,
                     256,
                 ),
@@ -97,7 +95,7 @@ mod tests {
         assert_eq!(
             field_rd_inc_canonical_bytes_requirement(2, 257),
             PackingValidityRequirement::field_element_canonical_bytes(
-                PackingFamilyId::FieldRdIncByte { index: 0 },
+                JoltPackingFamilyId::FieldRdIncByte { index: 0 }.into(),
                 2,
                 257,
             )

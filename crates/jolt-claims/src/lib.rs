@@ -1,4 +1,11 @@
 //! Shared claim and expression types for Jolt protocols.
+//!
+//! This crate owns protocol semantics: symbolic claim expressions, typed opening
+//! and challenge identifiers, relation metadata, and Jolt-specific formula
+//! builders. The lattice/Akita surface follows the same rule: `jolt-claims`
+//! names Jolt facts, logical view formulas, and validity requirements, while
+//! physical packing layouts and PCS transport remain in `jolt-openings`,
+//! `jolt-verifier`, and the backend adapter crates.
 
 mod claims;
 mod ops;
