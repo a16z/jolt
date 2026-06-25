@@ -213,12 +213,14 @@ mod tests {
     )]
 
     use super::*;
-    use jolt_claims::protocols::jolt::{
-        JoltCommittedPolynomial, JoltOpeningId, JoltPackingFamilyId, JoltRelationId,
-    };
+    #[cfg(feature = "akita")]
+    use jolt_claims::protocols::jolt::JoltPackingFamilyId;
+    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
     use jolt_field::{Fr, FromPrimitiveInt};
+    #[cfg(feature = "akita")]
     use jolt_openings::PackingFamilyId;
 
+    #[cfg(feature = "akita")]
     fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
         family.into()
     }
