@@ -78,15 +78,6 @@ impl FieldInlineBytecodeFlags {
             .into_iter()
             .find(|flag| self.get(*flag))
     }
-
-    pub fn transcript_bits(self) -> u8 {
-        FIELD_INLINE_BYTECODE_STAGE1_FLAGS
-            .into_iter()
-            .enumerate()
-            .fold(0, |bits, (index, flag)| {
-                bits | (u8::from(self.get(flag)) << index)
-            })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]

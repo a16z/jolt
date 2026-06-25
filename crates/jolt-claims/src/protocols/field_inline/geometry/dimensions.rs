@@ -2,8 +2,6 @@ use jolt_field::Field;
 
 use crate::protocols::jolt::geometry::dimensions::JoltFormulaPointError;
 
-pub const FIELD_REGISTERS_ADDRESS_BITS: usize = super::super::FIELD_REGISTERS_LOG_K;
-
 // field_inline shares the protocol-agnostic crate-root sumcheck spec; it gains a
 // `domain` field, always `BooleanHypercube` via `::boolean`.
 pub use crate::SumcheckSpec as FieldInlineSumcheckSpec;

@@ -222,14 +222,6 @@ impl InstructionReadRafOutputOpenings {
     }
 }
 
-pub fn read_raf_input_openings() -> [JoltOpeningId; 3] {
-    [
-        lookup_output_reduced(),
-        left_lookup_operand_reduced(),
-        right_lookup_operand_reduced(),
-    ]
-}
-
 pub fn read_raf_output_openings(
     dimensions: InstructionReadRafDimensions,
 ) -> InstructionReadRafOutputOpenings {

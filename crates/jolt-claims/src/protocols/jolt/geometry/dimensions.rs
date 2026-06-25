@@ -259,10 +259,6 @@ impl JoltReadWriteConfig {
             self.registers_rw_phase2_num_rounds as usize,
         )
     }
-
-    pub const fn needs_single_advice_opening(self, log_t: usize) -> bool {
-        self.ram_rw_phase1_num_rounds as usize == log_t
-    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
