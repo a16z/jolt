@@ -41,7 +41,7 @@ mod tests {
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
             jolt_sdk::VerifierTranscript,
-        >(&preprocessing, &device, &proof, None, false);
+        >(&preprocessing, &device, &proof, None, proof.claims.is_zk());
         let duration = start.elapsed();
         println!("Verification took: {} ms", duration.as_millis());
         assert!(result.is_ok(), "Verifier failed: {:?}", result.err());

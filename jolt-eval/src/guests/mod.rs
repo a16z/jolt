@@ -73,7 +73,7 @@ pub fn verify(
         io_device,
         &proof,
         None,
-        false,
+        proof.claims.is_zk(),
     )
 }
 
@@ -105,7 +105,7 @@ pub fn verify_with_claims(
         &io_device,
         &proof,
         None,
-        false,
+        proof.claims.is_zk(),
     )
 }
 
