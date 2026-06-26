@@ -1,9 +1,9 @@
 [package]
-name = "jolt-verifier-derive"
+name = "jolt-claims-derive"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Derive macros for jolt-verifier opening-claim plumbing"
+description = "Derive macros for jolt-claims opening-claim plumbing"
 repository = "https://github.com/a16z/jolt"
 
 [lib]

@@ -18,7 +18,7 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
-use jolt_verifier_derive::{InputClaims, OutputClaims};
+use jolt_claims_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};

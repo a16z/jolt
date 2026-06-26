@@ -4,7 +4,7 @@
 //! resolvers, and the value↔point zip) lives in `jolt-claims` and is re-exported
 //! here so existing `crate::stages::relations::{..}` paths keep resolving. Those
 //! traits are implemented by `#[derive(OutputClaims)]` / `#[derive(InputClaims)]`
-//! (crate `jolt-verifier-derive`) on each relation's claim struct, making the
+//! (crate `jolt-claims-derive`) on each relation's claim struct, making the
 //! canonical opening **order** and **count** a single-sourced consequence of a
 //! struct's field declaration order.
 //!
@@ -189,7 +189,7 @@ mod tests {
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_riscv::{CircuitFlags, CIRCUIT_FLAGS};
-    use jolt_verifier_derive::{InputClaims, OutputClaims};
+    use jolt_claims_derive::{InputClaims, OutputClaims};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

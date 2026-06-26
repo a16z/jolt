@@ -11,6 +11,7 @@ mod util;
 pub use claim_data::{
     zip_openings, GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, ZipOpenings,
 };
+pub use jolt_claims_derive::{InputClaims, OutputClaims};
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
 pub use sumcheck::{SumcheckDomain, SumcheckSpec};
 pub use symbolic::SymbolicSumcheck;

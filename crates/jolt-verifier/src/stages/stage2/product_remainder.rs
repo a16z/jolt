@@ -24,7 +24,7 @@ use jolt_poly::{
 };
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
-use jolt_verifier_derive::{InputClaims, OutputClaims};
+use jolt_claims_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};

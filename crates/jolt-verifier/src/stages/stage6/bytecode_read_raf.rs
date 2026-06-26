@@ -34,7 +34,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_riscv::{CircuitFlags, InstructionFlags, JoltInstructionRow, CIRCUIT_FLAGS};
-use jolt_verifier_derive::{InputClaims, OutputClaims};
+use jolt_claims_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use super::verify::{

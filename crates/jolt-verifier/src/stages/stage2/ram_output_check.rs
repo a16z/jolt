@@ -20,7 +20,7 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_verifier_derive::OutputClaims;
+use jolt_claims_derive::OutputClaims;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, InputClaims, OpeningClaim};

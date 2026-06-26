@@ -29,7 +29,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
-use jolt_verifier_derive::{InputClaims, OutputClaims};
+use jolt_claims_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use crate::proof::JoltProof;

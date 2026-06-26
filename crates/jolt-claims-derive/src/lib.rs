@@ -1,13 +1,13 @@
-//! Derive macros generating the opening-claim plumbing for `jolt-verifier`.
+//! Derive macros generating the opening-claim plumbing for Jolt relations.
 //!
 //! These derives operate on a single relation's claim struct. They emit the
 //! per-struct encode/resolve impls so that the canonical opening **order** and
 //! **count** are single-sourced from the struct's field declaration order
 //! (rather than hand-written three times, where they drift). They generate impls
-//! of the `OutputClaims` / `InputClaims` traits defined in
-//! `jolt_verifier::stages::relations`; the generated code references those traits
-//! through `crate::stages::relations::*`, so the derives are for use *within*
-//! `jolt-verifier`.
+//! of the `OutputClaims` / `InputClaims` traits defined in `jolt_claims`; the
+//! generated code references those traits through `::jolt_claims::*` (absolute
+//! paths), so the derives can be applied to structs in any crate that depends on
+//! `jolt-claims`.
 //!
 //! The claim struct is generic over an opening *cell* (`OpeningClaim<F>` on the
 //! clear path, `Vec<F>` for ZK points, `F` for the serialized wire form). The
@@ -156,7 +156,7 @@ fn cell_impl_pieces(
         .as_ref()
         .map(|where_clause| &where_clause.predicates);
     let where_clause = quote! {
-        where #cell: crate::stages::relations::GetValue<#value>, #orig_predicates
+        where #cell: ::jolt_claims::GetValue<#value>, #orig_predicates
     };
     Ok((value, impl_generics, quote!(#ty_generics), where_clause))
 }
@@ -358,7 +358,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         .map(|field| plan_field(field, struct_relation.as_ref()))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let get = quote!(crate::stages::relations::GetValue::value);
+    let get = quote!(::jolt_claims::GetValue::value);
     let mut value_chains = Vec::new();
     let mut count_terms = Vec::new();
     let mut resolve_arms = Vec::new();
@@ -414,7 +414,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     // Field-wise zip of the value-only (`F`) and point-only (`Vec<F>`) cell forms
     // into the clear `OpeningClaim<F>` form: one `OpeningClaim` per leaf,
     // element-wise for `Vec` families, value-driven for `Option` leaves.
-    let opening = quote!(crate::stages::relations::OpeningClaim);
+    let opening = quote!(::jolt_claims::OpeningClaim);
     let zip_field = Ident::new("__JoltZipField", proc_macro2::Span::call_site());
     let mut zip_inits = Vec::new();
     for plan in &plans {
@@ -446,7 +446,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     Ok(quote! {
-        impl #impl_generics crate::stages::relations::OutputClaims<#value>
+        impl #impl_generics ::jolt_claims::OutputClaims<#value>
             for #name #ty_generics #where_clause
         {
             fn opening_values(&self) -> ::std::vec::Vec<#value> {
@@ -468,7 +468,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
 
-        impl<#zip_field: ::jolt_field::Field> crate::stages::relations::ZipOpenings<#zip_field>
+        impl<#zip_field: ::jolt_field::Field> ::jolt_claims::ZipOpenings<#zip_field>
             for #name<#opening<#zip_field>>
         {
             type Values = #name<#zip_field>;
@@ -491,7 +491,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
         .map(|field| plan_field(field, None))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let get = quote!(crate::stages::relations::GetValue::value);
+    let get = quote!(::jolt_claims::GetValue::value);
     let mut resolve_arms = Vec::new();
     for plan in &plans {
         let FieldPlan {
@@ -527,7 +527,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     Ok(quote! {
-        impl #impl_generics crate::stages::relations::InputClaims<#value>
+        impl #impl_generics ::jolt_claims::InputClaims<#value>
             for #name #ty_generics #where_clause
         {
             fn resolve_input(
