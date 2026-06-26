@@ -10,7 +10,7 @@ use crate::{
 };
 use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AKITA_FIELD_MODULUS};
 use jolt_field::FixedByteSize;
-use jolt_openings::PackingWitnessLayout;
+use jolt_openings::{PackingBatchProof, PackingWitnessLayout};
 
 pub(crate) fn validate_akita_artifacts_for_proof(
     setup: &AkitaPackingVerifierSetup,
@@ -126,7 +126,7 @@ pub(crate) fn validate_akita_proof_payload_shape(
     Ok(())
 }
 
-pub(crate) fn validate_akita_opening_proof_payload_shape(
+pub(crate) fn validate_akita_packed_target_opening_proof_payload_shape(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
     opening_proof: &AkitaPackingBatchProof,
 ) -> Result<(), VerifierError> {
@@ -137,29 +137,30 @@ pub(crate) fn validate_akita_opening_proof_payload_shape(
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
             })?;
-    if opening_proof.native.commitment() != &payload.packed_witness {
+    let native = opening_proof.native();
+    if native.commitment() != &payload.packed_witness {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "lattice packed opening proof commitment does not match packed witness payload"
                 .to_string(),
         });
     }
-    validate_akita_commitment_bytes(opening_proof.native.commitment())?;
-    if opening_proof.native.statement_bridge().is_empty() {
+    validate_akita_commitment_bytes(native.commitment())?;
+    if native.statement_bridge().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing statement bridge bytes".to_string(),
         });
     }
-    if opening_proof.native.proof_shape().is_empty() {
+    if native.proof_shape().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing native proof shape bytes".to_string(),
         });
     }
-    if opening_proof.native.proof_bytes().is_empty() {
+    if native.proof_bytes().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing native proof bytes".to_string(),
         });
     }
-    if let Some(reduction) = &opening_proof.reduction {
+    if let Some(reduction) = opening_proof.reduction() {
         validate_akita_field_bytes(
             "lattice packing reduction opening eval",
             &reduction.opening_eval,
@@ -178,8 +179,8 @@ pub(crate) fn validate_akita_packing_opening_proof_payload_shape(
     opening_proof: &AkitaPackingBatchProof,
     field: &'static str,
 ) -> Result<(), VerifierError> {
-    validate_akita_opening_proof_payload_shape(proof_commitments, opening_proof)?;
-    if opening_proof.reduction.is_none() {
+    validate_akita_packed_target_opening_proof_payload_shape(proof_commitments, opening_proof)?;
+    if !matches!(opening_proof, PackingBatchProof::Packed { .. }) {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: format!("{field} must include a packed reduction"),
         });
@@ -208,29 +209,28 @@ fn validate_akita_precommitted_opening_proof_payload_shape(
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
             })?;
-    if opening_proof.native.commitment() == &payload.packed_witness {
+    let PackingBatchProof::Direct { native } = opening_proof else {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "lattice precommitted opening proof must be a direct native proof".to_string(),
+        });
+    };
+    if native.commitment() == &payload.packed_witness {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
                 "lattice precommitted opening proof must target a separate precommitted commitment"
                     .to_string(),
         });
     }
-    if opening_proof.reduction.is_some() {
-        return Err(VerifierError::InvalidProtocolConfig {
-            reason: "lattice precommitted opening proof must not include a packed reduction"
-                .to_string(),
-        });
-    }
-    if opening_proof.native.commitment().num_vars() != payload.d_pack {
+    if native.commitment().num_vars() != payload.d_pack {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: format!(
                 "lattice precommitted opening commitment dimension {} does not match Akita setup dimension {}",
-                opening_proof.native.commitment().num_vars(),
+                native.commitment().num_vars(),
                 payload.d_pack
             ),
         });
     }
-    validate_akita_native_opening_proof_payload_shape(&opening_proof.native)
+    validate_akita_native_opening_proof_payload_shape(native)
 }
 
 fn validate_akita_native_opening_proof_payload_shape(
@@ -802,10 +802,8 @@ mod tests {
             1,
             payload.packed_witness.native_bytes().to_vec(),
         );
-        let proof = AkitaPackingBatchProof {
-            reduction: None,
-            native: native_opening_proof_with_commitment(precommitted),
-        };
+        let proof =
+            AkitaPackingBatchProof::direct(native_opening_proof_with_commitment(precommitted));
 
         assert!(matches!(
             validate_akita_precommitted_opening_proof_payload_shapes(

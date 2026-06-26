@@ -215,16 +215,6 @@ where
     PCS: BatchOpeningScheme,
     T: Transcript<Challenge = PCS::Field>,
 {
-    if batch.precommitted_statements.len() != precommitted_proofs.len() {
-        return Err(VerifierError::FinalOpeningVerificationFailed {
-            reason: format!(
-                "expected {} precommitted opening proofs, got {}",
-                batch.precommitted_statements.len(),
-                precommitted_proofs.len()
-            ),
-        });
-    }
-
     let precommitted_coefficients = verify_precommitted_opening_batches::<PCS, _>(
         setup,
         transcript,

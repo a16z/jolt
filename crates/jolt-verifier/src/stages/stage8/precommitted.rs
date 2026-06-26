@@ -1,9 +1,6 @@
 #[cfg(test)]
 use super::verify::Stage8OpeningRoute;
-use super::{
-    outputs::{Stage8OpeningStatement, Stage8PhysicalOpening},
-    verify::Stage8BatchEntry,
-};
+use super::{outputs::Stage8OpeningStatement, verify::Stage8BatchEntry};
 use crate::VerifierError;
 use jolt_field::Field;
 use jolt_openings::{
@@ -61,11 +58,6 @@ where
     let mut opening_claims = Vec::with_capacity(entries.len());
     let mut statements = Vec::with_capacity(entries.len());
     for entry in entries {
-        let physical = Stage8PhysicalOpening {
-            id: entry.id,
-            relation: entry.id,
-            view: PhysicalView::Direct,
-        };
         let opening_claim =
             entry
                 .opening_claim
@@ -83,10 +75,10 @@ where
             layout_digest: direct_statement_layout_digest(entry.commitment, default_layout_digest),
             claims: vec![BatchOpeningClaim {
                 id: entry.id,
-                relation: physical.relation,
+                relation: entry.id,
                 commitment: entry.commitment.clone(),
                 claim: opening_claim,
-                view: physical.view,
+                view: PhysicalView::Direct,
                 scale: entry.scale,
             }],
         });

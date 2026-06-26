@@ -58,10 +58,7 @@ where
                 unit_indices,
                 hint,
             )?;
-            return Ok(PackingBatchProof {
-                reduction: None,
-                native,
-            });
+            return Ok(PackingBatchProof::direct(native));
         }
 
         let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
@@ -81,10 +78,7 @@ where
             unit_indices,
             hint,
         )?;
-        return Ok(PackingBatchProof {
-            reduction: Some(reduction.proof),
-            native,
-        });
+        return Ok(PackingBatchProof::packed(reduction.proof, native));
     }
 
     let polynomial = packing_witness_source_polynomial(source)?;
