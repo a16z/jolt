@@ -2686,7 +2686,14 @@ mod tests {
         d_pack: usize,
     ) -> TestProof {
         let base = proof_with_zk(false, clear_claims());
-        let proof = JoltProof::new_with_protocol(
+        #[cfg_attr(
+            not(feature = "akita"),
+            expect(
+                unused_mut,
+                reason = "proof is mutated only when Akita validity is attached"
+            )
+        )]
+        let mut proof = JoltProof::new_with_protocol(
             *config,
             CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
                 TestCommitment,
