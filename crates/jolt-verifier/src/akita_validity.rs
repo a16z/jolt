@@ -1,10 +1,10 @@
+use crate::akita_packing::AkitaPackingScheme;
 use crate::{
     akita::{
         prove_akita_packing_openings, AkitaClearVectorCommitment, AkitaJoltProof,
         AkitaPackingBatchProof, AkitaPackingProverSetup, AkitaPackingWitnessArtifacts,
         AkitaVerifierPreprocessing,
     },
-    akita_packing::AkitaPackingScheme,
     akita_validation::validate_akita_artifacts_for_proof,
     akita_validity_sumcheck::prove_combined_validity_sumcheck,
     proof::{ClearOnlyCommitment, JoltProofClaims},
@@ -750,7 +750,6 @@ mod tests {
     use super::*;
     use crate::{
         akita::{commit_akita_packing_witness_with_config, AkitaPackingVerifierSetup},
-        akita_packing::AkitaPackingScheme,
         config::{IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode},
         proof::ClearOnlyCommitment,
         stages::{

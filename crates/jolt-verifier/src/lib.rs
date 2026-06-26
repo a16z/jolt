@@ -1,7 +1,7 @@
 //! Verifier model crate for Jolt proofs.
 
 #[cfg(feature = "akita")]
-pub mod akita;
+mod akita;
 #[cfg(feature = "akita")]
 mod akita_openings;
 #[cfg(feature = "akita")]
@@ -25,16 +25,24 @@ mod verifier;
 
 #[cfg(feature = "akita")]
 pub use akita::{
-    attach_akita_packing_validity_proof, commit_akita_packing_witness,
-    commit_akita_packing_witness_with_config, prove_akita_jolt_final_openings,
-    prove_akita_jolt_final_openings_with_precommitted, prove_akita_jolt_packed_validity,
-    prove_akita_packing_openings, prove_akita_packing_validity, prove_akita_stage8_clear_openings,
-    prove_akita_stage8_clear_openings_with_precommitted, prove_and_attach_akita_opening_proofs,
-    prove_and_attach_akita_opening_proofs_with_precommitted, verify_akita_clear,
-    AkitaClearVectorCommitment, AkitaJoltProof, AkitaPackingValidityProofArtifacts,
-    AkitaPackingWitnessArtifacts, AkitaPrecommittedOpeningInput, AkitaStage8ClearOpeningProofs,
-    AkitaVerifierPreprocessing,
+    verify_akita_clear, AkitaClearVectorCommitment, AkitaJoltProof, AkitaVerifierPreprocessing,
 };
+#[cfg(feature = "akita")]
+pub mod prover_support {
+    pub use crate::akita::{
+        attach_akita_packing_validity_proof, build_akita_packing_jolt_witness,
+        commit_akita_packing_jolt_witness, commit_akita_packing_witness,
+        commit_akita_packing_witness_with_config, prove_akita_jolt_final_openings,
+        prove_akita_jolt_final_openings_with_precommitted, prove_akita_jolt_packed_validity,
+        prove_akita_packing_openings, prove_akita_packing_validity,
+        prove_akita_stage8_clear_openings, prove_akita_stage8_clear_openings_with_precommitted,
+        prove_and_attach_akita_opening_proofs,
+        prove_and_attach_akita_opening_proofs_with_precommitted, AkitaCommittedPackedJoltWitness,
+        AkitaPackingBatchProof, AkitaPackingJoltWitnessInput, AkitaPackingProverSetup,
+        AkitaPackingValidityProofArtifacts, AkitaPackingVerifierSetup,
+        AkitaPackingWitnessArtifacts, AkitaPrecommittedOpeningInput, AkitaStage8ClearOpeningProofs,
+    };
+}
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
     IncrementCommitmentMode, JoltProtocolConfig, LatticeConfig, PackedWitnessConfig, PcsFamily,

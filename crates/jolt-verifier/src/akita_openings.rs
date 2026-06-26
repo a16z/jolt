@@ -3,7 +3,7 @@ use crate::{
         AkitaClearVectorCommitment, AkitaJoltProof, AkitaPackingBatchProof,
         AkitaPackingProverSetup, AkitaPackingWitnessArtifacts, AkitaVerifierPreprocessing,
     },
-    akita_packing::AkitaPackingScheme,
+    akita_packing::{self, AkitaPackingScheme},
     akita_validation::validate_akita_artifacts_for_proof,
     akita_validity::{attach_akita_packing_validity_proof, prove_akita_jolt_packed_validity},
     stages::stage8::{Stage8BatchStatement, Stage8OpeningId},
@@ -67,7 +67,7 @@ where
         }
     }
 
-    AkitaPackingScheme::prove_packing_source_batch(
+    akita_packing::prove_packing_source_batch(
         setup,
         transcript,
         statement,
