@@ -22,10 +22,9 @@
 //!   `unimplemented!()` `challenge_u128`.
 //!
 //! This module exposes `write_slice`/`read_slice` for the prover-side NARG path. In
-//! the current split, the exported modular verifier proof is still structured: the
-//! prover may write byte-identical round payloads into its internal NARG, but
-//! [`proof_parts_into_verifier`](crate::zkvm::proof::proof_parts_into_verifier)
-//! converts the retained structured fields into `jolt-verifier`'s proof model.
+//! the current split, [`proof_parts_into_verifier`](crate::zkvm::proof::proof_parts_into_verifier)
+//! exports the prover's NARG to `jolt-verifier`, and prover-only stage/BlindFold
+//! payloads are consumed from that stream.
 //!
 //! Three concerns, three traits:
 //! - [`FsChallenge`] — squeezed verifier randomness; implemented per sponge type for

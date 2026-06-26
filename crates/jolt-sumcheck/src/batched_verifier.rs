@@ -7,9 +7,9 @@
 //! earlier rounds. Each claim is scaled by $2^{N - n_i}$ where $N$ is the
 //! maximum `num_vars` across all claims.
 
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_field::Field;
-use jolt_transcript::FsTranscript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use crate::append_sumcheck_claim;
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
@@ -292,6 +292,18 @@ impl BatchedSumcheckVerifier {
         }
     }
 
+    /// Verifies a compressed clear Boolean-hypercube batch from NARG frames.
+    pub fn verify_compressed_boolean_from_narg<F, T>(
+        claims: &[SumcheckClaim<F>],
+        transcript: &mut T,
+    ) -> Result<BatchedEvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: Field,
+        T: FsNargRead<F>,
+    {
+        Self::verify_compressed_from_narg(claims, transcript)
+    }
+
     /// Checks batched committed-proof consistency through the transcript.
     ///
     /// This path is used when BlindFold verifies the hidden claim relations. It
@@ -327,6 +339,19 @@ impl BatchedSumcheckVerifier {
         }
     }
 
+    /// Checks batched committed-proof consistency from NARG frames.
+    pub fn verify_committed_consistency_from_narg<F, C, T>(
+        statements: &[SumcheckStatement],
+        transcript: &mut T,
+    ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
+    where
+        F: Field,
+        C: Clone + CanonicalSerialize + CanonicalDeserialize,
+        T: FsNargRead<F>,
+    {
+        Self::verify_committed_consistency_for_narg(statements, transcript)
+    }
+
     fn verify_committed_consistency_for_proof<F, C, T>(
         statements: &[SumcheckStatement],
         proof: &CommittedSumcheckProof<C>,
@@ -340,6 +365,73 @@ impl BatchedSumcheckVerifier {
         let statement = Self::batch_statement(statements)?;
         let batching_coefficients = Self::batching_coefficients(statements.len(), transcript);
         let consistency = proof.verify_committed_consistency(statement, transcript)?;
+
+        Ok(BatchedCommittedSumcheckConsistency {
+            consistency,
+            batching_coefficients,
+            max_num_vars: statement.num_vars,
+            max_degree: statement.degree,
+        })
+    }
+
+    fn verify_compressed_from_narg<F, T>(
+        claims: &[SumcheckClaim<F>],
+        transcript: &mut T,
+    ) -> Result<BatchedEvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: Field,
+        T: FsNargRead<F>,
+    {
+        let statement = Self::batch_claim_statement(claims)?;
+        let max_num_vars = statement.num_vars;
+        let max_degree = statement.degree;
+
+        for claim in claims {
+            append_sumcheck_claim(transcript, &claim.claimed_sum);
+        }
+        let batching_coefficients = Self::batching_coefficients(claims.len(), transcript);
+
+        let claimed_sum = claims
+            .iter()
+            .zip(&batching_coefficients)
+            .map(|(claim, coefficient)| {
+                claim.claimed_sum.mul_pow_2(max_num_vars - claim.num_vars) * *coefficient
+            })
+            .sum();
+
+        let combined_claim = SumcheckClaim {
+            num_vars: max_num_vars,
+            degree: max_degree,
+            claimed_sum,
+        };
+        let reduction = crate::verifier::SumcheckVerifier::verify_compressed_from_narg(
+            &combined_claim,
+            BooleanHypercube,
+            transcript,
+        )?;
+
+        Ok(BatchedEvaluationClaim {
+            reduction,
+            batching_coefficients,
+            max_num_vars,
+            max_degree,
+        })
+    }
+
+    fn verify_committed_consistency_for_narg<F, C, T>(
+        statements: &[SumcheckStatement],
+        transcript: &mut T,
+    ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
+    where
+        F: Field,
+        C: Clone + CanonicalSerialize + CanonicalDeserialize,
+        T: FsNargRead<F>,
+    {
+        let statement = Self::batch_statement(statements)?;
+        let batching_coefficients = Self::batching_coefficients(statements.len(), transcript);
+        let consistency = CommittedSumcheckProof::<C>::verify_committed_consistency_from_narg(
+            statement, transcript,
+        )?;
 
         Ok(BatchedCommittedSumcheckConsistency {
             consistency,

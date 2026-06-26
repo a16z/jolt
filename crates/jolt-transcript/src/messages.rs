@@ -53,10 +53,12 @@
 //! [`from_challenge_bytes`]: jolt_field::TranscriptChallenge::from_challenge_bytes
 //! [`from_u128`]: jolt_field::FromPrimitiveInt::from_u128
 
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_field::Field;
 use rand::{CryptoRng, RngCore};
-use spongefish::{DuplexSpongeInterface, ProverState, VerifierState};
+use spongefish::{
+    DuplexSpongeInterface, ProverState, VerificationError, VerificationResult, VerifierState,
+};
 
 use crate::codec::BytesMsg;
 #[cfg(any(feature = "transcript-blake2b", feature = "transcript-keccak"))]
@@ -84,6 +86,20 @@ pub fn serialize_slice<T: CanonicalSerialize>(values: &[T]) -> Vec<u8> {
             .expect("CanonicalSerialize into a Vec is infallible");
     }
     buf
+}
+
+/// Decode every canonical value in a bounded NARG frame body.
+///
+/// The caller supplies only the body of a [`BytesMsg`], so allocation is bounded
+/// by the actual proof bytes instead of by an attacker-controlled `Vec<T>`
+/// length prefix.
+fn deserialize_slice<T: CanonicalDeserialize>(body: &[u8]) -> VerificationResult<Vec<T>> {
+    let mut cursor = body;
+    let mut out = Vec::new();
+    while !cursor.is_empty() {
+        out.push(T::deserialize_compressed(&mut cursor).map_err(|_| VerificationError)?);
+    }
+    Ok(out)
 }
 
 /// Absorb shared values into the sponge (spongefish `public_message`); emits
@@ -249,6 +265,60 @@ impl<F: Field> FsChallenge<F> for VerifierState<'_, spongefish::instantiations::
 pub trait FsTranscript<F: Field>: FsAbsorb + FsChallenge<F> {}
 
 impl<F: Field, T: FsAbsorb + FsChallenge<F>> FsTranscript<F> for T {}
+
+/// Verifier-side NARG frame reads for prover-only payloads.
+///
+/// This is the asymmetric companion to [`FsAbsorb`]: the prover wrote a
+/// length-prefixed [`BytesMsg`] with `prover_message`, and the verifier reads
+/// and absorbs that exact frame before deriving the next challenge.
+pub trait FsNargRead<F: Field>: FsTranscript<F> {
+    /// Read every canonical value in the next NARG frame.
+    fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>>;
+
+    /// Read exactly one canonical value from the next NARG frame.
+    fn read_single<T: CanonicalDeserialize>(&mut self) -> VerificationResult<T> {
+        match <[T; 1]>::try_from(self.read_slice::<T>()?) {
+            Ok([value]) => Ok(value),
+            Err(_) => Err(VerificationError),
+        }
+    }
+
+    /// Read field elements from the next NARG frame.
+    ///
+    /// Field frames are written by the prover with the same byte layout as
+    /// [`FsAbsorb::absorb_field_slice`]: contiguous 32-byte little-endian
+    /// canonical field encodings.
+    fn read_field_slice(&mut self) -> VerificationResult<Vec<F>> {
+        let body = self.read_bytes()?;
+        if body.len() % F::NUM_BYTES != 0 {
+            return Err(VerificationError);
+        }
+        body.chunks_exact(F::NUM_BYTES)
+            .map(|chunk| {
+                let bytes: [u8; 32] = chunk.try_into().map_err(|_| VerificationError)?;
+                Ok(F::from_bytes_array(&bytes))
+            })
+            .collect()
+    }
+
+    /// Read the next raw NARG frame body.
+    fn read_bytes(&mut self) -> VerificationResult<Vec<u8>>;
+}
+
+impl<F, H> FsNargRead<F> for VerifierState<'_, H>
+where
+    F: Field,
+    H: DuplexSpongeInterface<U = u8>,
+    Self: FsTranscript<F>,
+{
+    fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
+        deserialize_slice(&self.read_bytes()?)
+    }
+
+    fn read_bytes(&mut self) -> VerificationResult<Vec<u8>> {
+        Ok(self.prover_message::<BytesMsg>()?.0)
+    }
+}
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]

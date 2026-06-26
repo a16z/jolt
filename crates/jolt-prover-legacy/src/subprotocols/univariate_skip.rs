@@ -140,10 +140,8 @@ pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
 ) -> UniSkipFirstRoundProof<F> {
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
-    // Write the clear first-round polynomial into the prover-side NARG. The split
-    // modular verifier bridge still retains this structured proof field and
-    // replays it with `absorb_slice`; `write_slice` is byte-identical to
-    // `absorb_slice` for the sponge state, but also records a NARG frame.
+    // Write the clear first-round polynomial into the prover-side NARG. The
+    // modular verifier reads the same frame at this transcript position.
     transcript.write_slice(&uni_poly.coeffs);
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
@@ -184,6 +182,7 @@ pub fn prove_uniskip_round_zk<
 
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
+    transcript.write_slice(std::slice::from_ref(&poly_degree));
 
     let output_claim_values = opening_accumulator.take_pending_claims();
     let output_claim_ids = opening_accumulator.take_pending_claim_ids();
@@ -194,11 +193,7 @@ pub fn prove_uniskip_round_zk<
         .collect();
     let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
     let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
-    // Keep the output-claim commitments in the structured bridge for now. The
-    // modular verifier absorbs this as a `Vec`, whose bytes are not the same as
-    // the slice frame used by `write_slice`; moving it into the NARG requires the
-    // verifier proof model to read the same frame.
-    transcript.absorb(&output_claims_commitments);
+    transcript.write_slice(&output_claims_commitments);
 
     let input_constraint = instance.get_params().input_claim_constraint();
     let input_constraint_challenge_values = instance

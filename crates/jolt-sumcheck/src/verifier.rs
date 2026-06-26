@@ -1,13 +1,14 @@
 //! Sumcheck verifier: checks round polynomials against the claimed sum.
 
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_field::Field;
-use jolt_poly::UnivariatePolynomial;
-use jolt_transcript::FsTranscript;
+use jolt_poly::{CompressedPoly, UnivariatePoly, UnivariatePolynomial};
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
-    CommittedRound, CommittedSumcheckConsistency, CommittedSumcheckProof, VerifiedCommittedRound,
+    CommittedOutputClaims, CommittedRound, CommittedSumcheckConsistency, CommittedSumcheckProof,
+    VerifiedCommittedRound,
 };
 use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
@@ -84,6 +85,43 @@ impl SumcheckVerifier {
         Ok(EvaluationClaim::new(challenges, running_sum))
     }
 
+    /// Verifies a clear full-round proof by reading each round polynomial from
+    /// the NARG at its natural transcript position.
+    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_from_narg")]
+    pub fn verify_from_narg<F, T, D>(
+        claim: &SumcheckClaim<F>,
+        domain: D,
+        transcript: &mut T,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: Field,
+        T: FsNargRead<F>,
+        D: SumcheckDomain<F>,
+    {
+        let mut running_sum = claim.claimed_sum;
+        let mut challenges = Vec::with_capacity(claim.num_vars);
+
+        for round in 0..claim.num_vars {
+            let coeffs = transcript
+                .read_field_slice()
+                .map_err(|_| SumcheckError::MalformedNarg)?;
+            let round_proof = UnivariatePoly::new(coeffs);
+            let degree = UnivariatePolynomial::degree(&round_proof);
+            if degree > claim.degree {
+                return Err(SumcheckError::DegreeBoundExceeded {
+                    got: degree,
+                    max: claim.degree,
+                });
+            }
+            domain.check_round_sum(round, running_sum, &round_proof)?;
+            let r: F = transcript.challenge();
+            running_sum = round_proof.evaluate(r);
+            challenges.push(r);
+        }
+
+        Ok(EvaluationClaim::new(challenges, running_sum))
+    }
+
     #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_compressed")]
     pub fn verify_compressed<F, T>(
         claim: &SumcheckClaim<F>,
@@ -119,6 +157,46 @@ impl SumcheckVerifier {
             }
 
             transcript.absorb_field_slice(coeffs);
+            let r: F = transcript.challenge();
+            running_sum = round_proof.evaluate_with_hint(running_sum, r);
+            challenges.push(r);
+        }
+
+        Ok(EvaluationClaim::new(challenges, running_sum))
+    }
+
+    /// Verifies a compressed clear Boolean-hypercube proof from NARG frames.
+    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_compressed_from_narg")]
+    pub fn verify_compressed_from_narg<F, T>(
+        claim: &SumcheckClaim<F>,
+        domain: BooleanHypercube,
+        transcript: &mut T,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: Field,
+        T: FsNargRead<F>,
+    {
+        let BooleanHypercube = domain;
+
+        let mut running_sum = claim.claimed_sum;
+        let mut challenges = Vec::with_capacity(claim.num_vars);
+
+        for round in 0..claim.num_vars {
+            let coeffs = transcript
+                .read_field_slice()
+                .map_err(|_| SumcheckError::MalformedNarg)?;
+            let round_proof = CompressedPoly::new(coeffs);
+            if round_proof.degree() > claim.degree {
+                return Err(SumcheckError::DegreeBoundExceeded {
+                    got: round_proof.degree(),
+                    max: claim.degree,
+                });
+            }
+            let coeffs = round_proof.coeffs_except_linear_term();
+            if coeffs.is_empty() {
+                return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
+            }
+
             let r: F = transcript.challenge();
             running_sum = round_proof.evaluate_with_hint(running_sum, r);
             challenges.push(r);
@@ -166,7 +244,12 @@ impl SumcheckVerifier {
             });
         }
 
-        Ok(CommittedSumcheckConsistency { rounds })
+        Ok(CommittedSumcheckConsistency {
+            rounds,
+            output_claims: CommittedOutputClaims {
+                commitments: Vec::new(),
+            },
+        })
     }
 }
 
@@ -202,12 +285,66 @@ impl<C> CommittedSumcheckProof<C> {
         T: FsTranscript<F>,
         C: Clone + CanonicalSerialize,
     {
-        let consistency = SumcheckVerifier::verify_committed_round_consistency(
+        let mut consistency = SumcheckVerifier::verify_committed_round_consistency(
             statement,
             &self.rounds,
             transcript,
         )?;
         self.output_claims.append_to_transcript(transcript);
+        consistency.output_claims = self.output_claims.clone();
         Ok(consistency)
+    }
+
+    /// Checks committed-proof transcript consistency from NARG frames.
+    pub fn verify_committed_consistency_from_narg<F, T>(
+        statement: SumcheckStatement,
+        transcript: &mut T,
+    ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
+    where
+        F: Field,
+        T: FsNargRead<F>,
+        C: Clone + CanonicalSerialize + CanonicalDeserialize,
+    {
+        let mut rounds = Vec::with_capacity(statement.num_vars);
+        for _ in 0..statement.num_vars {
+            let commitment = transcript
+                .read_single()
+                .map_err(|_| SumcheckError::MalformedNarg)?;
+            rounds.push(VerifiedCommittedRound {
+                commitment,
+                degree: 0,
+                challenge: transcript.challenge(),
+            });
+        }
+
+        let degrees: Vec<usize> = transcript
+            .read_slice()
+            .map_err(|_| SumcheckError::MalformedNarg)?;
+        if degrees.len() != statement.num_vars {
+            return Err(SumcheckError::WrongNumberOfRounds {
+                expected: statement.num_vars,
+                got: degrees.len(),
+            });
+        }
+        for (round, degree) in rounds.iter_mut().zip(degrees) {
+            if degree > statement.degree {
+                return Err(SumcheckError::DegreeBoundExceeded {
+                    got: degree,
+                    max: statement.degree,
+                });
+            }
+            round.degree = degree;
+        }
+
+        let output_claims = CommittedOutputClaims {
+            commitments: transcript
+                .read_slice()
+                .map_err(|_| SumcheckError::MalformedNarg)?,
+        };
+
+        Ok(CommittedSumcheckConsistency {
+            rounds,
+            output_claims,
+        })
     }
 }

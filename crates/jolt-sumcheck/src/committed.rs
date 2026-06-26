@@ -56,6 +56,7 @@ pub struct VerifiedCommittedRound<F, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommittedSumcheckConsistency<F, C> {
     pub rounds: Vec<VerifiedCommittedRound<F, C>>,
+    pub output_claims: CommittedOutputClaims<C>,
 }
 
 impl<F: Copy, C: Clone> CommittedSumcheckConsistency<F, C> {

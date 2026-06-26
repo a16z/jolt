@@ -120,10 +120,8 @@ impl BatchedSumcheck {
 
             let compressed_poly = batched_univariate_poly.compress();
 
-            // Write the clear round polynomial into the prover-side NARG. The split
-            // modular verifier bridge still retains this structured proof field and
-            // replays it with `absorb_slice`; `write_slice` is byte-identical to
-            // `absorb_slice` for the sponge state, but also records a NARG frame.
+            // Write the clear round polynomial into the prover-side NARG. The
+            // modular verifier reads the same frame at this transcript position.
             transcript.write_slice(&compressed_poly.coeffs_except_linear_term);
             compressed_polys.push(compressed_poly);
             let r_j = transcript.challenge_optimized();
@@ -315,6 +313,8 @@ impl BatchedSumcheck {
             sumcheck.finalize();
         }
 
+        transcript.write_slice(&poly_degrees);
+
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -337,11 +337,7 @@ impl BatchedSumcheck {
             .collect();
         let (output_claims_commitments, output_claims_blindings): (Vec<_>, Vec<_>) =
             oc_committed.into_iter().unzip();
-        // Keep the output-claim commitments in the structured bridge for now. The
-        // modular verifier absorbs this as a `Vec`, whose bytes are not the same as
-        // the slice frame used by `write_slice`; moving it into the NARG requires the
-        // verifier proof model to read the same frame.
-        transcript.absorb(&output_claims_commitments);
+        transcript.write_slice(&output_claims_commitments);
 
         let output_constraints: Vec<_> = sumcheck_instances
             .iter()
@@ -566,8 +562,7 @@ impl<F: JoltField> ClearSumcheckProof<F> {
     }
 
     /// Verify this standard sumcheck. Structured proofs replay each round as a
-    /// shared absorb; an empty proof remains a fallback for full-NARG readers
-    /// that read round polynomials from the NARG.
+    /// shared absorb; an empty proof reads round polynomials from the NARG.
     pub fn verify(
         &self,
         claim: F,
