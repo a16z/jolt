@@ -11,10 +11,7 @@ use jolt_verifier::{
     preprocessing::{
         CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
     },
-    proof::{
-        JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
-        TracePolynomialOrder,
-    },
+    proof::{JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, TracePolynomialOrder},
 };
 
 #[cfg(not(feature = "zk"))]
@@ -22,8 +19,6 @@ use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
 };
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-#[cfg(feature = "zk")]
-use jolt_crypto::VectorCommitmentOpening;
 use jolt_crypto::{
     Bn254G1, Bn254GT, Commitment as VerifierCommitment, HomomorphicCommitment, Pedersen,
     PedersenSetup, VectorCommitment as VerifierVectorCommitment,
@@ -32,12 +27,7 @@ use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field as VerifierFieldTrait, Fr as VerifierFr};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
-use jolt_sumcheck::{
-    ClearProof, ClearSumcheckProof, CommittedOutputClaims, CommittedRound, CommittedSumcheckProof,
-    CompressedSumcheckProof, SumcheckProof,
-};
 use jolt_transcript::DuplexSpongeInterface;
 
 use crate::{
@@ -49,9 +39,6 @@ use crate::{
             ArkGT as ProverDoryCommitment, DoryCommitmentScheme, DoryLayout as ProverDoryLayout,
         },
     },
-    subprotocols::{
-        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
-    },
     zkvm::{
         config::{OneHotConfig as ProverOneHotConfig, ReadWriteConfig as ProverReadWriteConfig},
         preprocessing::{BlindfoldSetup, JoltSharedPreprocessing},
@@ -60,18 +47,11 @@ use crate::{
         prover::JoltProverPreprocessing,
     },
 };
-#[cfg(feature = "zk")]
-use crate::{
-    poly::commitment::hyrax::HyraxOpeningProof, poly::unipoly::CompressedUniPoly,
-    subprotocols::blindfold::BlindFoldProof as ProverBlindFoldProof,
-};
 #[cfg(not(feature = "zk"))]
 use crate::{
     poly::opening_proof as prover_opening,
     zkvm::{instruction as prover_instruction, witness as prover_witness},
 };
-#[cfg(feature = "zk")]
-use jolt_blindfold::BlindFoldProof as VerifierBlindFoldProof;
 
 pub type RV64IMACProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 
@@ -424,22 +404,9 @@ where
     let untrusted_advice_commitment = proof
         .untrusted_advice_commitment
         .map(PCS::commitment_into_verifier);
-    let stages = JoltStageProofs {
-        stage1_uni_skip_first_round_proof: convert_uniskip(proof.stage1_uni_skip_first_round_proof),
-        stage1_sumcheck_proof: convert_sumcheck(proof.stage1_sumcheck_proof),
-        stage2_uni_skip_first_round_proof: convert_uniskip(proof.stage2_uni_skip_first_round_proof),
-        stage2_sumcheck_proof: convert_sumcheck(proof.stage2_sumcheck_proof),
-        stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
-        stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
-        stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
-        stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
-        stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
-        stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
-    };
 
-    Ok(JoltProof::new(
+    let mut verifier_proof = JoltProof::new(
         commitments,
-        stages,
         PCS::opening_proof_into_verifier(proof.joint_opening_proof),
         untrusted_advice_commitment,
         JoltProofClaims::Clear(convert_opening_claims(
@@ -451,7 +418,9 @@ where
         convert_read_write_config(proof.rw_config),
         one_hot_config,
         convert_trace_polynomial_order(proof.dory_layout),
-    ))
+    );
+    verifier_proof.narg = proof.narg;
+    Ok(verifier_proof)
 }
 
 #[cfg(feature = "zk")]
@@ -481,138 +450,20 @@ where
     let untrusted_advice_commitment = proof
         .untrusted_advice_commitment
         .map(PCS::commitment_into_verifier);
-    let stages = JoltStageProofs {
-        stage1_uni_skip_first_round_proof: convert_uniskip(proof.stage1_uni_skip_first_round_proof),
-        stage1_sumcheck_proof: convert_sumcheck(proof.stage1_sumcheck_proof),
-        stage2_uni_skip_first_round_proof: convert_uniskip(proof.stage2_uni_skip_first_round_proof),
-        stage2_sumcheck_proof: convert_sumcheck(proof.stage2_sumcheck_proof),
-        stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
-        stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
-        stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
-        stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
-        stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
-        stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
-    };
 
-    Ok(JoltProof::new(
+    let mut verifier_proof = JoltProof::new(
         commitments,
-        stages,
         PCS::opening_proof_into_verifier(proof.joint_opening_proof),
         untrusted_advice_commitment,
-        JoltProofClaims::Zk {
-            blindfold_proof: prover_blindfold_proof_into_verifier::<F, C>(&proof.blindfold_proof),
-        },
+        JoltProofClaims::Zk,
         proof.trace_length,
         proof.ram_K,
         convert_read_write_config(proof.rw_config),
         one_hot_config,
         convert_trace_polynomial_order(proof.dory_layout),
-    ))
-}
-
-fn convert_uniskip<F, C>(
-    proof: UniSkipFirstRoundProofVariant<F, C>,
-) -> SumcheckProof<F::VerifierField, C::VerifierRoundCommitment>
-where
-    F: ProofField,
-    C: ProofCurve<F>,
-{
-    match proof {
-        UniSkipFirstRoundProofVariant::Standard(proof) => {
-            SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof {
-                round_polynomials: vec![convert_univariate(proof.uni_poly)],
-            }))
-        }
-        UniSkipFirstRoundProofVariant::Zk(proof) => {
-            SumcheckProof::Committed(committed_proof_from_parts::<F, C>(
-                vec![proof.commitment],
-                vec![proof.poly_degree],
-                proof.output_claims_commitments,
-            ))
-        }
-    }
-}
-
-fn convert_sumcheck<F, C>(
-    proof: SumcheckInstanceProof<F, C>,
-) -> SumcheckProof<F::VerifierField, C::VerifierRoundCommitment>
-where
-    F: ProofField,
-    C: ProofCurve<F>,
-{
-    match proof {
-        SumcheckInstanceProof::Clear(proof) => {
-            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof {
-                round_polynomials: proof
-                    .compressed_polys
-                    .into_iter()
-                    .map(convert_compressed_poly)
-                    .collect(),
-            }))
-        }
-        SumcheckInstanceProof::Zk(proof) => {
-            SumcheckProof::Committed(committed_proof_from_parts::<F, C>(
-                proof.round_commitments,
-                proof.poly_degrees,
-                proof.output_claims_commitments,
-            ))
-        }
-    }
-}
-
-fn committed_proof_from_parts<F, C>(
-    round_commitments: Vec<C::G1>,
-    poly_degrees: Vec<usize>,
-    output_claims_commitments: Vec<C::G1>,
-) -> CommittedSumcheckProof<C::VerifierRoundCommitment>
-where
-    F: ProofField,
-    C: ProofCurve<F>,
-{
-    let rounds = round_commitments
-        .into_iter()
-        .zip(poly_degrees)
-        .map(|(commitment, degree)| CommittedRound {
-            commitment: C::g1_into_verifier(commitment),
-            degree,
-        })
-        .collect();
-
-    CommittedSumcheckProof {
-        rounds,
-        output_claims: CommittedOutputClaims {
-            commitments: output_claims_commitments
-                .into_iter()
-                .map(C::g1_into_verifier)
-                .collect(),
-        },
-    }
-}
-
-fn convert_univariate<F>(poly: crate::poly::unipoly::UniPoly<F>) -> UnivariatePoly<F::VerifierField>
-where
-    F: ProofField,
-{
-    UnivariatePoly::new(convert_field_vec(poly.coeffs))
-}
-
-fn convert_compressed_poly<F>(
-    poly: crate::poly::unipoly::CompressedUniPoly<F>,
-) -> CompressedPoly<F::VerifierField>
-where
-    F: ProofField,
-{
-    CompressedPoly::new(convert_field_vec(poly.coeffs_except_linear_term))
-}
-
-fn convert_field_vec<F>(values: Vec<F>) -> Vec<F::VerifierField>
-where
-    F: ProofField,
-{
-    values
-        .into_iter()
-        .map(ProofField::into_verifier_field)
-        .collect()
+    );
+    verifier_proof.narg = proof.narg;
+    Ok(verifier_proof)
 }
 
 fn prover_dory_commitment_into_verifier(commitment: &ProverDoryCommitment) -> Bn254GT {
@@ -622,113 +473,6 @@ fn prover_dory_commitment_into_verifier(commitment: &ProverDoryCommitment) -> Bn
     // future change to either wrapper becomes a type error here instead of silent
     // memory corruption on the soundness-critical commitment path.
     Bn254GT::from(commitment.0)
-}
-
-#[cfg(feature = "zk")]
-fn prover_blindfold_proof_into_verifier<F, C>(
-    proof: &ProverBlindFoldProof<F, C>,
-) -> VerifierBlindFoldProof<F::VerifierField, C::VerifierRoundCommitment>
-where
-    F: ProofField,
-    C: ProofCurve<F>,
-{
-    VerifierBlindFoldProof {
-        auxiliary_row_commitments: convert_g1_slice::<F, C>(&proof.noncoeff_row_commitments),
-        random_round_commitments: convert_g1_slice::<F, C>(
-            &proof.random_instance.round_commitments,
-        ),
-        random_output_claim_row_commitments: convert_g1_slice::<F, C>(
-            &proof.random_instance.output_claims_row_commitments,
-        ),
-        random_auxiliary_row_commitments: convert_g1_slice::<F, C>(
-            &proof.random_instance.noncoeff_row_commitments,
-        ),
-        random_error_row_commitments: convert_g1_slice::<F, C>(
-            &proof.random_instance.e_row_commitments,
-        ),
-        random_eval_commitments: convert_g1_slice::<F, C>(&proof.random_instance.eval_commitments),
-        random_u: proof.random_instance.u.into_verifier_field(),
-        cross_term_error_row_commitments: convert_g1_slice::<F, C>(
-            &proof.cross_term_row_commitments,
-        ),
-        outer_sumcheck: convert_compressed_sumcheck::<F>(&proof.spartan_proof),
-        az_rx: proof.az_r.into_verifier_field(),
-        bz_rx: proof.bz_r.into_verifier_field(),
-        cz_rx: proof.cz_r.into_verifier_field(),
-        inner_sumcheck: convert_compressed_sumcheck::<F>(&proof.inner_sumcheck_proof),
-        witness_opening: convert_hyrax_opening::<F>(&proof.w_opening),
-        error_opening: convert_hyrax_opening::<F>(&proof.e_opening),
-        folded_eval_outputs: convert_field_slice(&proof.folded_eval_outputs),
-        folded_eval_blindings: convert_field_slice(&proof.folded_eval_blindings),
-        folded_eval_output_openings: proof
-            .folded_eval_output_openings
-            .iter()
-            .map(convert_hyrax_opening::<F>)
-            .collect(),
-        folded_eval_blinding_openings: proof
-            .folded_eval_blinding_openings
-            .iter()
-            .map(convert_hyrax_opening::<F>)
-            .collect(),
-    }
-}
-
-#[cfg(feature = "zk")]
-fn convert_g1_slice<F, C>(commitments: &[C::G1]) -> Vec<C::VerifierRoundCommitment>
-where
-    F: ProofField,
-    C: ProofCurve<F>,
-{
-    commitments
-        .iter()
-        .copied()
-        .map(C::g1_into_verifier)
-        .collect()
-}
-
-#[cfg(feature = "zk")]
-fn convert_compressed_sumcheck<F>(
-    proof: &[CompressedUniPoly<F>],
-) -> CompressedSumcheckProof<F::VerifierField>
-where
-    F: ProofField,
-{
-    CompressedSumcheckProof {
-        round_polynomials: proof.iter().map(convert_compressed_poly_ref).collect(),
-    }
-}
-
-#[cfg(feature = "zk")]
-fn convert_compressed_poly_ref<F>(poly: &CompressedUniPoly<F>) -> CompressedPoly<F::VerifierField>
-where
-    F: ProofField,
-{
-    CompressedPoly::new(convert_field_slice(&poly.coeffs_except_linear_term))
-}
-
-#[cfg(feature = "zk")]
-fn convert_hyrax_opening<F>(
-    proof: &HyraxOpeningProof<F>,
-) -> VectorCommitmentOpening<F::VerifierField>
-where
-    F: ProofField,
-{
-    VectorCommitmentOpening {
-        combined_vector: convert_field_slice(&proof.combined_row),
-        combined_blinding: proof.combined_blinding.into_verifier_field(),
-    }
-}
-
-#[cfg(feature = "zk")]
-fn convert_field_slice<F>(values: &[F]) -> Vec<F::VerifierField>
-where
-    F: ProofField,
-{
-    values
-        .iter()
-        .copied()
-        .map(ProofField::into_verifier_field)
-        .collect()
 }
 
 #[cfg(not(feature = "zk"))]

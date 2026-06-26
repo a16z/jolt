@@ -1,10 +1,10 @@
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
 use jolt_field::{Field, FieldCore, RingAccumulator, WithAccumulator};
-use jolt_poly::EqPolynomial;
+use jolt_poly::{CompressedPoly, EqPolynomial, UnivariatePolynomial};
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{CompressedSumcheckProof, EvaluationClaim, SumcheckClaim, SumcheckError};
-use jolt_transcript::{FsAbsorb, FsTranscript};
+use jolt_transcript::{FsAbsorb, FsNargRead, FsTranscript};
 
 use crate::{
     BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError,
@@ -47,6 +47,70 @@ where
         self.verify_inner_folded_r1cs::<VC, T>(proof, vc_setup, &folded, &outer, transcript)?;
         Ok(())
     }
+
+    pub fn verify_from_narg<VC, T>(
+        &self,
+        vc_setup: &VC::Setup,
+        transcript: &mut T,
+    ) -> Result<(), VerificationError<F>>
+    where
+        VC: VectorCommitment<Field = F, Output = Com>,
+        T: FsNargRead<F>,
+        Com: CanonicalDeserialize,
+    {
+        let folded = self.folded_instance_from_narg(transcript)?;
+        let folded_eval_outputs = read_field_vec(transcript, "folded eval outputs")?;
+        let folded_eval_blindings = read_field_vec(transcript, "folded eval blindings")?;
+        ensure_len(
+            "folded eval outputs",
+            folded.eval_commitments.len(),
+            folded_eval_outputs.len(),
+        )?;
+        ensure_len(
+            "folded eval blindings",
+            folded.eval_commitments.len(),
+            folded_eval_blindings.len(),
+        )?;
+        verify_folded_eval_commitments::<F, VC>(
+            vc_setup,
+            &folded,
+            &folded_eval_outputs,
+            &folded_eval_blindings,
+        )?;
+
+        let coordinates = self.final_opening_witness_coordinates()?;
+        let expected_outputs = coordinates
+            .iter()
+            .filter(|coordinates| coordinates.evaluation.is_some())
+            .count();
+        let expected_blindings = coordinates
+            .iter()
+            .filter(|coordinates| coordinates.blinding.is_some())
+            .count();
+        let folded_eval_output_openings = read_final_openings(
+            transcript,
+            expected_outputs,
+            self.dimensions.witness.row_len,
+        )?;
+        let folded_eval_blinding_openings = read_final_openings(
+            transcript,
+            expected_blindings,
+            self.dimensions.witness.row_len,
+        )?;
+        self.verify_folded_eval_witness_bindings_from_narg::<VC>(
+            vc_setup,
+            &folded,
+            &folded_eval_outputs,
+            &folded_eval_blindings,
+            &folded_eval_output_openings,
+            &folded_eval_blinding_openings,
+        )?;
+
+        let outer =
+            self.verify_outer_folded_r1cs_from_narg::<VC, T>(vc_setup, &folded, transcript)?;
+        self.verify_inner_folded_r1cs_from_narg::<VC, T>(vc_setup, &folded, &outer, transcript)?;
+        Ok(())
+    }
 }
 
 impl<F, Com> BlindFoldProtocol<F, Com>
@@ -82,6 +146,46 @@ where
         Ok(committed.fold(
             &random,
             &proof.cross_term_error_row_commitments,
+            folding_challenge,
+        )?)
+    }
+
+    fn folded_instance_from_narg<T>(
+        &self,
+        transcript: &mut T,
+    ) -> Result<RelaxedInstance<F, Com>, VerificationError<F>>
+    where
+        T: FsNargRead<F>,
+        Com: CanonicalDeserialize,
+    {
+        let committed = read_committed_instance_from_narg(self, transcript)?;
+
+        let random_u = read_field_one(transcript, "random u")?;
+        let random_round_commitments = read_narg_slice(transcript, "random round commitments")?;
+        let random_output_claim_row_commitments =
+            read_narg_slice(transcript, "random output claim row commitments")?;
+        let random_auxiliary_row_commitments =
+            read_narg_slice(transcript, "random auxiliary row commitments")?;
+        let random_error_row_commitments =
+            read_narg_slice(transcript, "random error row commitments")?;
+        let random_eval_commitments = read_narg_slice(transcript, "random eval commitments")?;
+        let random = self.random_relaxed_instance(
+            &random_round_commitments,
+            &random_output_claim_row_commitments,
+            &random_auxiliary_row_commitments,
+            &random_error_row_commitments,
+            &random_eval_commitments,
+            random_u,
+        )?;
+
+        let cross_term_error_row_commitments =
+            read_narg_slice(transcript, "cross-term error row commitments")?;
+        self.validate_cross_term_error_rows(&cross_term_error_row_commitments)?;
+
+        let folding_challenge = transcript.challenge();
+        Ok(committed.fold(
+            &random,
+            &cross_term_error_row_commitments,
             folding_challenge,
         )?)
     }
@@ -178,6 +282,88 @@ where
 
         Ok(OuterCheck {
             point: outer.point.into_vec(),
+            az_rx: proof.az_rx,
+            bz_rx: proof.bz_rx,
+            cz_rx: proof.cz_rx,
+        })
+    }
+
+    fn verify_outer_folded_r1cs_from_narg<VC, T>(
+        &self,
+        vc_setup: &VC::Setup,
+        folded: &RelaxedInstance<F, Com>,
+        transcript: &mut T,
+    ) -> Result<OuterCheck<F>, VerificationError<F>>
+    where
+        VC: VectorCommitment<Field = F, Output = Com>,
+        T: FsNargRead<F>,
+    {
+        let error_row_count = self.dimensions.error.row_count;
+        if error_row_count == 0 || !error_row_count.is_power_of_two() {
+            return Err(VerificationError::InvalidPowerOfTwo {
+                name: "error row count",
+                value: error_row_count,
+            });
+        }
+        let row_vars = error_row_count.trailing_zeros() as usize;
+
+        let error_row_len = self.dimensions.error.row_len;
+        if error_row_len == 0 || !error_row_len.is_power_of_two() {
+            return Err(VerificationError::InvalidPowerOfTwo {
+                name: "error row length",
+                value: error_row_len,
+            });
+        }
+        let entry_vars = error_row_len.trailing_zeros() as usize;
+        let num_vars =
+            row_vars
+                .checked_add(entry_vars)
+                .ok_or(VerificationError::InvalidPowerOfTwo {
+                    name: "outer sumcheck dimension",
+                    value: usize::MAX,
+                })?;
+        if num_vars == 0 {
+            return Err(VerificationError::DegenerateSumcheck {
+                name: "outer folded R1CS sumcheck",
+            });
+        }
+
+        let tau = transcript.challenge_vector(num_vars);
+        let claim = SumcheckClaim::new(num_vars, OUTER_SUMCHECK_DEGREE, F::zero());
+        let outer = verify_compressed_sumcheck_from_narg(&claim, transcript)
+            .map_err(|source| VerificationError::OuterSumcheck { source })?;
+
+        let azbzcz = read_field_vec(transcript, "outer final claims")?;
+        let [az_rx, bz_rx, cz_rx] = <[F; 3]>::try_from(azbzcz.as_slice()).map_err(|_| {
+            VerificationError::MalformedNarg {
+                name: "outer final claims",
+            }
+        })?;
+        let error_opening = read_vector_opening(transcript, error_row_len, "error opening")?;
+
+        let (row_point, entry_point) = outer.point.split_at(row_vars);
+        let e_rx = VC::verify_committed_rows(
+            vc_setup,
+            &folded.error_row_commitments,
+            row_point,
+            entry_point,
+            &error_opening,
+        )?;
+
+        let eq_tau_rx = EqPolynomial::<F>::mle(&tau, &outer.point);
+        let expected = eq_tau_rx * (az_rx * bz_rx - folded.u * cz_rx - e_rx);
+        if outer.value != expected {
+            return Err(VerificationError::OuterFinalClaimMismatch {
+                expected,
+                actual: outer.value,
+            });
+        }
+
+        Ok(OuterCheck {
+            point: outer.point.into_vec(),
+            az_rx,
+            bz_rx,
+            cz_rx,
         })
     }
 }
@@ -209,6 +395,32 @@ where
 
         Ok(())
     }
+}
+
+fn verify_folded_eval_commitments<F, VC>(
+    vc_setup: &VC::Setup,
+    folded: &RelaxedInstance<F, VC::Output>,
+    folded_eval_outputs: &[F],
+    folded_eval_blindings: &[F],
+) -> Result<(), VerificationError<F>>
+where
+    F: Field,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + CanonicalSerialize,
+{
+    for (index, ((commitment, &output), &blinding)) in folded
+        .eval_commitments
+        .iter()
+        .zip(folded_eval_outputs)
+        .zip(folded_eval_blindings)
+        .enumerate()
+    {
+        if !VC::verify(vc_setup, commitment, &[output], &blinding) {
+            return Err(VerificationError::EvalCommitmentMismatch { index });
+        }
+    }
+
+    Ok(())
 }
 
 impl<F, Com> BlindFoldProtocol<F, Com>
@@ -291,6 +503,85 @@ where
                 }
                 coordinate.require_dedicated_row(opening, "blinding", index)?;
                 append_vector_opening(transcript, opening);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_folded_eval_witness_bindings_from_narg<VC>(
+        &self,
+        vc_setup: &VC::Setup,
+        folded: &RelaxedInstance<F, Com>,
+        folded_eval_outputs: &[F],
+        folded_eval_blindings: &[F],
+        folded_eval_output_openings: &[VectorCommitmentOpening<F>],
+        folded_eval_blinding_openings: &[VectorCommitmentOpening<F>],
+    ) -> Result<(), VerificationError<F>>
+    where
+        VC: VectorCommitment<Field = F, Output = Com>,
+    {
+        let coordinates = self.final_opening_witness_coordinates()?;
+        ensure_len(
+            "final opening bindings",
+            coordinates.len(),
+            folded.eval_commitments.len(),
+        )?;
+
+        let expected_outputs = coordinates
+            .iter()
+            .filter(|coordinates| coordinates.evaluation.is_some())
+            .count();
+        ensure_len(
+            "folded eval output witness openings",
+            expected_outputs,
+            folded_eval_output_openings.len(),
+        )?;
+        let expected_blindings = coordinates
+            .iter()
+            .filter(|coordinates| coordinates.blinding.is_some())
+            .count();
+        ensure_len(
+            "folded eval blinding witness openings",
+            expected_blindings,
+            folded_eval_blinding_openings.len(),
+        )?;
+
+        let mut output_openings = folded_eval_output_openings.iter();
+        let mut blinding_openings = folded_eval_blinding_openings.iter();
+        for (index, coordinates) in coordinates.iter().enumerate() {
+            if let Some(coordinate) = coordinates.evaluation {
+                let opening = output_openings.next().ok_or(RelaxedError::LengthMismatch {
+                    name: "folded eval output witness openings",
+                    expected: expected_outputs,
+                    actual: folded_eval_output_openings.len(),
+                })?;
+                let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
+                if opened != folded_eval_outputs[index] {
+                    return Err(VerificationError::EvalWitnessMismatch {
+                        kind: "output",
+                        index,
+                    });
+                }
+                coordinate.require_dedicated_row(opening, "output", index)?;
+            }
+
+            if let Some(coordinate) = coordinates.blinding {
+                let opening = blinding_openings
+                    .next()
+                    .ok_or(RelaxedError::LengthMismatch {
+                        name: "folded eval blinding witness openings",
+                        expected: expected_blindings,
+                        actual: folded_eval_blinding_openings.len(),
+                    })?;
+                let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
+                if opened != folded_eval_blindings[index] {
+                    return Err(VerificationError::EvalWitnessMismatch {
+                        kind: "blinding",
+                        index,
+                    });
+                }
+                coordinate.require_dedicated_row(opening, "blinding", index)?;
             }
         }
 
@@ -436,11 +727,88 @@ where
 
         Ok(())
     }
+
+    fn verify_inner_folded_r1cs_from_narg<VC, T>(
+        &self,
+        vc_setup: &VC::Setup,
+        folded: &RelaxedInstance<F, Com>,
+        outer: &OuterCheck<F>,
+        transcript: &mut T,
+    ) -> Result<(), VerificationError<F>>
+    where
+        VC: VectorCommitment<Field = F, Output = Com>,
+        T: FsNargRead<F>,
+    {
+        let ra = transcript.challenge();
+        let rb = transcript.challenge();
+        let rc = transcript.challenge();
+        let public = public_contributions(&self.r1cs, &outer.point, folded.u)?;
+        let claim = ra * (outer.az_rx - public.a)
+            + rb * (outer.bz_rx - public.b)
+            + rc * (outer.cz_rx - public.c);
+
+        let witness_row_count = self.dimensions.witness.row_count;
+        if witness_row_count == 0 || !witness_row_count.is_power_of_two() {
+            return Err(VerificationError::InvalidPowerOfTwo {
+                name: "witness row count",
+                value: witness_row_count,
+            });
+        }
+        let row_vars = witness_row_count.trailing_zeros() as usize;
+
+        let witness_row_len = self.dimensions.witness.row_len;
+        if witness_row_len == 0 || !witness_row_len.is_power_of_two() {
+            return Err(VerificationError::InvalidPowerOfTwo {
+                name: "witness row length",
+                value: witness_row_len,
+            });
+        }
+        let entry_vars = witness_row_len.trailing_zeros() as usize;
+        let num_vars =
+            row_vars
+                .checked_add(entry_vars)
+                .ok_or(VerificationError::InvalidPowerOfTwo {
+                    name: "inner sumcheck dimension",
+                    value: usize::MAX,
+                })?;
+        if num_vars == 0 {
+            return Err(VerificationError::DegenerateSumcheck {
+                name: "inner folded R1CS sumcheck",
+            });
+        }
+        let inner_claim = SumcheckClaim::new(num_vars, INNER_SUMCHECK_DEGREE, claim);
+        let inner = verify_compressed_sumcheck_from_narg(&inner_claim, transcript)
+            .map_err(|source| VerificationError::InnerSumcheck { source })?;
+
+        let witness_opening = read_vector_opening(transcript, witness_row_len, "witness opening")?;
+        let (row_point, entry_point) = inner.point.split_at(row_vars);
+        let w_ry = VC::verify_committed_rows(
+            vc_setup,
+            &folded.witness_row_commitments,
+            row_point,
+            entry_point,
+            &witness_opening,
+        )?;
+
+        let l_w_at_ry = compute_l_w_at_ry(&self.r1cs, &outer.point, &inner.point, ra, rb, rc)?;
+        let expected = l_w_at_ry * w_ry;
+        if inner.value != expected {
+            return Err(VerificationError::InnerFinalClaimMismatch {
+                expected,
+                actual: inner.value,
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OuterCheck<F> {
     point: Vec<F>,
+    az_rx: F,
+    bz_rx: F,
+    cz_rx: F,
 }
 
 fn append_vector_opening<F, T>(transcript: &mut T, opening: &VectorCommitmentOpening<F>)
@@ -450,6 +818,143 @@ where
 {
     absorb_legacy_field_vec(transcript, &opening.combined_vector);
     transcript.absorb_field(&opening.combined_blinding);
+}
+
+fn read_committed_instance_from_narg<F, Com, T>(
+    protocol: &BlindFoldProtocol<F, Com>,
+    transcript: &mut T,
+) -> Result<RelaxedInstance<F, Com>, VerificationError<F>>
+where
+    F: Field,
+    Com: Clone + HomomorphicCommitment<F> + CanonicalSerialize + CanonicalDeserialize,
+    T: FsNargRead<F>,
+{
+    transcript.absorb_field(&F::one());
+    let round_commitments = protocol
+        .sumcheck_consistency
+        .iter()
+        .flat_map(|consistency| consistency.rounds.iter())
+        .map(|round| round.commitment.clone())
+        .collect::<Vec<_>>();
+    transcript.absorb(&round_commitments);
+    let output_claim_row_commitments = protocol
+        .committed_output_claims
+        .iter()
+        .flat_map(|claims| claims.commitments.iter().cloned())
+        .collect::<Vec<_>>();
+    transcript.absorb(&output_claim_row_commitments);
+    let auxiliary_row_commitments = read_narg_slice(transcript, "auxiliary row commitments")?;
+    let committed = protocol.committed_relaxed_instance(&auxiliary_row_commitments)?;
+    transcript.absorb(&committed.error_row_commitments);
+    transcript.absorb(&committed.eval_commitments);
+    Ok(committed)
+}
+
+fn read_narg_slice<F, T, Value>(
+    transcript: &mut T,
+    name: &'static str,
+) -> Result<Vec<Value>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead<F>,
+    Value: CanonicalDeserialize,
+{
+    transcript
+        .read_slice()
+        .map_err(|_| VerificationError::MalformedNarg { name })
+}
+
+fn read_field_vec<F, T>(
+    transcript: &mut T,
+    name: &'static str,
+) -> Result<Vec<F>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead<F>,
+{
+    transcript
+        .read_field_slice()
+        .map_err(|_| VerificationError::MalformedNarg { name })
+}
+
+fn read_field_one<F, T>(transcript: &mut T, name: &'static str) -> Result<F, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead<F>,
+{
+    let values = read_field_vec(transcript, name)?;
+    match <[F; 1]>::try_from(values.as_slice()) {
+        Ok([value]) => Ok(value),
+        Err(_) => Err(VerificationError::MalformedNarg { name }),
+    }
+}
+
+fn read_final_openings<F, T>(
+    transcript: &mut T,
+    count: usize,
+    row_len: usize,
+) -> Result<Vec<VectorCommitmentOpening<F>>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead<F>,
+{
+    (0..count)
+        .map(|_| read_vector_opening(transcript, row_len, "folded eval witness opening"))
+        .collect()
+}
+
+fn read_vector_opening<F, T>(
+    transcript: &mut T,
+    expected_len: usize,
+    name: &'static str,
+) -> Result<VectorCommitmentOpening<F>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead<F>,
+{
+    let combined_vector = read_field_vec(transcript, name)?;
+    if combined_vector.len() != expected_len {
+        return Err(VerificationError::MalformedNarg { name });
+    }
+    let combined_blinding = read_field_one(transcript, name)?;
+    Ok(VectorCommitmentOpening {
+        combined_vector,
+        combined_blinding,
+    })
+}
+
+fn verify_compressed_sumcheck_from_narg<F, T>(
+    claim: &SumcheckClaim<F>,
+    transcript: &mut T,
+) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+where
+    F: Field,
+    T: FsNargRead<F>,
+{
+    let mut running_sum = claim.claimed_sum;
+    let mut challenges = Vec::with_capacity(claim.num_vars);
+
+    for round in 0..claim.num_vars {
+        let coeffs = transcript
+            .read_field_slice()
+            .map_err(|_| SumcheckError::MalformedNarg)?;
+        let round_proof = CompressedPoly::new(coeffs);
+        if round_proof.degree() > claim.degree {
+            return Err(SumcheckError::DegreeBoundExceeded {
+                got: round_proof.degree(),
+                max: claim.degree,
+            });
+        }
+        if round_proof.is_empty() {
+            return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
+        }
+
+        let challenge = transcript.challenge();
+        running_sum = round_proof.evaluate_with_hint(running_sum, challenge);
+        challenges.push(challenge);
+    }
+
+    Ok(EvaluationClaim::new(challenges, running_sum))
 }
 
 fn verify_legacy_compressed_sumcheck<F, T>(

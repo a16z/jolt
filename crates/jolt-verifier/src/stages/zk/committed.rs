@@ -1,9 +1,7 @@
 //! Shared checks for committed sumcheck stage boundaries.
 
-use common::constants::MAX_BLINDFOLD_GENERATORS;
-use jolt_field::Field;
-
 use crate::VerifierError;
+use common::constants::MAX_BLINDFOLD_GENERATORS;
 
 pub(crate) use crate::stages::zk::inputs::CommittedOutputClaimInputs;
 pub(crate) use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -12,11 +10,10 @@ pub fn zk_vector_commitment_capacity_requirement() -> usize {
     MAX_BLINDFOLD_GENERATORS
 }
 
-pub(crate) fn verify_output_claim_commitments<F, C>(
-    input: CommittedOutputClaimInputs<'_, F, C>,
+pub(crate) fn verify_output_claim_commitments<C>(
+    input: CommittedOutputClaimInputs<'_, C>,
 ) -> Result<CommittedOutputClaimOutput<C>, VerifierError>
 where
-    F: Field,
     C: Clone,
 {
     let capacity = input
@@ -31,13 +28,7 @@ where
         });
     }
     let expected = input.output_claim_count.div_ceil(capacity);
-    let committed = input
-        .proof
-        .as_committed()
-        .ok_or(VerifierError::ExpectedCommittedProof {
-            field: input.proof_label,
-        })?;
-    let got = committed.output_claims.commitments.len();
+    let got = input.output_claims.commitments.len();
     if got != expected {
         return Err(VerifierError::StageClaimSumcheckFailed {
             stage: input.stage,
@@ -55,6 +46,6 @@ where
             row_count: got,
             row_len: capacity,
         },
-        commitments: committed.output_claims.clone(),
+        commitments: input.output_claims.clone(),
     })
 }

@@ -12,24 +12,17 @@ use strum::EnumCount;
 
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, Openings};
-#[cfg(feature = "zk")]
-use crate::subprotocols::blindfold::BlindFoldProof;
+use crate::zkvm::{
+    config::{OneHotConfig, ReadWriteConfig},
+    instruction::{CircuitFlags, InstructionFlags},
+    witness::{CommittedPolynomial, VirtualPolynomial},
+};
 use crate::{
     curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
-    },
-};
-use crate::{
-    subprotocols::{
-        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
-    },
-    zkvm::{
-        config::{OneHotConfig, ReadWriteConfig},
-        instruction::{CircuitFlags, InstructionFlags},
-        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 
@@ -40,40 +33,22 @@ pub(crate) struct JoltProofParts<
     H: DuplexSpongeInterface,
 > {
     pub commitments: Vec<PCS::Commitment>,
-    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C>,
-    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C>,
-    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    pub stage6a_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C>,
-    #[cfg(feature = "zk")]
-    pub blindfold_proof: BlindFoldProof<F, C>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     #[cfg(not(feature = "zk"))]
     pub opening_claims: ProverOpeningClaims<F>,
-    /// Spongefish NARG byte-string produced by the legacy prover. Some prover-only
-    /// round payloads are written here, but the live modular verifier bridge for
-    /// this split is still structured: it converts the retained proof fields into
-    /// `jolt-verifier`'s proof model and does not export or consume this NARG.
-    #[expect(
-        dead_code,
-        reason = "retained for the prover-legacy Spongefish NARG proof-parts path; the modular verifier bridge converts structured fields"
-    )]
+    /// Spongefish NARG byte-string produced by the legacy prover. Prover-only
+    /// round payloads are exported through the bridge and consumed by the
+    /// modular verifier at their Fiat-Shamir positions.
     pub narg: Vec<u8>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
-    /// Compile-time transcript-link: a proof produced under sponge `H` can only be
-    /// verified under sponge `H`. Serializes to zero bytes; `fn() -> H` keeps the
-    /// proof `Send + Sync` without bounding `H`.
-    pub _marker: PhantomData<fn() -> H>,
+    /// Compile-time curve/transcript link. Serializes to zero bytes; `fn() -> ...`
+    /// keeps the proof `Send + Sync` without bounding the marker types.
+    pub _marker: PhantomData<fn() -> (C, H)>,
 }
 
 #[cfg(not(feature = "zk"))]

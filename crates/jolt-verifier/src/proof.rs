@@ -1,15 +1,14 @@
 //! Verifier-owned proof model types.
 
 use ark_serialize::CanonicalSerialize;
-use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-use jolt_crypto::{Commitment, VectorCommitment};
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{serialize_slice, BytesMsg, Encoding};
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 
 use crate::{
     config::JoltProtocolConfig,
@@ -22,30 +21,30 @@ use crate::{
     reason = "Matches current jolt-prover-legacy proof field name."
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
-pub struct JoltProof<
-    PCS,
-    VC,
-    ZkProof = BlindFoldProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
-> where
+#[serde(bound = "")]
+pub struct JoltProof<PCS, VC, ZkProof = ()>
+where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
     pub protocol: JoltProtocolConfig,
-    /// Spongefish NARG frames consumed by the modular verifier. This is being
-    /// expanded incrementally as the split verifier moves away from structured
-    /// proof fields.
+    /// Spongefish NARG frames consumed by the modular verifier. This carries
+    /// witness commitments, prover-only sumcheck/uni-skip round payloads, and
+    /// BlindFold payloads. Dory's joint opening proof and non-ZK opening
+    /// claims remain structural because spongefish has no non-absorbing hint
+    /// channel for those values.
     pub narg: Vec<u8>,
     pub commitments: JoltCommitments<PCS::Output>,
-    pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Output>,
-    pub claims: JoltProofClaims<PCS::Field, ZkProof>,
+    pub claims: JoltProofClaims<PCS::Field>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
+    #[serde(skip)]
+    _proof_marker: PhantomData<fn() -> (VC, ZkProof)>,
 }
 
 impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
@@ -59,10 +58,9 @@ where
     )]
     pub fn new(
         commitments: JoltCommitments<PCS::Output>,
-        stages: JoltStageProofs<PCS::Field, VC>,
         joint_opening_proof: PCS::Proof,
         untrusted_advice_commitment: Option<PCS::Output>,
-        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        claims: JoltProofClaims<PCS::Field>,
         trace_length: usize,
         ram_k: usize,
         rw_config: JoltReadWriteConfig,
@@ -78,7 +76,6 @@ where
             protocol,
             narg,
             commitments,
-            stages,
             joint_opening_proof,
             untrusted_advice_commitment,
             claims,
@@ -87,20 +84,14 @@ where
             rw_config,
             one_hot_config,
             trace_polynomial_order,
+            _proof_marker: PhantomData,
         }
     }
 
     pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(claims) => Ok(claims),
-            JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
-        }
-    }
-
-    pub(crate) fn blindfold_proof(&self) -> Result<&ZkProof, VerifierError> {
-        match &self.claims {
-            JoltProofClaims::Clear(_) => Err(VerifierError::MissingBlindFoldProof),
-            JoltProofClaims::Zk { blindfold_proof } => Ok(blindfold_proof),
+            JoltProofClaims::Zk => Err(VerifierError::UnexpectedBlindFoldProof),
         }
     }
 }
@@ -144,21 +135,21 @@ impl<C> JoltCommitments<C> {
     clippy::large_enum_variant,
     reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
 )]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
-pub enum JoltProofClaims<F, ZkProof>
+#[serde(bound = "")]
+pub enum JoltProofClaims<F>
 where
     F: Field,
 {
     Clear(ClearProofClaims<F>),
-    Zk { blindfold_proof: ZkProof },
+    Zk,
 }
 
-impl<F, ZkProof> JoltProofClaims<F, ZkProof>
+impl<F> JoltProofClaims<F>
 where
     F: Field,
 {
     pub const fn is_zk(&self) -> bool {
-        matches!(self, Self::Zk { .. })
+        matches!(self, Self::Zk)
     }
 }
 
@@ -172,25 +163,6 @@ pub struct ClearProofClaims<F: Field> {
     pub stage5: stage5::outputs::Stage5OutputClaims<F>,
     pub stage6: stage6::outputs::Stage6OutputClaims<F>,
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct JoltStageProofs<F, VC>
-where
-    F: Field,
-    VC: VectorCommitment<Field = F>,
-{
-    pub stage1_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
-    pub stage1_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage2_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
-    pub stage2_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
 }
 
 fn append_narg_frame<T: CanonicalSerialize>(narg: &mut Vec<u8>, values: &[T]) {

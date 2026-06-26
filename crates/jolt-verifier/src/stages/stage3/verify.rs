@@ -1,5 +1,6 @@
 //! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::registers as registers_claim_reduction, dimensions::TraceDimensions,
@@ -11,7 +12,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::FsTranscript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     instruction_input::{InstructionInput, InstructionInputInputClaims},
@@ -84,7 +85,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsTranscript<PCS::Field>,
+    T: FsNargRead<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = TraceDimensions::new(log_t);
@@ -119,9 +121,8 @@ where
                 registers_spec.sumcheck.degree,
             ),
         ];
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage3_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -131,7 +132,7 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage3_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage3_sumcheck_proof",
                 output_claim_count: STAGE3_BATCH_OUTPUT_CLAIMS,
                 stage: JoltRelationId::SpartanShift,
@@ -186,15 +187,12 @@ where
             registers_relation.input_claim(&registers_inputs)?,
         ),
     ];
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage3_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::SpartanShift,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::SpartanShift,
+                reason: error.to_string(),
+            })?;
 
     let shift_point = batch
         .try_instance_point(shift_spec.sumcheck.rounds)

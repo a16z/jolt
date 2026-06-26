@@ -1,7 +1,6 @@
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::SumcheckProof;
+use jolt_sumcheck::CommittedOutputClaims;
 
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -14,9 +13,9 @@ use crate::{
     verifier::CheckedInputs,
 };
 
-pub(crate) struct CommittedOutputClaimInputs<'a, F: Field, C> {
+pub(crate) struct CommittedOutputClaimInputs<'a, C> {
     pub checked: &'a CheckedInputs,
-    pub proof: &'a SumcheckProof<F, C>,
+    pub output_claims: &'a CommittedOutputClaims<C>,
     pub proof_label: &'static str,
     pub output_claim_count: usize,
     pub stage: JoltRelationId,

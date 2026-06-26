@@ -441,6 +441,9 @@ mod tests {
                     challenge: Fr::from_u64(index as u64 + 11),
                 })
                 .collect(),
+            output_claims: CommittedOutputClaims {
+                commitments: Vec::new(),
+            },
         }
     }
 
@@ -454,6 +457,9 @@ mod tests {
                     challenge: Fr::from_u64(challenge),
                 })
                 .collect(),
+            output_claims: CommittedOutputClaims {
+                commitments: Vec::new(),
+            },
         }
     }
 

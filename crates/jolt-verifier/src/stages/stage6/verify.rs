@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{self, BooleanityDimensions},
@@ -24,7 +25,7 @@ use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::FsTranscript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 use num_traits::{One, Zero};
 
 use super::{
@@ -90,7 +91,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsTranscript<PCS::Field>,
+    T: FsNargRead<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = formula_dimensions.trace.log_t();
     let log_k = checked.ram_K.ilog2() as usize;
@@ -277,9 +279,8 @@ where
                 claim.sumcheck.degree,
             ));
         }
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage6b_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -483,7 +484,7 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage6b_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage6b_sumcheck_proof",
                 output_claim_count: committed_output_claims,
                 stage: JoltRelationId::BytecodeReadRaf,
@@ -754,15 +755,12 @@ where
     // through the same bundle method the prover uses, in canonical batch order.
     let sumcheck_claims = relations.sumcheck_claims()?;
 
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage6b_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: error.to_string(),
+            })?;
 
     let bytecode_point = batch
         .try_instance_point(bytecode_claims.sumcheck.rounds)
@@ -1794,7 +1792,7 @@ pub(super) struct Stage6AClearOutput<F: Field> {
 
 pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    _proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     bytecode_address_claims: &JoltRelationClaims<PCS::Field>,
     booleanity_address_claims: &JoltRelationClaims<PCS::Field>,
@@ -1802,7 +1800,8 @@ pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsTranscript<PCS::Field>,
+    T: FsNargRead<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let address_statements = vec![
         SumcheckStatement::new(
@@ -1814,15 +1813,15 @@ where
             booleanity_address_claims.sumcheck.degree,
         ),
     ];
-    let address_phase_consistency = BatchedSumcheckVerifier::verify_committed_consistency(
-        &address_statements,
-        &proof.stages.stage6a_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: error.to_string(),
-    })?;
+    let address_phase_consistency =
+        BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
+            &address_statements,
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
     let committed_program_claims = if checked.precommitted.bytecode.is_some() {
         jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
     } else {
@@ -1831,7 +1830,7 @@ where
     let address_phase_output_claims =
         committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
             checked,
-            proof: &proof.stages.stage6a_sumcheck_proof,
+            output_claims: &address_phase_consistency.consistency.output_claims,
             proof_label: "stage6a_sumcheck_proof",
             output_claim_count: 2 + committed_program_claims,
             stage: JoltRelationId::BytecodeReadRaf,
@@ -1869,7 +1868,7 @@ where
 }
 
 pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    _proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     claims: &Stage6OutputClaims<PCS::Field>,
     bytecode_relation: &BytecodeReadRafAddressPhase<PCS::Field>,
@@ -1879,7 +1878,7 @@ pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsTranscript<PCS::Field>,
+    T: FsNargRead<PCS::Field>,
 {
     let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
     let bytecode_read_raf_input = bytecode_relation.input_claim(bytecode_inputs)?;
@@ -1898,9 +1897,8 @@ where
             booleanity_input,
         ),
     ];
-    let address_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
+    let address_batch = BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(
         &address_sumcheck_claims,
-        &proof.stages.stage6a_sumcheck_proof,
         transcript,
     )
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {

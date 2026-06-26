@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
@@ -13,7 +14,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::FsTranscript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     outputs::{
@@ -70,7 +71,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsTranscript<PCS::Field>,
+    T: FsNargRead<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
@@ -144,9 +146,8 @@ where
                 ram_val_check_claims.sumcheck.degree,
             ),
         ];
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage4_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -156,7 +157,7 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage4_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage4_sumcheck_proof",
                 output_claim_count: stage4_committed_output_claims(checked, proof),
                 stage: JoltRelationId::RegistersReadWriteChecking,
@@ -248,15 +249,12 @@ where
             ram_input_claim,
         ),
     ];
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage4_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::RegistersReadWriteChecking,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::RegistersReadWriteChecking,
+                reason: error.to_string(),
+            })?;
 
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)

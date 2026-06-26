@@ -165,9 +165,9 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{
-    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver,
-    BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RelaxedR1CSInstance,
-    RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
+    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProver, BlindFoldWitness,
+    ExtraConstraintWitness, FinalOutputWitness, RelaxedR1CSInstance, RoundWitness, StageConfig,
+    StageWitness, VerifierR1CSBuilder,
 };
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
@@ -581,18 +581,14 @@ where
                 .absorb(&program_commitments.program_image_commitment);
         }
 
-        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, r_stage1) =
-            self.prove_stage1();
-        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof, r_stage2) =
-            self.prove_stage2();
-        let (stage3_sumcheck_proof, r_stage3) = self.prove_stage3();
-        let (stage4_sumcheck_proof, r_stage4) = self.prove_stage4();
-        let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5();
-        let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
-            self.prove_stage6a();
-        let (stage6b_sumcheck_proof, r_stage6) =
-            self.prove_stage6b(bytecode_read_raf_params, booleanity_cycle_input);
-        let (stage7_sumcheck_proof, r_stage7) = self.prove_stage7();
+        let (_, _, r_stage1) = self.prove_stage1();
+        let (_, _, r_stage2) = self.prove_stage2();
+        let (_, r_stage3) = self.prove_stage3();
+        let (_, r_stage4) = self.prove_stage4();
+        let (_, r_stage5) = self.prove_stage5();
+        let (_, bytecode_read_raf_params, booleanity_cycle_input) = self.prove_stage6a();
+        let (_, r_stage6) = self.prove_stage6b(bytecode_read_raf_params, booleanity_cycle_input);
+        let (_, r_stage7) = self.prove_stage7();
 
         let _sumcheck_challenges = [
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
@@ -600,7 +596,7 @@ where
 
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
         #[cfg(feature = "zk")]
-        let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
+        self.prove_blindfold(&joint_opening_proof);
 
         #[cfg(not(feature = "zk"))]
         let opening_claims = crate::zkvm::proof_parts::ProverOpeningClaims(
@@ -620,9 +616,9 @@ where
             );
         }
 
-        // Internal prover NARG. The proof bridge exports the prefix currently
-        // consumed by the modular verifier; the remaining stage frames are kept
-        // here until those verifier paths are made NARG-native too.
+        // Full prover NARG exported by the proof bridge. The modular verifier
+        // consumes prover-only round payloads from this stream at their
+        // Fiat-Shamir positions.
         let narg = self.transcript.narg_string().to_vec();
 
         #[cfg(test)]
@@ -637,18 +633,6 @@ where
         let proof = JoltProofParts {
             commitments,
             untrusted_advice_commitment,
-            stage1_uni_skip_first_round_proof,
-            stage1_sumcheck_proof,
-            stage2_uni_skip_first_round_proof,
-            stage2_sumcheck_proof,
-            stage3_sumcheck_proof,
-            stage4_sumcheck_proof,
-            stage5_sumcheck_proof,
-            stage6a_sumcheck_proof,
-            stage6b_sumcheck_proof,
-            stage7_sumcheck_proof,
-            #[cfg(feature = "zk")]
-            blindfold_proof,
             joint_opening_proof,
             #[cfg(not(feature = "zk"))]
             opening_claims,
@@ -1599,7 +1583,7 @@ where
 
     #[tracing::instrument(skip_all)]
     #[cfg(feature = "zk")]
-    fn prove_blindfold(&mut self, joint_opening_proof: &PCS::Proof) -> BlindFoldProof<F, C> {
+    fn prove_blindfold(&mut self, joint_opening_proof: &PCS::Proof) {
         use crate::curve::JoltGroupElement;
         use rayon::prelude::*;
 
@@ -3549,88 +3533,12 @@ mod tests {
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
 
-    /// Test BlindFold R1CS satisfaction using real sumcheck data from muldiv proof.
-    ///
-    /// This test extracts sumcheck polynomials from all 6 stages of a real Jolt proof
-    /// and verifies that they satisfy the BlindFold verifier R1CS. This validates that:
-    /// 1. The coefficient extraction from CompressedUniPoly works correctly
-    /// 2. The BlindFold R1CS correctly encodes sumcheck verification
-    /// 3. Real proof data from all stages satisfies the R1CS constraints
+    /// Test BlindFold verification using the NARG-backed muldiv proof.
     #[cfg(feature = "zk")]
     #[test]
     #[serial]
     fn blindfold_r1cs_satisfaction() {
         DoryGlobals::reset();
-
-        use crate::curve::Bn254Curve;
-        use crate::subprotocols::blindfold::{
-            BakedPublicInputs, BlindFoldWitness, RoundWitness, StageConfig, StageWitness,
-            VerifierR1CSBuilder,
-        };
-        use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-        use crate::transcript_msgs::VerifierFs;
-        use jolt_transcript::{verifier_transcript, Blake2b512};
-        /// Helper to process a single stage's sumcheck proof.
-        /// Returns a list of (RoundWitness, degree) for each round.
-        /// For ZK proofs, creates synthetic witnesses with correct degrees to test R1CS structure.
-        ///
-        /// `transcript` is a fresh, independent challenge generator (not the proof's transcript):
-        /// it is bound on `VerifierFs<Fr>`, which pins `Fr`, so the `absorb`/`challenge_optimized`
-        /// calls below need no fully-qualified turbofish.
-        fn process_stage(
-            proof: &SumcheckInstanceProof<Fr, Bn254Curve>,
-            transcript: &mut impl VerifierFs<Fr>,
-        ) -> Vec<(RoundWitness<Fr>, usize)> {
-            match proof {
-                // Under `--features host,zk` the muldiv prover emits only `Zk` proofs
-                // (`prove_sumcheck`/`prove_uniskip` select the `prove_zk` path), so this arm is
-                // unreachable here.
-                SumcheckInstanceProof::Clear(_) => {
-                    unreachable!("muldiv in ZK mode produces only Zk sumcheck proofs")
-                }
-                SumcheckInstanceProof::Zk(zk_proof) => {
-                    // For ZK proofs, create synthetic witnesses with correct degrees.
-                    // This tests the R1CS structure without needing actual coefficients.
-                    let num_rounds = zk_proof.round_commitments.len();
-
-                    if num_rounds == 0 {
-                        return vec![];
-                    }
-
-                    let mut rounds = Vec::with_capacity(num_rounds);
-
-                    for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
-                        transcript.absorb(commitment);
-                        let challenge: Fr = transcript.challenge_optimized().into();
-
-                        let degree = zk_proof.poly_degrees[round_idx];
-
-                        // Create synthetic coefficients that satisfy sumcheck relation
-                        // g(x) = c0 + c1*x + c2*x^2 + ... has degree+1 coefficients
-                        // claimed_sum = 2*c0 + c1 + c2 + ...
-                        let claimed_sum = Fr::from(12345u64);
-
-                        // Use simple synthetic values: c0 = 1, c2..cd = 1, compute c1
-                        let c0 = Fr::from(1u64);
-                        let num_higher_coeffs = degree.saturating_sub(1);
-                        let sum_higher_coeffs = Fr::from(num_higher_coeffs as u64);
-                        let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
-
-                        let mut coeffs = vec![c0, c1];
-                        for _ in 0..num_higher_coeffs {
-                            coeffs.push(Fr::from(1u64));
-                        }
-
-                        let round_witness =
-                            RoundWitness::with_claimed_sum(coeffs, challenge, claimed_sum);
-
-                        rounds.push((round_witness, degree));
-                    }
-
-                    rounds
-                }
-            }
-        }
 
         // Run muldiv prover to get a real proof
         let mut program = host::Program::new("muldiv-guest");
@@ -3658,98 +3566,16 @@ mod tests {
             None,
             None,
         );
-        let (jolt_proof, _) = prover.prove_parts();
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, _) = prover
+            .prove()
+            .expect("prover should produce verifier-native ZK proof");
 
-        println!("\n=== BlindFold R1CS Satisfaction Test (All 7 Stages) ===\n");
-
-        // Process all 7 stages and verify each one
-        let stage_proofs: Vec<(&str, &SumcheckInstanceProof<Fr, Bn254Curve>)> = vec![
-            ("Stage 1 (Spartan Outer)", &jolt_proof.stage1_sumcheck_proof),
-            (
-                "Stage 2 (Product Virtual)",
-                &jolt_proof.stage2_sumcheck_proof,
-            ),
-            ("Stage 3 (Instruction)", &jolt_proof.stage3_sumcheck_proof),
-            ("Stage 4 (Registers+RAM)", &jolt_proof.stage4_sumcheck_proof),
-            ("Stage 5 (Value+Lookup)", &jolt_proof.stage5_sumcheck_proof),
-            (
-                "Stage 6 (OneHot+Hamming)",
-                &jolt_proof.stage6b_sumcheck_proof,
-            ),
-            (
-                "Stage 7 (HammingWeight+ClaimReduction)",
-                &jolt_proof.stage7_sumcheck_proof,
-            ),
-        ];
-
-        let mut total_rounds = 0;
-        let mut total_constraints = 0;
-
-        for (stage_name, proof) in &stage_proofs {
-            // Create a fresh transcript for each stage (independent verification). BlindFold's
-            // R1CS-structure check only needs deterministic per-round challenges, so an empty-NARG
-            // verifier transcript (absorb + challenge only, no reads) suffices.
-            let mut stage_transcript =
-                verifier_transcript(b"BlindFoldStageTest", [0u8; 32], Blake2b512::default(), &[]);
-
-            let rounds = process_stage(proof, &mut stage_transcript);
-
-            if rounds.is_empty() {
-                println!("  {stage_name} - 0 rounds, skipping");
-                continue;
-            }
-
-            // Process each round individually
-            let mut stage_rounds = 0;
-            let mut stage_constraints = 0;
-
-            for (round_witness, degree) in rounds {
-                // Build R1CS for a single round
-                let config = StageConfig::new(1, degree);
-                let initial_claim = round_witness.claimed_sum;
-                let baked = BakedPublicInputs {
-                    challenges: vec![round_witness.challenge],
-                    initial_claims: vec![initial_claim],
-                    ..Default::default()
-                };
-                let builder = VerifierR1CSBuilder::<Fr>::new(std::slice::from_ref(&config), &baked);
-                let r1cs = builder.build();
-                let stage_witness = StageWitness::new(vec![round_witness]);
-                let witness = BlindFoldWitness::new(initial_claim, vec![stage_witness]);
-
-                let z = witness.assign(&r1cs);
-                match r1cs.check_satisfaction(&z) {
-                    Ok(()) => {
-                        stage_rounds += 1;
-                        stage_constraints += r1cs.num_constraints;
-                    }
-                    Err(row) => {
-                        panic!(
-                            "{} (degree {}) - constraint {} failed (out of {})",
-                            stage_name, degree, row, r1cs.num_constraints
-                        );
-                    }
-                }
-            }
-
-            println!(
-                "  {stage_name} - {stage_rounds} rounds, {stage_constraints} constraints - SATISFIED"
-            );
-            total_rounds += stage_rounds;
-            total_constraints += stage_constraints;
-        }
-
-        println!("\n=== Summary ===");
-        println!("Total rounds across all stages: {total_rounds}");
-        println!("Total constraints across all stages: {total_constraints}");
-        println!("All 6 stages satisfied!\n");
-
-        // Ensure we processed a meaningful amount
-        assert!(total_rounds > 0, "Expected at least some sumcheck rounds");
         assert!(
-            total_constraints > 0,
-            "Expected at least some R1CS constraints"
+            !jolt_proof.narg.is_empty(),
+            "ZK proof must carry BlindFold and sumcheck data in the NARG"
         );
+        verify_verifier_proof(&preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -3989,10 +3815,10 @@ mod tests {
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
-        // BlindFold is absorb-only (no NARG writes), so the verifier replays over an empty NARG.
         let mut prover_transcript =
             jolt_transcript::prover_transcript(b"BlindFold_E2E", [0u8; 32], Blake2b512::default());
-        let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        let narg = prover_transcript.narg_string().to_vec();
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
@@ -4004,9 +3830,9 @@ mod tests {
             b"BlindFold_E2E",
             [0u8; 32],
             Blake2b512::default(),
-            &[],
+            &narg,
         );
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        let result = verifier.verify(verifier_input, &mut verifier_transcript);
 
         assert!(
             result.is_ok(),
@@ -4019,7 +3845,7 @@ mod tests {
             r1cs.num_constraints, r1cs.num_vars
         );
         println!("Witness size: {} field elements", witness.len());
-        println!("Spartan sumcheck rounds: {}", proof.spartan_proof.len());
+        println!("BlindFold NARG size: {} bytes", narg.len());
         println!("Protocol verification: SUCCESS");
     }
 

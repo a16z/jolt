@@ -154,7 +154,12 @@ mod tests {
             "stage",
             SumcheckStatement::new(2, 2),
             SumcheckDomainSpec::BooleanHypercube,
-            CommittedSumcheckConsistency::<Fr, ()> { rounds: Vec::new() },
+            CommittedSumcheckConsistency::<Fr, ()> {
+                rounds: Vec::new(),
+                output_claims: CommittedOutputClaims {
+                    commitments: Vec::new(),
+                },
+            },
             CommittedClaimRows::empty(),
             claim.clone(),
             claim,

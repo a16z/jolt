@@ -145,6 +145,24 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
+        impl ::ark_serialize::Valid for $wrapper {
+            #[inline]
+            fn check(&self) -> Result<(), ::ark_serialize::SerializationError> {
+                self.0.check()
+            }
+        }
+
+        impl ::ark_serialize::CanonicalDeserialize for $wrapper {
+            #[inline]
+            fn deserialize_with_mode<R: ::ark_serialize::Read>(
+                reader: R,
+                compress: ::ark_serialize::Compress,
+                validate: ::ark_serialize::Validate,
+            ) -> Result<Self, ::ark_serialize::SerializationError> {
+                <$projective>::deserialize_with_mode(reader, compress, validate).map(Self)
+            }
+        }
+
         impl $crate::JoltGroup for $wrapper {
             #[inline(always)]
             fn identity() -> Self {

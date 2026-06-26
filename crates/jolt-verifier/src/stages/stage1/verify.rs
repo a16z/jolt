@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain, JoltSumcheckSpec,
 };
@@ -9,9 +10,10 @@ use jolt_r1cs::constraints::jolt::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
-    BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
+    BatchedSumcheckVerifier, CenteredIntegerDomain, CommittedSumcheckProof, SumcheckClaim,
+    SumcheckStatement, SumcheckVerifier,
 };
-use jolt_transcript::FsTranscript;
+use jolt_transcript::FsNargRead;
 
 use super::outputs::{
     spartan_outer_opening_order, Stage1ClearOutput, Stage1Output, Stage1PublicOutput,
@@ -27,7 +29,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsTranscript<PCS::Field>,
+    T: FsNargRead<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let stage = JoltRelationId::SpartanOuter;
 
@@ -54,10 +57,11 @@ where
     };
     let uniskip_statement = SumcheckStatement::new(uniskip_spec.rounds, uniskip_spec.degree);
     let (uniskip_challenge, clear_uniskip, zk_uniskip_consistency) = if checked.zk {
-        let consistency = proof
-            .stages
-            .stage1_uni_skip_first_round_proof
-            .verify_committed_consistency(uniskip_statement, transcript)
+        let consistency =
+            CommittedSumcheckProof::<VC::Output>::verify_committed_consistency_from_narg(
+                uniskip_statement,
+                transcript,
+            )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage,
                 reason: error.to_string(),
@@ -65,7 +69,7 @@ where
         let uniskip_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage1_uni_skip_first_round_proof,
+                output_claims: &consistency.output_claims,
                 proof_label: "stage1_uni_skip_first_round_proof",
                 output_claim_count: 1,
                 stage,
@@ -84,22 +88,19 @@ where
     } else {
         let claims = &proof.clear_claims()?.stage1;
         let uniskip_input_claim = PCS::Field::from_u64(0);
-        let uniskip_reduction = proof
-            .stages
-            .stage1_uni_skip_first_round_proof
-            .verify(
-                &SumcheckClaim::new(
-                    uniskip_spec.rounds,
-                    uniskip_spec.degree,
-                    uniskip_input_claim,
-                ),
-                CenteredIntegerDomain::new(domain_size),
-                transcript,
-            )
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage,
-                reason: error.to_string(),
-            })?;
+        let uniskip_reduction = SumcheckVerifier::verify_from_narg(
+            &SumcheckClaim::new(
+                uniskip_spec.rounds,
+                uniskip_spec.degree,
+                uniskip_input_claim,
+            ),
+            CenteredIntegerDomain::new(domain_size),
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
         if uniskip_reduction.value != claims.uniskip_output_claim {
             return Err(VerifierError::StageClaimOutputMismatch { stage });
         }
@@ -143,9 +144,8 @@ where
         clear_remainder,
         zk_remainder_consistency,
     ) = if checked.zk {
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &[remainder_statement],
-            &proof.stages.stage1_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -155,7 +155,7 @@ where
         let remainder_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage1_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage1_sumcheck_proof",
                 output_claim_count: spartan_outer_opening_order(&dimensions).len(),
                 stage,
@@ -184,13 +184,12 @@ where
                 reason: "clear Stage 1 uni-skip output is missing".to_string(),
             })?;
         let remainder_input_claim = uniskip.expected_output_claim;
-        let remainder_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
+        let remainder_batch = BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(
             &[SumcheckClaim::new(
                 remainder_spec.rounds,
                 remainder_spec.degree,
                 remainder_input_claim,
             )],
-            &proof.stages.stage1_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {

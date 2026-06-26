@@ -1,6 +1,6 @@
 //! Top-level verifier entry point.
 
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::{
     JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
@@ -9,7 +9,6 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
-use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{
     serialize_slice, verifier_transcript, BytesMsg, DuplexSpongeInterface, FsAbsorb, FsTranscript,
     VerifierState, VerifierTranscript,
@@ -66,7 +65,7 @@ where
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
     PCS::Output: CanonicalSerialize + Clone + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize + CanonicalDeserialize,
     H: DuplexSpongeInterface<U = u8> + Default,
     for<'a> VerifierState<'a, H>: FsTranscript<F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
@@ -169,7 +168,7 @@ where
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
         blindfold
             .protocol
-            .verify::<VC, _>(proof.blindfold_proof()?, vc_setup, &mut transcript)
+            .verify_from_narg::<VC, _>(vc_setup, &mut transcript)
             .map_err(|error| VerifierError::BlindFoldVerificationFailed {
                 reason: error.to_string(),
             })?;
@@ -615,107 +614,34 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    validate_sumcheck_representation(
-        &proof.stages.stage1_uni_skip_first_round_proof,
-        "stage1_uni_skip_first_round_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage1_sumcheck_proof,
-        "stage1_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage2_uni_skip_first_round_proof,
-        "stage2_uni_skip_first_round_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage2_sumcheck_proof,
-        "stage2_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage3_sumcheck_proof,
-        "stage3_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage4_sumcheck_proof,
-        "stage4_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage5_sumcheck_proof,
-        "stage5_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage6a_sumcheck_proof,
-        "stage6a_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage6b_sumcheck_proof,
-        "stage6b_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage7_sumcheck_proof,
-        "stage7_sumcheck_proof",
-        zk,
-    )?;
-
     match (&proof.claims, zk) {
         (crate::proof::JoltProofClaims::Clear(_), false)
-        | (crate::proof::JoltProofClaims::Zk { .. }, true) => {}
+        | (crate::proof::JoltProofClaims::Zk, true) => {}
         (crate::proof::JoltProofClaims::Clear(_), true) => {
             return Err(VerifierError::UnexpectedOpeningClaims);
         }
-        (crate::proof::JoltProofClaims::Zk { .. }, false) => {
+        (crate::proof::JoltProofClaims::Zk, false) => {
             return Err(VerifierError::UnexpectedBlindFoldProof);
         }
     }
     Ok(())
 }
 
-fn validate_sumcheck_representation<F, RoundCommitment>(
-    proof: &SumcheckProof<F, RoundCommitment>,
-    field: &'static str,
-    zk: bool,
-) -> Result<(), VerifierError>
-where
-    F: Field,
-{
-    if proof.is_committed() == zk {
-        return Ok(());
-    }
-
-    if zk {
-        Err(VerifierError::ExpectedCommittedProof { field })
-    } else {
-        Err(VerifierError::ExpectedClearProof { field })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    use crate::proof::{ClearProofClaims, JoltProofClaims};
     use ark_serialize::{
         CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
     };
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
-    };
-    use jolt_sumcheck::{
-        ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
     use jolt_transcript::FsTranscript;
     use num_traits::Zero;
@@ -813,7 +739,7 @@ mod tests {
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
-    type TestClaims = JoltProofClaims<Fr, jolt_blindfold::BlindFoldProof<Fr, Bn254G1>>;
+    type TestClaims = JoltProofClaims<Fr>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -849,28 +775,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_stage_representation() {
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.stages.stage5_sumcheck_proof =
-            SumcheckProof::Committed(CommittedSumcheckProof::default());
-
-        assert!(matches!(
-            validate_proof_consistency(&proof, false),
-            Err(VerifierError::ExpectedClearProof {
-                field: "stage5_sumcheck_proof",
-            })
-        ));
-    }
-
-    #[test]
     fn rejects_wrong_verifier_zk_flag() {
         let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
             validate_proof_consistency(&proof, true),
-            Err(VerifierError::ExpectedCommittedProof {
-                field: "stage1_uni_skip_first_round_proof",
-            })
+            Err(VerifierError::UnexpectedOpeningClaims)
         ));
     }
 
@@ -1010,20 +920,20 @@ mod tests {
         proof.narg.clear();
 
         assert!(matches!(
-            verify_until_stage1::<
-                TestPcs,
-                Pedersen<Bn254G1>,
-                jolt_transcript::Blake2b512,
-                jolt_blindfold::BlindFoldProof<Fr, Bn254G1>,
-            >(&preprocessing, &public_io, &proof, None, false),
+            verify_until_stage1::<TestPcs, Pedersen<Bn254G1>, jolt_transcript::Blake2b512, ()>(
+                &preprocessing,
+                &public_io,
+                &proof,
+                None,
+                false
+            ),
             Err(VerifierError::MalformedNarg)
         ));
     }
 
-    fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
+    fn proof_with_zk(_is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
             test_commitments(),
-            stage_proofs(is_zk),
             (),
             None,
             claims,
@@ -1249,70 +1159,7 @@ mod tests {
     }
 
     fn zk_claims() -> TestClaims {
-        JoltProofClaims::Zk {
-            blindfold_proof: empty_blindfold_proof(),
-        }
-    }
-
-    fn empty_blindfold_proof() -> jolt_blindfold::BlindFoldProof<Fr, Bn254G1> {
-        jolt_blindfold::BlindFoldProof {
-            auxiliary_row_commitments: Vec::new(),
-            random_round_commitments: Vec::new(),
-            random_output_claim_row_commitments: Vec::new(),
-            random_auxiliary_row_commitments: Vec::new(),
-            random_error_row_commitments: Vec::new(),
-            random_eval_commitments: Vec::new(),
-            random_u: Fr::zero(),
-            cross_term_error_row_commitments: Vec::new(),
-            outer_sumcheck: CompressedSumcheckProof::default(),
-            az_rx: Fr::zero(),
-            bz_rx: Fr::zero(),
-            cz_rx: Fr::zero(),
-            inner_sumcheck: CompressedSumcheckProof::default(),
-            witness_opening: VectorCommitmentOpening {
-                combined_vector: Vec::new(),
-                combined_blinding: Fr::zero(),
-            },
-            error_opening: VectorCommitmentOpening {
-                combined_vector: Vec::new(),
-                combined_blinding: Fr::zero(),
-            },
-            folded_eval_outputs: Vec::new(),
-            folded_eval_blindings: Vec::new(),
-            folded_eval_output_openings: Vec::new(),
-            folded_eval_blinding_openings: Vec::new(),
-        }
-    }
-
-    fn stage_proofs(is_zk: bool) -> JoltStageProofs<Fr, Pedersen<Bn254G1>> {
-        JoltStageProofs {
-            stage1_uni_skip_first_round_proof: uniskip_proof(is_zk),
-            stage1_sumcheck_proof: sumcheck_proof(is_zk),
-            stage2_uni_skip_first_round_proof: uniskip_proof(is_zk),
-            stage2_sumcheck_proof: sumcheck_proof(is_zk),
-            stage3_sumcheck_proof: sumcheck_proof(is_zk),
-            stage4_sumcheck_proof: sumcheck_proof(is_zk),
-            stage5_sumcheck_proof: sumcheck_proof(is_zk),
-            stage6a_sumcheck_proof: sumcheck_proof(is_zk),
-            stage6b_sumcheck_proof: sumcheck_proof(is_zk),
-            stage7_sumcheck_proof: sumcheck_proof(is_zk),
-        }
-    }
-
-    fn uniskip_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
-        if is_zk {
-            SumcheckProof::Committed(CommittedSumcheckProof::default())
-        } else {
-            SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default()))
-        }
-    }
-
-    fn sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
-        if is_zk {
-            SumcheckProof::Committed(CommittedSumcheckProof::default())
-        } else {
-            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()))
-        }
+        JoltProofClaims::Zk
     }
 
     fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
