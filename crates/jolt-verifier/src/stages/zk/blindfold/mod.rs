@@ -86,7 +86,7 @@ use jolt_claims::{
         InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-        JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltPublicId,
+        JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltDerivedId,
         JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
         ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
         RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
@@ -96,7 +96,7 @@ use jolt_claims::{
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanShiftChallenge, SpartanShiftPublic,
     },
-    public, Expr, Source, SymbolicSumcheck, Term,
+    derived, Expr, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, FromPrimitiveInt, RingCore};
@@ -156,15 +156,15 @@ impl From<JoltOpeningId> for VerifierOpeningId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifierPublicId {
-    Jolt(JoltPublicId),
+    Jolt(JoltDerivedId),
     SpartanOuter(JoltSpartanOuterPublic),
     /// Gamma values that remain as `JoltChallengeId` variants (not moved to Public) but are
     /// treated as public inputs in the BlindFold R1CS wiring.
     Challenge(JoltChallengeId),
 }
 
-impl From<JoltPublicId> for VerifierPublicId {
-    fn from(id: JoltPublicId) -> Self {
+impl From<JoltDerivedId> for VerifierPublicId {
+    fn from(id: JoltDerivedId) -> Self {
         Self::Jolt(id)
     }
 }
@@ -385,8 +385,8 @@ fn map_jolt_expr<F: Field>(expr: JoltExpr<F>) -> VerifierExpr<F> {
                     .into_iter()
                     .map(|source| match source {
                         Source::Opening(id) => Source::Opening(id.into()),
-                        Source::Public(id) => Source::Public(VerifierPublicId::Jolt(id)),
-                        Source::Challenge(id) => Source::Public(VerifierPublicId::Challenge(id)),
+                        Source::Derived(id) => Source::Derived(VerifierPublicId::Jolt(id)),
+                        Source::Challenge(id) => Source::Derived(VerifierPublicId::Challenge(id)),
                     })
                     .collect(),
             })
@@ -400,7 +400,7 @@ fn require_expr_sources<F: Field>(
     expr: &VerifierExpr<F>,
     values: &SourceValues<F>,
 ) -> Result<(), VerifierError> {
-    for id in expr.required_publics() {
+    for id in expr.required_deriveds() {
         if !values.has_public(id) {
             return Err(VerifierError::BlindFoldConstructionFailed {
                 reason: format!("{stage} {expression} is missing public source {id:?}"),
@@ -788,20 +788,20 @@ where
         );
         for (index, stage_cycle_eq) in committed_public_values.stage_cycle_eqs.iter().enumerate() {
             values.public(
-                JoltPublicId::from(BytecodeReadRafPublic::StageCycleEq(index)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(index)),
                 *stage_cycle_eq,
             )?;
         }
         values.public(
-            JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
+            JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
             committed_public_values.spartan_outer_raf,
         )?;
         values.public(
-            JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
+            JoltDerivedId::from(BytecodeReadRafPublic::SpartanShiftRaf),
             committed_public_values.spartan_shift_raf,
         )?;
         values.public(
-            JoltPublicId::from(BytecodeReadRafPublic::Entry),
+            JoltDerivedId::from(BytecodeReadRafPublic::Entry),
             committed_public_values.entry,
         )?;
     } else {
@@ -839,20 +839,20 @@ where
             .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
         for (index, stage_value) in bytecode_public_values.stage_values.iter().enumerate() {
             values.public(
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(index)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(index)),
                 *stage_value,
             )?;
         }
         values.public(
-            JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
+            JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
             bytecode_public_values.spartan_outer_raf,
         )?;
         values.public(
-            JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
+            JoltDerivedId::from(BytecodeReadRafPublic::SpartanShiftRaf),
             bytecode_public_values.spartan_shift_raf,
         )?;
         values.public(
-            JoltPublicId::from(BytecodeReadRafPublic::Entry),
+            JoltDerivedId::from(BytecodeReadRafPublic::Entry),
             bytecode_public_values.entry,
         )?;
     }
@@ -882,7 +882,7 @@ where
     ]
     .concat();
     values.public(
-        JoltPublicId::from(BooleanityPublic::EqAddressCycle),
+        JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
         try_eq_mle(&booleanity_full_point, &reference_eq_point)
             .map_err(|error| public_error(JoltRelationId::Booleanity, error))?,
     )?;
@@ -894,7 +894,7 @@ where
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
     let stage1_cycle_binding = &input.stage1.public.remainder_challenges[1..];
     values.public(
-        JoltPublicId::from(RamHammingBooleanityPublic::EqCycle),
+        JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle),
         try_eq_mle(&ram_hamming_point, stage1_cycle_binding)
             .map_err(|error| public_error(JoltRelationId::RamHammingBooleanity, error))?,
     )?;
@@ -909,7 +909,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?;
     let ram_reduced_cycle = &input.stage5.output_points.ram_reduced_opening_point()[log_k..];
     values.public(
-        JoltPublicId::from(RamRaVirtualizationPublic::EqCycle),
+        JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle),
         try_eq_mle(ram_reduced_cycle, &ram_ra_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?,
     )?;
@@ -925,7 +925,7 @@ where
         .cycle_opening_point(&instruction_ra_point)
         .map_err(|error| public_error(JoltRelationId::InstructionRaVirtualization, error))?;
     values.public(
-        JoltPublicId::from(InstructionRaVirtualizationPublic::EqCycle),
+        JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle),
         try_eq_mle(
             input.stage5.output_points.instruction_r_cycle(),
             &instruction_ra_cycle,
@@ -942,7 +942,7 @@ where
         .cycle_opening_point(&inc_point)
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?;
     values.public(
-        JoltPublicId::from(IncClaimReductionPublic::EqRamReadWrite),
+        JoltDerivedId::from(IncClaimReductionPublic::EqRamReadWrite),
         try_eq_mle(
             &inc_opening_point,
             &input.stage2.output_points.ram_read_write_point()[log_k..],
@@ -950,7 +950,7 @@ where
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
     values.public(
-        JoltPublicId::from(IncClaimReductionPublic::EqRamValCheck),
+        JoltDerivedId::from(IncClaimReductionPublic::EqRamValCheck),
         try_eq_mle(
             &inc_opening_point,
             &input.stage4.output_points.ram_val_check_point()[log_k..],
@@ -958,7 +958,7 @@ where
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
     values.public(
-        JoltPublicId::from(IncClaimReductionPublic::EqRegistersReadWrite),
+        JoltDerivedId::from(IncClaimReductionPublic::EqRegistersReadWrite),
         try_eq_mle(
             &inc_opening_point,
             &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..],
@@ -966,7 +966,7 @@ where
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
     values.public(
-        JoltPublicId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
+        JoltDerivedId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
         try_eq_mle(
             &inc_opening_point,
             &input.stage5.output_points.registers_opening_point()[REGISTER_ADDRESS_BITS..],
@@ -1014,7 +1014,7 @@ fn add_bytecode_chunk_weight_publics<F: Field>(
 ) -> Result<(), VerifierError> {
     for (chunk_idx, weight) in chunk_weights.into_iter().enumerate() {
         values.public(
-            JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx)),
+            JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx)),
             weight,
         )?;
     }
@@ -1115,7 +1115,7 @@ where
             public_error(JoltRelationId::ProgramImageClaimReductionCyclePhase, error)
         })?;
     values.public(
-        JoltPublicId::from(ProgramImageClaimReductionPublic::FinalScale),
+        JoltDerivedId::from(ProgramImageClaimReductionPublic::FinalScale),
         scale,
     )
 }
@@ -1142,7 +1142,7 @@ where
         .address_phase_final_output_scale(&r_addr_rw, &cycle_phase_variables, sumcheck_point)
         .map_err(|error| public_error(JoltRelationId::ProgramImageClaimReduction, error))?;
     values.public(
-        JoltPublicId::from(ProgramImageClaimReductionPublic::FinalScale),
+        JoltDerivedId::from(ProgramImageClaimReductionPublic::FinalScale),
         scale,
     )
 }
@@ -1175,7 +1175,7 @@ where
         .cycle_phase_scale_at_opening_point(&source_point, opening_point)
         .map_err(|error| public_error(JoltRelationId::AdviceClaimReductionCyclePhase, error))?;
     values.public(
-        JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(kind)),
+        JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(kind)),
         scale,
     )
 }
@@ -1203,7 +1203,7 @@ where
         .address_phase_final_output_scale(&source_point, &cycle_phase_variables, sumcheck_point)
         .map_err(|error| public_error(JoltRelationId::AdviceClaimReduction, error))?;
     values.public(
-        JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(kind)),
+        JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(kind)),
         scale,
     )
 }

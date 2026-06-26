@@ -8,13 +8,13 @@ use crate::protocols::field_inline::geometry::registers::{
     field_rs1_ra_read_write, field_rs1_value_claim, field_rs2_ra_read_write, field_rs2_value_claim,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineDerivedId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersReadWriteChallenge,
     FieldRegistersReadWriteDimensions, FieldRegistersReadWritePublic,
     FieldRegistersTraceDimensions, FieldRegistersValEvaluationPublic,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, opening, public};
+use crate::{challenge, opening, derived};
 
 /// The native field-register read/write checking sumcheck: relates the read-value
 /// claims (`FieldRdValue`, `FieldRs1Value`, `FieldRs2Value`) folded by `gamma` to
@@ -26,7 +26,7 @@ pub struct ReadWriteChecking {
 impl SymbolicSumcheck for ReadWriteChecking {
     type RelationId = FieldInlineRelationId;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
+    type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersReadWriteDimensions;
 
@@ -51,7 +51,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
         let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
-        let eq_cycle = public(FieldRegistersReadWritePublic::EqCycle);
+        let eq_cycle = derived(FieldRegistersReadWritePublic::EqCycle);
         eq_cycle.clone() * opening(field_rd_wa_read_write()) * opening(field_rd_inc_read_write())
             + eq_cycle.clone()
                 * opening(field_rd_wa_read_write())
@@ -76,7 +76,7 @@ pub struct ValEvaluation {
 impl SymbolicSumcheck for ValEvaluation {
     type RelationId = FieldInlineRelationId;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
+    type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
 
@@ -97,7 +97,7 @@ impl SymbolicSumcheck for ValEvaluation {
     }
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        public(FieldRegistersValEvaluationPublic::LtCycle)
+        derived(FieldRegistersValEvaluationPublic::LtCycle)
             * opening(field_rd_inc_val_evaluation())
             * opening(field_rd_wa_val_evaluation())
     }
@@ -154,8 +154,8 @@ mod tests {
         );
         assert_eq!(relation.required_challenges::<Fr>().len(), 1);
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![FieldInlinePublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![FieldInlineDerivedId::from(
                 FieldRegistersReadWritePublic::EqCycle
             )]
         );
@@ -209,7 +209,7 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                FieldInlinePublicId::FieldRegistersReadWrite(
+                FieldInlineDerivedId::FieldRegistersReadWrite(
                     FieldRegistersReadWritePublic::EqCycle,
                 ) => eq_cycle,
                 _ => zero,
@@ -245,8 +245,8 @@ mod tests {
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![FieldInlinePublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![FieldInlineDerivedId::from(
                 FieldRegistersValEvaluationPublic::LtCycle
             )]
         );
@@ -279,7 +279,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                FieldInlinePublicId::FieldRegistersValEvaluation(
+                FieldInlineDerivedId::FieldRegistersValEvaluation(
                     FieldRegistersValEvaluationPublic::LtCycle,
                 ) => lt_cycle,
                 _ => zero,

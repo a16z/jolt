@@ -9,10 +9,10 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     right_lookup_operand_spartan, weighted_claims,
 };
 use crate::protocols::jolt::{
-    InstructionClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
+    InstructionClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId,
     JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::{public, SymbolicSumcheck};
+use crate::{derived, SymbolicSumcheck};
 
 /// Batches the Spartan-outer instruction-lookup openings (lookup output, left/
 /// right lookup operands, left/right instruction inputs) by `gamma` and reduces
@@ -24,7 +24,7 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -51,7 +51,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(InstructionClaimReductionPublic::EqSpartan)
+        derived(InstructionClaimReductionPublic::EqSpartan)
             * weighted_claims(
                 lookup_output_reduced(),
                 left_lookup_operand_reduced(),
@@ -150,7 +150,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::InstructionClaimReduction(
+                JoltDerivedId::InstructionClaimReduction(
                     InstructionClaimReductionPublic::EqSpartan,
                 ) => eq_spartan,
                 _ => zero,
@@ -212,8 +212,8 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(
                 InstructionClaimReductionPublic::EqSpartan
             )]
         );

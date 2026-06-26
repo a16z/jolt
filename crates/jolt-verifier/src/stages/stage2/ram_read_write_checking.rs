@@ -9,7 +9,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::ReadWriteDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::ReadWriteDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
     RamReadWriteChallenge, RamReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -132,13 +132,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RamReadWriteInputClaims<C>,
         outputs: Option<&RamReadWriteOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RamReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RamReadWrite(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the

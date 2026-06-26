@@ -10,7 +10,7 @@
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::{dimensions::committed_address_chunks, ram::RamRaVirtualizationDimensions},
-    JoltPublicId, JoltRelationId, RamRaVirtualizationPublic,
+    JoltDerivedId, JoltRelationId, RamRaVirtualizationPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -108,13 +108,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RamRaVirtualizationInputClaims<C>,
         outputs: Option<&RamRaVirtualizationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let log_t = self.dimensions.log_t();
         let point = outputs

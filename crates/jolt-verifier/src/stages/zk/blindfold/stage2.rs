@@ -76,7 +76,7 @@ where
         VerifierPublicId::Challenge(JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
         input.stage2.public.ram_read_write_gamma,
     )?;
-    values.public(JoltPublicId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
+    values.public(JoltDerivedId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
 
     let product_point = input
         .stage2
@@ -124,7 +124,7 @@ where
         input.stage2.public.instruction_gamma,
     )?;
     values.public(
-        JoltPublicId::from(InstructionClaimReductionPublic::EqSpartan),
+        JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan),
         eq_spartan,
     )?;
 
@@ -147,7 +147,7 @@ where
         * PCS::Field::from_u64(8)
         + PCS::Field::from_u64(input.checked.public_io.memory_layout.get_lowest_address());
     values.public(
-        JoltPublicId::from(RamRafEvaluationPublic::UnmapAddress),
+        JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress),
         ram_raf_unmap_address,
     )?;
 
@@ -165,11 +165,11 @@ where
         &ram_output_address,
     )?;
     values.public(
-        JoltPublicId::from(RamOutputCheckPublic::EqIoMask),
+        JoltDerivedId::from(RamOutputCheckPublic::EqIoMask),
         output_publics.0,
     )?;
     values.public(
-        JoltPublicId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
+        JoltDerivedId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
         output_publics.1,
     )?;
 

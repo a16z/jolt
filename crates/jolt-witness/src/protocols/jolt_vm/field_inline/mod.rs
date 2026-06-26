@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::field_inline::{
-    FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlineOpeningId, FieldInlineDerivedId,
     FieldInlineVirtualPolynomial, FIELD_REGISTERS_LOG_K,
 };
 use jolt_field::{Field, ReducingBytes};
@@ -34,8 +34,8 @@ impl WitnessNamespace for FieldInlineNamespace {
     type CommittedId = FieldInlineCommittedPolynomial;
     type VirtualId = FieldInlineVirtualPolynomial;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
-    type ChallengeId = FieldInlinePublicId;
+    type PublicId = FieldInlineDerivedId;
+    type ChallengeId = FieldInlineDerivedId;
 
     const ID: NamespaceId = FIELD_INLINE_NAMESPACE;
 }

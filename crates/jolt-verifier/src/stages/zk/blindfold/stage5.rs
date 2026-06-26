@@ -60,19 +60,19 @@ where
         input.stage5.challenges.instruction_gamma * input.stage5.challenges.instruction_gamma;
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
         values.public(
-            JoltPublicId::from(InstructionReadRafPublic::EqTableValue(table.index())),
+            JoltDerivedId::from(InstructionReadRafPublic::EqTableValue(table.index())),
             eq_reduction
                 * table.evaluate_mle::<PCS::Field, PCS::Field>(&instruction_opening.r_address),
         )?;
     }
     values.public(
-        JoltPublicId::from(InstructionReadRafPublic::EqRafConstant),
+        JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
         eq_reduction
             * (input.stage5.challenges.instruction_gamma * left_operand_eval
                 + instruction_gamma_squared * right_operand_eval),
     )?;
     values.public(
-        JoltPublicId::from(InstructionReadRafPublic::EqRafFlag),
+        JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
         eq_reduction
             * (instruction_gamma_squared * identity_eval
                 - input.stage5.challenges.instruction_gamma * left_operand_eval
@@ -95,17 +95,17 @@ where
     let ram_read_write_cycle = &input.stage2.output_points.ram_read_write_point()[log_k..];
     let ram_val_cycle = &input.stage4.output_points.ram_val_check_point()[log_k..];
     values.public(
-        JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
+        JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleRaf),
         try_eq_mle(&ram_cycle, ram_raf_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
     values.public(
-        JoltPublicId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
+        JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
         try_eq_mle(&ram_cycle, ram_read_write_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
     values.public(
-        JoltPublicId::from(RamRaClaimReductionPublic::EqCycleValCheck),
+        JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleValCheck),
         try_eq_mle(&ram_cycle, ram_val_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
@@ -121,7 +121,7 @@ where
     let registers_read_write_cycle =
         &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
     values.public(
-        JoltPublicId::from(RegistersValEvaluationPublic::LtCycle),
+        JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle),
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 

@@ -12,7 +12,7 @@ use crate::protocols::jolt::{
     RegistersReadWritePublic, RegistersValEvaluationPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, opening, public};
+use crate::{challenge, opening, derived};
 
 /// The registers read/write checking sumcheck: relates the read-value claims
 /// (`RdWriteValue`, `Rs1Value`, `Rs2Value`) folded by `gamma` to the register
@@ -24,7 +24,7 @@ pub struct ReadWriteChecking {
 impl SymbolicSumcheck for ReadWriteChecking {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
 
@@ -49,7 +49,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(RegistersReadWriteChallenge::Gamma);
-        let eq_cycle = public(RegistersReadWritePublic::EqCycle);
+        let eq_cycle = derived(RegistersReadWritePublic::EqCycle);
         eq_cycle.clone() * opening(rd_wa_read_write()) * opening(rd_inc_read_write())
             + eq_cycle.clone() * opening(rd_wa_read_write()) * opening(registers_val_read_write())
             + eq_cycle.clone()
@@ -72,7 +72,7 @@ pub struct ValEvaluation {
 impl SymbolicSumcheck for ValEvaluation {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -93,7 +93,7 @@ impl SymbolicSumcheck for ValEvaluation {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(RegistersValEvaluationPublic::LtCycle)
+        derived(RegistersValEvaluationPublic::LtCycle)
             * opening(rd_inc_val_evaluation())
             * opening(rd_wa_val_evaluation())
     }
@@ -102,7 +102,7 @@ impl SymbolicSumcheck for ValEvaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltPublicId};
+    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
@@ -183,7 +183,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::RegistersReadWrite(RegistersReadWritePublic::EqCycle) => eq_cycle,
+                JoltDerivedId::RegistersReadWrite(RegistersReadWritePublic::EqCycle) => eq_cycle,
                 _ => zero,
             },
         );
@@ -241,7 +241,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
+                JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                     lt_cycle
                 }
                 _ => zero,
@@ -281,8 +281,8 @@ mod tests {
             vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RegistersReadWritePublic::EqCycle)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(RegistersReadWritePublic::EqCycle)]
         );
     }
 
@@ -301,8 +301,8 @@ mod tests {
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RegistersValEvaluationPublic::LtCycle)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle)]
         );
     }
 }

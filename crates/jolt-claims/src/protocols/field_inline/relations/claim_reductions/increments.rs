@@ -6,11 +6,11 @@ use crate::protocols::field_inline::geometry::claim_reductions::increments::{
     field_rd_inc_read_write, field_rd_inc_reduced, field_rd_inc_val_evaluation,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineDerivedId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic, FieldRegistersTraceDimensions,
 };
-use crate::{challenge, opening, public, SymbolicSumcheck};
+use crate::{challenge, opening, derived, SymbolicSumcheck};
 
 /// Reduces the two `FieldRdInc` openings (read/write and val-evaluation) to a
 /// single reduced `FieldRdInc` opening, folding by `eta` and weighting by the
@@ -22,7 +22,7 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = FieldInlineRelationId;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
+    type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
 
@@ -47,8 +47,8 @@ impl SymbolicSumcheck for ClaimReduction {
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
         let eta = challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
 
-        let output_coeff = public(FieldRegistersIncClaimReductionPublic::EqReadWrite)
-            + eta * public(FieldRegistersIncClaimReductionPublic::EqValEvaluation);
+        let output_coeff = derived(FieldRegistersIncClaimReductionPublic::EqReadWrite)
+            + eta * derived(FieldRegistersIncClaimReductionPublic::EqValEvaluation);
         output_coeff * opening(field_rd_inc_reduced())
     }
 }
@@ -89,10 +89,10 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                FieldInlinePublicId::from(FieldRegistersIncClaimReductionPublic::EqReadWrite),
-                FieldInlinePublicId::from(FieldRegistersIncClaimReductionPublic::EqValEvaluation),
+                FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqReadWrite),
+                FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqValEvaluation),
             ]
         );
     }
@@ -136,10 +136,10 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                FieldInlinePublicId::FieldRegistersIncClaimReduction(
+                FieldInlineDerivedId::FieldRegistersIncClaimReduction(
                     FieldRegistersIncClaimReductionPublic::EqReadWrite,
                 ) => eq_read_write,
-                FieldInlinePublicId::FieldRegistersIncClaimReduction(
+                FieldInlineDerivedId::FieldRegistersIncClaimReduction(
                     FieldRegistersIncClaimReductionPublic::EqValEvaluation,
                 ) => eq_val_evaluation,
                 _ => zero,

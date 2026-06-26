@@ -13,10 +13,10 @@ use crate::protocols::jolt::geometry::spartan::{
     SpartanProductDimensions, SHIFT_DEGREE,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
     SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
 };
-use crate::{challenge, opening, public, SymbolicSumcheck};
+use crate::{challenge, opening, derived, SymbolicSumcheck};
 
 /// The Spartan shift sumcheck: relates each `Next*` column from the outer
 /// sumcheck (and `next_is_noop` from the product remainder) to the shifted
@@ -29,7 +29,7 @@ pub struct Shift {
 impl SymbolicSumcheck for Shift {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -56,12 +56,12 @@ impl SymbolicSumcheck for Shift {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
-        public(SpartanShiftPublic::EqPlusOneOuter)
+        derived(SpartanShiftPublic::EqPlusOneOuter)
             * (opening(unexpanded_pc_shift())
                 + gamma.clone() * opening(pc_shift())
                 + gamma.clone().pow(2) * opening(is_virtual_shift())
                 + gamma.clone().pow(3) * opening(is_first_in_sequence_shift()))
-            + public(SpartanShiftPublic::EqPlusOneProduct)
+            + derived(SpartanShiftPublic::EqPlusOneProduct)
                 * gamma.pow(4)
                 * (JoltExpr::one() - opening(is_noop_shift()))
     }
@@ -76,7 +76,7 @@ pub struct OuterUniskip {
 impl SymbolicSumcheck for OuterUniskip {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanOuterDimensions;
 
@@ -110,7 +110,7 @@ pub struct OuterRemainder {
 impl SymbolicSumcheck for OuterRemainder {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanOuterDimensions;
 
@@ -137,7 +137,7 @@ impl SymbolicSumcheck for OuterRemainder {
             for (right_index, right_variable) in self.shape.variables().iter().copied().enumerate()
             {
                 output = output
-                    + public(JoltPublicId::from(
+                    + derived(JoltDerivedId::from(
                         SpartanOuterPublic::QuadraticCoefficient {
                             left: left_index,
                             right: right_index,
@@ -150,14 +150,14 @@ impl SymbolicSumcheck for OuterRemainder {
         if self.shape.include_linear_terms() {
             for (index, variable) in self.shape.variables().iter().copied().enumerate() {
                 output = output
-                    + public(JoltPublicId::from(SpartanOuterPublic::LinearCoefficient(
+                    + derived(JoltDerivedId::from(SpartanOuterPublic::LinearCoefficient(
                         index,
                     ))) * opening(outer_opening(variable));
             }
         }
 
         if self.shape.include_constant_term() {
-            output = output + public(JoltPublicId::from(SpartanOuterPublic::ConstantCoefficient));
+            output = output + derived(JoltDerivedId::from(SpartanOuterPublic::ConstantCoefficient));
         }
 
         output
@@ -173,7 +173,7 @@ pub struct ProductUniskip {
 impl SymbolicSumcheck for ProductUniskip {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanProductDimensions;
 
@@ -209,7 +209,7 @@ pub struct ProductRemainder {
 impl SymbolicSumcheck for ProductRemainder {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanProductDimensions;
 
@@ -245,7 +245,7 @@ impl SymbolicSumcheck for ProductRemainder {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{
-        JoltChallengeId, JoltPublicId, SpartanProductVirtualizationPublic,
+        JoltChallengeId, JoltDerivedId, SpartanProductVirtualizationPublic,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -283,10 +283,10 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::SpartanProductVirtualization(
+                JoltDerivedId::SpartanProductVirtualization(
                     SpartanProductVirtualizationPublic::LagrangeWeight(index),
                 ) => weights[index],
-                JoltPublicId::SpartanProductVirtualization(
+                JoltDerivedId::SpartanProductVirtualization(
                     SpartanProductVirtualizationPublic::TauKernel,
                 ) => tau_kernel,
                 _ => zero,
@@ -351,8 +351,8 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::SpartanShift(SpartanShiftPublic::EqPlusOneOuter) => eq_outer,
-                JoltPublicId::SpartanShift(SpartanShiftPublic::EqPlusOneProduct) => eq_product,
+                JoltDerivedId::SpartanShift(SpartanShiftPublic::EqPlusOneOuter) => eq_outer,
+                JoltDerivedId::SpartanShift(SpartanShiftPublic::EqPlusOneProduct) => eq_product,
                 _ => zero,
             },
         );
@@ -389,10 +389,10 @@ mod tests {
             vec![JoltChallengeId::from(SpartanShiftChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(SpartanShiftPublic::EqPlusOneOuter),
-                JoltPublicId::from(SpartanShiftPublic::EqPlusOneProduct),
+                JoltDerivedId::from(SpartanShiftPublic::EqPlusOneOuter),
+                JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
             ]
         );
     }

@@ -7,10 +7,10 @@ use jolt_poly::{
 };
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 
-use crate::public;
+use crate::derived;
 
 use super::super::{
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
+    JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltVirtualPolynomial,
     SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
 use super::dimensions::{
@@ -364,7 +364,7 @@ pub(crate) fn product_weight<F>(index: usize) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    public(JoltPublicId::from(
+    derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::LagrangeWeight(index),
     ))
 }
@@ -373,7 +373,7 @@ pub(crate) fn product_uniskip_weight<F>(index: usize) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    public(JoltPublicId::from(
+    derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
     ))
 }
@@ -382,7 +382,7 @@ pub(crate) fn product_tau_kernel<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
-    public(JoltPublicId::from(
+    derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::TauKernel,
     ))
 }

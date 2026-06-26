@@ -8,7 +8,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltPublicId, SpartanShiftChallenge,
+    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltDerivedId, SpartanShiftChallenge,
     SpartanShiftPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -138,13 +138,13 @@ impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &SpartanShiftInputClaims<C>,
         outputs: Option<&SpartanShiftOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::SpartanShift(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::SpartanShift(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         // Every shift output shares the one shift opening point.
         let opening_point = outputs.unexpanded_pc.point();

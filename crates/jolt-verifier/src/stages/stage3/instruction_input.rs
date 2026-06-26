@@ -15,7 +15,7 @@
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, InstructionInputChallenge, InstructionInputPublic,
-    JoltChallengeId, JoltPublicId, JoltRelationId,
+    JoltChallengeId, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -152,13 +152,13 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &InstructionInputInputClaims<C>,
         outputs: Option<&InstructionInputOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::InstructionInput(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::InstructionInput(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // Every instruction-input output shares the one opening point.

@@ -9,9 +9,9 @@ pub enum Source<O, P = (), C = usize> {
     /// Transcript-derived scalar, including verifier-computed Eq/Lt values over
     /// Fiat-Shamir challenge points that are consumed as stage challenges.
     Challenge(C),
-    /// Deterministic verifier-side scalar: public IO, preprocessing, boundary
+    /// Deterministic verifier-computed scalar: public IO, preprocessing, boundary
     /// data, or fixed coefficients computed from already-known points.
-    Public(P),
+    Derived(P),
 }
 
 /// One product term: `coefficient * product(factors)`.
@@ -90,16 +90,16 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
         }
     }
 
-    pub fn evaluate<OpeningValue, ChallengeValue, PublicValue>(
+    pub fn evaluate<OpeningValue, ChallengeValue, DerivedValue>(
         &self,
         mut resolve_opening: OpeningValue,
         mut resolve_challenge: ChallengeValue,
-        mut resolve_public: PublicValue,
+        mut resolve_derived: DerivedValue,
     ) -> F
     where
         OpeningValue: FnMut(&O) -> F,
         ChallengeValue: FnMut(&C) -> F,
-        PublicValue: FnMut(&P) -> F,
+        DerivedValue: FnMut(&P) -> F,
     {
         let mut result = F::zero();
         for term in &self.terms {
@@ -108,7 +108,7 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
                 value *= match factor {
                     Source::Opening(id) => resolve_opening(id),
                     Source::Challenge(id) => resolve_challenge(id),
-                    Source::Public(id) => resolve_public(id),
+                    Source::Derived(id) => resolve_derived(id),
                 };
             }
             result += value;
@@ -116,16 +116,16 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
         result
     }
 
-    pub fn try_evaluate<OpeningValue, ChallengeValue, PublicValue, Error>(
+    pub fn try_evaluate<OpeningValue, ChallengeValue, DerivedValue, Error>(
         &self,
         mut resolve_opening: OpeningValue,
         mut resolve_challenge: ChallengeValue,
-        mut resolve_public: PublicValue,
+        mut resolve_derived: DerivedValue,
     ) -> Result<F, Error>
     where
         OpeningValue: FnMut(&O) -> Result<F, Error>,
         ChallengeValue: FnMut(&C) -> Result<F, Error>,
-        PublicValue: FnMut(&P) -> Result<F, Error>,
+        DerivedValue: FnMut(&P) -> Result<F, Error>,
     {
         let mut result = F::zero();
         for term in &self.terms {
@@ -134,7 +134,7 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
                 value *= match factor {
                     Source::Opening(id) => resolve_opening(id)?,
                     Source::Challenge(id) => resolve_challenge(id)?,
-                    Source::Public(id) => resolve_public(id)?,
+                    Source::Derived(id) => resolve_derived(id)?,
                 };
             }
             result += value;
@@ -163,7 +163,7 @@ impl<F: RingCore, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
 }
 
 impl<F: RingCore, O, C> Expr<F, O, (), C> {
-    pub fn evaluate_without_public<OpeningValue, ChallengeValue>(
+    pub fn evaluate_without_derived<OpeningValue, ChallengeValue>(
         &self,
         opening_value: OpeningValue,
         challenge_value: ChallengeValue,
@@ -191,16 +191,16 @@ impl<F, O: Clone + Eq, P, C> Expr<F, O, P, C> {
 }
 
 impl<F, O, P: Clone + Eq, C> Expr<F, O, P, C> {
-    pub fn required_publics(&self) -> Vec<P> {
-        let mut publics = Vec::new();
+    pub fn required_deriveds(&self) -> Vec<P> {
+        let mut deriveds = Vec::new();
         for source in self.terms.iter().flat_map(|term| term.factors.iter()) {
-            if let Source::Public(id) = source {
-                if !publics.contains(id) {
-                    publics.push(id.clone());
+            if let Source::Derived(id) = source {
+                if !deriveds.contains(id) {
+                    deriveds.push(id.clone());
                 }
             }
         }
-        publics
+        deriveds
     }
 }
 
@@ -218,10 +218,10 @@ pub fn challenge<F: RingCore, O, P, C>(id: impl Into<C>) -> Expr<F, O, P, C> {
     }
 }
 
-/// Builds a named public-value source expression.
-pub fn public<F: RingCore, O, P, C>(id: impl Into<P>) -> Expr<F, O, P, C> {
+/// Builds a named derived-value source expression.
+pub fn derived<F: RingCore, O, P, C>(id: impl Into<P>) -> Expr<F, O, P, C> {
     Expr {
-        terms: vec![Term::source(Source::Public(id.into()))],
+        terms: vec![Term::source(Source::Derived(id.into()))],
     }
 }
 
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    enum Public {
+    enum Derived {
         Offset,
     }
 
@@ -259,7 +259,7 @@ mod tests {
                 + challenge(1usize) * opening(Opening::A)
                 - constant(Fr::from_u64(5));
 
-        let value = expr.evaluate_without_public(
+        let value = expr.evaluate_without_derived(
             |opening| match opening {
                 Opening::A => Fr::from_u64(3),
                 Opening::B => Fr::from_u64(7),
@@ -274,9 +274,9 @@ mod tests {
     }
 
     #[test]
-    fn expression_evaluates_public_sources() {
-        let expr: Expr<Fr, Opening, Public> =
-            opening(Opening::A) * public(Public::Offset) + constant(Fr::from_u64(4));
+    fn expression_evaluates_derived_sources() {
+        let expr: Expr<Fr, Opening, Derived> =
+            opening(Opening::A) * derived(Derived::Offset) + constant(Fr::from_u64(4));
 
         let value = expr.evaluate(
             |opening| match opening {
@@ -284,8 +284,8 @@ mod tests {
                 Opening::B => Fr::from_u64(0),
             },
             |_| Fr::from_u64(0),
-            |public| match public {
-                Public::Offset => Fr::from_u64(9),
+            |derived| match derived {
+                Derived::Offset => Fr::from_u64(9),
             },
         );
 
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn expression_powers_are_structural_products() {
-        let gamma: Expr<Fr, Opening, Public, Challenge> = challenge(Challenge::Alpha);
+        let gamma: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Alpha);
         let expr = gamma.pow(3) * opening(Opening::A);
 
         assert_eq!(expr.required_challenges(), vec![Challenge::Alpha]);
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn expression_zero_power_is_one() {
-        let expr: Expr<Fr, Opening, Public, Challenge> = Expr::zero().pow(0);
+        let expr: Expr<Fr, Opening, Derived, Challenge> = Expr::zero().pow(0);
 
         assert_eq!(
             expr.evaluate(
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn zero_coefficient_terms_keep_non_constant_metadata() {
-        let expr: Expr<Fr, Opening, Public, Challenge> = Term {
+        let expr: Expr<Fr, Opening, Derived, Challenge> = Term {
             coefficient: Fr::from_u64(0),
             factors: vec![Source::Opening(Opening::A)],
         }
@@ -350,9 +350,9 @@ mod tests {
 
     #[test]
     fn typed_challenges_have_canonical_order() {
-        let expression: Expr<Fr, Opening, Public, Challenge> = challenge(Challenge::Beta)
+        let expression: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Beta)
             * opening(Opening::B)
-            + challenge(Challenge::Alpha) * public(Public::Offset)
+            + challenge(Challenge::Alpha) * derived(Derived::Offset)
             + challenge(Challenge::Beta);
 
         assert_eq!(

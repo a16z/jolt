@@ -194,7 +194,7 @@ where
             let source = match source {
                 Source::Opening(id) => sources.opening(id)?,
                 Source::Challenge(id) => sources.challenge(id)?,
-                Source::Public(id) => sources.public(id)?,
+                Source::Derived(id) => sources.public(id)?,
             };
             match source {
                 SourceValue::Constant(value) => coefficient *= value,
@@ -251,7 +251,7 @@ fn lower_product<F: Field>(
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_claims::{challenge, constant, opening, public, Expr};
+    use jolt_claims::{challenge, constant, opening, derived, Expr};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,7 +285,7 @@ mod tests {
         sources.insert_public(Public::Offset, Fr::from_u64(4));
 
         let expression: Expr<Fr, Opening, Public> =
-            opening(Opening::A) * opening(Opening::B) + challenge(0usize) * public(Public::Offset);
+            opening(Opening::A) * opening(Opening::B) + challenge(0usize) * derived(Public::Offset);
 
         assert_claim_expr_eq(&mut builder, &expression, out, &mut sources)
             .expect("expression lowers");
@@ -357,7 +357,7 @@ mod tests {
         sources.insert_public_lc(Public::Offset, LinearCombination::variable(public_value));
 
         let expression: Expr<Fr, Opening, Public, Challenge> =
-            opening(Opening::A) * challenge(Challenge::Gamma) + public(Public::Offset);
+            opening(Opening::A) * challenge(Challenge::Gamma) + derived(Public::Offset);
 
         assert_claim_expr_eq(&mut builder, &expression, out, &mut sources)
             .expect("variable sources lower");
@@ -398,7 +398,7 @@ mod tests {
         sources.insert_public(Public::Offset, Fr::from_u64(7));
 
         let expression: Expr<Fr, Opening, Public, Challenge> =
-            challenge(Challenge::Gamma) * public(Public::Offset);
+            challenge(Challenge::Gamma) * derived(Public::Offset);
         let lowered = lower_claim_expr(&mut builder, &expression, &mut sources)
             .expect("constant sources lower");
 
@@ -452,7 +452,7 @@ mod tests {
     fn missing_public_is_typed_error() {
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
-        let expression: Expr<Fr, Opening, Public> = public(Public::Offset);
+        let expression: Expr<Fr, Opening, Public> = derived(Public::Offset);
 
         let error = lower_claim_expr(&mut builder, &expression, &mut sources)
             .expect_err("public is missing");

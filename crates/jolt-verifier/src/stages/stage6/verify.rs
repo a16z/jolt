@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
     },
     relations, AdviceClaimReductionLayout, BytecodeClaimReductionChallenge,
     BytecodeClaimReductionLayout, BytecodeReadRafChallenge, JoltAdviceKind, JoltChallengeId,
-    JoltPublicId, JoltRelationId, JoltSumcheckSpec, PrecommittedClaimReduction,
+    JoltDerivedId, JoltRelationId, JoltSumcheckSpec, PrecommittedClaimReduction,
     PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -1666,11 +1666,11 @@ pub fn stage6_bytecode_read_raf_expected_output<F: Field>(
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         },
         |id| match id {
-            JoltPublicId::BytecodeReadRaf(public_id) => inputs
+            JoltDerivedId::BytecodeReadRaf(public_id) => inputs
                 .public_values
                 .value(*public_id)
-                .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
         },
     )
 }

@@ -11,7 +11,7 @@ use crate::{Expr, SumcheckSpec};
 pub trait SymbolicSumcheck {
     type RelationId;
     type OpeningId;
-    type PublicId;
+    type DerivedId;
     type ChallengeId;
 
     /// The construction input that fully determines this relation's structure (its
@@ -31,10 +31,10 @@ pub trait SymbolicSumcheck {
 
     fn input_expression<F: RingCore>(
         &self,
-    ) -> Expr<F, Self::OpeningId, Self::PublicId, Self::ChallengeId>;
+    ) -> Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>;
     fn output_expression<F: RingCore>(
         &self,
-    ) -> Expr<F, Self::OpeningId, Self::PublicId, Self::ChallengeId>;
+    ) -> Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>;
 
     /// Openings referenced by either expression, input first, deduplicated.
     fn required_openings<F: RingCore>(&self) -> Vec<Self::OpeningId>
@@ -46,13 +46,13 @@ pub trait SymbolicSumcheck {
         ids
     }
 
-    /// Public values referenced by either expression, input first, deduplicated.
-    fn required_publics<F: RingCore>(&self) -> Vec<Self::PublicId>
+    /// Derived values referenced by either expression, input first, deduplicated.
+    fn required_deriveds<F: RingCore>(&self) -> Vec<Self::DerivedId>
     where
-        Self::PublicId: Clone + Eq,
+        Self::DerivedId: Clone + Eq,
     {
-        let mut ids = self.input_expression::<F>().required_publics();
-        extend_unique(&mut ids, &self.output_expression::<F>().required_publics());
+        let mut ids = self.input_expression::<F>().required_deriveds();
+        extend_unique(&mut ids, &self.output_expression::<F>().required_deriveds());
         ids
     }
 
@@ -75,7 +75,7 @@ pub trait SymbolicSumcheck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{challenge, opening, public, Expr, SumcheckSpec};
+    use crate::{challenge, derived, opening, Expr, SumcheckSpec};
     use jolt_field::Fr;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,7 +96,7 @@ mod tests {
     impl SymbolicSumcheck for Dummy {
         type RelationId = u8;
         type OpeningId = O;
-        type PublicId = P;
+        type DerivedId = P;
         type ChallengeId = Ch;
         type Shape = ();
         fn new((): ()) -> Self {
@@ -112,7 +112,7 @@ mod tests {
             opening(O::A) + challenge(Ch::G) * opening(O::B)
         }
         fn output_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {
-            public(P::X) * opening(O::B)
+            derived(P::X) * opening(O::B)
         }
     }
 
@@ -120,7 +120,7 @@ mod tests {
     fn required_sets_are_input_then_output_deduped() {
         let d = Dummy;
         assert_eq!(d.required_openings::<Fr>(), vec![O::A, O::B]); // A from input, B from input
-        assert_eq!(d.required_publics::<Fr>(), vec![P::X]);
+        assert_eq!(d.required_deriveds::<Fr>(), vec![P::X]);
         assert_eq!(d.required_challenges::<Fr>(), vec![Ch::G]);
         assert_eq!(Dummy::id(), 7);
     }

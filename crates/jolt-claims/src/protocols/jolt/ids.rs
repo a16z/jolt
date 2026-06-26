@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::Expr;
 
 /// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
-/// families (openings, publics, challenges). Each relation's `input`/`output`
+/// families (openings, deriveds, challenges). Each relation's `input`/`output`
 /// expression is a `JoltExpr<F>`.
-pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltPublicId, JoltChallengeId>;
+pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltRelationId {
@@ -410,7 +410,7 @@ impl JoltOpeningId {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-pub enum JoltPublicId {
+pub enum JoltDerivedId {
     TraceLength,
     PaddedTraceLength,
     BytecodeLength,

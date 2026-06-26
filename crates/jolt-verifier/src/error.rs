@@ -1,7 +1,7 @@
 //! Verifier error types.
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
+    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltDerivedId, JoltRelationId,
 };
 
 use crate::config::JoltProtocolConfig;
@@ -75,7 +75,7 @@ pub enum VerifierError {
     MissingStageClaimChallenge { id: JoltChallengeId },
 
     #[error("missing stage claim public input {id:?}")]
-    MissingStageClaimPublic { id: JoltPublicId },
+    MissingStageClaimDerived { id: JoltDerivedId },
 
     #[error("stage {stage:?} opening inputs {left:?} and {right:?} must have the same evaluation")]
     StageClaimOpeningMismatch {

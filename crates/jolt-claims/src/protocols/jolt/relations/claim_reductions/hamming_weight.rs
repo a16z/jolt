@@ -8,9 +8,9 @@ use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
 };
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{challenge, opening, public, SymbolicSumcheck};
+use crate::{challenge, opening, derived, SymbolicSumcheck};
 
 /// Batches each RA polynomial's hamming-weight, booleanity, and virtualization
 /// claims by powers of `gamma` and reduces them to the per-polynomial
@@ -22,7 +22,7 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = HammingWeightClaimReductionDimensions;
 
@@ -59,9 +59,9 @@ impl SymbolicSumcheck for ClaimReduction {
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             let output_coeff = gamma.clone().pow(3 * i)
                 + gamma.clone().pow(3 * i + 1)
-                    * public(HammingWeightClaimReductionPublic::EqBooleanity)
+                    * derived(HammingWeightClaimReductionPublic::EqBooleanity)
                 + gamma.clone().pow(3 * i + 2)
-                    * public(HammingWeightClaimReductionPublic::EqVirtualization(i));
+                    * derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
             output = output + output_coeff * opening(reduced_claim(polynomial));
         }
 
@@ -157,16 +157,16 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqBooleanity,
                 ) => eq_bool,
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqVirtualization(0),
                 ) => eq_virt_instruction,
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqVirtualization(1),
                 ) => eq_virt_bytecode,
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqVirtualization(2),
                 ) => eq_virt_ram,
                 _ => zero,
@@ -244,12 +244,12 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqBooleanity),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(0)),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(1)),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(2)),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanity),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(0)),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(1)),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(2)),
             ]
         );
         Ok(())

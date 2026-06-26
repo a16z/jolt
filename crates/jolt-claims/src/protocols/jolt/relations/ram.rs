@@ -9,14 +9,14 @@ use crate::protocols::jolt::geometry::ram::{
     RamRafEvaluationDimensions,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
     RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
     RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
     RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
     ReadWriteDimensions, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, constant, opening, public};
+use crate::{challenge, constant, opening, derived};
 
 /// The RAM read/write-checking sumcheck: folds the read and write values by
 /// `gamma` on the input side, and reconstructs them from `ra`, `val`, and `inc`
@@ -28,7 +28,7 @@ pub struct ReadWriteChecking {
 impl SymbolicSumcheck for ReadWriteChecking {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
 
@@ -50,12 +50,12 @@ impl SymbolicSumcheck for ReadWriteChecking {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(RamReadWritePublic::EqCycle) * opening(ram_ra()) * opening(ram_val())
-            + public(RamReadWritePublic::EqCycle)
+        derived(RamReadWritePublic::EqCycle) * opening(ram_ra()) * opening(ram_val())
+            + derived(RamReadWritePublic::EqCycle)
                 * challenge(RamReadWriteChallenge::Gamma)
                 * opening(ram_ra())
                 * opening(ram_val())
-            + public(RamReadWritePublic::EqCycle)
+            + derived(RamReadWritePublic::EqCycle)
                 * challenge(RamReadWriteChallenge::Gamma)
                 * opening(ram_ra())
                 * opening(ram_inc())
@@ -72,7 +72,7 @@ pub struct RafEvaluation {
 impl SymbolicSumcheck for RafEvaluation {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = RamRafEvaluationDimensions;
 
@@ -93,7 +93,7 @@ impl SymbolicSumcheck for RafEvaluation {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(RamRafEvaluationPublic::UnmapAddress) * opening(ram_ra_raf_evaluation())
+        derived(RamRafEvaluationPublic::UnmapAddress) * opening(ram_ra_raf_evaluation())
     }
 }
 
@@ -107,7 +107,7 @@ pub struct OutputCheck {
 impl SymbolicSumcheck for OutputCheck {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
 
@@ -128,8 +128,8 @@ impl SymbolicSumcheck for OutputCheck {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(RamOutputCheckPublic::EqIoMask) * opening(ram_val_final())
-            + public(RamOutputCheckPublic::NegEqIoMaskValIo)
+        derived(RamOutputCheckPublic::EqIoMask) * opening(ram_val_final())
+            + derived(RamOutputCheckPublic::NegEqIoMaskValIo)
     }
 }
 
@@ -143,7 +143,7 @@ pub struct RaClaimReduction {
 impl SymbolicSumcheck for RaClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -168,9 +168,9 @@ impl SymbolicSumcheck for RaClaimReduction {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(RamRaClaimReductionChallenge::Gamma);
-        (public(RamRaClaimReductionPublic::EqCycleRaf)
-            + gamma.clone() * public(RamRaClaimReductionPublic::EqCycleReadWrite)
-            + gamma.pow(2) * public(RamRaClaimReductionPublic::EqCycleValCheck))
+        (derived(RamRaClaimReductionPublic::EqCycleRaf)
+            + gamma.clone() * derived(RamRaClaimReductionPublic::EqCycleReadWrite)
+            + gamma.pow(2) * derived(RamRaClaimReductionPublic::EqCycleValCheck))
             * opening(ram_ra_claim_reduction())
     }
 }
@@ -185,7 +185,7 @@ pub struct RaVirtualization {
 impl SymbolicSumcheck for RaVirtualization {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = RamRaVirtualizationDimensions;
 
@@ -206,7 +206,7 @@ impl SymbolicSumcheck for RaVirtualization {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(RamRaVirtualizationPublic::EqCycle) * committed_ram_ra_product(self.shape)
+        derived(RamRaVirtualizationPublic::EqCycle) * committed_ram_ra_product(self.shape)
     }
 }
 
@@ -220,7 +220,7 @@ pub struct HammingBooleanity {
 impl SymbolicSumcheck for HammingBooleanity {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -241,7 +241,7 @@ impl SymbolicSumcheck for HammingBooleanity {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let eq_cycle = public(RamHammingBooleanityPublic::EqCycle);
+        let eq_cycle = derived(RamHammingBooleanityPublic::EqCycle);
         let h = opening(ram_hamming_weight());
         eq_cycle * (h.clone() * h.clone() - h)
     }
@@ -269,7 +269,7 @@ pub struct RamValCheckShape {
 }
 
 /// The RAM value-check sumcheck. The input reconstructs `Val_init(r_address)` as
-/// `public(InitEval) - Σ public(InitSelector)·opening(advice)` and folds it
+/// `derived(InitEval) - Σ derived(InitSelector)·opening(advice)` and folds it
 /// against the read-write `val` and output-check `val_final` by `gamma`; the
 /// output is the degree-two `LtCyclePlusGamma·inc·ra`. The `Val_init` scalars are
 /// `Public` symbols resolved by the verifier — value-preserving versus the prior
@@ -282,7 +282,7 @@ pub struct RamValCheck {
 impl SymbolicSumcheck for RamValCheck {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = RamValCheckShape;
 
@@ -300,17 +300,17 @@ impl SymbolicSumcheck for RamValCheck {
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma));
-        let mut init = public(JoltPublicId::from(RamValCheckPublic::InitEval));
+        let mut init = derived(JoltDerivedId::from(RamValCheckPublic::InitEval));
         for contribution in &self.shape.contributions {
             init = init
-                - public(JoltPublicId::from(contribution.selector)) * opening(contribution.opening);
+                - derived(JoltDerivedId::from(contribution.selector)) * opening(contribution.opening);
         }
         opening(ram_val()) + gamma.clone() * opening(ram_val_final())
             - (JoltExpr::one() + gamma) * init
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma))
+        derived(JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma))
             * opening(ram_inc_val_check())
             * opening(ram_ra_val_check())
     }
@@ -323,7 +323,7 @@ mod tests {
     use crate::protocols::jolt::geometry::ram::{
         committed_ram_ra, RamRaClaimReductionPublicValues,
     };
-    use crate::protocols::jolt::{JoltChallengeId, JoltPublicId};
+    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn trace_dimensions() -> TraceDimensions {
@@ -407,7 +407,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::RamReadWrite(RamReadWritePublic::EqCycle) => eq,
+                JoltDerivedId::RamReadWrite(RamReadWritePublic::EqCycle) => eq,
                 _ => zero,
             },
         );
@@ -442,7 +442,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::RamRafEvaluation(RamRafEvaluationPublic::UnmapAddress) => unmap,
+                JoltDerivedId::RamRafEvaluation(RamRafEvaluationPublic::UnmapAddress) => unmap,
                 _ => zero,
             },
         );
@@ -470,8 +470,8 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::RamOutputCheck(RamOutputCheckPublic::EqIoMask) => eq_io_mask,
-                JoltPublicId::RamOutputCheck(RamOutputCheckPublic::NegEqIoMaskValIo) => {
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::EqIoMask) => eq_io_mask,
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::NegEqIoMaskValIo) => {
                     neg_eq_io_mask_val_io
                 }
                 _ => zero,
@@ -551,7 +551,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::RamRaClaimReduction(id) => public_values.value(id),
+                JoltDerivedId::RamRaClaimReduction(id) => public_values.value(id),
                 _ => zero,
             },
         );
@@ -591,7 +591,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) => eq_cycle,
+                JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) => eq_cycle,
                 _ => zero,
             },
         );
@@ -621,7 +621,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => eq_cycle,
+                JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => eq_cycle,
                 _ => zero,
             },
         );
@@ -657,8 +657,8 @@ mod tests {
             vec![JoltChallengeId::from(RamReadWriteChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RamReadWritePublic::EqCycle)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(RamReadWritePublic::EqCycle)]
         );
     }
 
@@ -674,8 +674,8 @@ mod tests {
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RamRafEvaluationPublic::UnmapAddress)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress)]
         );
     }
 
@@ -691,10 +691,10 @@ mod tests {
         assert_eq!(relation.required_openings::<Fr>(), vec![ram_val_final()]);
         assert!(relation.required_challenges::<Fr>().is_empty());
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(RamOutputCheckPublic::EqIoMask),
-                JoltPublicId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
+                JoltDerivedId::from(RamOutputCheckPublic::EqIoMask),
+                JoltDerivedId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
             ]
         );
     }
@@ -719,11 +719,11 @@ mod tests {
             vec![JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleValCheck),
+                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleRaf),
+                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
+                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleValCheck),
             ]
         );
     }
@@ -755,8 +755,8 @@ mod tests {
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RamRaVirtualizationPublic::EqCycle)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle)]
         );
     }
 
@@ -775,8 +775,8 @@ mod tests {
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RamHammingBooleanityPublic::EqCycle)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle)]
         );
     }
 
@@ -805,10 +805,10 @@ mod tests {
             vec![JoltChallengeId::from(RamValCheckChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(RamValCheckPublic::InitEval),
-                JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
+                JoltDerivedId::from(RamValCheckPublic::InitEval),
+                JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
             ]
         );
     }
@@ -864,11 +864,11 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::RamValCheck(RamValCheckPublic::InitEval) => public_eval,
-                JoltPublicId::RamValCheck(RamValCheckPublic::InitSelector(
+                JoltDerivedId::RamValCheck(RamValCheckPublic::InitEval) => public_eval,
+                JoltDerivedId::RamValCheck(RamValCheckPublic::InitSelector(
                     JoltAdviceKind::Untrusted,
                 )) => untrusted_neg_selector,
-                JoltPublicId::RamValCheck(RamValCheckPublic::InitSelector(
+                JoltDerivedId::RamValCheck(RamValCheckPublic::InitSelector(
                     JoltAdviceKind::Trusted,
                 )) => trusted_neg_selector,
                 _ => zero,

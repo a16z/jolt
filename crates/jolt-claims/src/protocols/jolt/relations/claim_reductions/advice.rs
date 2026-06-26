@@ -7,9 +7,9 @@ use crate::protocols::jolt::geometry::claim_reductions::advice::{
 };
 use crate::protocols::jolt::{
     AdviceClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltExpr, JoltOpeningId,
-    JoltPublicId, JoltRelationId, JoltSumcheckSpec, PrecommittedReductionDimensions,
+    JoltDerivedId, JoltRelationId, JoltSumcheckSpec, PrecommittedReductionDimensions,
 };
-use crate::{opening, public, SymbolicSumcheck};
+use crate::{opening, derived, SymbolicSumcheck};
 
 /// `(advice kind, two-phase dimensions)` shape shared by the advice cycle- and
 /// address-phase reductions.
@@ -25,7 +25,7 @@ pub struct CyclePhase {
 impl SymbolicSumcheck for CyclePhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = AdviceReductionShape;
 
@@ -51,7 +51,7 @@ impl SymbolicSumcheck for CyclePhase {
         if dimensions.has_address_phase() {
             opening(cycle_phase_advice_opening(kind))
         } else {
-            public(JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
+            derived(JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
                 kind,
             ))) * opening(final_advice_opening(kind))
         }
@@ -67,7 +67,7 @@ pub struct AddressPhase {
 impl SymbolicSumcheck for AddressPhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = AdviceReductionShape;
 
@@ -90,7 +90,7 @@ impl SymbolicSumcheck for AddressPhase {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let kind = self.shape.0;
-        public(JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
+        derived(JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
             kind,
         ))) * opening(final_advice_opening(kind))
     }
@@ -133,7 +133,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
+                JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
                     JoltAdviceKind::Trusted,
                 )) => final_scale,
                 _ => zero,
@@ -168,7 +168,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
+                JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
                     JoltAdviceKind::Untrusted,
                 )) => final_scale,
                 _ => zero,
@@ -197,7 +197,7 @@ mod tests {
             vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_publics::<Fr>().is_empty());
+        assert!(relation.required_deriveds::<Fr>().is_empty());
     }
 
     #[test]
@@ -212,8 +212,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
                 JoltAdviceKind::Untrusted
             ))]
         );
@@ -234,8 +234,8 @@ mod tests {
             vec![final_advice_opening(JoltAdviceKind::Trusted)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
                 JoltAdviceKind::Trusted
             ))]
         );

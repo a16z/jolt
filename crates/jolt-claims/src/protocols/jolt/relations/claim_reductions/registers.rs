@@ -7,10 +7,10 @@ use crate::protocols::jolt::geometry::claim_reductions::registers::{
     rs2_value_reduced, rs2_value_spartan,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::{challenge, opening, public, SymbolicSumcheck};
+use crate::{challenge, opening, derived, SymbolicSumcheck};
 
 /// Batches the Spartan-outer register openings (`RdWriteValue`, `Rs1Value`,
 /// `Rs2Value`) by `gamma` and reduces them to the registers-claim-reduction
@@ -22,7 +22,7 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -48,7 +48,7 @@ impl SymbolicSumcheck for ClaimReduction {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
-        let eq_spartan = public(RegistersClaimReductionPublic::EqSpartan);
+        let eq_spartan = derived(RegistersClaimReductionPublic::EqSpartan);
 
         eq_spartan.clone() * opening(rd_write_value_reduced())
             + eq_spartan.clone() * gamma.clone() * opening(rs1_value_reduced())
@@ -135,7 +135,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::RegistersClaimReduction(RegistersClaimReductionPublic::EqSpartan) => {
+                JoltDerivedId::RegistersClaimReduction(RegistersClaimReductionPublic::EqSpartan) => {
                     eq_spartan
                 }
                 _ => zero,
@@ -184,8 +184,8 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RegistersClaimReductionPublic::EqSpartan)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan)]
         );
     }
 }

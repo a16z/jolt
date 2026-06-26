@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::committed_address_chunks, instruction::InstructionRaVirtualizationDimensions,
     },
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltChallengeId,
-    JoltPublicId, JoltRelationId,
+    JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -130,15 +130,15 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &InstructionRaVirtualizationInputClaims<C>,
         outputs: Option<&InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let log_t = self.dimensions.log_t();
         let point = outputs

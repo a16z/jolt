@@ -55,11 +55,11 @@ where
     let eq_plus_one_product =
         EqPlusOnePolynomial::new(product_opening_point.clone()).evaluate(&shift_opening_point);
     values.public(
-        JoltPublicId::from(SpartanShiftPublic::EqPlusOneOuter),
+        JoltDerivedId::from(SpartanShiftPublic::EqPlusOneOuter),
         eq_plus_one_outer,
     )?;
     values.public(
-        JoltPublicId::from(SpartanShiftPublic::EqPlusOneProduct),
+        JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
         eq_plus_one_product,
     )?;
 
@@ -72,7 +72,7 @@ where
         })?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(
-        JoltPublicId::from(InstructionInputPublic::EqProduct),
+        JoltDerivedId::from(InstructionInputPublic::EqProduct),
         try_eq_mle(&instruction_opening_point, &product_opening_point)
             .map_err(|error| public_error(JoltRelationId::InstructionInputVirtualization, error))?,
     )?;
@@ -84,7 +84,7 @@ where
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(
-        JoltPublicId::from(RegistersClaimReductionPublic::EqSpartan),
+        JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan),
         try_eq_mle(
             &registers_opening_point,
             &input.stage2.public.product_tau_low,

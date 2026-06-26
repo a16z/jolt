@@ -10,7 +10,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
     RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -152,13 +152,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         inputs: &RamRaClaimReductionInputClaims<C>,
         outputs: Option<&RamRaClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RamRaClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RamRaClaimReduction(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let output_cycle = &outputs.ram_ra.point()[self.ram_log_k..];
         let fixed_cycle = match public_id {

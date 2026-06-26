@@ -8,7 +8,7 @@ use crate::protocols::jolt::geometry::bytecode::{
     stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
 };
 use crate::protocols::jolt::{
-    BytecodeReadRafChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId,
     JoltRelationId, JoltSumcheckSpec,
 };
 use crate::{challenge, opening, SymbolicSumcheck};
@@ -22,7 +22,7 @@ pub struct ReadRaf {
 impl SymbolicSumcheck for ReadRaf {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
 
@@ -65,7 +65,7 @@ pub struct ReadRafAddressPhase {
 impl SymbolicSumcheck for ReadRafAddressPhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
 
@@ -108,7 +108,7 @@ pub struct ReadRafCyclePhase {
 impl SymbolicSumcheck for ReadRafCyclePhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
 
@@ -143,7 +143,7 @@ pub struct ReadRafCyclePhaseCommitted {
 impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
 
@@ -348,16 +348,16 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::StageValue(index)) => {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::StageValue(index)) => {
                     stage_values[index]
                 }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => {
                     spartan_outer_raf
                 }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => {
                     spartan_shift_raf
                 }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
                 _ => zero,
             },
         );
@@ -384,16 +384,16 @@ mod tests {
         assert_eq!(relation.spec(), dimensions(2).sumcheck());
         assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(0)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(1)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(2)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(3)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(4)),
-                JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-                JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-                JoltPublicId::from(BytecodeReadRafPublic::Entry),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(0)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(1)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(2)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(3)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(4)),
+                JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
+                JoltDerivedId::from(BytecodeReadRafPublic::SpartanShiftRaf),
+                JoltDerivedId::from(BytecodeReadRafPublic::Entry),
             ]
         );
     }

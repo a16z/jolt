@@ -6,7 +6,7 @@ use crate::protocols::jolt::geometry::claim_reductions::program_image::{
     cycle_phase_program_image_opening, final_output_expr, ram_val_check_contribution_opening,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
     PrecommittedReductionDimensions,
 };
 use crate::{opening, SymbolicSumcheck};
@@ -22,7 +22,7 @@ pub struct CyclePhase {
 impl SymbolicSumcheck for CyclePhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = PrecommittedReductionDimensions;
 
@@ -61,7 +61,7 @@ pub struct AddressPhase {
 impl SymbolicSumcheck for AddressPhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = PrecommittedReductionDimensions;
 
@@ -128,7 +128,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::ProgramImageClaimReduction(
+                JoltDerivedId::ProgramImageClaimReduction(
                     ProgramImageClaimReductionPublic::FinalScale,
                 ) => final_scale,
                 _ => zero,
@@ -158,7 +158,7 @@ mod tests {
             vec![cycle_phase_program_image_opening()]
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_publics::<Fr>().is_empty());
+        assert!(relation.required_deriveds::<Fr>().is_empty());
     }
 
     #[test]
@@ -171,8 +171,8 @@ mod tests {
             vec![final_program_image_opening()]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(
                 ProgramImageClaimReductionPublic::FinalScale
             )]
         );
@@ -197,8 +197,8 @@ mod tests {
             vec![final_program_image_opening()]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(
                 ProgramImageClaimReductionPublic::FinalScale
             )]
         );

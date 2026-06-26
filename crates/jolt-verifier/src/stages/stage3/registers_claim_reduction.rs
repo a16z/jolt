@@ -8,7 +8,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -122,13 +122,13 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RegistersClaimReductionInputClaims<C>,
         outputs: Option<&RegistersClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RegistersClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RegistersClaimReduction(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // Every reduction output shares the one opening point.

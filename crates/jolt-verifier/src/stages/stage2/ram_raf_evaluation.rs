@@ -14,7 +14,7 @@
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::{dimensions::ReadWriteDimensions, ram::RamRafEvaluationDimensions},
-    JoltPublicId, JoltRelationId, RamRafEvaluationPublic,
+    JoltDerivedId, JoltRelationId, RamRafEvaluationPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -126,13 +126,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RamRafEvaluationInputClaims<C>,
         outputs: Option<&RamRafEvaluationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RamRafEvaluation(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RamRafEvaluation(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The produced opening point is `[r_address(log_k) ‖ tau_low]`; the

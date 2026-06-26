@@ -14,10 +14,10 @@ use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
-use crate::{opening, public};
+use crate::{opening, derived};
 
 use super::super::super::{
-    BytecodeClaimReductionPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId,
+    BytecodeClaimReductionPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltDerivedId,
     JoltRelationId, JoltVirtualPolynomial,
 };
 use super::super::dimensions::{
@@ -487,7 +487,7 @@ where
     let mut output = JoltExpr::zero();
     for chunk_idx in 0..chunk_count {
         output = output
-            + public(JoltPublicId::from(
+            + derived(JoltDerivedId::from(
                 BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx),
             )) * opening(final_bytecode_chunk_opening(chunk_idx));
     }

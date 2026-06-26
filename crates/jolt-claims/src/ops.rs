@@ -239,7 +239,7 @@ mod tests {
         let expr: Expr<Fr, Opening> =
             opening(Opening::A) * constant(Fr::from_u64(7)) + constant(Fr::from_u64(2));
 
-        let value = expr.evaluate_without_public(|_| Fr::from_u64(3), |_| Fr::from_u64(0));
+        let value = expr.evaluate_without_derived(|_| Fr::from_u64(3), |_| Fr::from_u64(0));
 
         assert_eq!(value, Fr::from_u64(23));
     }

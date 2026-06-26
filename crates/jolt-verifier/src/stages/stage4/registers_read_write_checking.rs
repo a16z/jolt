@@ -9,7 +9,7 @@
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
-    JoltChallengeId, JoltPublicId, JoltRelationId, RegistersReadWriteChallenge,
+    JoltChallengeId, JoltDerivedId, JoltRelationId, RegistersReadWriteChallenge,
     RegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -134,13 +134,13 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         inputs: &RegistersReadWriteInputClaims<C>,
         outputs: Option<&RegistersReadWriteOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RegistersReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RegistersReadWrite(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             RegistersReadWritePublic::EqCycle => {

@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::bytecode::bytecode_val_stage_opening,
         dimensions::committed_address_chunks,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltDerivedId, JoltRelationId,
     JoltVirtualPolynomial,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -559,10 +559,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
             },
             |id| self.resolve_challenge(id),
             |id| match id {
-                JoltPublicId::BytecodeReadRaf(public_id) => public_values
+                JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                     .value(*public_id)
-                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-                _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
             },
         )
     }

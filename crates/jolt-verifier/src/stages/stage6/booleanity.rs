@@ -13,7 +13,7 @@ use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
-    JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId,
+    JoltChallengeId, JoltOpeningId, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -206,13 +206,13 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &BooleanityInputClaims<C>,
         outputs: Option<&BooleanityOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         // Recover the raw two-phase sumcheck point from a produced opening point
         // (`r_address ++ r_cycle`): each half is the reverse of its phase's

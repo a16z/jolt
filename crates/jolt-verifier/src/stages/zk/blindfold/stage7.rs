@@ -61,14 +61,14 @@ where
         })?;
     let booleanity_r_address = &booleanity_opening[..hamming_dimensions.log_k_chunk];
     values.public(
-        JoltPublicId::from(HammingWeightClaimReductionPublic::EqBooleanity),
+        JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanity),
         try_eq_mle(&rho_rev, booleanity_r_address)
             .map_err(|error| public_error(JoltRelationId::HammingWeightClaimReduction, error))?,
     )?;
     let virtualization_points = stage6_virtualization_points(input, hamming_dimensions)?;
     for (index, point) in virtualization_points.iter().enumerate() {
         values.public(
-            JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(index)),
+            JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(index)),
             try_eq_mle(&rho_rev, point).map_err(|error| {
                 public_error(JoltRelationId::HammingWeightClaimReduction, error)
             })?,

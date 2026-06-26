@@ -13,7 +13,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    geometry::spartan::SpartanProductDimensions, JoltPublicId, JoltRelationId,
+    geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltRelationId,
     SpartanProductVirtualizationPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -142,13 +142,13 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &ProductRemainderInputClaims<C>,
         outputs: Option<&ProductRemainderOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::SpartanProductVirtualization(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The uni-skip first-round Lagrange weights, evaluated at the product
@@ -172,7 +172,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
             // `LagrangeWeight` only (plus `TauKernel`). Reject rather than silently
             // aliasing it onto the Lagrange-weight path, so a misrouted public surfaces.
             SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
-                Err(VerifierError::MissingStageClaimPublic { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: *id })
             }
             // The product opening point binds the uni-skip kernel (against
             // `tau_high`) and the equality of the low remainder challenges

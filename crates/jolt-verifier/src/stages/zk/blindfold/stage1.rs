@@ -95,7 +95,7 @@ fn stage1_spartan_outer_output_expr<F: Field>(
     for left in 0..openings.len() {
         for right in 0..openings.len() {
             output = output
-                + public(VerifierPublicId::SpartanOuter(
+                + derived(VerifierPublicId::SpartanOuter(
                     JoltSpartanOuterPublic::QuadraticCoefficient { left, right },
                 )) * opening(stage1_spartan_outer_opening_id(openings[left]))
                     * opening(stage1_spartan_outer_opening_id(openings[right]));
@@ -103,12 +103,12 @@ fn stage1_spartan_outer_output_expr<F: Field>(
     }
     for (index, opening_id) in openings.iter().copied().enumerate() {
         output = output
-            + public(VerifierPublicId::SpartanOuter(
+            + derived(VerifierPublicId::SpartanOuter(
                 JoltSpartanOuterPublic::LinearCoefficient(index),
             )) * opening(stage1_spartan_outer_opening_id(opening_id));
     }
     output
-        + public(VerifierPublicId::SpartanOuter(
+        + derived(VerifierPublicId::SpartanOuter(
             JoltSpartanOuterPublic::ConstantCoefficient,
         ))
 }

@@ -7,7 +7,7 @@ use crate::protocols::field_inline::geometry::product::{
     field_product_opening, field_rs1_value_product, field_rs2_value_product,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineDerivedId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersTraceDimensions,
 };
 use crate::SymbolicSumcheck;
@@ -21,7 +21,7 @@ pub struct FieldProduct {
 impl SymbolicSumcheck for FieldProduct {
     type RelationId = FieldInlineRelationId;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
+    type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
 
@@ -78,7 +78,7 @@ mod tests {
             field_product_output_openings().to_vec()
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_publics::<Fr>().is_empty());
+        assert!(relation.required_deriveds::<Fr>().is_empty());
         assert_eq!(
             selected_product_uniskip_input_openings(),
             [field_product_opening(), field_inv_product_opening()]

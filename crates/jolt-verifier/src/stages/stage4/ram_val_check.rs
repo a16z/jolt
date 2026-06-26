@@ -21,7 +21,7 @@ use jolt_claims::protocols::jolt::{
         ram::{self, RamValCheckInit, RamValCheckInitContribution},
     },
     relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
-    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationId, RamValCheckChallenge,
+    JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltRelationId, RamValCheckChallenge,
     RamValCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -225,12 +225,12 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         inputs: &RamValCheckInputClaims<C>,
         outputs: Option<&RamValCheckOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::RamValCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::RamValCheck(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The `Val_init` decomposition publics are input publics (resolved
@@ -241,12 +241,12 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                 self.init_selectors
                     .iter()
                     .find_map(|(selector, value)| (selector == public_id).then_some(*value))
-                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
             }
             // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation
             // of the produced cycle point against the fixed read-write cycle.
             RamValCheckPublic::LtCyclePlusGamma => {
-                let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+                let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
                 let output_cycle = &outputs.ram_ra.point()[self.ram_log_k..];
                 let fixed_cycle = &inputs.ram_val.point()[self.ram_log_k..];
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + self.gamma)

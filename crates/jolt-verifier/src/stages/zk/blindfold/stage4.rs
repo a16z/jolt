@@ -23,12 +23,12 @@ where
     // baked as `Term` constants in the expression); the advice / program-image
     // openings they weight remain hidden witnesses.
     values.public(
-        JoltPublicId::from(RamValCheckPublic::InitEval),
+        JoltDerivedId::from(RamValCheckPublic::InitEval),
         ram_init.public_eval,
     )?;
     for contribution in &ram_init.contributions {
         values.public(
-            JoltPublicId::from(contribution.selector),
+            JoltDerivedId::from(contribution.selector),
             contribution.neg_selector,
         )?;
     }
@@ -71,7 +71,7 @@ where
         .copied()
         .collect::<Vec<_>>();
     values.public(
-        JoltPublicId::from(RegistersReadWritePublic::EqCycle),
+        JoltDerivedId::from(RegistersReadWritePublic::EqCycle),
         try_eq_mle(&registers_reduction_opening, &registers_opening.r_cycle)
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
@@ -96,7 +96,7 @@ where
             reason: "RAM read-write opening point is shorter than the RAM address".to_string(),
         })?;
     values.public(
-        JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
+        JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
         LtPolynomial::evaluate(&ram_val_cycle, r_cycle)
             + input.stage4.challenges.ram_val_check_gamma,
     )?;

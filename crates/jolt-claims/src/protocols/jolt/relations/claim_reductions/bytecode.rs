@@ -7,7 +7,7 @@ use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     final_output_expr, NUM_BYTECODE_VAL_STAGES,
 };
 use crate::protocols::jolt::{
-    BytecodeClaimReductionChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
+    BytecodeClaimReductionChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId,
     JoltRelationId, JoltSumcheckSpec, PrecommittedReductionDimensions,
 };
 use crate::{challenge, opening, SymbolicSumcheck};
@@ -27,7 +27,7 @@ pub struct CyclePhase {
 impl SymbolicSumcheck for CyclePhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReductionShape;
 
@@ -73,7 +73,7 @@ pub struct AddressPhase {
 impl SymbolicSumcheck for AddressPhase {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReductionShape;
 
@@ -165,7 +165,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltPublicId::BytecodeClaimReduction(
+                JoltDerivedId::BytecodeClaimReduction(
                     BytecodeClaimReductionPublic::ChunkOutputWeight(chunk),
                 ) => chunk_weights[chunk],
                 _ => zero,
@@ -201,7 +201,7 @@ mod tests {
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta)]
         );
-        assert!(relation.required_publics::<Fr>().is_empty());
+        assert!(relation.required_deriveds::<Fr>().is_empty());
     }
 
     #[test]
@@ -217,10 +217,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
-                JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
+                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
+                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
             ]
         );
     }
@@ -244,10 +244,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
-                JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
+                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
+                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
             ]
         );
     }

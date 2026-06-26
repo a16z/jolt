@@ -16,7 +16,7 @@
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs, BytecodeClaimReductionLayout,
-    BytecodeClaimReductionPublic, JoltPublicId, JoltRelationId, PrecommittedReductionLayout,
+    BytecodeClaimReductionPublic, JoltDerivedId, JoltRelationId, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -119,16 +119,16 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
         outputs: Option<&BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
             chunk_idx,
         )) = id
         else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let opening_point = outputs.chunks.first().map(GetPoint::point).ok_or_else(|| {
             bytecode_public_failed("bytecode reduction produced no chunk openings")
@@ -143,7 +143,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         weights
             .get(*chunk_idx)
             .copied()
-            .ok_or(VerifierError::MissingStageClaimPublic { id: *id })
+            .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
     }
 }
 
@@ -225,15 +225,15 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
         outputs: Option<&ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         self.layout
             .address_phase_scale_at_opening_point(

@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
-    JoltPublicId, JoltRelationId, RegistersValEvaluationPublic,
+    JoltDerivedId, JoltRelationId, RegistersValEvaluationPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -112,18 +112,18 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         inputs: &RegistersValEvaluationInputClaims<C>,
         outputs: Option<&RegistersValEvaluationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         match id {
-            JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
+            JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                 let registers_cycle = &outputs.rd_inc.point()[REGISTER_ADDRESS_BITS..];
                 let fixed_cycle = &inputs.registers_val.point()[REGISTER_ADDRESS_BITS..];
                 Ok(LtPolynomial::evaluate(registers_cycle, fixed_cycle))
             }
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
         }
     }
 }

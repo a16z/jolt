@@ -14,7 +14,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    AdviceClaimReductionLayout, AdviceClaimReductionPublic, JoltAdviceKind, JoltPublicId,
+    AdviceClaimReductionLayout, AdviceClaimReductionPublic, JoltAdviceKind, JoltDerivedId,
     JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -137,17 +137,17 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &AdviceAddressPhaseInputClaims<C>,
         outputs: Option<&AdviceAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
         else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         if *kind != self.kind {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         }
         self.layout
             .address_phase_scale_at_opening_point(

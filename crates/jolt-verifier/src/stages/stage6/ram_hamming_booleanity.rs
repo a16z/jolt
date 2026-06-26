@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, JoltOpeningId, JoltDerivedId, JoltRelationId,
     RamHammingBooleanityPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -107,13 +107,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RamHammingBooleanityInputClaims<C>,
         outputs: Option<&RamHammingBooleanityOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         // `cycle_opening_point` reverses the sumcheck point, so recover the raw
         // sumcheck point (what `EqCycle` compares against) by reversing back.

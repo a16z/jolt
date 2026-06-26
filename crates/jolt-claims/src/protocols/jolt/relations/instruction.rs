@@ -18,7 +18,7 @@ use crate::protocols::jolt::{
     JoltExpr, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, opening, public};
+use crate::{challenge, opening, derived};
 
 /// The instruction input-virtualization sumcheck: relates the left/right
 /// instruction-input products from the product sumcheck to the per-operand
@@ -30,7 +30,7 @@ pub struct InputVirtualization {
 impl SymbolicSumcheck for InputVirtualization {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -53,17 +53,17 @@ impl SymbolicSumcheck for InputVirtualization {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(InstructionInputPublic::EqProduct)
+        derived(InstructionInputPublic::EqProduct)
             * opening(right_operand_is_rs2())
             * opening(rs2_value())
-            + public(InstructionInputPublic::EqProduct)
+            + derived(InstructionInputPublic::EqProduct)
                 * opening(right_operand_is_imm())
                 * opening(imm())
-            + public(InstructionInputPublic::EqProduct)
+            + derived(InstructionInputPublic::EqProduct)
                 * challenge(InstructionInputChallenge::Gamma)
                 * opening(left_operand_is_rs1())
                 * opening(rs1_value())
-            + public(InstructionInputPublic::EqProduct)
+            + derived(InstructionInputPublic::EqProduct)
                 * challenge(InstructionInputChallenge::Gamma)
                 * opening(left_operand_is_pc())
                 * opening(unexpanded_pc())
@@ -80,7 +80,7 @@ pub struct ReadRaf {
 impl SymbolicSumcheck for ReadRaf {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = InstructionReadRafDimensions;
 
@@ -109,14 +109,14 @@ impl SymbolicSumcheck for ReadRaf {
 
         for table in LookupTableKind::<XLEN>::iter() {
             output = output
-                + public(eq_table_value(table))
+                + derived(eq_table_value(table))
                     * ra_product.clone()
                     * opening(lookup_table_flag(table));
         }
 
         output = output
-            + public(InstructionReadRafPublic::EqRafConstant) * ra_product.clone()
-            + public(InstructionReadRafPublic::EqRafFlag)
+            + derived(InstructionReadRafPublic::EqRafConstant) * ra_product.clone()
+            + derived(InstructionReadRafPublic::EqRafFlag)
                 * ra_product
                 * opening(instruction_raf_flag());
 
@@ -134,7 +134,7 @@ pub struct RaVirtualization {
 impl SymbolicSumcheck for RaVirtualization {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = InstructionRaVirtualizationDimensions;
 
@@ -157,7 +157,7 @@ impl SymbolicSumcheck for RaVirtualization {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(InstructionRaVirtualizationChallenge::Gamma);
-        let eq_cycle = public(InstructionRaVirtualizationPublic::EqCycle);
+        let eq_cycle = derived(InstructionRaVirtualizationPublic::EqCycle);
         let mut output = JoltExpr::zero();
         for virtual_index in 0..self.shape.num_virtual_ra_polys() {
             output = output
@@ -175,7 +175,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::instruction::instruction_ra;
     use crate::protocols::jolt::{
-        JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId,
+        JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltDerivedId,
         JoltVirtualPolynomial,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -201,9 +201,9 @@ mod tests {
         TraceDimensions::new(5)
     }
 
-    fn eq_table_value_publics() -> Vec<JoltPublicId> {
+    fn eq_table_value_publics() -> Vec<JoltDerivedId> {
         LookupTableKind::<XLEN>::iter()
-            .map(|table| JoltPublicId::from(eq_table_value(table)))
+            .map(|table| JoltDerivedId::from(eq_table_value(table)))
             .collect()
     }
 
@@ -281,7 +281,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::InstructionInput(InstructionInputPublic::EqProduct) => eq_product,
+                JoltDerivedId::InstructionInput(InstructionInputPublic::EqProduct) => eq_product,
                 _ => zero,
             },
         );
@@ -376,13 +376,13 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::InstructionReadRaf(InstructionReadRafPublic::EqTableValue(index)) => {
+                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqTableValue(index)) => {
                     table_values[index]
                 }
-                JoltPublicId::InstructionReadRaf(InstructionReadRafPublic::EqRafConstant) => {
+                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqRafConstant) => {
                     raf_constant
                 }
-                JoltPublicId::InstructionReadRaf(InstructionReadRafPublic::EqRafFlag) => {
+                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqRafFlag) => {
                     raf_flag_coeff
                 }
                 _ => zero,
@@ -480,7 +480,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::InstructionRaVirtualization(
+                JoltDerivedId::InstructionRaVirtualization(
                     InstructionRaVirtualizationPublic::EqCycle,
                 ) => eq_cycle,
                 _ => zero,
@@ -516,8 +516,8 @@ mod tests {
             vec![JoltChallengeId::from(InstructionInputChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(InstructionInputPublic::EqProduct)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(InstructionInputPublic::EqProduct)]
         );
     }
 
@@ -533,10 +533,10 @@ mod tests {
         );
         let mut expected_publics = eq_table_value_publics();
         expected_publics.extend([
-            JoltPublicId::from(InstructionReadRafPublic::EqRafConstant),
-            JoltPublicId::from(InstructionReadRafPublic::EqRafFlag),
+            JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
+            JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
         ]);
-        assert_eq!(relation.required_publics::<Fr>(), expected_publics);
+        assert_eq!(relation.required_deriveds::<Fr>(), expected_publics);
     }
 
     #[test]
@@ -555,8 +555,8 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(
                 InstructionRaVirtualizationPublic::EqCycle
             )]
         );

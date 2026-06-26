@@ -1,6 +1,6 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening, public};
+use crate::{challenge, opening, derived};
 
 use super::super::{
     BooleanityChallenge, BooleanityPublic, JoltExpr, JoltOpeningId, JoltRelationId,
@@ -43,7 +43,7 @@ where
     F: RingCore,
 {
     let gamma = challenge(BooleanityChallenge::Gamma);
-    let eq_address_cycle = public(BooleanityPublic::EqAddressCycle);
+    let eq_address_cycle = derived(BooleanityPublic::EqAddressCycle);
     let mut output = JoltExpr::zero();
 
     for (i, opening_id) in booleanity_output_openings(dimensions.layout)

@@ -8,7 +8,7 @@
 //! `+ 1 + 1 + 2`-style count literals) that historically drift apart.
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckDomain,
+    JoltChallengeId, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckDomain,
     JoltSumcheckSpec,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -160,7 +160,7 @@ where
     type Symbolic: SymbolicSumcheck<
         RelationId = JoltRelationId,
         OpeningId = JoltOpeningId,
-        PublicId = JoltPublicId,
+        DerivedId = JoltDerivedId,
         ChallengeId = JoltChallengeId,
     >;
     /// The relation's consumed-claim struct (`#[derive(InputClaims)]`), generic
@@ -209,11 +209,11 @@ where
     /// that have them.
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &Self::Inputs<C>,
         _outputs: Option<&Self::Outputs<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        Err(VerifierError::MissingStageClaimPublic { id: *id })
+        Err(VerifierError::MissingStageClaimDerived { id: *id })
     }
 
     /// The input claim (claimed sum), evaluated from the input `Expr` against the

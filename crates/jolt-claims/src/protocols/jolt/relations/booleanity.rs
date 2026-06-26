@@ -21,7 +21,7 @@ pub struct Booleanity {
 impl SymbolicSumcheck for Booleanity {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = BooleanityDimensions;
 
@@ -55,7 +55,7 @@ pub struct BooleanityAddressPhase {
 impl SymbolicSumcheck for BooleanityAddressPhase {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = BooleanityDimensions;
 
@@ -90,7 +90,7 @@ pub struct BooleanityCyclePhase {
 impl SymbolicSumcheck for BooleanityCyclePhase {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type PublicId = crate::protocols::jolt::JoltPublicId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = BooleanityDimensions;
 
@@ -122,7 +122,7 @@ mod tests {
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use crate::protocols::jolt::{
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltCommittedPolynomial,
-        JoltOpeningId, JoltPublicId, JoltSumcheckSpec,
+        JoltOpeningId, JoltDerivedId, JoltSumcheckSpec,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -175,7 +175,7 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) => eq_address_cycle,
+                JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) => eq_address_cycle,
                 _ => zero,
             },
         );
@@ -205,8 +205,8 @@ mod tests {
             vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(BooleanityPublic::EqAddressCycle)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
         );
     }
 
@@ -224,7 +224,7 @@ mod tests {
             vec![booleanity_address_phase_opening()]
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_publics::<Fr>().is_empty());
+        assert!(relation.required_deriveds::<Fr>().is_empty());
     }
 
     #[test]
@@ -241,8 +241,8 @@ mod tests {
             vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(BooleanityPublic::EqAddressCycle)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
         );
     }
 }

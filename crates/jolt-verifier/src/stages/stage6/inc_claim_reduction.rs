@@ -9,7 +9,7 @@
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, IncClaimReductionChallenge, IncClaimReductionPublic,
-    JoltChallengeId, JoltPublicId, JoltRelationId,
+    JoltChallengeId, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -135,13 +135,13 @@ impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &IncClaimReductionInputClaims<C>,
         outputs: Option<&IncClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::IncClaimReduction(public) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::IncClaimReduction(public) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let opening_point = outputs.ram_inc.point();
         let cycle = match public {

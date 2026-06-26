@@ -13,7 +13,7 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::ReadWriteDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::ReadWriteDimensions, JoltOpeningId, JoltDerivedId, JoltRelationId,
     RamOutputCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -156,13 +156,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RamOutputCheckInputClaims<C>,
         outputs: Option<&RamOutputCheckOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::RamOutputCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::RamOutputCheck(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let (eq_io_mask, neg_eq_io_mask_val_io) = self.output_publics(outputs.val_final.point())?;
         match public_id {

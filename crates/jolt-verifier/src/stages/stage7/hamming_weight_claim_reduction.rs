@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions,
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltPublicId, JoltRelationId,
+    JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -170,13 +170,13 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
 
     fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &HammingWeightClaimReductionInputClaims<C>,
         outputs: Option<&HammingWeightClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::HammingWeightClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+        let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let rho_rev = self.rho_reversed(outputs)?;
         match public_id {

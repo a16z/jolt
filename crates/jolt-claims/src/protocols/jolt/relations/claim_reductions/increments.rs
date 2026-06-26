@@ -8,9 +8,9 @@ use crate::protocols::jolt::geometry::claim_reductions::increments::{
 };
 use crate::protocols::jolt::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId,
-    JoltPublicId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
+    JoltDerivedId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::{challenge, opening, public, SymbolicSumcheck};
+use crate::{challenge, opening, derived, SymbolicSumcheck};
 
 /// Batches the RAM/register increment openings (`RamInc` read-write and
 /// val-check, `RdInc` read-write and val-evaluation) by `gamma` and reduces
@@ -22,7 +22,7 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
 
@@ -50,10 +50,10 @@ impl SymbolicSumcheck for ClaimReduction {
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(IncClaimReductionChallenge::Gamma);
 
-        let ram_output_coeff = public(IncClaimReductionPublic::EqRamReadWrite)
-            + gamma.clone() * public(IncClaimReductionPublic::EqRamValCheck);
-        let rd_output_coeff = public(IncClaimReductionPublic::EqRegistersReadWrite)
-            + gamma.clone() * public(IncClaimReductionPublic::EqRegistersValEvaluation);
+        let ram_output_coeff = derived(IncClaimReductionPublic::EqRamReadWrite)
+            + gamma.clone() * derived(IncClaimReductionPublic::EqRamValCheck);
+        let rd_output_coeff = derived(IncClaimReductionPublic::EqRegistersReadWrite)
+            + gamma.clone() * derived(IncClaimReductionPublic::EqRegistersValEvaluation);
         ram_output_coeff * opening(ram_inc_reduced())
             + gamma.pow(2) * rd_output_coeff * opening(rd_inc_reduced())
     }
@@ -111,16 +111,16 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamReadWrite) => {
+                JoltDerivedId::IncClaimReduction(IncClaimReductionPublic::EqRamReadWrite) => {
                     eq_ram_rw
                 }
-                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamValCheck) => {
+                JoltDerivedId::IncClaimReduction(IncClaimReductionPublic::EqRamValCheck) => {
                     eq_ram_val
                 }
-                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRegistersReadWrite) => {
+                JoltDerivedId::IncClaimReduction(IncClaimReductionPublic::EqRegistersReadWrite) => {
                     eq_rd_rw
                 }
-                JoltPublicId::IncClaimReduction(
+                JoltDerivedId::IncClaimReduction(
                     IncClaimReductionPublic::EqRegistersValEvaluation,
                 ) => eq_rd_val,
                 _ => zero,
@@ -163,12 +163,12 @@ mod tests {
             vec![JoltChallengeId::from(IncClaimReductionChallenge::Gamma)]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(IncClaimReductionPublic::EqRamReadWrite),
-                JoltPublicId::from(IncClaimReductionPublic::EqRamValCheck),
-                JoltPublicId::from(IncClaimReductionPublic::EqRegistersReadWrite),
-                JoltPublicId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
+                JoltDerivedId::from(IncClaimReductionPublic::EqRamReadWrite),
+                JoltDerivedId::from(IncClaimReductionPublic::EqRamValCheck),
+                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersReadWrite),
+                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
             ]
         );
     }
