@@ -1,7 +1,10 @@
-use akita_pcs::{AkitaTranscript, CommitmentProver, CpuBackend};
-use akita_prover::{AkitaPolyOps, CommittedPolynomials, ProverClaims};
+use akita_pcs::{
+    AkitaTranscript, CommitmentProver, CpuBackend, ProverCommitmentGroup, ProverOpeningBatch,
+    RootPolyShape,
+};
 use akita_types::{
-    BasisMode, CommitmentVerifier, CommittedOpenings, SetupContributionMode, VerifierClaims,
+    BasisMode, CommitmentGroup, CommitmentVerifier, PointVariableSelection, SetupContributionMode,
+    VerifierOpeningBatch,
 };
 use jolt_openings::{
     BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, OpeningsError, PhysicalView,
@@ -17,8 +20,8 @@ use crate::{
     },
     types::{
         AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint, AkitaProverSetup,
-        AkitaVerifierSetup, NativeCommitment, NativeHint, NativeProof, NativeProofShape,
-        NativeScheme, NativeVerifier, AKITA_D,
+        AkitaVerifierSetup, NativeCommitment, NativeDensePoly, NativeProof, NativeProofShape,
+        NativeScheme, NativeSparsePoly, NativeVerifier, AKITA_D,
     },
 };
 
@@ -34,14 +37,7 @@ impl BatchOpeningScheme for AkitaScheme {
         T: Transcript<Challenge = Self::Field>,
     {
         let dense = dense_polynomials(polynomials)?;
-        let dense_refs = dense.iter().collect::<Vec<_>>();
-        prove_batch_with_native_polynomials(
-            setup,
-            transcript,
-            statement,
-            dense_refs.as_slice(),
-            hints,
-        )
+        prove_batch_with_native_polynomials(setup, transcript, statement, dense.as_slice(), hints)
     }
 
     fn verify_batch<T, OpeningId, RelationId>(
@@ -83,13 +79,14 @@ impl BatchOpeningScheme for AkitaScheme {
             .iter()
             .map(|claim| claim.claim)
             .collect::<Vec<_>>();
-        let claims: VerifierClaims<'_, AkitaField, _> = (
-            statement.pcs_point.as_slice(),
-            vec![CommittedOpenings {
-                openings: openings.as_slice(),
+        let claims = VerifierOpeningBatch::from_groups(
+            statement.pcs_point.clone(),
+            vec![CommitmentGroup {
+                claims: openings,
                 commitment: &native_commitment,
             }],
-        );
+        )
+        .map_err(akita_error)?;
         NativeScheme::batched_verify(
             &native_proof,
             &native_verifier,
@@ -108,65 +105,93 @@ impl BatchOpeningScheme for AkitaScheme {
     }
 }
 
-pub(crate) fn prove_batch_with_native_polynomials<T, P, OpeningId, RelationId>(
+macro_rules! prove_native_batch {
+    ($setup:expr, $transcript:expr, $statement:expr, $polynomials:expr, $hints:expr) => {{
+        let normalized = normalize_clear_batch($statement)?;
+        validate_native_prover_inputs($setup, &normalized.commitment, $polynomials, &$hints)?;
+        bind_verifier_setup_key(&$setup.verifier, $transcript);
+        bind_batch_statement(
+            $statement,
+            &normalized.commitment,
+            &normalized.coefficients,
+            normalized.reduced_opening,
+            $transcript,
+        );
+        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
+        let statement_bridge = bind_jolt_transcript_bridge($transcript, &mut akita_transcript);
+
+        let native_commitment =
+            deserialize_akita::<NativeCommitment>(&normalized.commitment.native, &())?;
+        let native_hint = $hints
+            .into_iter()
+            .next()
+            .and_then(|hint| hint.native)
+            .ok_or_else(|| invalid_batch("Akita prover hint is missing native opening data"))?;
+        let poly_refs = $polynomials.iter().collect::<Vec<_>>();
+        let claims = ProverOpeningBatch {
+            point: $statement.pcs_point.as_slice().into(),
+            groups: vec![ProverCommitmentGroup {
+                point_vars: PointVariableSelection::prefix(
+                    $statement.pcs_point.len(),
+                    $statement.pcs_point.len(),
+                )
+                .map_err(akita_error)?,
+                polynomials: poly_refs.as_slice(),
+                commitment: (native_commitment, native_hint),
+            }],
+        };
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &$setup.prepared,
+            $setup.native.expanded.as_ref(),
+        )
+        .map_err(akita_error)?;
+
+        let native_proof = NativeScheme::batched_prove(
+            &$setup.native,
+            claims,
+            &stack,
+            &mut akita_transcript,
+            BasisMode::Lagrange,
+            SetupContributionMode::Direct,
+        )
+        .map_err(akita_error)?;
+        let proof_shape = native_proof.shape();
+        let proof = AkitaBatchProof {
+            commitment: normalized.commitment,
+            statement_bridge,
+            proof_shape: serialize_akita(&proof_shape)?,
+            proof: serialize_akita(&native_proof)?,
+        };
+        bind_proof_bytes(&proof, $transcript);
+        Ok(proof)
+    }};
+}
+
+pub(crate) fn prove_batch_with_native_polynomials<T, OpeningId, RelationId>(
     setup: &AkitaProverSetup,
     transcript: &mut T,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-    polynomials: &[P],
+    polynomials: &[NativeDensePoly],
     hints: Vec<AkitaProverHint>,
 ) -> Result<AkitaBatchProof, OpeningsError>
 where
     T: Transcript<Challenge = AkitaField>,
-    P: AkitaPolyOps<AkitaField, AKITA_D>,
 {
-    let normalized = normalize_clear_batch(statement)?;
-    validate_native_prover_inputs(setup, &normalized.commitment, polynomials, &hints)?;
-    bind_verifier_setup_key(&setup.verifier, transcript);
-    bind_batch_statement(
-        statement,
-        &normalized.commitment,
-        &normalized.coefficients,
-        normalized.reduced_opening,
-        transcript,
-    );
-    let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
-    let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
+    prove_native_batch!(setup, transcript, statement, polynomials, hints)
+}
 
-    let native_commitment =
-        deserialize_akita::<NativeCommitment>(&normalized.commitment.native, &())?;
-    let native_hint = hints
-        .into_iter()
-        .next()
-        .and_then(|hint| hint.native)
-        .ok_or_else(|| invalid_batch("Akita prover hint is missing native opening data"))?;
-    let claims: ProverClaims<'_, AkitaField, P, _, NativeHint> = (
-        statement.pcs_point.as_slice(),
-        vec![CommittedPolynomials {
-            polynomials,
-            commitment: &native_commitment,
-            hint: native_hint,
-        }],
-    );
-
-    let native_proof = NativeScheme::batched_prove(
-        &setup.native,
-        &CpuBackend,
-        &setup.prepared,
-        claims,
-        &mut akita_transcript,
-        BasisMode::Lagrange,
-        SetupContributionMode::Direct,
-    )
-    .map_err(akita_error)?;
-    let proof_shape = native_proof.shape();
-    let proof = AkitaBatchProof {
-        commitment: normalized.commitment,
-        statement_bridge,
-        proof_shape: serialize_akita(&proof_shape)?,
-        proof: serialize_akita(&native_proof)?,
-    };
-    bind_proof_bytes(&proof, transcript);
-    Ok(proof)
+pub(crate) fn prove_sparse_batch_with_native_polynomials<T, OpeningId, RelationId>(
+    setup: &AkitaProverSetup,
+    transcript: &mut T,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    polynomials: &[NativeSparsePoly],
+    hints: Vec<AkitaProverHint>,
+) -> Result<AkitaBatchProof, OpeningsError>
+where
+    T: Transcript<Challenge = AkitaField>,
+{
+    prove_native_batch!(setup, transcript, statement, polynomials, hints)
 }
 
 struct NormalizedBatch {
@@ -238,7 +263,7 @@ fn validate_native_prover_inputs<P>(
     hints: &[AkitaProverHint],
 ) -> Result<(), OpeningsError>
 where
-    P: AkitaPolyOps<AkitaField, AKITA_D>,
+    P: RootPolyShape<AkitaField, AKITA_D>,
 {
     validate_setup_shape(
         setup.max_num_vars,

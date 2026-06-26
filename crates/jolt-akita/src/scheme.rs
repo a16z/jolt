@@ -1,5 +1,4 @@
-use akita_pcs::{CommitmentProver, ComputeBackendSetup, CpuBackend};
-use akita_prover::AkitaPolyOps;
+use akita_pcs::{CommitmentProver, ComputeBackendSetup, CpuBackend, RootPolyShape};
 use jolt_crypto::Commitment;
 use jolt_openings::{
     BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError, PhysicalView,
@@ -8,14 +7,14 @@ use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 use serde::{Deserialize, Serialize};
 
-use crate::batch::prove_batch_with_native_polynomials;
+use crate::batch::prove_sparse_batch_with_native_polynomials;
 use crate::native::{
     akita_error, dense_polynomials, invalid_batch, polynomial_evaluations, serialize_akita,
 };
 use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint,
-    AkitaProverSetup, AkitaSetupParams, AkitaSparsePolynomial, AkitaVerifierSetup, NativeScheme,
-    AKITA_D,
+    AkitaProverSetup, AkitaSetupParams, AkitaSparsePolynomial, AkitaVerifierSetup, NativeDensePoly,
+    NativeScheme, NativeSparsePoly, AKITA_D,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,13 +37,12 @@ impl AkitaScheme {
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let num_vars = validate_commit_polynomials(setup, polynomials)?;
         let dense = dense_polynomials(polynomials)?;
-        let dense_refs = dense.iter().collect::<Vec<_>>();
-        commit_native_group(
+        commit_dense_native_group(
             setup,
             layout_digest,
             num_vars,
             polynomials.len(),
-            dense_refs.as_slice(),
+            dense.as_slice(),
         )
     }
 
@@ -53,12 +51,12 @@ impl AkitaScheme {
         layout_digest: [u8; 32],
         polynomial: &AkitaSparsePolynomial,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        commit_native_group(
+        commit_sparse_native_group(
             setup,
             layout_digest,
             polynomial.num_vars(),
             1,
-            &[&polynomial.native],
+            std::slice::from_ref(&polynomial.native),
         )
     }
 
@@ -85,11 +83,11 @@ impl AkitaScheme {
     where
         T: Transcript<Challenge = AkitaField>,
     {
-        prove_batch_with_native_polynomials(
+        prove_sparse_batch_with_native_polynomials(
             setup,
             transcript,
             statement,
-            &[&polynomial.native],
+            std::slice::from_ref(&polynomial.native),
             vec![hint],
         )
     }
@@ -112,48 +110,68 @@ impl AkitaScheme {
     }
 }
 
-fn commit_native_group<P>(
+macro_rules! commit_native_group {
+    ($setup:expr, $layout_digest:expr, $num_vars:expr, $poly_count:expr, $polynomials:expr) => {{
+        validate_native_commit_shape($setup, $num_vars, $poly_count)?;
+        if $polynomials.len() != $poly_count {
+            return Err(invalid_batch(format!(
+                "Akita native commit received {} polynomials for {} commitment slots",
+                $polynomials.len(),
+                $poly_count
+            )));
+        }
+        for polynomial in $polynomials {
+            if polynomial.num_vars() != $num_vars {
+                return Err(invalid_batch(format!(
+                    "Akita native commit mixes {}-variable and {}-variable polynomials",
+                    polynomial.num_vars(),
+                    $num_vars
+                )));
+            }
+        }
+
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &$setup.prepared,
+            $setup.native.expanded.as_ref(),
+        )
+        .map_err(akita_error)?;
+        let (native_commitment, native_hint) =
+            NativeScheme::commit(&$setup.native, $polynomials, &stack).map_err(akita_error)?;
+        let commitment = AkitaCommitment {
+            layout_digest: $layout_digest,
+            num_vars: $num_vars,
+            poly_count: $poly_count,
+            native: serialize_akita(&native_commitment)?,
+        };
+        Ok((
+            commitment.clone(),
+            AkitaProverHint {
+                commitment,
+                native: Some(native_hint),
+            },
+        ))
+    }};
+}
+
+fn commit_dense_native_group(
     setup: &AkitaProverSetup,
     layout_digest: [u8; 32],
     num_vars: usize,
     poly_count: usize,
-    polynomials: &[P],
-) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
-where
-    P: AkitaPolyOps<AkitaField, AKITA_D>,
-{
-    validate_native_commit_shape(setup, num_vars, poly_count)?;
-    if polynomials.len() != poly_count {
-        return Err(invalid_batch(format!(
-            "Akita native commit received {} polynomials for {poly_count} commitment slots",
-            polynomials.len()
-        )));
-    }
-    for polynomial in polynomials {
-        if polynomial.num_vars() != num_vars {
-            return Err(invalid_batch(format!(
-                "Akita native commit mixes {}-variable and {num_vars}-variable polynomials",
-                polynomial.num_vars()
-            )));
-        }
-    }
+    polynomials: &[NativeDensePoly],
+) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+    commit_native_group!(setup, layout_digest, num_vars, poly_count, polynomials)
+}
 
-    let (native_commitment, native_hint) =
-        NativeScheme::commit(&setup.native, &CpuBackend, &setup.prepared, polynomials)
-            .map_err(akita_error)?;
-    let commitment = AkitaCommitment {
-        layout_digest,
-        num_vars,
-        poly_count,
-        native: serialize_akita(&native_commitment)?,
-    };
-    Ok((
-        commitment.clone(),
-        AkitaProverHint {
-            commitment,
-            native: Some(native_hint),
-        },
-    ))
+fn commit_sparse_native_group(
+    setup: &AkitaProverSetup,
+    layout_digest: [u8; 32],
+    num_vars: usize,
+    poly_count: usize,
+    polynomials: &[NativeSparsePoly],
+) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+    commit_native_group!(setup, layout_digest, num_vars, poly_count, polynomials)
 }
 
 fn validate_native_commit_shape(

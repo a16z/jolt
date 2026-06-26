@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use akita_config::CommitmentConfig;
 use akita_field::PseudoMersenneField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{AkitaPolyOps, CpuPreparedSetup, DensePoly, SparseRingPoly};
+use akita_prover::{CpuPreparedSetup, DensePoly, SparseRingPoly};
 use akita_types::{
     AkitaBatchedProof as NativeBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as NativeCommitmentHint, AkitaVerifierSetup as NativeVerifierSetup,
@@ -16,13 +16,14 @@ use serde::{Deserialize, Serialize};
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
 pub(crate) const AKITA_D: usize = AkitaConfig::D;
+pub(crate) type NativeExtField = <AkitaConfig as CommitmentConfig>::ExtField;
 pub const AKITA_FIELD_MODULUS: u128 =
     u128::MAX - (<AkitaField as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
 pub(crate) type NativeScheme = AkitaCommitmentScheme<AKITA_D, AkitaConfig>;
 pub(crate) type NativeCommitment = NativeRingCommitment<AkitaField, AKITA_D>;
 pub(crate) type NativeHint = NativeCommitmentHint<AkitaField, AKITA_D>;
-pub(crate) type NativeProof = NativeBatchProof<AkitaField, AkitaField>;
+pub(crate) type NativeProof = NativeBatchProof<AkitaField, NativeExtField>;
 pub(crate) type NativeProofShape = AkitaBatchedProofShape;
 pub(crate) type NativeVerifier = NativeVerifierSetup<AkitaField>;
 pub(crate) type NativeDensePoly = DensePoly<AkitaField, AKITA_D>;
