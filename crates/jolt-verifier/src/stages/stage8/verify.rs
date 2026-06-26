@@ -215,12 +215,16 @@ where
     PCS: BatchOpeningScheme,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let precommitted_coefficients = verify_precommitted_opening_batches::<PCS, _>(
-        setup,
-        transcript,
-        &batch.precommitted_statements,
-        precommitted_proofs,
-    )?;
+    if batch.precommitted_statements.len() != precommitted_proofs.len() {
+        return Err(VerifierError::FinalOpeningVerificationFailed {
+            reason: format!(
+                "expected {} precommitted opening proofs, got {}",
+                batch.precommitted_statements.len(),
+                precommitted_proofs.len()
+            ),
+        });
+    }
+
     let batch_result =
         PCS::verify_batch(setup, transcript, &batch.statement, proof).map_err(|error| {
             VerifierError::FinalOpeningVerificationFailed {
@@ -228,7 +232,12 @@ where
             }
         })?;
     let mut coefficients = batch_result.coefficients;
-    coefficients.extend(precommitted_coefficients);
+    coefficients.extend(verify_precommitted_opening_batches::<PCS, _>(
+        setup,
+        transcript,
+        &batch.precommitted_statements,
+        precommitted_proofs,
+    )?);
 
     Ok(Stage8ClearOutput {
         opening_claims: batch.opening_claims,
