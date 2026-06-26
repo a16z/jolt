@@ -1,0 +1,31 @@
+name: Docs
+
+on:
+  pull_request:
+    branches: ["**", main]
+    paths:
+      - "README.md"
+      - "book/**"
+      - "scripts/ci/check_docs_scaffold.py"
+      - "src/main.rs"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check scaffold docs
+        run: python3 scripts/ci/check_docs_scaffold.py
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: "0.4.10"
+      - name: Install mdbook-katex
+        run: cargo install mdbook-katex
+      - name: Build Jolt Book
+        run: mdbook build ./book
+

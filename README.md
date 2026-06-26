@@ -193,6 +193,8 @@ Fallback (Claude Code / Codex):
 curl -sfL jolt.rs/skill | bash
 ```
 
+For a walkthrough of agent-friendly proof scaffolding, signature adaptation, and the guest/host pipeline, see the [AI Agent Workflow](https://jolt.a16zcrypto.com/usage/agent_workflow.html) page in the Jolt Book.
+
 ## CI Benchmarking
 
 We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/) to track performance changes over time in terms of prover runtime and peak memory usage.
