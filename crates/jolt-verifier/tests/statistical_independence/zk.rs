@@ -16,11 +16,7 @@ use ark_serialize::CanonicalSerialize;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_field::{FixedBytes, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_sumcheck::SumcheckProof;
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_transcript::{prover_transcript, Blake2b512, FsAbsorb, FsChallenge};
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_verifier::JoltProofClaims;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 const DEFAULT_SAMPLES: usize = 64;
@@ -122,18 +118,13 @@ struct StableZkProofShape {
     one_hot_config: jolt_claims::protocols::jolt::JoltOneHotConfig,
     trace_polynomial_order: jolt_claims::protocols::jolt::TracePolynomialOrder,
     commitment_shape: CommitmentShape,
-    stage_shapes: Vec<CommittedStageShape>,
     dory_shape: DoryOpeningProofShape,
-    blindfold_shape: BlindFoldProofShape,
+    narg_len: usize,
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 impl StableZkProofShape {
     fn from_case(case: &crate::support::verifier_fixtures::ZkVerifierFixtureCase) -> Self {
-        let JoltProofClaims::Zk { blindfold_proof } = &case.proof.claims else {
-            panic!("ZK statistical fixture must carry a BlindFold proof");
-        };
-
         Self {
             public_io: case.public_io.clone(),
             preprocessing_digest: case.preprocessing.preprocessing_digest,
@@ -148,9 +139,8 @@ impl StableZkProofShape {
                 bytecode_ra: case.proof.commitments.ra.bytecode.len(),
                 has_untrusted_advice: case.proof.untrusted_advice_commitment.is_some(),
             },
-            stage_shapes: committed_stage_shapes(&case.proof.stages),
             dory_shape: DoryOpeningProofShape::from_proof(&case.proof.joint_opening_proof),
-            blindfold_shape: BlindFoldProofShape::from_proof(blindfold_proof),
+            narg_len: case.proof.narg.len(),
         }
     }
 }
@@ -166,14 +156,6 @@ struct CommitmentShape {
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct CommittedStageShape {
-    rounds: usize,
-    degrees: Vec<usize>,
-    output_claim_rows: usize,
-}
-
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-#[derive(Clone, Debug, PartialEq, Eq)]
 struct DoryOpeningProofShape {
     first_messages: usize,
     second_messages: usize,
@@ -184,37 +166,6 @@ struct DoryOpeningProofShape {
     has_sigma1: bool,
     has_sigma2: bool,
     has_scalar_product: bool,
-}
-
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct BlindFoldProofShape {
-    auxiliary_rows: usize,
-    random_round_commitment_rows: usize,
-    random_output_claim_rows: usize,
-    random_auxiliary_rows: usize,
-    random_error_rows: usize,
-    random_eval_commitments: usize,
-    cross_term_error_rows: usize,
-    folded_eval_output_openings: usize,
-    folded_eval_blinding_openings: usize,
-}
-
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-impl BlindFoldProofShape {
-    fn from_proof(proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>) -> Self {
-        Self {
-            auxiliary_rows: proof.auxiliary_row_commitments.len(),
-            random_round_commitment_rows: proof.random_round_commitments.len(),
-            random_output_claim_rows: proof.random_output_claim_row_commitments.len(),
-            random_auxiliary_rows: proof.random_auxiliary_row_commitments.len(),
-            random_error_rows: proof.random_error_row_commitments.len(),
-            random_eval_commitments: proof.random_eval_commitments.len(),
-            cross_term_error_rows: proof.cross_term_error_row_commitments.len(),
-            folded_eval_output_openings: proof.folded_eval_output_openings.len(),
-            folded_eval_blinding_openings: proof.folded_eval_blinding_openings.len(),
-        }
-    }
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -236,47 +187,11 @@ impl DoryOpeningProofShape {
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn committed_stage_shapes(
-    stages: &jolt_verifier::proof::JoltStageProofs<Fr, jolt_crypto::Pedersen<jolt_crypto::Bn254G1>>,
-) -> Vec<CommittedStageShape> {
-    [
-        &stages.stage1_uni_skip_first_round_proof,
-        &stages.stage1_sumcheck_proof,
-        &stages.stage2_uni_skip_first_round_proof,
-        &stages.stage2_sumcheck_proof,
-        &stages.stage3_sumcheck_proof,
-        &stages.stage4_sumcheck_proof,
-        &stages.stage5_sumcheck_proof,
-        &stages.stage6a_sumcheck_proof,
-        &stages.stage6b_sumcheck_proof,
-        &stages.stage7_sumcheck_proof,
-    ]
-    .into_iter()
-    .map(committed_stage_shape)
-    .collect()
-}
-
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn committed_stage_shape<C>(proof: &SumcheckProof<Fr, C>) -> CommittedStageShape {
-    let proof = proof
-        .as_committed()
-        .expect("ZK statistical fixture must use committed sumcheck proofs");
-    CommittedStageShape {
-        rounds: proof.rounds.len(),
-        degrees: proof.rounds.iter().map(|round| round.degree).collect(),
-        output_claim_rows: proof.output_claims.commitments.len(),
-    }
-}
-
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn collect_jolt_proof_statistics(
     case: &crate::support::verifier_fixtures::ZkVerifierFixtureCase,
     tracker: &mut BucketTracker,
 ) {
     let proof = &case.proof;
-    let JoltProofClaims::Zk { blindfold_proof } = &proof.claims else {
-        panic!("ZK statistical fixture must carry a BlindFold proof");
-    };
 
     tracker.record_append("pcs.commitment.rd_inc", &proof.commitments.rd_inc);
     tracker.record_append("pcs.commitment.ram_inc", &proof.commitments.ram_inc);
@@ -290,82 +205,13 @@ fn collect_jolt_proof_statistics(
         tracker.record_append("pcs.commitment.untrusted_advice", commitment);
     }
 
-    collect_sumcheck_statistics(
-        "sumcheck.stage1_uniskip",
-        &proof.stages.stage1_uni_skip_first_round_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage1_batch",
-        &proof.stages.stage1_sumcheck_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage2_uniskip",
-        &proof.stages.stage2_uni_skip_first_round_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage2_batch",
-        &proof.stages.stage2_sumcheck_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage3_batch",
-        &proof.stages.stage3_sumcheck_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage4_batch",
-        &proof.stages.stage4_sumcheck_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage5_batch",
-        &proof.stages.stage5_sumcheck_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage6_address_phase",
-        &proof.stages.stage6a_sumcheck_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage6_cycle_phase",
-        &proof.stages.stage6b_sumcheck_proof,
-        tracker,
-    );
-    collect_sumcheck_statistics(
-        "sumcheck.stage7_batch",
-        &proof.stages.stage7_sumcheck_proof,
-        tracker,
-    );
-
+    collect_narg_statistics(&proof.narg, tracker);
     collect_dory_opening_statistics(&proof.joint_opening_proof, tracker);
-    collect_blindfold_statistics(blindfold_proof, tracker);
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn collect_sumcheck_statistics<C>(
-    prefix: &'static str,
-    proof: &SumcheckProof<Fr, C>,
-    tracker: &mut BucketTracker,
-) where
-    C: CanonicalSerialize,
-{
-    let proof = proof
-        .as_committed()
-        .expect("ZK statistical fixture must use committed sumcheck proofs");
-    for index in selected_positions(proof.rounds.len()) {
-        tracker.record_append(
-            format!("{prefix}.round.{index}"),
-            &proof.rounds[index].commitment,
-        );
-    }
-    tracker.record_append_positions(
-        &format!("{prefix}.output_claim"),
-        &proof.output_claims.commitments,
-    );
+fn collect_narg_statistics(narg: &[u8], tracker: &mut BucketTracker) {
+    tracker.record_bytes("proof.narg".to_string(), narg);
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -427,67 +273,6 @@ fn collect_dory_opening_statistics(proof: &jolt_dory::DoryProof, tracker: &mut B
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn collect_blindfold_statistics(
-    proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>,
-    tracker: &mut BucketTracker,
-) {
-    tracker.record_canonical("blindfold.random.u", &proof.random_u);
-    tracker.record_append_positions(
-        "blindfold.random.round_commitment",
-        &proof.random_round_commitments,
-    );
-    tracker.record_append_positions(
-        "blindfold.random.output_claim_commitment",
-        &proof.random_output_claim_row_commitments,
-    );
-    tracker.record_append_positions(
-        "blindfold.random.auxiliary_commitment",
-        &proof.random_auxiliary_row_commitments,
-    );
-    tracker.record_append_positions(
-        "blindfold.random.error_commitment",
-        &proof.random_error_row_commitments,
-    );
-    tracker.record_append_positions(
-        "blindfold.random.eval_commitment",
-        &proof.random_eval_commitments,
-    );
-    tracker.record_append_positions(
-        "blindfold.real.auxiliary_commitment",
-        &proof.auxiliary_row_commitments,
-    );
-    tracker.record_append_positions(
-        "blindfold.cross_term_commitment",
-        &proof.cross_term_error_row_commitments,
-    );
-    tracker.record_canonical("blindfold.az_rx", &proof.az_rx);
-    tracker.record_canonical("blindfold.bz_rx", &proof.bz_rx);
-    tracker.record_canonical("blindfold.cz_rx", &proof.cz_rx);
-    tracker.record_vector_opening("blindfold.witness_opening", &proof.witness_opening);
-    tracker.record_vector_opening("blindfold.error_opening", &proof.error_opening);
-    tracker.record_canonical_positions("blindfold.folded_eval.output", &proof.folded_eval_outputs);
-    tracker.record_canonical_positions(
-        "blindfold.folded_eval.blinding",
-        &proof.folded_eval_blindings,
-    );
-    // These openings are fixed-coordinate checks; the rows intentionally contain
-    // structural zero slots, so the hiding component to sample is the opening
-    // blinding.
-    for index in selected_positions(proof.folded_eval_output_openings.len()) {
-        tracker.record_vector_opening_blinding(
-            &format!("blindfold.folded_eval.output_opening.{index}"),
-            &proof.folded_eval_output_openings[index],
-        );
-    }
-    for index in selected_positions(proof.folded_eval_blinding_openings.len()) {
-        tracker.record_vector_opening_blinding(
-            &format!("blindfold.folded_eval.blinding_opening.{index}"),
-            &proof.folded_eval_blinding_openings[index],
-        );
-    }
-}
-
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, Default)]
 struct BucketTracker {
     buckets: BTreeMap<String, Vec<usize>>,
@@ -530,27 +315,6 @@ impl BucketTracker {
         for index in selected_positions(values.len()) {
             self.record_canonical(format!("{prefix}.{index}"), &values[index]);
         }
-    }
-
-    fn record_vector_opening<F>(
-        &mut self,
-        prefix: &str,
-        opening: &jolt_crypto::VectorCommitmentOpening<F>,
-    ) where
-        F: CanonicalSerialize,
-    {
-        self.record_canonical_positions(&format!("{prefix}.row"), &opening.combined_vector);
-        self.record_canonical(format!("{prefix}.blinding"), &opening.combined_blinding);
-    }
-
-    fn record_vector_opening_blinding<F>(
-        &mut self,
-        prefix: &str,
-        opening: &jolt_crypto::VectorCommitmentOpening<F>,
-    ) where
-        F: CanonicalSerialize,
-    {
-        self.record_canonical(format!("{prefix}.blinding"), &opening.combined_blinding);
     }
 
     fn record_bytes(&mut self, name: String, bytes: &[u8]) {

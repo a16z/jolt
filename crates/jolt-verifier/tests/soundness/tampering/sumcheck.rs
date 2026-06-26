@@ -12,6 +12,8 @@ use crate::support::{tamper_manifest, verifier_fixtures::VerifierFixtureCase};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::proof_claims::{offset_opening_claim, opening_claim, upsert_opening_claim};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use jolt_claims::protocols::jolt::formulas::ram::RamRafEvaluationDimensions;
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity, bytecode,
@@ -19,13 +21,13 @@ use jolt_claims::protocols::jolt::{
             advice, hamming_weight, increments, instruction as instruction_claim_reduction,
             registers as registers_claim_reduction,
         },
-        dimensions::JoltFormulaDimensions,
+        dimensions::{JoltFormulaDimensions, TraceDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram, registers,
         spartan::{
-            outer_opening, outer_uniskip_opening, product_outer_opening,
+            self, outer_opening, outer_uniskip_opening, product_outer_opening,
             product_remainder_output_openings, product_should_branch_outer_opening,
             product_should_jump_outer_opening, product_uniskip_opening, shift_output_openings,
-            SpartanOuterDimensions,
+            SpartanOuterDimensions, SpartanProductDimensions,
         },
     },
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
@@ -36,11 +38,9 @@ use jolt_field::{Fr, FromPrimitiveInt};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_poly::{CompressedPoly, UnivariatePoly};
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_sumcheck::{ClearProof, SumcheckProof};
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_verifier::stages::PrecommittedSchedule;
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use std::ops::Range;
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
@@ -319,420 +319,500 @@ fn real_advice_case() -> VerifierFixtureCase {
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage1_uniskip_round(base: &VerifierFixtureCase) {
-    let round_count = clear_full_round_count(&base.proof.stages.stage1_uni_skip_first_round_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage1.uni_skip.round_polynomial"),
-            base,
-            |case| {
-                mutate_full_round(
-                    &mut case.proof.stages.stage1_uni_skip_first_round_proof,
-                    round_index,
-                );
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage1.uni_skip.round_polynomial",
+        narg_payload_spans(base).stage1_uniskip,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage1_remainder_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage1_sumcheck_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage1.remainder.round_polynomial"),
-            base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage1_sumcheck_proof, round_index);
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage1.remainder.round_polynomial",
+        narg_payload_spans(base).stage1_remainder,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage1_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage1.uni_skip.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_full_round(&mut case.proof.stages.stage1_uni_skip_first_round_proof);
-        },
+        "stage1.uni_skip.round_count.missing",
+        "stage1.uni_skip.round_count.extra",
+        narg_payload_spans(base).stage1_uniskip,
     );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage1.uni_skip.round_count.extra"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            push_full_round(&mut case.proof.stages.stage1_uni_skip_first_round_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage1.remainder.round_count.missing"),
-        base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage1_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage1.remainder.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage1_sumcheck_proof);
-        },
+        "stage1.remainder.round_count.missing",
+        "stage1.remainder.round_count.extra",
+        narg_payload_spans(base).stage1_remainder,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage2_uniskip_round(base: &VerifierFixtureCase) {
-    let round_count = clear_full_round_count(&base.proof.stages.stage2_uni_skip_first_round_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage2.product_uniskip.round_polynomial"),
-            base,
-            |case| {
-                mutate_full_round(
-                    &mut case.proof.stages.stage2_uni_skip_first_round_proof,
-                    round_index,
-                );
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage2.product_uniskip.round_polynomial",
+        narg_payload_spans(base).stage2_uniskip,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage2_uniskip_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage2.product_uniskip.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_full_round(&mut case.proof.stages.stage2_uni_skip_first_round_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage2.product_uniskip.round_count.extra"),
-        base,
-        |case| {
-            push_full_round(&mut case.proof.stages.stage2_uni_skip_first_round_proof);
-        },
+        "stage2.product_uniskip.round_count.missing",
+        "stage2.product_uniskip.round_count.extra",
+        narg_payload_spans(base).stage2_uniskip,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage2_batch_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage2_sumcheck_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage2.batch.round_polynomial"),
-            base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage2_sumcheck_proof, round_index);
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage2.batch.round_polynomial",
+        narg_payload_spans(base).stage2_batch,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage2_batch_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage2.batch.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage2_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage2.batch.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage2_sumcheck_proof);
-        },
+        "stage2.batch.round_count.missing",
+        "stage2.batch.round_count.extra",
+        narg_payload_spans(base).stage2_batch,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage3_batch_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage3_sumcheck_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage3.batch.round_polynomial"),
-            base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage3_sumcheck_proof, round_index);
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage3.batch.round_polynomial",
+        narg_payload_spans(base).stage3_batch,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage3_batch_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage3.batch.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage3_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage3.batch.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage3_sumcheck_proof);
-        },
+        "stage3.batch.round_count.missing",
+        "stage3.batch.round_count.extra",
+        narg_payload_spans(base).stage3_batch,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage4_batch_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage4_sumcheck_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage4.batch.round_polynomial"),
-            base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage4_sumcheck_proof, round_index);
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage4.batch.round_polynomial",
+        narg_payload_spans(base).stage4_batch,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage4_batch_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage4.batch.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage4_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage4.batch.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage4_sumcheck_proof);
-        },
+        "stage4.batch.round_count.missing",
+        "stage4.batch.round_count.extra",
+        narg_payload_spans(base).stage4_batch,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage5_batch_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage5_sumcheck_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage5.batch.round_polynomial"),
-            base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage5_sumcheck_proof, round_index);
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage5.batch.round_polynomial",
+        narg_payload_spans(base).stage5_batch,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage5_batch_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage5.batch.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage5_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage5.batch.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage5_sumcheck_proof);
-        },
+        "stage5.batch.round_count.missing",
+        "stage5.batch.round_count.extra",
+        narg_payload_spans(base).stage5_batch,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage6_address_phase_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage6a_sumcheck_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage6.address_phase.round_polynomial"),
-            base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage6a_sumcheck_proof, round_index);
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage6.address_phase.round_polynomial",
+        narg_payload_spans(base).stage6_address,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage6_address_phase_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage6.address_phase.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage6a_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage6.address_phase.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage6a_sumcheck_proof);
-        },
+        "stage6.address_phase.round_count.missing",
+        "stage6.address_phase.round_count.extra",
+        narg_payload_spans(base).stage6_address,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage6_cycle_phase_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage6b_sumcheck_proof);
-    for round_index in 0..round_count {
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage6.cycle_phase.round_polynomial"),
-            base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage6b_sumcheck_proof, round_index);
-            },
-        );
-    }
+    tamper_each_narg_round(
+        base,
+        "stage6.cycle_phase.round_polynomial",
+        narg_payload_spans(base).stage6_cycle,
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_stage6_cycle_phase_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage6.cycle_phase.round_count.missing"),
+    tamper_narg_round_count(
         base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage6b_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage6.cycle_phase.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage6b_sumcheck_proof);
-        },
+        "stage6.cycle_phase.round_count.missing",
+        "stage6.cycle_phase.round_count.extra",
+        narg_payload_spans(base).stage6_cycle,
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage7_batch_round(base: &VerifierFixtureCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage7_sumcheck_proof);
-    for round_index in 0..round_count {
+    tamper_each_narg_round(
+        base,
+        "stage7.batch.round_polynomial",
+        narg_payload_spans(base).stage7_batch,
+    );
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn tamper_stage7_batch_round_counts(base: &VerifierFixtureCase) {
+    tamper_narg_round_count(
+        base,
+        "stage7.batch.round_count.missing",
+        "stage7.batch.round_count.extra",
+        narg_payload_spans(base).stage7_batch,
+    );
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[derive(Clone, Copy)]
+struct NargFrameSpan {
+    start: usize,
+    len: usize,
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+impl NargFrameSpan {
+    const fn last(self) -> usize {
+        self.start + self.len - 1
+    }
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+struct NargPayloadSpans {
+    stage1_uniskip: NargFrameSpan,
+    stage1_remainder: NargFrameSpan,
+    stage2_uniskip: NargFrameSpan,
+    stage2_batch: NargFrameSpan,
+    stage3_batch: NargFrameSpan,
+    stage4_batch: NargFrameSpan,
+    stage5_batch: NargFrameSpan,
+    stage6_address: NargFrameSpan,
+    stage6_cycle: NargFrameSpan,
+    stage7_batch: NargFrameSpan,
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[derive(Clone)]
+struct NargFrameRange {
+    full: Range<usize>,
+    body: Range<usize>,
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn narg_payload_spans(base: &VerifierFixtureCase) -> NargPayloadSpans {
+    let log_t = base.proof.trace_length.ilog2() as usize;
+    let mut cursor = 2;
+
+    let spans = NargPayloadSpans {
+        stage1_uniskip: take_narg_span(&mut cursor, 1),
+        stage1_remainder: take_narg_span(&mut cursor, 1 + log_t),
+        stage2_uniskip: take_narg_span(&mut cursor, 1),
+        stage2_batch: take_narg_span(&mut cursor, stage2_batch_round_count(base)),
+        stage3_batch: take_narg_span(&mut cursor, stage3_batch_round_count(base)),
+        stage4_batch: take_narg_span(&mut cursor, stage4_batch_round_count(base)),
+        stage5_batch: take_narg_span(&mut cursor, stage5_batch_round_count(base)),
+        stage6_address: take_narg_span(&mut cursor, stage6_address_round_count(base)),
+        stage6_cycle: take_narg_span(&mut cursor, stage6_cycle_round_count(base)),
+        stage7_batch: take_narg_span(&mut cursor, stage7_batch_round_count(base)),
+    };
+    let frame_count = narg_frame_ranges(&base.proof.narg).len();
+    assert_eq!(
+        cursor, frame_count,
+        "NARG frame plan must cover every verifier payload frame"
+    );
+    spans
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+const fn take_narg_span(cursor: &mut usize, len: usize) -> NargFrameSpan {
+    let span = NargFrameSpan {
+        start: *cursor,
+        len,
+    };
+    *cursor += len;
+    span
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn tamper_each_narg_round(base: &VerifierFixtureCase, target_name: &str, span: NargFrameSpan) {
+    assert!(
+        span.len > 0,
+        "NARG span for {target_name} must not be empty"
+    );
+    for offset in 0..span.len {
+        let frame_index = span.start + offset;
         tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target("stage7.batch.round_polynomial"),
+            manifest_target(target_name),
             base,
-            |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage7_sumcheck_proof, round_index);
-            },
+            |case| mutate_narg_frame(case, frame_index),
         );
     }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn tamper_stage7_batch_round_counts(base: &VerifierFixtureCase) {
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage7.batch.round_count.missing"),
-        base,
-        |case| {
-            pop_compressed_round(&mut case.proof.stages.stage7_sumcheck_proof);
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("stage7.batch.round_count.extra"),
-        base,
-        |case| {
-            push_compressed_round(&mut case.proof.stages.stage7_sumcheck_proof);
-        },
-    );
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn clear_full_round_count(proof: &SumcheckProof<Fr, jolt_crypto::Bn254G1>) -> usize {
-    let SumcheckProof::Clear(ClearProof::Full(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear full uni-skip proof");
-    };
-    proof.round_polynomials.len()
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn compressed_round_count(proof: &SumcheckProof<Fr, jolt_crypto::Bn254G1>) -> usize {
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear compressed sumcheck proof");
-    };
-    proof.round_polynomials.len()
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn mutate_full_round(proof: &mut SumcheckProof<Fr, jolt_crypto::Bn254G1>, round_index: usize) {
-    let SumcheckProof::Clear(ClearProof::Full(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear full uni-skip proof");
-    };
-    let Some(round) = proof.round_polynomials.get_mut(round_index) else {
-        panic!("converted verifier fixture is missing expected uni-skip round {round_index}");
-    };
-    *round = UnivariatePoly::new(vec![Fr::from_u64(round_index as u64 + 1)]);
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn mutate_compressed_round(
-    proof: &mut SumcheckProof<Fr, jolt_crypto::Bn254G1>,
-    round_index: usize,
+fn tamper_narg_round_count(
+    base: &VerifierFixtureCase,
+    missing_target: &str,
+    extra_target: &str,
+    span: NargFrameSpan,
 ) {
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear compressed sumcheck proof");
-    };
-    let Some(round) = proof.round_polynomials.get_mut(round_index) else {
-        panic!("converted verifier fixture is missing expected compressed round {round_index}");
-    };
-    *round = CompressedPoly::new(vec![Fr::from_u64(round_index as u64 + 1)]);
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn pop_full_round(proof: &mut SumcheckProof<Fr, jolt_crypto::Bn254G1>) {
-    let SumcheckProof::Clear(ClearProof::Full(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear full uni-skip proof");
-    };
-    let removed = proof.round_polynomials.pop();
     assert!(
-        removed.is_some(),
-        "converted verifier fixture has no full round to remove"
+        span.len > 0,
+        "NARG span for {missing_target}/{extra_target} must not be empty"
+    );
+    let last_frame = span.last();
+    tamper_manifest::assert_verifier_fixture_tamper_rejects(
+        manifest_target(missing_target),
+        base,
+        |case| remove_narg_frame(case, last_frame),
+    );
+    tamper_manifest::assert_verifier_fixture_tamper_rejects(
+        manifest_target(extra_target),
+        base,
+        |case| duplicate_narg_frame(case, last_frame),
     );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn push_full_round(proof: &mut SumcheckProof<Fr, jolt_crypto::Bn254G1>) {
-    let SumcheckProof::Clear(ClearProof::Full(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear full uni-skip proof");
-    };
-    proof
-        .round_polynomials
-        .push(UnivariatePoly::new(vec![Fr::from_u64(1)]));
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn pop_compressed_round(proof: &mut SumcheckProof<Fr, jolt_crypto::Bn254G1>) {
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear compressed sumcheck proof");
-    };
-    let removed = proof.round_polynomials.pop();
+fn mutate_narg_frame(case: &mut VerifierFixtureCase, frame_index: usize) {
+    let ranges = narg_frame_ranges(&case.proof.narg);
+    let range = ranges
+        .get(frame_index)
+        .unwrap_or_else(|| panic!("NARG is missing expected frame {frame_index}"));
     assert!(
-        removed.is_some(),
-        "converted verifier fixture has no compressed round to remove"
+        !range.body.is_empty(),
+        "NARG frame {frame_index} should carry a round payload"
     );
+    case.proof.narg[range.body.start] ^= 1;
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn push_compressed_round(proof: &mut SumcheckProof<Fr, jolt_crypto::Bn254G1>) {
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = proof else {
-        panic!("converted verifier fixture must use a clear compressed sumcheck proof");
-    };
-    proof
-        .round_polynomials
-        .push(CompressedPoly::new(vec![Fr::from_u64(1)]));
+fn remove_narg_frame(case: &mut VerifierFixtureCase, frame_index: usize) {
+    let ranges = narg_frame_ranges(&case.proof.narg);
+    let full = ranges
+        .get(frame_index)
+        .unwrap_or_else(|| panic!("NARG is missing expected frame {frame_index}"))
+        .full
+        .clone();
+    drop(case.proof.narg.drain(full));
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn duplicate_narg_frame(case: &mut VerifierFixtureCase, frame_index: usize) {
+    let ranges = narg_frame_ranges(&case.proof.narg);
+    let full = ranges
+        .get(frame_index)
+        .unwrap_or_else(|| panic!("NARG is missing expected frame {frame_index}"))
+        .full
+        .clone();
+    let frame = case.proof.narg[full.clone()].to_vec();
+    drop(case.proof.narg.splice(full.end..full.end, frame));
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn narg_frame_ranges(narg: &[u8]) -> Vec<NargFrameRange> {
+    let mut offset = 0;
+    let mut ranges = Vec::new();
+    while offset < narg.len() {
+        assert!(
+            narg.len() - offset >= 8,
+            "NARG has a truncated frame prefix at byte {offset}"
+        );
+        let mut len_bytes = [0u8; 8];
+        len_bytes.copy_from_slice(&narg[offset..offset + 8]);
+        let len = usize::try_from(u64::from_le_bytes(len_bytes))
+            .expect("NARG frame length should fit in usize");
+        let body_start = offset + 8;
+        let body_end = body_start
+            .checked_add(len)
+            .expect("NARG frame body range should not overflow");
+        assert!(
+            body_end <= narg.len(),
+            "NARG frame at byte {offset} is truncated"
+        );
+        ranges.push(NargFrameRange {
+            full: offset..body_end,
+            body: body_start..body_end,
+        });
+        offset = body_end;
+    }
+    ranges
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage2_batch_round_count(base: &VerifierFixtureCase) -> usize {
+    let log_t = base.proof.trace_length.ilog2() as usize;
+    let log_k = base.proof.ram_K.ilog2() as usize;
+    let trace = TraceDimensions::new(log_t);
+    let read_write = base.proof.rw_config.ram_dimensions(log_t, log_k);
+    let product = SpartanProductDimensions::new(log_t);
+    let raf = RamRafEvaluationDimensions::try_from(read_write)
+        .unwrap_or_else(|error| panic!("fixture has invalid RAM RAF dimensions: {error}"));
+    max_round_count([
+        ram::read_write_checking::<Fr>(read_write).sumcheck.rounds,
+        spartan::product_remainder::<Fr>(product).sumcheck.rounds,
+        instruction_claim_reduction::claim_reduction::<Fr>(trace)
+            .sumcheck
+            .rounds,
+        ram::raf_evaluation::<Fr>(raf).sumcheck.rounds,
+        ram::output_check::<Fr>(read_write).sumcheck.rounds,
+    ])
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage3_batch_round_count(base: &VerifierFixtureCase) -> usize {
+    let trace = TraceDimensions::new(base.proof.trace_length.ilog2() as usize);
+    max_round_count([
+        spartan::shift::<Fr>(trace).sumcheck.rounds,
+        instruction::input_virtualization::<Fr>(trace)
+            .sumcheck
+            .rounds,
+        registers_claim_reduction::claim_reduction::<Fr>(trace)
+            .sumcheck
+            .rounds,
+    ])
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage4_batch_round_count(base: &VerifierFixtureCase) -> usize {
+    let log_t = base.proof.trace_length.ilog2() as usize;
+    let trace = TraceDimensions::new(log_t);
+    let registers_dimensions = base
+        .proof
+        .rw_config
+        .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
+    max_round_count([
+        registers::read_write_checking::<Fr>(registers_dimensions)
+            .sumcheck
+            .rounds,
+        ram::val_check::<Fr>(trace, ram::RamValCheckInit::full(Fr::from_u64(0)))
+            .sumcheck
+            .rounds,
+    ])
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage5_batch_round_count(base: &VerifierFixtureCase) -> usize {
+    let dimensions = stage6_dimensions(base);
+    max_round_count([
+        instruction::read_raf::<Fr>(dimensions.instruction_read_raf)
+            .sumcheck
+            .rounds,
+        ram::ra_claim_reduction::<Fr>(dimensions.trace)
+            .sumcheck
+            .rounds,
+        registers::val_evaluation::<Fr>(dimensions.trace)
+            .sumcheck
+            .rounds,
+    ])
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage6_address_round_count(base: &VerifierFixtureCase) -> usize {
+    let dimensions = stage6_dimensions(base);
+    let booleanity = booleanity::BooleanityDimensions::new(
+        dimensions.ra_layout,
+        base.proof.trace_length.ilog2() as usize,
+        base.proof.one_hot_config.committed_chunk_bits(),
+    );
+    max_round_count([
+        bytecode::read_raf_address_phase::<Fr>(dimensions.bytecode_read_raf)
+            .sumcheck
+            .rounds,
+        booleanity::booleanity_address_phase::<Fr>(booleanity)
+            .sumcheck
+            .rounds,
+    ])
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage6_cycle_round_count(base: &VerifierFixtureCase) -> usize {
+    let dimensions = stage6_dimensions(base);
+    let booleanity = booleanity::BooleanityDimensions::new(
+        dimensions.ra_layout,
+        dimensions.trace.log_t(),
+        base.proof.one_hot_config.committed_chunk_bits(),
+    );
+    max_round_count([
+        bytecode::read_raf_cycle_phase::<Fr>(dimensions.bytecode_read_raf)
+            .sumcheck
+            .rounds,
+        booleanity::booleanity_cycle_phase::<Fr>(booleanity)
+            .sumcheck
+            .rounds,
+        ram::hamming_booleanity::<Fr>(dimensions.trace)
+            .sumcheck
+            .rounds,
+        ram::ra_virtualization::<Fr>(dimensions.ram_ra_virtualization)
+            .sumcheck
+            .rounds,
+        instruction::ra_virtualization::<Fr>(dimensions.instruction_ra_virtualization)
+            .sumcheck
+            .rounds,
+        increments::claim_reduction::<Fr>(dimensions.trace)
+            .sumcheck
+            .rounds,
+    ])
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage7_batch_round_count(base: &VerifierFixtureCase) -> usize {
+    let dimensions = stage6_dimensions(base);
+    let hamming = hamming_weight::HammingWeightClaimReductionDimensions::new(
+        dimensions.ra_layout,
+        base.proof.one_hot_config.committed_chunk_bits(),
+    );
+    hamming_weight::claim_reduction::<Fr>(hamming)
+        .sumcheck
+        .rounds
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn max_round_count<const N: usize>(rounds: [usize; N]) -> usize {
+    rounds
+        .into_iter()
+        .max()
+        .expect("batched sumcheck must include at least one relation")
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]

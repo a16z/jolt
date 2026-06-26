@@ -1,6 +1,6 @@
 //! Shape audits for verifier-native ZK proofs.
 
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -63,7 +63,7 @@ where
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
     PCS::Output: CanonicalSerialize + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize + CanonicalDeserialize,
     H: DuplexSpongeInterface<U = u8> + Default,
     for<'a> VerifierState<'a, H>: jolt_transcript::FsTranscript<F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
