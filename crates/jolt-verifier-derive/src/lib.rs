@@ -21,9 +21,9 @@
 //! has leaf opening fields. Each field is either a leaf opening (annotated with
 //! `#[opening(..)]`) or a nested aggregate (no annotation; its type must also
 //! implement `OutputClaims`). An `Option<C>` leaf is a *conditional* opening: it
-//! contributes to `opening_values` / `opening_count` / `append_openings` and
-//! resolves by id only when `Some` (used for advice / committed-program openings
-//! that are present only in some proof configurations).
+//! contributes to `opening_values` / `opening_count` and resolves by id only when
+//! `Some` (used for advice / committed-program openings that are present only in
+//! some proof configurations).
 //!
 //! ## `#[derive(InputClaims)]`
 //!
@@ -361,7 +361,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     let get = quote!(crate::stages::relations::GetValue::value);
     let mut value_chains = Vec::new();
     let mut count_terms = Vec::new();
-    let mut append_stmts = Vec::new();
     let mut resolve_arms = Vec::new();
 
     for plan in &plans {
@@ -376,11 +375,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             let id = id_expr(kind, relation, Some(quote!(index)));
             value_chains.push(quote!(.chain(self.#ident.iter().map(|__cell| #get(__cell)))));
             count_terms.push(quote!(self.#ident.len()));
-            append_stmts.push(quote! {
-                for __cell in &self.#ident {
-                    transcript.append_labeled(b"opening_claim", &#get(__cell));
-                }
-            });
             resolve_arms.push(quote! {
                 for (index, __cell) in self.#ident.iter().enumerate() {
                     if *id == #id {
@@ -392,11 +386,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             let id = id_expr(kind, relation, None);
             value_chains.push(quote!(.chain(self.#ident.as_ref().map(|__cell| #get(__cell)))));
             count_terms.push(quote!(::core::primitive::usize::from(self.#ident.is_some())));
-            append_stmts.push(quote! {
-                if let ::core::option::Option::Some(__cell) = &self.#ident {
-                    transcript.append_labeled(b"opening_claim", &#get(__cell));
-                }
-            });
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__cell) = &self.#ident {
                     if *id == #id {
@@ -408,9 +397,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             let id = id_expr(kind, relation, None);
             value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
             count_terms.push(quote!(1usize));
-            append_stmts.push(quote! {
-                transcript.append_labeled(b"opening_claim", &#get(&self.#ident));
-            });
             resolve_arms.push(quote! {
                 if *id == #id {
                     return ::core::option::Option::Some(#get(&self.#ident));
@@ -471,13 +457,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             fn opening_count(&self) -> usize {
                 #count_body
-            }
-
-            fn append_openings<T: ::jolt_transcript::Transcript<Challenge = #value>>(
-                &self,
-                transcript: &mut T,
-            ) {
-                #(#append_stmts)*
             }
 
             fn resolve_output(

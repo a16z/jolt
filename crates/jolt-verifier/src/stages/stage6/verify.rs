@@ -59,7 +59,7 @@ use crate::{
     stages::{
         relations::{
             check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-            OutputClaims,
+            OutputAppend,
         },
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},

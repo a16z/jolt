@@ -1,11 +1,20 @@
 //! Shared per-relation opening-claim plumbing.
 //!
-//! These traits are implemented by `#[derive(OutputClaims)]` /
-//! `#[derive(InputClaims)]` (crate `jolt-verifier-derive`) on each relation's
-//! claim struct. They make the canonical opening **order** and **count** a
-//! single-sourced consequence of a struct's field declaration order, instead of
-//! the three hand-written copies (`*_output_claim_values`, `append_*`, and the
-//! `+ 1 + 1 + 2`-style count literals) that historically drift apart.
+//! The claim data model (the opening cells, the `OutputClaims`/`InputClaims`
+//! resolvers, and the value↔point zip) lives in `jolt-claims` and is re-exported
+//! here so existing `crate::stages::relations::{..}` paths keep resolving. Those
+//! traits are implemented by `#[derive(OutputClaims)]` / `#[derive(InputClaims)]`
+//! (crate `jolt-verifier-derive`) on each relation's claim struct, making the
+//! canonical opening **order** and **count** a single-sourced consequence of a
+//! struct's field declaration order.
+//!
+//! Transcript I/O stays here: [`OutputAppend::append_openings`] is a thin
+//! verifier-side consumer of [`OutputClaims::opening_values`], so `jolt-claims`
+//! stays transcript-free while the Fiat-Shamir order remains single-sourced.
+
+pub use jolt_claims::{
+    zip_openings, GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, ZipOpenings,
+};
 
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckDomain,
@@ -37,107 +46,26 @@ pub fn check_relation_boolean_hypercube(
     Ok(())
 }
 
-/// Canonical encoders and the output-formula resolver for a relation's
-/// *produced* opening-claim struct.
+/// Transcript-side companion to [`OutputClaims`]: append a relation's produced
+/// openings to the Fiat-Shamir transcript in canonical order.
 ///
-/// The implementor's field declaration order is the single definition of
-/// canonical opening order: [`opening_values`](Self::opening_values),
-/// [`opening_count`](Self::opening_count), and
-/// [`append_openings`](Self::append_openings) all derive from it, so they cannot
-/// disagree.
-pub trait OutputClaims<F: Field> {
-    /// Produced opening scalars in canonical (field-declaration) order.
-    fn opening_values(&self) -> Vec<F>;
-
-    /// Number of produced openings; equals `opening_values().len()` but is
-    /// computed without allocating.
-    fn opening_count(&self) -> usize;
-
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label. This is the Fiat-Shamir order and
-    /// MUST match the order in which the prover commits the openings.
-    fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T);
-
-    /// Resolve a produced opening's value by id, for evaluating the relation's
-    /// output `Expr`. Returns `None` for ids this struct does not carry (callers
-    /// turn that into [`VerifierError::MissingOpeningClaim`](crate::VerifierError)).
-    fn resolve_output(&self, id: &JoltOpeningId) -> Option<F>;
-}
-
-/// The input-formula resolver for a relation's *consumed* opening-claim struct
-/// (populated by explicit cross-stage wiring).
-pub trait InputClaims<F: Field> {
-    /// Resolve a consumed opening's value by id, for evaluating the relation's
-    /// input `Expr`. Returns `None` for ids this struct does not carry.
-    fn resolve_input(&self, id: &JoltOpeningId) -> Option<F>;
-}
-
-/// One opening-claim cell: a `(point, value)` pair. The opening point is
-/// verifier-derived (from the sumcheck), so it never crosses the wire — only the
-/// value is serialized into the proof.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpeningClaim<F> {
-    pub point: Vec<F>,
-    pub value: F,
-}
-
-/// A claim-struct cell that exposes an opening point. Implemented by the
-/// point-only ZK cell (`Vec<F>`) and the clear cell (`OpeningClaim<F>`).
-pub trait GetPoint<F> {
-    fn point(&self) -> &[F];
-}
-
-/// A claim-struct cell that exposes an opening value. Implemented by the
-/// value-only wire cell (`F`) and the clear cell (`OpeningClaim<F>`).
-pub trait GetValue<F> {
-    fn value(&self) -> F;
-}
-
-impl<F: Field> GetPoint<F> for Vec<F> {
-    fn point(&self) -> &[F] {
-        self.as_slice()
+/// This lives in `jolt-verifier` (not `jolt-claims`) because it needs a
+/// `Transcript`; `jolt-claims` stays transcript-free. It is a blanket extension
+/// over every `OutputClaims` implementor, so the Fiat-Shamir order is
+/// single-sourced by [`OutputClaims::opening_values`] and cannot disagree with it.
+pub trait OutputAppend<F: Field>: OutputClaims<F> {
+    /// Append every produced opening to the transcript in canonical
+    /// ([`OutputClaims::opening_values`]) order, each under the `b"opening_claim"`
+    /// label. This is the Fiat-Shamir order and MUST match the order in which the
+    /// prover commits the openings.
+    fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
+        for value in self.opening_values() {
+            transcript.append_labeled(b"opening_claim", &value);
+        }
     }
 }
 
-impl<F: Field> GetValue<F> for F {
-    fn value(&self) -> F {
-        *self
-    }
-}
-
-impl<F: Field> GetPoint<F> for OpeningClaim<F> {
-    fn point(&self) -> &[F] {
-        &self.point
-    }
-}
-
-impl<F: Field> GetValue<F> for OpeningClaim<F> {
-    fn value(&self) -> F {
-        self.value
-    }
-}
-
-/// A produced-claim struct in its clear `OpeningClaim<F>` (point + value) cell
-/// form, reconstructible by pairing the value-only (`F`) and point-only (`Vec<F>`)
-/// cell forms of the same struct field-by-field. `#[derive(OutputClaims)]` emits
-/// the implementation (one `OpeningClaim` per leaf, element-wise for `Vec`
-/// families, value-driven for `Option` leaves), so callers reach it through the
-/// free [`zip_openings`] function instead of hand-writing the pairing.
-pub trait ZipOpenings<F: Field>: Sized {
-    /// The value-only (`F`-cell) form — the serialized wire claims.
-    type Values;
-    /// The point-only (`Vec<F>`-cell) form — the derived opening points.
-    type Points;
-    /// Pair each opening's value with its derived point.
-    fn zip_openings(values: &Self::Values, points: &Self::Points) -> Self;
-}
-
-/// Pair a relation's value-only claims with its point-only claims into the clear
-/// `OpeningClaim<F>` form, single-sourcing the per-field `(point, value)` pairing
-/// that each stage's `*_output_claims_with_points` helper used to hand-write.
-pub fn zip_openings<F: Field, T: ZipOpenings<F>>(values: &T::Values, points: &T::Points) -> T {
-    T::zip_openings(values, points)
-}
+impl<F: Field, C: OutputClaims<F>> OutputAppend<F> for C {}
 
 /// A single sumcheck instance, driven identically by the prover (while producing
 /// its proof) and the verifier (after checking it).
