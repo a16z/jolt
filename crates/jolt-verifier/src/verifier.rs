@@ -2686,7 +2686,7 @@ mod tests {
         d_pack: usize,
     ) -> TestProof {
         let base = proof_with_zk(false, clear_claims());
-        let mut proof = JoltProof::new_with_protocol(
+        let proof = JoltProof::new_with_protocol(
             *config,
             CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
                 TestCommitment,

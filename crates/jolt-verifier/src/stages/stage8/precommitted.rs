@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "akita"))]
 use super::verify::Stage8OpeningRoute;
 use super::{outputs::Stage8OpeningStatement, verify::Stage8BatchEntry};
 use crate::VerifierError;
