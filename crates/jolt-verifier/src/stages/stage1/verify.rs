@@ -1,12 +1,13 @@
 use jolt_claims::protocols::jolt::{
     geometry::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain, JoltSumcheckSpec,
 };
+use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::FromPrimitiveInt;
 use jolt_openings::CommitmentScheme;
 use jolt_r1cs::constraints::jolt::{
-    JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges, SPARTAN_OUTER_REMAINDER_DEGREE,
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+    SPARTAN_OUTER_REMAINDER_DEGREE, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+    SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
@@ -14,10 +15,16 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::Transcript;
 
+use super::outer_remainder::{
+    outer_remainder_inputs_from_uniskip_output, outer_remainder_outputs_from_spartan_outer_claims,
+    OuterRemainder,
+};
+use super::outer_uniskip::OuterUniskip;
 use super::outputs::{
     spartan_outer_opening_order, Stage1ClearOutput, Stage1Output, Stage1PublicOutput,
     Stage1ZkOutput, VerifiedSpartanOuterSumcheck,
 };
+use crate::stages::relations::{zip_openings, ConcreteSumcheck, OutputAppend};
 use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -84,7 +91,16 @@ where
         )
     } else {
         let claims = &proof.clear_claims()?.stage1;
-        let uniskip_input_claim = PCS::Field::from_u64(0);
+        let uniskip_relation = OuterUniskip::<PCS::Field>::new(dimensions.clone());
+        // The uni-skip first round consumes no openings: its `input_expression` is
+        // `zero`, so the relation's `input_claim` is the constant zero. Computing it
+        // through the relation (rather than hard-coding `0`) keeps the claim algebra
+        // single-sourced with the BlindFold input constraint.
+        let uniskip_input_claim = uniskip_relation.input_claim(
+            &super::outer_uniskip::OuterUniskipInputClaims::default(),
+            &NoChallenges::default(),
+        )?;
+        debug_assert_eq!(uniskip_input_claim, PCS::Field::from_u64(0));
         let uniskip_reduction = proof
             .stages
             .stage1_uni_skip_first_round_proof
@@ -185,7 +201,16 @@ where
                 stage,
                 reason: "clear Stage 1 uni-skip output is missing".to_string(),
             })?;
+        // The remainder consumes the uni-skip's reduced opening as its input claim.
+        // The input claim drawn into the singleton batch is the relation's
+        // `input_claim` (the bare consumed opening), which equals
+        // `uniskip.expected_output_claim`; it must be known before the sumcheck binds
+        // (the `OuterRemainder` coefficients depend on the remainder challenges, which
+        // are only available after binding, so the relation itself is built below).
+        let remainder_inputs =
+            outer_remainder_inputs_from_uniskip_output(uniskip.expected_output_claim);
         let remainder_input_claim = uniskip.expected_output_claim;
+        let no_challenges = NoChallenges::default();
         let remainder_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
             &[SumcheckClaim::new(
                 remainder_spec.rounds,
@@ -199,6 +224,10 @@ where
             stage,
             reason: error.to_string(),
         })?;
+        // The singleton batch's RLC coefficient is drawn inside
+        // `verify_compressed_boolean`, in the inter-sumcheck gap after the uni-skip
+        // output was absorbed above. This squeeze is part of the prover transcript and
+        // must not be removed.
         let [remainder_batching_coefficient] = remainder_batch.batching_coefficients.as_slice()
         else {
             return Err(VerifierError::StageClaimSumcheckFailed {
@@ -209,25 +238,34 @@ where
         };
         let batched_remainder_input_claim = remainder_input_claim * *remainder_batching_coefficient;
         let remainder_reduction = remainder_batch.reduction;
-        let r1cs_input_claims = claims.spartan_outer_claims(&dimensions)?;
-        let remainder_challenges = remainder_reduction.point.as_slice();
-        let remainder_formula =
-            JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-                tau: &tau,
-                uniskip: uniskip_challenge,
-                remainder: remainder_challenges,
-            })
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage,
-                reason: error.to_string(),
-            })?;
-        let expected_remainder_output_claim = remainder_formula
-            .expected_output_claim(&r1cs_input_claims)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage,
-                reason: error.to_string(),
-            })?
-            * *remainder_batching_coefficient;
+
+        // Build the remainder relation now that the bound point is known: its
+        // constructor expands the quadratic R1CS form into `SpartanOuterPublic`
+        // coefficients once (the same source BlindFold uses), which
+        // `expected_output` then evaluates against the produced openings.
+        let remainder_relation = OuterRemainder::<PCS::Field>::new(
+            dimensions.clone(),
+            &tau,
+            uniskip_challenge,
+            remainder_reduction.point.as_slice(),
+        )?;
+        debug_assert_eq!(
+            remainder_relation.input_claim(&remainder_inputs, &no_challenges)?,
+            remainder_input_claim,
+        );
+        let remainder_points = remainder_relation
+            .derive_opening_points(remainder_reduction.point.as_slice(), &remainder_inputs)?;
+        // The produced opening values come from the serialized outer claims (the wire
+        // form); pairing them with the shared remainder point yields the located
+        // openings the output `Expr` evaluates against.
+        let remainder_output_values =
+            outer_remainder_outputs_from_spartan_outer_claims(&claims.outer);
+        let remainder_output_claims = zip_openings(&remainder_output_values, &remainder_points);
+        let expected_remainder_output_claim = remainder_relation.expected_output(
+            &remainder_inputs,
+            &remainder_output_claims,
+            &no_challenges,
+        )? * *remainder_batching_coefficient;
         if remainder_reduction.value != expected_remainder_output_claim {
             return Err(VerifierError::StageClaimOutputMismatch { stage });
         }
@@ -237,9 +275,11 @@ where
             sumcheck_final_claim: remainder_reduction.value,
             expected_output_claim: expected_remainder_output_claim,
         };
-        for opening_claim in &r1cs_input_claims {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
+        // Append the 35 produced openings in canonical (declaration) order, matching
+        // the prover's commitment order. `OuterRemainderOutputClaims`' field order is
+        // `dimensions.variables()` (= `SPARTAN_OUTER_R1CS_INPUTS`), so this is the same
+        // order as the previous explicit `r1cs_input_claims` loop.
+        remainder_output_claims.append_openings(transcript);
 
         let remainder_challenges = remainder.sumcheck_point.as_slice().to_vec();
         (
