@@ -344,6 +344,12 @@ pub struct HammingBooleanityInputs<'a> {
     pub e_out: &'a DeviceFrVec,
 }
 
+pub struct RaVirtualD4Inputs<'a> {
+    pub chunks: [&'a DeviceFrVec; 4],
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -668,6 +674,14 @@ impl CudaKernelContext {
             num_cycles,
         )?;
         Ok((a.to_host()?, b.to_host()?))
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn ra_virtual_d4_round_poly(
+        &self,
+        inputs: RaVirtualD4Inputs<'_>,
+    ) -> Result<[Fr; 4], CudaError> {
+        todo!()
     }
 
     pub fn hamming_booleanity_round_poly(
@@ -2630,6 +2644,80 @@ mod tests {
             let mut got = state.eq.gruen_poly_deg_3(q[0], q[1], previous_claim);
             got *= scale;
             prop_assert_eq!(got.coefficients(), expected.coefficients());
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::ra_virtual_d4_round_poly is todo!()"]
+        fn ra_virtual_d4_round_poly_matches_cpu(
+            num_vars in 1usize..10,
+            point_seed in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            use crate::stage6::accumulate_instruction_ra_d4_products;
+            use jolt_field::FieldAccumulator;
+            use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+            // RamRaVirtual config: 4 dense chunks, 1 virtual, weight = e_in (gamma
+            // absorbed into a unit gamma^0). Mirror round_poly_sparse_d4's fold.
+            let len = 1usize << num_vars;
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| point_seed + Fr::from_u64(i as u64))
+                .collect();
+            let chunks: Vec<Vec<Fr>> = (0..4)
+                .map(|c| {
+                    (0..len)
+                        .map(|j| seed + Fr::from_u64((c * len + j + 1) as u64))
+                        .collect()
+                })
+                .collect();
+
+            let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+            let e_in = split_eq.e_in_current();
+            let e_out = split_eq.e_out_current();
+            let in_bits = e_in.len().trailing_zeros() as usize;
+
+            type Acc = <Fr as Field>::Accumulator;
+            let mut expected_accs = [Acc::default(); 4];
+            for (x_out, &eo) in e_out.iter().enumerate() {
+                let mut inner = [Acc::default(); 4];
+                let base = x_out << in_bits;
+                for (x_in, &ei) in e_in.iter().enumerate() {
+                    let row = base | x_in;
+                    let pair = |c: usize| (chunks[c][2 * row], chunks[c][2 * row + 1]);
+                    accumulate_instruction_ra_d4_products(
+                        ei,
+                        &mut inner,
+                        pair(0),
+                        pair(1),
+                        pair(2),
+                        pair(3),
+                    );
+                }
+                for (acc, inner) in expected_accs.iter_mut().zip(inner) {
+                    acc.fmadd(eo, inner.reduce());
+                }
+            }
+            let expected: Vec<Fr> =
+                expected_accs.into_iter().map(FieldAccumulator::reduce).collect();
+
+            let c = ctx();
+            let chunk_devs: Vec<DeviceFrVec> =
+                chunks.iter().map(|v| c.upload(v).unwrap()).collect();
+            let e_in_dev = c.upload(e_in).unwrap();
+            let e_out_dev = c.upload(e_out).unwrap();
+            let got = c
+                .ra_virtual_d4_round_poly(RaVirtualD4Inputs {
+                    chunks: [
+                        &chunk_devs[0],
+                        &chunk_devs[1],
+                        &chunk_devs[2],
+                        &chunk_devs[3],
+                    ],
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                })
+                .unwrap();
+            prop_assert_eq!(got.to_vec(), expected);
         }
     }
 

@@ -5015,7 +5015,7 @@ fn eval_instruction_ra_product<F: Field>(pairs: &[(F, F)], evals: &mut [F]) {
 }
 
 #[inline(always)]
-fn accumulate_instruction_ra_d4_products<F: Field>(
+pub(crate) fn accumulate_instruction_ra_d4_products<F: Field>(
     weight: F,
     evals: &mut [F::Accumulator],
     a0: (F, F),
