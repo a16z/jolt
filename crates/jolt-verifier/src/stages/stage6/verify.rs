@@ -51,8 +51,8 @@ use super::{
         BytecodeReadRafOutputClaims, BytecodeReductionWeights, IncClaimReductionOutputClaims,
         InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
         RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
-        Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6ClearOutput, Stage6Output,
-        Stage6OutputClaims, Stage6PublicOutput, Stage6ZkOutput,
+        Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6Challenges,
+        Stage6ClearOutput, Stage6Output, Stage6OutputClaims, Stage6ZkOutput,
     },
 };
 use crate::{
@@ -250,9 +250,9 @@ where
         booleanity_gamma = PCS::Field::one();
     }
 
-    let public = |instruction_ra_gamma_powers: Vec<PCS::Field>,
-                  inc_gamma: PCS::Field,
-                  eta: Option<PCS::Field>| Stage6PublicOutput {
+    let challenges = |instruction_ra_gamma_powers: Vec<PCS::Field>,
+                      inc_gamma: PCS::Field,
+                      eta: Option<PCS::Field>| Stage6Challenges {
         bytecode_gamma_powers: bytecode_gamma_powers.clone(),
         stage1_gammas: stage1_gammas.clone(),
         stage2_gammas: stage2_gammas.clone(),
@@ -571,7 +571,7 @@ where
         };
 
         return Ok(Stage6Output::Zk(Stage6ZkOutput {
-            public: public(instruction_ra_gamma_powers, inc_gamma, eta),
+            challenges: challenges(instruction_ra_gamma_powers, inc_gamma, eta),
             batch_consistency: consistency,
             batch_output_claims,
             address_phase_consistency: stage6a.address_phase_consistency,
@@ -1150,7 +1150,6 @@ where
     };
 
     Ok(Stage6Output::Clear(Stage6ClearOutput {
-        public: public(instruction_ra_gamma_powers, inc_gamma, eta),
         output_claims: claims.clone(),
         output_points,
         bytecode_reduction_weights: cycle_bytecode_reduction_weights,
@@ -1630,11 +1629,11 @@ impl<F: Field> Stage6TranscriptChallenges<F> {
     }
 }
 
-pub fn stage6_public_output<F: Field>(
+pub fn stage6_challenges<F: Field>(
     transcript_challenges: &Stage6TranscriptChallenges<F>,
     bytecode_reduction_eta: Option<F>,
-) -> Stage6PublicOutput<F> {
-    Stage6PublicOutput {
+) -> Stage6Challenges<F> {
+    Stage6Challenges {
         bytecode_gamma_powers: transcript_challenges.bytecode_gamma_powers.clone(),
         stage1_gammas: transcript_challenges.stage1_gammas.clone(),
         stage2_gammas: transcript_challenges.stage2_gammas.clone(),

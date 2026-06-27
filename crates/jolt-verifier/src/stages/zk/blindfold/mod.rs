@@ -669,31 +669,31 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Gamma)),
-        input.stage6.public.bytecode_gamma_powers[1],
+        input.stage6.challenges.bytecode_gamma_powers[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma)),
-        input.stage6.public.stage1_gammas[1],
+        input.stage6.challenges.stage1_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma)),
-        input.stage6.public.stage2_gammas[1],
+        input.stage6.challenges.stage2_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma)),
-        input.stage6.public.stage3_gammas[1],
+        input.stage6.challenges.stage3_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma)),
-        input.stage6.public.stage4_gammas[1],
+        input.stage6.challenges.stage4_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma)),
-        input.stage6.public.stage5_gammas[1],
+        input.stage6.challenges.stage5_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BooleanityChallenge::Gamma)),
-        input.stage6.public.booleanity_gamma,
+        input.stage6.challenges.booleanity_gamma,
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(
@@ -701,7 +701,7 @@ where
         )),
         input
             .stage6
-            .public
+            .challenges
             .instruction_ra_gamma_powers
             .get(1)
             .copied()
@@ -709,7 +709,7 @@ where
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(IncClaimReductionChallenge::Gamma)),
-        input.stage6.public.inc_gamma,
+        input.stage6.challenges.inc_gamma,
     )?;
 
     let bytecode_address_point = input
@@ -830,11 +830,11 @@ where
                     .output_points
                     .registers_opening_point()[..REGISTER_ADDRESS_BITS],
                 entry_bytecode_index,
-                stage1_gammas: &input.stage6.public.stage1_gammas,
-                stage2_gammas: &input.stage6.public.stage2_gammas,
-                stage3_gammas: &input.stage6.public.stage3_gammas,
-                stage4_gammas: &input.stage6.public.stage4_gammas,
-                stage5_gammas: &input.stage6.public.stage5_gammas,
+                stage1_gammas: &input.stage6.challenges.stage1_gammas,
+                stage2_gammas: &input.stage6.challenges.stage2_gammas,
+                stage3_gammas: &input.stage6.challenges.stage3_gammas,
+                stage4_gammas: &input.stage6.challenges.stage4_gammas,
+                stage5_gammas: &input.stage6.challenges.stage5_gammas,
             })
             .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
         for (index, stage_value) in bytecode_public_values.stage_values.iter().enumerate() {
@@ -869,11 +869,18 @@ where
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let reference_eq_point = input
         .stage6
-        .public
+        .challenges
         .booleanity_reference_address
         .iter()
         .rev()
-        .chain(input.stage6.public.booleanity_reference_cycle.iter().rev())
+        .chain(
+            input
+                .stage6
+                .challenges
+                .booleanity_reference_cycle
+                .iter()
+                .rev(),
+        )
         .copied()
         .collect::<Vec<_>>();
     let booleanity_full_point = [
@@ -985,20 +992,22 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
-        VerifierError::MissingStageClaimChallenge {
+    let eta = input
+        .stage6
+        .challenges
+        .bytecode_reduction_eta
+        .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
             id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-        }
-    })?;
+        })?;
     verify::bytecode_reduction_weights(
         layout,
         verify::BytecodeReductionWeightInputs {
             eta,
-            stage1_gammas: &input.stage6.public.stage1_gammas,
-            stage2_gammas: &input.stage6.public.stage2_gammas,
-            stage3_gammas: &input.stage6.public.stage3_gammas,
-            stage4_gammas: &input.stage6.public.stage4_gammas,
-            stage5_gammas: &input.stage6.public.stage5_gammas,
+            stage1_gammas: &input.stage6.challenges.stage1_gammas,
+            stage2_gammas: &input.stage6.challenges.stage2_gammas,
+            stage3_gammas: &input.stage6.challenges.stage3_gammas,
+            stage4_gammas: &input.stage6.challenges.stage4_gammas,
+            stage5_gammas: &input.stage6.challenges.stage5_gammas,
             register_read_write_point: &input.stage4.output_points.registers_read_write_point()
                 [..REGISTER_ADDRESS_BITS],
             register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()

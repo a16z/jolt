@@ -84,11 +84,13 @@ where
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted)?;
     }
     if let Some(layout) = bytecode_reduction_layout.as_ref() {
-        let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
-            VerifierError::MissingStageClaimChallenge {
+        let eta = input
+            .stage6
+            .challenges
+            .bytecode_reduction_eta
+            .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
                 id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-            }
-        })?;
+            })?;
         values.public(
             VerifierPublicId::Challenge(JoltChallengeId::from(
                 BytecodeClaimReductionChallenge::Eta,
