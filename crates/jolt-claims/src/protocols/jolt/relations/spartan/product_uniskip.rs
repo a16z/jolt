@@ -24,6 +24,8 @@ impl SymbolicSumcheck for ProductUniskip {
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanProductDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: SpartanProductDimensions) -> Self {
         Self { shape }

@@ -45,6 +45,8 @@ impl SymbolicSumcheck for AddressPhase {
     type ChallengeId = JoltChallengeId;
     type Shape = PrecommittedReductionDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = ProgramImageReductionAddressPhaseInputClaims<C>;
+    type Outputs<C> = ProgramImageReductionAddressPhaseOutputClaims<C>;
 
     fn new(shape: PrecommittedReductionDimensions) -> Self {
         Self { shape }

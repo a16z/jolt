@@ -113,6 +113,12 @@ impl<F: Field, C> SumcheckChallenges<F, C> for NoChallenges<F> {
     }
 }
 
+/// Placeholder `Inputs`/`Outputs` for a symbolic-only relation (no concrete
+/// resolution): it declares the GATs `SymbolicSumcheck` requires without owning
+/// real claim structs. Never resolved (no `ConcreteSumcheck` impl references it).
+pub struct NoInputs<C>(::core::marker::PhantomData<C>);
+pub struct NoOutputs<C>(::core::marker::PhantomData<C>);
+
 /// One opening-claim cell: a `(point, value)` pair. The opening point is
 /// verifier-derived (from the sumcheck), so it never crosses the wire — only the
 /// value is serialized into the proof.

@@ -23,6 +23,14 @@ pub trait SymbolicSumcheck {
     /// [`NoChallenges`](crate::NoChallenges).
     type Challenges<F>;
 
+    /// The relation's consumed-claim struct, generic over the opening *cell*
+    /// (`OpeningClaim<F>` | `Vec<F>` | `F`). A symbolic-only relation uses
+    /// [`NoInputs`](crate::NoInputs).
+    type Inputs<C>;
+    /// The relation's produced-claim struct, generic over the opening *cell*. A
+    /// symbolic-only relation uses [`NoOutputs`](crate::NoOutputs).
+    type Outputs<C>;
+
     fn new(shape: Self::Shape) -> Self;
 
     /// The relation this sumcheck belongs to. A type-level constant; NOT a unique
@@ -105,6 +113,8 @@ mod tests {
         type ChallengeId = Ch;
         type Shape = ();
         type Challenges<F> = crate::NoChallenges<F>;
+        type Inputs<C> = crate::NoInputs<C>;
+        type Outputs<C> = crate::NoOutputs<C>;
         fn new((): ()) -> Self {
             Self
         }

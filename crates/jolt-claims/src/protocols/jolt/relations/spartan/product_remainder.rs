@@ -66,6 +66,8 @@ impl SymbolicSumcheck for ProductRemainder {
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanProductDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = ProductRemainderInputClaims<C>;
+    type Outputs<C> = ProductRemainderOutputClaims<C>;
 
     fn new(shape: SpartanProductDimensions) -> Self {
         Self { shape }

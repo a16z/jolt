@@ -121,6 +121,8 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
     type Challenges<F> = BytecodeReadRafAddressPhaseChallenges<F>;
+    type Inputs<C> = BytecodeReadRafAddressPhaseInputClaims<C>;
+    type Outputs<C> = BytecodeReadRafAddressPhaseOutputClaims<C>;
 
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }

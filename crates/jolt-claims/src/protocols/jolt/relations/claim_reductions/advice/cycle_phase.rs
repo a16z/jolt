@@ -51,6 +51,8 @@ impl SymbolicSumcheck for CyclePhase {
     type ChallengeId = JoltChallengeId;
     type Shape = AdviceReductionShape;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = AdviceCyclePhaseInputClaims<C>;
+    type Outputs<C> = AdviceCyclePhaseOutputClaims<C>;
 
     fn new(shape: AdviceReductionShape) -> Self {
         Self { shape }

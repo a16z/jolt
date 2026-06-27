@@ -2,6 +2,7 @@
 
 use jolt_field::RingCore;
 
+use super::{BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims};
 use crate::protocols::jolt::geometry::bytecode::{
     bytecode_read_raf_address_phase_opening, read_raf_cycle_output, BytecodeReadRafDimensions,
 };
@@ -32,6 +33,8 @@ impl SymbolicSumcheck for ReadRafCyclePhase {
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
     type Challenges<F> = BytecodeReadRafCyclePhaseChallenges<F>;
+    type Inputs<C> = BytecodeReadRafInputClaims<C>;
+    type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }

@@ -84,8 +84,6 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
     type Symbolic = relations::claim_reductions::advice::AddressPhase;
-    type Inputs<C> = AdviceAddressPhaseInputClaims<C>;
-    type Outputs<C> = AdviceAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

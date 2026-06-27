@@ -44,6 +44,8 @@ impl SymbolicSumcheck for RaVirtualization {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = RamRaVirtualizationDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = RamRaVirtualizationInputClaims<C>;
+    type Outputs<C> = RamRaVirtualizationOutputClaims<C>;
 
     fn new(shape: RamRaVirtualizationDimensions) -> Self {
         Self { shape }

@@ -26,6 +26,8 @@ impl SymbolicSumcheck for ClaimReduction {
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: FieldRegistersTraceDimensions) -> Self {
         Self { shape }

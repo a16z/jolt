@@ -76,6 +76,8 @@ impl SymbolicSumcheck for InputVirtualization {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
     type Challenges<F> = InstructionInputChallenges<F>;
+    type Inputs<C> = InstructionInputInputClaims<C>;
+    type Outputs<C> = InstructionInputOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

@@ -57,6 +57,8 @@ impl SymbolicSumcheck for HammingBooleanity {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = RamHammingBooleanityInputClaims<C>;
+    type Outputs<C> = RamHammingBooleanityOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

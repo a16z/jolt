@@ -50,6 +50,8 @@ impl SymbolicSumcheck for AddressPhase {
     type ChallengeId = JoltChallengeId;
     type Shape = AdviceReductionShape;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = AdviceAddressPhaseInputClaims<C>;
+    type Outputs<C> = AdviceAddressPhaseOutputClaims<C>;
 
     fn new(shape: AdviceReductionShape) -> Self {
         Self { shape }

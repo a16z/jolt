@@ -108,6 +108,8 @@ impl SymbolicSumcheck for RamValCheck {
     type ChallengeId = JoltChallengeId;
     type Shape = RamValCheckShape;
     type Challenges<F> = RamValCheckChallenges<F>;
+    type Inputs<C> = RamValCheckInputClaims<C>;
+    type Outputs<C> = RamValCheckOutputClaims<C>;
 
     fn new(shape: RamValCheckShape) -> Self {
         Self { shape }

@@ -80,8 +80,6 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
     type Symbolic = relations::claim_reductions::bytecode::AddressPhase;
-    type Inputs<C> = BytecodeReductionAddressPhaseInputClaims<C>;
-    type Outputs<C> = BytecodeReductionAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -167,8 +165,6 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
     type Symbolic = relations::claim_reductions::program_image::AddressPhase;
-    type Inputs<C> = ProgramImageReductionAddressPhaseInputClaims<C>;
-    type Outputs<C> = ProgramImageReductionAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

@@ -46,6 +46,8 @@ impl SymbolicSumcheck for CyclePhase {
     type ChallengeId = JoltChallengeId;
     type Shape = PrecommittedReductionDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = ProgramImageReductionCyclePhaseInputClaims<C>;
+    type Outputs<C> = ProgramImageReductionCyclePhaseOutputClaims<C>;
 
     fn new(shape: PrecommittedReductionDimensions) -> Self {
         Self { shape }

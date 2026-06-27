@@ -92,8 +92,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     type Symbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
-    type Inputs<C> = HammingWeightClaimReductionInputClaims<C>;
-    type Outputs<C> = HammingWeightClaimReductionOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

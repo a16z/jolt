@@ -76,8 +76,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
     type Symbolic = relations::spartan::ProductRemainder;
-    type Inputs<C> = ProductRemainderInputClaims<C>;
-    type Outputs<C> = ProductRemainderOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

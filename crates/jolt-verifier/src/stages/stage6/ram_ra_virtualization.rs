@@ -72,8 +72,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
     type Symbolic = relations::ram::RaVirtualization;
-    type Inputs<C> = RamRaVirtualizationInputClaims<C>;
-    type Outputs<C> = RamRaVirtualizationOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

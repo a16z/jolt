@@ -2,6 +2,7 @@
 
 use jolt_field::RingCore;
 
+use super::monolith::{BooleanityInputClaims, BooleanityOutputClaims};
 use crate::opening;
 use crate::protocols::jolt::geometry::booleanity::{
     booleanity_address_phase_opening, booleanity_cycle_output, BooleanityDimensions,
@@ -32,6 +33,8 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = BooleanityDimensions;
     type Challenges<F> = BooleanityCyclePhaseChallenges<F>;
+    type Inputs<C> = BooleanityInputClaims<C>;
+    type Outputs<C> = BooleanityOutputClaims<C>;
 
     fn new(shape: BooleanityDimensions) -> Self {
         Self { shape }

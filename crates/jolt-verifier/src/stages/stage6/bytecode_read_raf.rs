@@ -145,8 +145,6 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     type Symbolic = relations::bytecode::ReadRafAddressPhase;
-    type Inputs<C> = BytecodeReadRafAddressPhaseInputClaims<C>;
-    type Outputs<C> = BytecodeReadRafAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -236,8 +234,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
     type Symbolic = relations::bytecode::ReadRafCyclePhase;
-    type Inputs<C> = BytecodeReadRafInputClaims<C>;
-    type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -362,8 +358,6 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
     type Symbolic = relations::bytecode::ReadRafCyclePhaseCommitted;
-    type Inputs<C> = BytecodeReadRafInputClaims<C>;
-    type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

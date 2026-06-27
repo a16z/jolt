@@ -100,8 +100,6 @@ pub(crate) fn reconstruct_r_address<F: Field, C: GetPoint<F>>(
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
     type Symbolic = relations::instruction::ReadRaf;
-    type Inputs<C> = InstructionReadRafInputClaims<C>;
-    type Outputs<C> = InstructionReadRafOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

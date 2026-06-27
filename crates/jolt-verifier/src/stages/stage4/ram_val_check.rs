@@ -129,8 +129,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
     type Symbolic = RamValCheckSymbolic;
-    type Inputs<C> = RamValCheckInputClaims<C>;
-    type Outputs<C> = RamValCheckOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

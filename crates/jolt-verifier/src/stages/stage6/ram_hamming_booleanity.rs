@@ -55,8 +55,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
     type Symbolic = relations::ram::HammingBooleanity;
-    type Inputs<C> = RamHammingBooleanityInputClaims<C>;
-    type Outputs<C> = RamHammingBooleanityOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

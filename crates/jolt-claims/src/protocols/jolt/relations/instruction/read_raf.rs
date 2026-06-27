@@ -64,6 +64,8 @@ impl SymbolicSumcheck for ReadRaf {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = InstructionReadRafDimensions;
     type Challenges<F> = InstructionReadRafChallenges<F>;
+    type Inputs<C> = InstructionReadRafInputClaims<C>;
+    type Outputs<C> = InstructionReadRafOutputClaims<C>;
 
     fn new(shape: InstructionReadRafDimensions) -> Self {
         Self { shape }

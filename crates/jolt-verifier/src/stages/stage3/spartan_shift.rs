@@ -66,8 +66,6 @@ impl<F: Field> SpartanShift<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
     type Symbolic = relations::spartan::Shift;
-    type Inputs<C> = SpartanShiftInputClaims<C>;
-    type Outputs<C> = SpartanShiftOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

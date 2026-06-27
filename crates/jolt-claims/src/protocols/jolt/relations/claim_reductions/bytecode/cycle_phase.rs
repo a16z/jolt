@@ -59,6 +59,8 @@ impl SymbolicSumcheck for CyclePhase {
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReductionShape;
     type Challenges<F> = BytecodeReductionCyclePhaseChallenges<F>;
+    type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
+    type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 
     fn new(shape: BytecodeReductionShape) -> Self {
         assert_valid_chunk_count(shape.1);

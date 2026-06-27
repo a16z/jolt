@@ -63,6 +63,8 @@ impl SymbolicSumcheck for ClaimReduction {
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
     type Challenges<F> = IncClaimReductionChallenges<F>;
+    type Inputs<C> = IncClaimReductionInputClaims<C>;
+    type Outputs<C> = IncClaimReductionOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

@@ -73,8 +73,6 @@ impl<F: Field> InstructionInput<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
     type Symbolic = relations::instruction::InputVirtualization;
-    type Inputs<C> = InstructionInputInputClaims<C>;
-    type Outputs<C> = InstructionInputOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

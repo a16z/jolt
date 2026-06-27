@@ -48,8 +48,6 @@ impl<F: Field> BooleanityAddressPhase<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     type Symbolic = relations::booleanity::BooleanityAddressPhase;
-    type Inputs<C> = BooleanityAddressPhaseInputClaims<C>;
-    type Outputs<C> = BooleanityAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -112,8 +110,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
     type Symbolic = relations::booleanity::BooleanityCyclePhase;
-    type Inputs<C> = BooleanityInputClaims<C>;
-    type Outputs<C> = BooleanityOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

@@ -77,6 +77,8 @@ impl SymbolicSumcheck for ClaimReduction {
     type ChallengeId = JoltChallengeId;
     type Shape = HammingWeightClaimReductionDimensions;
     type Challenges<F> = HammingWeightClaimReductionChallenges<F>;
+    type Inputs<C> = HammingWeightClaimReductionInputClaims<C>;
+    type Outputs<C> = HammingWeightClaimReductionOutputClaims<C>;
 
     fn new(shape: HammingWeightClaimReductionDimensions) -> Self {
         Self { shape }

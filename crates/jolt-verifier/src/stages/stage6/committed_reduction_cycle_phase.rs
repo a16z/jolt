@@ -113,8 +113,6 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
     type Symbolic = relations::claim_reductions::advice::CyclePhase;
-    type Inputs<C> = AdviceCyclePhaseInputClaims<C>;
-    type Outputs<C> = AdviceCyclePhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -210,8 +208,6 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
     type Symbolic = relations::claim_reductions::program_image::CyclePhase;
-    type Inputs<C> = ProgramImageReductionCyclePhaseInputClaims<C>;
-    type Outputs<C> = ProgramImageReductionCyclePhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -300,8 +296,6 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
     type Symbolic = relations::claim_reductions::bytecode::CyclePhase;
-    type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
-    type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

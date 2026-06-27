@@ -21,6 +21,8 @@ impl SymbolicSumcheck for OuterUniskip {
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanOuterDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: SpartanOuterDimensions) -> Self {
         Self { shape }

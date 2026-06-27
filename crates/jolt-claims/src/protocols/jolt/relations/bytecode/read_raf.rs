@@ -43,6 +43,8 @@ impl SymbolicSumcheck for ReadRaf {
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
     type Challenges<F> = BytecodeReadRafChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }

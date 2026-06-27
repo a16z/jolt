@@ -77,6 +77,15 @@ impl<F: Field, C: OutputClaims<F>> OutputAppend<F> for C {}
 pub type ConcreteSumcheckChallenges<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Challenges<F>;
 
+/// The consumed-claim struct of a [`ConcreteSumcheck`] instance, projected through
+/// its symbolic relation's [`Inputs`](SymbolicSumcheck::Inputs) GAT at cell `C`.
+pub type ConcreteSumcheckInputs<F, S, C> =
+    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Inputs<C>;
+/// The produced-claim struct of a [`ConcreteSumcheck`] instance, projected through
+/// its symbolic relation's [`Outputs`](SymbolicSumcheck::Outputs) GAT at cell `C`.
+pub type ConcreteSumcheckOutputs<F, S, C> =
+    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<C>;
+
 /// A single sumcheck instance, driven identically by the prover (while producing
 /// its proof) and the verifier (after checking it).
 ///
@@ -89,8 +98,8 @@ pub type ConcreteSumcheckChallenges<F, S> =
 /// makes "a ZK opening carries no value" a compile-time fact.
 pub trait ConcreteSumcheck<F: Field>
 where
-    Self::Inputs<OpeningClaim<F>>: InputClaims<F>,
-    Self::Outputs<OpeningClaim<F>>: OutputClaims<F>,
+    ConcreteSumcheckInputs<F, Self, OpeningClaim<F>>: InputClaims<F>,
+    ConcreteSumcheckOutputs<F, Self, OpeningClaim<F>>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, JoltChallengeId>,
 {
     /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
@@ -102,12 +111,6 @@ where
         DerivedId = JoltDerivedId,
         ChallengeId = JoltChallengeId,
     >;
-    /// The relation's consumed-claim struct (`#[derive(InputClaims)]`), generic
-    /// over the cell.
-    type Inputs<C>;
-    /// The relation's produced-claim struct (`#[derive(OutputClaims)]`), generic
-    /// over the cell.
-    type Outputs<C>;
 
     /// The symbolic relation backing this instance.
     fn symbolic(&self) -> &Self::Symbolic;
@@ -157,8 +160,8 @@ where
     fn derive_opening_points<C: GetPoint<F>>(
         &self,
         sumcheck_point: &[F],
-        inputs: &Self::Inputs<C>,
-    ) -> Result<Self::Outputs<Vec<F>>, VerifierError>;
+        inputs: &ConcreteSumcheckInputs<F, Self, C>,
+    ) -> Result<ConcreteSumcheckOutputs<F, Self, Vec<F>>, VerifierError>;
 
     /// Resolve a `Derived` in this relation's **input** expression: from the input
     /// points and the drawn challenges. The input claim is the claimed sum *before*
@@ -168,7 +171,7 @@ where
     fn derive_input_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
-        _inputs: &Self::Inputs<C>,
+        _inputs: &ConcreteSumcheckInputs<F, Self, C>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: *id })
@@ -183,8 +186,8 @@ where
     fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
-        _inputs: &Self::Inputs<C>,
-        _outputs: &Self::Outputs<OpeningClaim<F>>,
+        _inputs: &ConcreteSumcheckInputs<F, Self, C>,
+        _outputs: &ConcreteSumcheckOutputs<F, Self, OpeningClaim<F>>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: *id })
@@ -198,7 +201,7 @@ where
     /// produced.
     fn input_claim(
         &self,
-        inputs: &Self::Inputs<OpeningClaim<F>>,
+        inputs: &ConcreteSumcheckInputs<F, Self, OpeningClaim<F>>,
         challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         self.symbolic().input_expression::<F>().try_evaluate(
@@ -223,8 +226,8 @@ where
     /// Shared by prover and verifier; clear only.
     fn expected_output<C: GetPoint<F>>(
         &self,
-        inputs: &Self::Inputs<C>,
-        outputs: &Self::Outputs<OpeningClaim<F>>,
+        inputs: &ConcreteSumcheckInputs<F, Self, C>,
+        outputs: &ConcreteSumcheckOutputs<F, Self, OpeningClaim<F>>,
         challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         self.symbolic().output_expression::<F>().try_evaluate(

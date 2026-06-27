@@ -61,6 +61,8 @@ impl SymbolicSumcheck for RaClaimReduction {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
     type Challenges<F> = RamRaClaimReductionChallenges<F>;
+    type Inputs<C> = RamRaClaimReductionInputClaims<C>;
+    type Outputs<C> = RamRaClaimReductionOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

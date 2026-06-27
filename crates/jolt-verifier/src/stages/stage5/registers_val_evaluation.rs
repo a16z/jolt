@@ -58,8 +58,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
     type Symbolic = relations::registers::ValEvaluation;
-    type Inputs<C> = RegistersValEvaluationInputClaims<C>;
-    type Outputs<C> = RegistersValEvaluationOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

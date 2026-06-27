@@ -57,8 +57,6 @@ impl<F: Field> RegistersClaimReduction<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
     type Symbolic = relations::claim_reductions::registers::ClaimReduction;
-    type Inputs<C> = RegistersClaimReductionInputClaims<C>;
-    type Outputs<C> = RegistersClaimReductionOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

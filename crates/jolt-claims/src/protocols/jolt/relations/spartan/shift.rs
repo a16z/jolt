@@ -78,6 +78,8 @@ impl SymbolicSumcheck for Shift {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
     type Challenges<F> = SpartanShiftChallenges<F>;
+    type Inputs<C> = SpartanShiftInputClaims<C>;
+    type Outputs<C> = SpartanShiftOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

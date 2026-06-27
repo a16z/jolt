@@ -64,6 +64,8 @@ impl SymbolicSumcheck for ReadWriteChecking {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
     type Challenges<F> = RamReadWriteChallenges<F>;
+    type Inputs<C> = RamReadWriteInputClaims<C>;
+    type Outputs<C> = RamReadWriteOutputClaims<C>;
 
     fn new(shape: ReadWriteDimensions) -> Self {
         Self { shape }
