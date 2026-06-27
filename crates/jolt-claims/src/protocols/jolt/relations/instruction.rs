@@ -2,6 +2,8 @@
 
 use jolt_field::RingCore;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
+use jolt_riscv::InstructionFlags;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::instruction::{
     committed_instruction_ra_product, eq_table_value, imm, instruction_ra_product,
@@ -18,7 +20,92 @@ use crate::protocols::jolt::{
     JoltExpr, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, opening, derived};
+use crate::{challenge, opening, derived, InputClaims, OutputClaims};
+
+/// Produced instruction-input virtualization openings (the left/right operand
+/// selector flags and their operand values), all sharing the single
+/// instruction-input opening point. Generic over the cell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(InstructionInputVirtualization)]
+pub struct InstructionInputOutputClaims<C> {
+    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value))]
+    pub left_operand_is_rs1: C,
+    #[opening(Rs1Value)]
+    pub rs1_value: C,
+    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsPC))]
+    pub left_operand_is_pc: C,
+    #[opening(UnexpandedPC)]
+    pub unexpanded_pc: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRs2Value))]
+    pub right_operand_is_rs2: C,
+    #[opening(Rs2Value)]
+    pub rs2_value: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm))]
+    pub right_operand_is_imm: C,
+    #[opening(Imm)]
+    pub imm: C,
+}
+
+/// Consumed instruction-input openings: the left/right virtualized instruction
+/// inputs reduced by stage 2's product remainder. The relation reads only these
+/// values, so the input points are left empty. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct InstructionInputInputClaims<C> {
+    #[opening(RightInstructionInput, from = SpartanProductVirtualization)]
+    pub right_instruction_input: C,
+    #[opening(LeftInstructionInput, from = SpartanProductVirtualization)]
+    pub left_instruction_input: C,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(InstructionReadRaf)]
+pub struct InstructionReadRafOutputClaims<C> {
+    #[opening(LookupTableFlag)]
+    pub lookup_table_flags: Vec<C>,
+    #[opening(InstructionRa)]
+    pub instruction_ra: Vec<C>,
+    #[opening(InstructionRafFlag)]
+    pub instruction_raf_flag: C,
+}
+
+/// Consumed instruction-lookup openings (the reduced lookup output + left/right
+/// operands), wired from the upstream instruction claim-reduction.
+#[derive(Clone, Debug, InputClaims)]
+pub struct InstructionReadRafInputClaims<C> {
+    #[opening(LookupOutput, from = InstructionClaimReduction)]
+    pub lookup_output: C,
+    #[opening(LeftLookupOperand, from = InstructionClaimReduction)]
+    pub left_lookup_operand: C,
+    #[opening(RightLookupOperand, from = InstructionClaimReduction)]
+    pub right_lookup_operand: C,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(InstructionRaVirtualization)]
+pub struct InstructionRaVirtualizationOutputClaims<C> {
+    #[opening(committed = InstructionRa)]
+    pub committed_instruction_ra: Vec<C>,
+}
+
+/// The per-virtual reduced `InstructionRa` openings from the stage-5 instruction
+/// read-RAF.
+#[derive(Clone, Debug, InputClaims)]
+pub struct InstructionRaVirtualizationInputClaims<C> {
+    #[opening(InstructionRa, from = InstructionReadRaf)]
+    pub instruction_ra: Vec<C>,
+}
 
 /// The instruction input-virtualization sumcheck: relates the left/right
 /// instruction-input products from the product sumcheck to the per-operand

@@ -1,6 +1,7 @@
 //! Two-phase advice claim-reduction symbolic relations (cycle -> address).
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::advice::{
     cycle_phase_advice_opening, final_advice_opening, ram_val_check_advice_opening,
@@ -9,7 +10,55 @@ use crate::protocols::jolt::{
     AdviceClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltExpr, JoltOpeningId,
     JoltDerivedId, JoltRelationId, JoltSumcheckSpec, PrecommittedReductionDimensions,
 };
-use crate::{opening, derived, SymbolicSumcheck};
+use crate::{opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+
+/// Produced final advice openings, keyed by kind; present only when that kind's
+/// address phase ran. Generic over the cell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(AdviceClaimReduction)]
+pub struct AdviceAddressPhaseOutputClaims<C> {
+    #[opening(trusted_advice)]
+    pub trusted: Option<C>,
+    #[opening(untrusted_advice)]
+    pub untrusted: Option<C>,
+}
+
+/// Consumed cycle-phase advice openings, keyed by kind.
+#[derive(Clone, Debug, InputClaims)]
+pub struct AdviceAddressPhaseInputClaims<C> {
+    #[opening(trusted_advice, from = AdviceClaimReductionCyclePhase)]
+    pub trusted: Option<C>,
+    #[opening(untrusted_advice, from = AdviceClaimReductionCyclePhase)]
+    pub untrusted: Option<C>,
+}
+
+/// The produced advice opening (the intermediate when an address phase follows,
+/// else the final advice opening), keyed by kind.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(AdviceClaimReductionCyclePhase)]
+pub struct AdviceCyclePhaseOutputClaims<C> {
+    #[opening(trusted_advice)]
+    pub trusted: Option<C>,
+    #[opening(untrusted_advice)]
+    pub untrusted: Option<C>,
+}
+
+/// The consumed RAM value-check advice opening, keyed by kind.
+#[derive(Clone, Debug, InputClaims)]
+pub struct AdviceCyclePhaseInputClaims<C> {
+    #[opening(trusted_advice, from = RamValCheck)]
+    pub trusted: Option<C>,
+    #[opening(untrusted_advice, from = RamValCheck)]
+    pub untrusted: Option<C>,
+}
 
 /// `(advice kind, two-phase dimensions)` shape shared by the advice cycle- and
 /// address-phase reductions.

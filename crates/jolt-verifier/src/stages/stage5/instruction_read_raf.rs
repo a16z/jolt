@@ -8,6 +8,9 @@
 //! `resolve_public` reconstructs it from the output opening cells.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::instruction::{
+    InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::instruction::InstructionReadRafDimensions, InstructionReadRafChallenge,
     InstructionReadRafPublic, JoltChallengeId, JoltDerivedId, JoltRelationId,
@@ -18,68 +21,40 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(InstructionReadRaf)]
-pub struct InstructionReadRafOutputClaims<C> {
-    #[opening(LookupTableFlag)]
-    pub lookup_table_flags: Vec<C>,
-    #[opening(InstructionRa)]
-    pub instruction_ra: Vec<C>,
-    #[opening(InstructionRafFlag)]
-    pub instruction_raf_flag: C,
-}
-
-/// Consumed instruction-lookup openings (the reduced lookup output + left/right
-/// operands), wired from the upstream instruction claim-reduction.
-#[derive(Clone, Debug, InputClaims)]
-pub struct InstructionReadRafInputClaims<C> {
-    #[opening(LookupOutput, from = InstructionClaimReduction)]
-    pub lookup_output: C,
-    #[opening(LeftLookupOperand, from = InstructionClaimReduction)]
-    pub left_lookup_operand: C,
-    #[opening(RightLookupOperand, from = InstructionClaimReduction)]
-    pub right_lookup_operand: C,
-}
-
-impl<F: Field> InstructionReadRafInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed openings from the upstream instruction claim-reduction
-    /// (stage 2), applying the lookup-output fallback to the product remainder.
-    /// All three share the claim-reduction opening point.
-    pub fn from_upstream(stage2: &Stage2ClearOutput<F>) -> Self {
-        let reduction = &stage2.output_claims.instruction_claim_reduction;
-        let lookup_output = reduction.lookup_output.as_ref().map_or(
-            stage2.output_claims.product_remainder.lookup_output.value,
-            |claim| claim.value,
-        );
-        let point = stage2
-            .output_claims
-            .instruction_claim_reduction_point()
-            .to_vec();
-        Self {
-            lookup_output: OpeningClaim {
-                point: point.clone(),
-                value: lookup_output,
-            },
-            left_lookup_operand: OpeningClaim {
-                point: point.clone(),
-                value: reduction.left_lookup_operand.value,
-            },
-            right_lookup_operand: OpeningClaim {
-                point,
-                value: reduction.right_lookup_operand.value,
-            },
-        }
+/// Wire the consumed openings from the upstream instruction claim-reduction
+/// (stage 2), applying the lookup-output fallback to the product remainder.
+/// All three share the claim-reduction opening point. (Verifier-side constructor
+/// for the moved [`InstructionReadRafInputClaims`].)
+pub fn instruction_read_raf_inputs_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+) -> InstructionReadRafInputClaims<OpeningClaim<F>> {
+    let reduction = &stage2.output_claims.instruction_claim_reduction;
+    let lookup_output = reduction.lookup_output.as_ref().map_or(
+        stage2.output_claims.product_remainder.lookup_output.value,
+        |claim| claim.value,
+    );
+    let point = stage2
+        .output_claims
+        .instruction_claim_reduction_point()
+        .to_vec();
+    InstructionReadRafInputClaims {
+        lookup_output: OpeningClaim {
+            point: point.clone(),
+            value: lookup_output,
+        },
+        left_lookup_operand: OpeningClaim {
+            point: point.clone(),
+            value: reduction.left_lookup_operand.value,
+        },
+        right_lookup_operand: OpeningClaim {
+            point,
+            value: reduction.right_lookup_operand.value,
+        },
     }
 }
 

@@ -12,6 +12,9 @@
 //! `UnmapAddress` reads only the address prefix.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::{dimensions::ReadWriteDimensions, ram::RamRafEvaluationDimensions},
     JoltDerivedId, JoltRelationId, RamRafEvaluationPublic,
@@ -19,44 +22,21 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// The produced RAM RAF `ram_ra` opening, sharing the single RAF opening point.
-/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
-/// on the clear path).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamRafEvaluation)]
-pub struct RamRafEvaluationOutputClaims<C> {
-    #[opening(RamRa)]
-    pub ram_ra: C,
-}
-
-/// The consumed RAM address opening from stage 1's outer sumcheck. The relation
-/// reads only this value (its output point comes from its own sumcheck point), so
-/// the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamRafEvaluationInputClaims<C> {
-    #[opening(RamAddress, from = SpartanOuter)]
-    pub ram_address: C,
-}
-
-impl<F: Field> RamRafEvaluationInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage1: &Stage1ClearOutput<F>) -> Self {
-        Self {
-            ram_address: OpeningClaim {
-                point: Vec::new(),
-                value: stage1.outer.ram_address,
-            },
-        }
+/// Wire the consumed RAM address opening from stage 1's outer sumcheck.
+/// (Verifier-side constructor for the moved [`RamRafEvaluationInputClaims`].)
+pub fn ram_raf_evaluation_inputs_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+) -> RamRafEvaluationInputClaims<OpeningClaim<F>> {
+    RamRafEvaluationInputClaims {
+        ram_address: OpeningClaim {
+            point: Vec::new(),
+            value: stage1.outer.ram_address,
+        },
     }
 }
 

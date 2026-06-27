@@ -1,6 +1,7 @@
 //! Two-phase program-image (initial RAM) claim-reduction symbolic relations.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::program_image::{
     cycle_phase_program_image_opening, final_output_expr, ram_val_check_contribution_opening,
@@ -9,7 +10,45 @@ use crate::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
     PrecommittedReductionDimensions,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
+
+/// Produced `ProgramImageInit` opening at the reduction's final opening point.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(ProgramImageClaimReduction)]
+pub struct ProgramImageReductionAddressPhaseOutputClaims<C> {
+    #[opening(committed = ProgramImageInit)]
+    pub program_image: C,
+}
+
+/// Consumed intermediate opening from the stage-6b program-image cycle phase.
+#[derive(Clone, Debug, InputClaims)]
+pub struct ProgramImageReductionAddressPhaseInputClaims<C> {
+    #[opening(committed = ProgramImageInit, from = ProgramImageClaimReductionCyclePhase)]
+    pub cycle_phase: C,
+}
+
+/// The produced `ProgramImageInit` opening (intermediate or final).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(ProgramImageClaimReductionCyclePhase)]
+pub struct ProgramImageReductionCyclePhaseOutputClaims<C> {
+    #[opening(committed = ProgramImageInit)]
+    pub program_image: C,
+}
+
+/// The consumed RAM value-check program-image contribution.
+#[derive(Clone, Debug, InputClaims)]
+pub struct ProgramImageReductionCyclePhaseInputClaims<C> {
+    #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
+    pub contribution: C,
+}
 
 /// Cycle phase of the program-image reduction: binds the staged
 /// `ProgramImageInitContributionRw` scalar to either the cycle-phase

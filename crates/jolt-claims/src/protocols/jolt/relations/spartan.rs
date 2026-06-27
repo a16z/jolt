@@ -1,6 +1,8 @@
 //! Spartan symbolic sumcheck relations.
 
 use jolt_field::RingCore;
+use jolt_riscv::{CircuitFlags, InstructionFlags};
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::spartan::{
     branch_flag_product, is_first_in_sequence_shift, is_noop_shift, is_virtual_shift,
@@ -16,7 +18,85 @@ use crate::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
     SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
 };
-use crate::{challenge, opening, derived, SymbolicSumcheck};
+use crate::{challenge, opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+
+/// Produced product-remainder openings (the eight virtualized instruction-product
+/// operands and flags), all sharing the single product opening point. Generic over
+/// the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>` on the
+/// clear path). Field order is the canonical Fiat-Shamir order and must match
+/// [`spartan::product_remainder_output_openings`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(SpartanProductVirtualization)]
+pub struct ProductRemainderOutputClaims<C> {
+    #[opening(LeftInstructionInput)]
+    pub left_instruction_input: C,
+    #[opening(RightInstructionInput)]
+    pub right_instruction_input: C,
+    #[opening(OpFlags(CircuitFlags::Jump))]
+    pub jump_flag: C,
+    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
+    pub write_lookup_output_to_rd: C,
+    #[opening(LookupOutput)]
+    pub lookup_output: C,
+    #[opening(InstructionFlags(InstructionFlags::Branch))]
+    pub branch_flag: C,
+    #[opening(NextIsNoop)]
+    pub next_is_noop: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
+    pub virtual_instruction: C,
+}
+
+/// Consumed product-remainder input: the product uni-skip's reduced opening. The
+/// relation reads only this value (its output point comes from its own sumcheck
+/// point), so the input point is left empty. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct ProductRemainderInputClaims<C> {
+    #[opening(UnivariateSkip, from = SpartanProductVirtualization)]
+    pub product_uniskip: C,
+}
+
+/// Produced Spartan shift openings (the shifted unexpanded-PC / PC / virtual /
+/// first-in-sequence / noop columns), all sharing the single shift opening point.
+/// Generic over the cell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(SpartanShift)]
+pub struct SpartanShiftOutputClaims<C> {
+    #[opening(UnexpandedPC)]
+    pub unexpanded_pc: C,
+    #[opening(PC)]
+    pub pc: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
+    pub is_virtual: C,
+    #[opening(OpFlags(CircuitFlags::IsFirstInSequence))]
+    pub is_first_in_sequence: C,
+    #[opening(InstructionFlags(InstructionFlags::IsNoop))]
+    pub is_noop: C,
+}
+
+/// Consumed shift openings: the `Next*` PC/flag columns from stage 1's outer
+/// sumcheck and `next_is_noop` from stage 2's product remainder. Shift reads only
+/// these values, so the input points are left empty. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct SpartanShiftInputClaims<C> {
+    #[opening(NextUnexpandedPC, from = SpartanOuter)]
+    pub next_unexpanded_pc: C,
+    #[opening(NextPC, from = SpartanOuter)]
+    pub next_pc: C,
+    #[opening(NextIsVirtual, from = SpartanOuter)]
+    pub next_is_virtual: C,
+    #[opening(NextIsFirstInSequence, from = SpartanOuter)]
+    pub next_is_first_in_sequence: C,
+    #[opening(NextIsNoop, from = SpartanProductVirtualization)]
+    pub next_is_noop: C,
+}
 
 /// The Spartan shift sumcheck: relates each `Next*` column from the outer
 /// sumcheck (and `next_is_noop` from the product remainder) to the shifted

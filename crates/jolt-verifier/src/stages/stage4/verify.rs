@@ -20,11 +20,13 @@ use super::{
         Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4OutputClaims, Stage4ZkOutput,
     },
     ram_val_check::{
-        ram_val_check_initial_evaluation, RamValCheck, RamValCheckAdviceClaims,
-        RamValCheckInitialEvaluation, RamValCheckInputClaims, RamValCheckOutputClaims,
+        ram_val_check_initial_evaluation, ram_val_check_inputs_from_upstream, RamValCheck,
+        RamValCheckAdviceClaims, RamValCheckInitialEvaluation, RamValCheckInputClaims,
+        RamValCheckOutputClaims,
     },
     registers_read_write_checking::{
-        RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
+        registers_read_write_inputs_from_upstream, RegistersReadWriteChecking,
+        RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
     },
 };
 use crate::{
@@ -231,8 +233,8 @@ where
         ram_val_check_init.decomposition(),
     );
 
-    let registers_inputs = RegistersReadWriteInputClaims::from_upstream(stage3);
-    let ram_inputs = RamValCheckInputClaims::from_upstream(stage2, &ram_val_check_init);
+    let registers_inputs = registers_read_write_inputs_from_upstream(stage3);
+    let ram_inputs = ram_val_check_inputs_from_upstream(stage2, &ram_val_check_init);
     let registers_input_claim = registers_relation.input_claim(&registers_inputs)?;
     let ram_input_claim = ram_relation.input_claim(&ram_inputs)?;
 

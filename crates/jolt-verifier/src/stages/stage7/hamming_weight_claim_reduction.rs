@@ -10,6 +10,9 @@
 //! being hand-coded on each side.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{
+    HammingWeightClaimReductionInputClaims, HammingWeightClaimReductionOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions,
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
@@ -18,52 +21,9 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
-
-/// Produced one-hot `Ra` opening claims, grouped by family (instruction,
-/// bytecode, RAM) in canonical layout order. Every produced opening shares the
-/// single hamming-weight opening point. Generic over the cell (`F` on the wire,
-/// `Vec<F>` for ZK points, `OpeningClaim<F>` on the clear path).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(HammingWeightClaimReduction)]
-pub struct HammingWeightClaimReductionOutputClaims<C> {
-    #[opening(committed = InstructionRa)]
-    pub instruction_ra: Vec<C>,
-    #[opening(committed = BytecodeRa)]
-    pub bytecode_ra: Vec<C>,
-    #[opening(committed = RamRa)]
-    pub ram_ra: Vec<C>,
-}
-
-/// Consumed claims reduced by the hamming-weight sumcheck: the RAM hamming-weight
-/// claim (from RAM hamming booleanity) plus the per-family booleanity and
-/// virtualization claims (each wired from its producing stage-6 relation).
-/// Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct HammingWeightClaimReductionInputClaims<C> {
-    #[opening(RamHammingWeight, from = RamHammingBooleanity)]
-    pub ram_hamming_weight: C,
-    #[opening(committed = InstructionRa, from = Booleanity)]
-    pub instruction_booleanity: Vec<C>,
-    #[opening(committed = BytecodeRa, from = Booleanity)]
-    pub bytecode_booleanity: Vec<C>,
-    #[opening(committed = RamRa, from = Booleanity)]
-    pub ram_booleanity: Vec<C>,
-    #[opening(committed = InstructionRa, from = InstructionRaVirtualization)]
-    pub instruction_virtualization: Vec<C>,
-    #[opening(committed = BytecodeRa, from = BytecodeReadRaf)]
-    pub bytecode_virtualization: Vec<C>,
-    #[opening(committed = RamRa, from = RamRaVirtualization)]
-    pub ram_virtualization: Vec<C>,
-}
 
 pub struct HammingWeightClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::hamming_weight::ClaimReduction,

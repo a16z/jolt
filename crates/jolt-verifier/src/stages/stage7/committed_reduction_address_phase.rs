@@ -14,6 +14,12 @@
 //! exactly as stage 4's `RamValCheck` recovers the cycle from its output point.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
+    BytecodeReductionAddressPhaseInputClaims, BytecodeReductionAddressPhaseOutputClaims,
+};
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::{
+    ProgramImageReductionAddressPhaseInputClaims, ProgramImageReductionAddressPhaseOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs, BytecodeClaimReductionLayout,
     BytecodeClaimReductionPublic, JoltDerivedId, JoltRelationId, PrecommittedReductionLayout,
@@ -21,31 +27,9 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
-
-/// Produced per-chunk `BytecodeChunk(i)` openings, all sharing the reduction's
-/// final opening point. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(BytecodeClaimReduction)]
-pub struct BytecodeReductionAddressPhaseOutputClaims<C> {
-    #[opening(committed = BytecodeChunk)]
-    pub chunks: Vec<C>,
-}
-
-/// Consumed intermediate opening from the stage-6b bytecode cycle phase.
-#[derive(Clone, Debug, InputClaims)]
-pub struct BytecodeReductionAddressPhaseInputClaims<C> {
-    #[opening(BytecodeClaimReductionIntermediate, from = BytecodeClaimReductionCyclePhase)]
-    pub cycle_phase_intermediate: C,
-}
 
 pub struct BytecodeReductionAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::AddressPhase,
@@ -145,25 +129,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
             .copied()
             .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
     }
-}
-
-/// Produced `ProgramImageInit` opening at the reduction's final opening point.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(ProgramImageClaimReduction)]
-pub struct ProgramImageReductionAddressPhaseOutputClaims<C> {
-    #[opening(committed = ProgramImageInit)]
-    pub program_image: C,
-}
-
-/// Consumed intermediate opening from the stage-6b program-image cycle phase.
-#[derive(Clone, Debug, InputClaims)]
-pub struct ProgramImageReductionAddressPhaseInputClaims<C> {
-    #[opening(committed = ProgramImageInit, from = ProgramImageClaimReductionCyclePhase)]
-    pub cycle_phase: C,
 }
 
 pub struct ProgramImageReductionAddressPhase<F: Field> {

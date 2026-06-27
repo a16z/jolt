@@ -13,41 +13,18 @@
 //! recovers from the output claims.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
+    AdviceAddressPhaseInputClaims, AdviceAddressPhaseOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, JoltAdviceKind, JoltDerivedId,
     JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
-
-/// Produced final advice openings, keyed by kind; present only when that kind's
-/// address phase ran. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(AdviceClaimReduction)]
-pub struct AdviceAddressPhaseOutputClaims<C> {
-    #[opening(trusted_advice)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice)]
-    pub untrusted: Option<C>,
-}
-
-/// Consumed cycle-phase advice openings, keyed by kind.
-#[derive(Clone, Debug, InputClaims)]
-pub struct AdviceAddressPhaseInputClaims<C> {
-    #[opening(trusted_advice, from = AdviceClaimReductionCyclePhase)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice, from = AdviceClaimReductionCyclePhase)]
-    pub untrusted: Option<C>,
-}
 
 pub struct AdviceAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::advice::AddressPhase,

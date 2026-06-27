@@ -10,12 +10,20 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    instruction_read_raf::{InstructionReadRaf, InstructionReadRafInputClaims},
+    instruction_read_raf::{
+        instruction_read_raf_inputs_from_upstream, InstructionReadRaf, InstructionReadRafInputClaims,
+    },
     outputs::{
         Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5OutputClaims, Stage5ZkOutput,
     },
-    ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionInputClaims},
-    registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationInputClaims},
+    ram_ra_claim_reduction::{
+        ram_ra_claim_reduction_inputs_from_upstream, RamRaClaimReduction,
+        RamRaClaimReductionInputClaims,
+    },
+    registers_val_evaluation::{
+        registers_val_evaluation_inputs_from_upstream, RegistersValEvaluation,
+        RegistersValEvaluationInputClaims,
+    },
 };
 use crate::{
     proof::JoltProof,
@@ -234,9 +242,9 @@ where
     // (same opening point and value); stage 2 validates that alias, which the
     // instruction read-RAF input wiring relies on when it falls back to the
     // product remainder.
-    let instruction_inputs = InstructionReadRafInputClaims::from_upstream(stage2);
-    let ram_inputs = RamRaClaimReductionInputClaims::from_upstream(stage2, stage4);
-    let registers_inputs = RegistersValEvaluationInputClaims::from_upstream(stage4);
+    let instruction_inputs = instruction_read_raf_inputs_from_upstream(stage2);
+    let ram_inputs = ram_ra_claim_reduction_inputs_from_upstream(stage2, stage4);
+    let registers_inputs = registers_val_evaluation_inputs_from_upstream(stage4);
 
     let sumcheck_claims = [
         SumcheckClaim::new(

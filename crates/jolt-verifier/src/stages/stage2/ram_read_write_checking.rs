@@ -8,6 +8,9 @@
 //! which evaluates the same `ram::read_write_checking` formula).
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamReadWriteInputClaims, RamReadWriteOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
     RamReadWriteChallenge, RamReadWritePublic,
@@ -15,53 +18,23 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
-/// the single read-write opening point. Generic over the cell (`F` on the wire /
-/// serialized proof form, `OpeningClaim<F>` on the clear path).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamReadWriteChecking)]
-pub struct RamReadWriteOutputClaims<C> {
-    #[opening(RamVal)]
-    pub val: C,
-    #[opening(RamRa)]
-    pub ra: C,
-    #[opening(committed = RamInc)]
-    pub inc: C,
-}
-
-/// Consumed RAM read/write value openings from stage 1's outer sumcheck, reduced
-/// by the read-write checking sumcheck. The relation reads only these values (its
-/// output points come from its own sumcheck point and `product_tau_low`), so the
-/// input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamReadWriteInputClaims<C> {
-    #[opening(RamReadValue, from = SpartanOuter)]
-    pub ram_read_value: C,
-    #[opening(RamWriteValue, from = SpartanOuter)]
-    pub ram_write_value: C,
-}
-
-impl<F: Field> RamReadWriteInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage1: &Stage1ClearOutput<F>) -> Self {
-        let value = |value: F| OpeningClaim {
-            point: Vec::new(),
-            value,
-        };
-        Self {
-            ram_read_value: value(stage1.outer.ram_read_value),
-            ram_write_value: value(stage1.outer.ram_write_value),
-        }
+/// Wire the consumed RAM read/write value openings from stage 1's outer sumcheck.
+/// (Verifier-side constructor for the moved [`RamReadWriteInputClaims`].)
+pub fn ram_read_write_inputs_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+) -> RamReadWriteInputClaims<OpeningClaim<F>> {
+    let value = |value: F| OpeningClaim {
+        point: Vec::new(),
+        value,
+    };
+    RamReadWriteInputClaims {
+        ram_read_value: value(stage1.outer.ram_read_value),
+        ram_write_value: value(stage1.outer.ram_write_value),
     }
 }
 

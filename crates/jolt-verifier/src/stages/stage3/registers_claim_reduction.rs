@@ -7,6 +7,9 @@
 //! input/output claim algebra lives here once.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
+    RegistersClaimReductionInputClaims, RegistersClaimReductionOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
@@ -14,58 +17,26 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
-/// values reduced to the Spartan point), all sharing the single reduction opening
-/// point. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RegistersClaimReduction)]
-pub struct RegistersClaimReductionOutputClaims<C> {
-    #[opening(RdWriteValue)]
-    pub rd_write_value: C,
-    #[opening(Rs1Value)]
-    pub rs1_value: C,
-    #[opening(Rs2Value)]
-    pub rs2_value: C,
-}
-
-/// Consumed register openings reduced by this sumcheck, wired from stage 1's outer
-/// sumcheck. The relation reads only these values, so the input points are left
-/// empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RegistersClaimReductionInputClaims<C> {
-    #[opening(RdWriteValue, from = SpartanOuter)]
-    pub rd_write_value: C,
-    #[opening(Rs1Value, from = SpartanOuter)]
-    pub rs1_value: C,
-    #[opening(Rs2Value, from = SpartanOuter)]
-    pub rs2_value: C,
-}
-
-impl<F: Field> RegistersClaimReductionInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed openings from stage 1's outer sumcheck register values.
-    /// Only the values feed the input claim (the output points come from this
-    /// relation's own sumcheck point), so the input points are left empty.
-    pub fn from_upstream(stage1: &Stage1ClearOutput<F>) -> Self {
-        let value = |value: F| OpeningClaim {
-            point: Vec::new(),
-            value,
-        };
-        Self {
-            rd_write_value: value(stage1.outer.rd_write_value),
-            rs1_value: value(stage1.outer.rs1_value),
-            rs2_value: value(stage1.outer.rs2_value),
-        }
+/// Wire the consumed openings from stage 1's outer sumcheck register values.
+/// Only the values feed the input claim (the output points come from this
+/// relation's own sumcheck point), so the input points are left empty.
+/// (Verifier-side constructor for the moved [`RegistersClaimReductionInputClaims`].)
+pub fn registers_claim_reduction_inputs_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+) -> RegistersClaimReductionInputClaims<OpeningClaim<F>> {
+    let value = |value: F| OpeningClaim {
+        point: Vec::new(),
+        value,
+    };
+    RegistersClaimReductionInputClaims {
+        rd_write_value: value(stage1.outer.rd_write_value),
+        rs1_value: value(stage1.outer.rs1_value),
+        rs2_value: value(stage1.outer.rs2_value),
     }
 }
 

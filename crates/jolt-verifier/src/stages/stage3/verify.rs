@@ -11,12 +11,14 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    instruction_input::{InstructionInput, InstructionInputInputClaims},
+    instruction_input::{instruction_input_inputs_from_upstream, InstructionInput},
     outputs::{
         Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3OutputClaims, Stage3ZkOutput,
     },
-    registers_claim_reduction::{RegistersClaimReduction, RegistersClaimReductionInputClaims},
-    spartan_shift::{SpartanShift, SpartanShiftInputClaims},
+    registers_claim_reduction::{
+        registers_claim_reduction_inputs_from_upstream, RegistersClaimReduction,
+    },
+    spartan_shift::{spartan_shift_inputs_from_upstream, SpartanShift},
 };
 use crate::{
     proof::JoltProof,
@@ -167,9 +169,9 @@ where
         stage2.product_uniskip.tau_low.clone(),
     );
 
-    let shift_inputs = SpartanShiftInputClaims::from_upstream(stage1, stage2);
-    let instruction_inputs = InstructionInputInputClaims::from_upstream(stage2);
-    let registers_inputs = RegistersClaimReductionInputClaims::from_upstream(stage1);
+    let shift_inputs = spartan_shift_inputs_from_upstream(stage1, stage2);
+    let instruction_inputs = instruction_input_inputs_from_upstream(stage2);
+    let registers_inputs = registers_claim_reduction_inputs_from_upstream(stage1);
 
     let sumcheck_claims = [
         SumcheckClaim::new(

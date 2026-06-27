@@ -7,6 +7,9 @@
 //! being hand-coded on each side.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::registers::{
+    RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
     JoltChallengeId, JoltDerivedId, JoltRelationId, RegistersReadWriteChallenge,
@@ -15,60 +18,24 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage3::outputs::Stage3ClearOutput;
 use crate::VerifierError;
 
-/// Produced register read-write openings, all sharing the single read-write
-/// opening point. Generic over the cell (`F` on the wire, `Vec<F>` for ZK points,
-/// `OpeningClaim<F>` on the clear path).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RegistersReadWriteChecking)]
-pub struct RegistersReadWriteOutputClaims<C> {
-    #[opening(RegistersVal)]
-    pub registers_val: C,
-    #[opening(Rs1Ra)]
-    pub rs1_ra: C,
-    #[opening(Rs2Ra)]
-    pub rs2_ra: C,
-    #[opening(RdWa)]
-    pub rd_wa: C,
-    #[opening(committed = RdInc)]
-    pub rd_inc: C,
-}
-
-/// Consumed register openings reduced by the read-write checking sumcheck, wired
-/// from the upstream registers claim-reduction relation (stage 3). Generic over
-/// the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RegistersReadWriteInputClaims<C> {
-    #[opening(RdWriteValue, from = RegistersClaimReduction)]
-    pub rd_write_value: C,
-    #[opening(Rs1Value, from = RegistersClaimReduction)]
-    pub rs1_value: C,
-    #[opening(Rs2Value, from = RegistersClaimReduction)]
-    pub rs2_value: C,
-}
-
-impl<F: Field> RegistersReadWriteInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed openings from stage 3's registers claim-reduction output,
-    /// all sharing that relation's opening point.
-    pub fn from_upstream(stage3: &Stage3ClearOutput<F>) -> Self {
-        // The stage-3 register-reduction openings already carry their shared
-        // opening point (point + value), so the consumed claims are just clones.
-        let reduction = &stage3.output_claims.registers_claim_reduction;
-        Self {
-            rd_write_value: reduction.rd_write_value.clone(),
-            rs1_value: reduction.rs1_value.clone(),
-            rs2_value: reduction.rs2_value.clone(),
-        }
+/// Wire the consumed openings from stage 3's registers claim-reduction output,
+/// all sharing that relation's opening point. (Verifier-side constructor for the
+/// moved [`RegistersReadWriteInputClaims`].)
+pub fn registers_read_write_inputs_from_upstream<F: Field>(
+    stage3: &Stage3ClearOutput<F>,
+) -> RegistersReadWriteInputClaims<OpeningClaim<F>> {
+    // The stage-3 register-reduction openings already carry their shared
+    // opening point (point + value), so the consumed claims are just clones.
+    let reduction = &stage3.output_claims.registers_claim_reduction;
+    RegistersReadWriteInputClaims {
+        rd_write_value: reduction.rd_write_value.clone(),
+        rs1_value: reduction.rs1_value.clone(),
+        rs2_value: reduction.rs2_value.clone(),
     }
 }
 

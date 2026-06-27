@@ -3,6 +3,9 @@
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::registers::{
+    RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
     JoltDerivedId, JoltRelationId, RegistersValEvaluationPublic,
@@ -10,45 +13,23 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::LtPolynomial;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RegistersValEvaluation)]
-pub struct RegistersValEvaluationOutputClaims<C> {
-    #[opening(committed = RdInc)]
-    pub rd_inc: C,
-    #[opening(RdWa)]
-    pub rd_wa: C,
-}
-
-/// Consumed register value-evaluation opening, wired from the upstream register
-/// read-write checking.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RegistersValEvaluationInputClaims<C> {
-    #[opening(RegistersVal, from = RegistersReadWriteChecking)]
-    pub registers_val: C,
-}
-
-impl<F: Field> RegistersValEvaluationInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed `RegistersVal` opening from the upstream register
-    /// read-write checking (stage 4).
-    pub fn from_upstream(stage4: &Stage4ClearOutput<F>) -> Self {
-        Self {
-            registers_val: stage4
-                .output_claims
-                .registers_read_write
-                .registers_val
-                .clone(),
-        }
+/// Wire the consumed `RegistersVal` opening from the upstream register
+/// read-write checking (stage 4). (Verifier-side constructor for the moved
+/// [`RegistersValEvaluationInputClaims`].)
+pub fn registers_val_evaluation_inputs_from_upstream<F: Field>(
+    stage4: &Stage4ClearOutput<F>,
+) -> RegistersValEvaluationInputClaims<OpeningClaim<F>> {
+    RegistersValEvaluationInputClaims {
+        registers_val: stage4
+            .output_claims
+            .registers_read_write
+            .registers_val
+            .clone(),
     }
 }
 

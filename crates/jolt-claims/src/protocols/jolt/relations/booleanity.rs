@@ -1,13 +1,70 @@
 //! Booleanity symbolic sumcheck relations.
 
-use jolt_field::RingCore;
+use core::marker::PhantomData;
+
+use jolt_field::{Field, RingCore};
+use serde::{Deserialize, Serialize};
 
 use crate::opening;
 use crate::protocols::jolt::geometry::booleanity::{
     booleanity_address_phase_opening, booleanity_cycle_output, BooleanityDimensions,
 };
-use crate::protocols::jolt::{JoltExpr, JoltRelationId, JoltSumcheckSpec};
-use crate::SymbolicSumcheck;
+use crate::protocols::jolt::{JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec};
+use crate::{InputClaims, OutputClaims, SymbolicSumcheck};
+
+/// The staged `BooleanityAddrClaim` intermediate produced by the address phase
+/// and consumed by the cycle phase.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(Booleanity)]
+pub struct BooleanityAddressPhaseOutputClaims<C> {
+    #[opening(BooleanityAddrClaim)]
+    pub intermediate: C,
+}
+
+/// The address phase consumes no openings (its input claim is the constant zero).
+pub struct BooleanityAddressPhaseInputClaims<C> {
+    _cell: PhantomData<C>,
+}
+
+impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
+    fn default() -> Self {
+        Self { _cell: PhantomData }
+    }
+}
+
+impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<crate::OpeningClaim<F>> {
+    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
+        None
+    }
+}
+
+/// The committed per-family `Ra` openings produced by the cycle phase; every
+/// opening shares the single booleanity opening point (`r_address ++ r_cycle`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(Booleanity)]
+pub struct BooleanityOutputClaims<C> {
+    #[opening(committed = InstructionRa)]
+    pub instruction_ra: Vec<C>,
+    #[opening(committed = BytecodeRa)]
+    pub bytecode_ra: Vec<C>,
+    #[opening(committed = RamRa)]
+    pub ram_ra: Vec<C>,
+}
+
+/// The `BooleanityAddrClaim` intermediate consumed from the address phase.
+#[derive(Clone, Debug, InputClaims)]
+pub struct BooleanityInputClaims<C> {
+    #[opening(BooleanityAddrClaim, from = Booleanity)]
+    pub address_phase: C,
+}
 
 /// The full booleanity sumcheck over both the address and cycle variables:
 /// asserts every one-hot `ra` opening is boolean (`ra^2 - ra == 0`), folded

@@ -8,6 +8,9 @@
 //! the reduced cycle.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::{dimensions::committed_address_chunks, ram::RamRaVirtualizationDimensions},
     JoltDerivedId, JoltRelationId, RamRaVirtualizationPublic,
@@ -15,36 +18,19 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage5::Stage5ClearOutput;
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamRaVirtualization)]
-pub struct RamRaVirtualizationOutputClaims<C> {
-    #[opening(committed = RamRa)]
-    pub ram_ra: Vec<C>,
-}
-
-/// The single reduced `RamRa` opening from the stage-5 RAM RA claim reduction.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamRaVirtualizationInputClaims<C> {
-    #[opening(RamRa, from = RamRaClaimReduction)]
-    pub ram_ra_reduced: C,
-}
-
-impl<F: Field> RamRaVirtualizationInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage5: &Stage5ClearOutput<F>) -> Self {
-        Self {
-            ram_ra_reduced: stage5.output_claims.ram_ra_claim_reduction.ram_ra.clone(),
-        }
+/// Wire the single reduced `RamRa` opening from the stage-5 RAM RA claim
+/// reduction. (Verifier-side constructor for the moved
+/// [`RamRaVirtualizationInputClaims`].)
+pub fn ram_ra_virtualization_inputs_from_upstream<F: Field>(
+    stage5: &Stage5ClearOutput<F>,
+) -> RamRaVirtualizationInputClaims<OpeningClaim<F>> {
+    RamRaVirtualizationInputClaims {
+        ram_ra_reduced: stage5.output_claims.ram_ra_claim_reduction.ram_ra.clone(),
     }
 }
 

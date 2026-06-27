@@ -1,6 +1,7 @@
 //! registers symbolic sumcheck relations.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::registers::{
     rd_inc_read_write, rd_inc_val_evaluation, rd_wa_read_write, rd_wa_val_evaluation,
@@ -12,7 +13,63 @@ use crate::protocols::jolt::{
     RegistersReadWritePublic, RegistersValEvaluationPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, opening, derived};
+use crate::{challenge, opening, derived, InputClaims, OutputClaims};
+
+/// Produced register read-write openings, all sharing the single read-write
+/// opening point. Generic over the cell (`F` on the wire, `Vec<F>` for ZK points,
+/// `OpeningClaim<F>` on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RegistersReadWriteChecking)]
+pub struct RegistersReadWriteOutputClaims<C> {
+    #[opening(RegistersVal)]
+    pub registers_val: C,
+    #[opening(Rs1Ra)]
+    pub rs1_ra: C,
+    #[opening(Rs2Ra)]
+    pub rs2_ra: C,
+    #[opening(RdWa)]
+    pub rd_wa: C,
+    #[opening(committed = RdInc)]
+    pub rd_inc: C,
+}
+
+/// Consumed register openings reduced by the read-write checking sumcheck, wired
+/// from the upstream registers claim-reduction relation (stage 3). Generic over
+/// the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RegistersReadWriteInputClaims<C> {
+    #[opening(RdWriteValue, from = RegistersClaimReduction)]
+    pub rd_write_value: C,
+    #[opening(Rs1Value, from = RegistersClaimReduction)]
+    pub rs1_value: C,
+    #[opening(Rs2Value, from = RegistersClaimReduction)]
+    pub rs2_value: C,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RegistersValEvaluation)]
+pub struct RegistersValEvaluationOutputClaims<C> {
+    #[opening(committed = RdInc)]
+    pub rd_inc: C,
+    #[opening(RdWa)]
+    pub rd_wa: C,
+}
+
+/// Consumed register value-evaluation opening, wired from the upstream register
+/// read-write checking.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RegistersValEvaluationInputClaims<C> {
+    #[opening(RegistersVal, from = RegistersReadWriteChecking)]
+    pub registers_val: C,
+}
 
 /// The registers read/write checking sumcheck: relates the read-value claims
 /// (`RdWriteValue`, `Rs1Value`, `Rs2Value`) folded by `gamma` to the register

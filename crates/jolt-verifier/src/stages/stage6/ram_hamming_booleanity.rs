@@ -5,56 +5,26 @@
 //! and produces the single `RamHammingWeight` opening; its only public,
 //! `EqCycle`, ties the sumcheck point to the stage-1 Spartan-outer cycle binding.
 
-use core::marker::PhantomData;
-
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltOpeningId, JoltDerivedId, JoltRelationId,
-    RamHammingBooleanityPublic,
+    geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId, RamHammingBooleanityPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::OutputClaims;
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, InputClaims, OpeningClaim};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamHammingBooleanity)]
-pub struct RamHammingBooleanityOutputClaims<C> {
-    #[opening(RamHammingWeight)]
-    pub ram_hamming_weight: C,
-}
-
 /// `RamHammingBooleanity` consumes no openings (its input claim is the constant
-/// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
-/// since the derive requires at least one `#[opening]` field.
-pub struct RamHammingBooleanityInputClaims<C> {
-    _cell: PhantomData<C>,
-}
-
-impl<C> Default for RamHammingBooleanityInputClaims<C> {
-    fn default() -> Self {
-        Self { _cell: PhantomData }
-    }
-}
-
-impl<F: Field> RamHammingBooleanityInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream() -> Self {
-        Self::default()
-    }
-}
-
-impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<OpeningClaim<F>> {
-    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
-        None
-    }
+/// zero), so its consumed-claim struct is empty. (Verifier-side constructor for
+/// the moved [`RamHammingBooleanityInputClaims`].)
+pub fn ram_hamming_booleanity_inputs_from_upstream<F: Field>(
+) -> RamHammingBooleanityInputClaims<OpeningClaim<F>> {
+    RamHammingBooleanityInputClaims::default()
 }
 
 pub struct RamHammingBooleanity<F: Field> {

@@ -11,59 +11,26 @@
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::booleanity::{
+    BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims, BooleanityInputClaims,
+    BooleanityOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
-    JoltChallengeId, JoltOpeningId, JoltDerivedId, JoltRelationId,
+    JoltChallengeId, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
-// ---------------------------------------------------------------------------
-// Address phase (stage 6a)
-// ---------------------------------------------------------------------------
-
-/// The staged `BooleanityAddrClaim` intermediate produced by the address phase
-/// and consumed by the cycle phase.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(Booleanity)]
-pub struct BooleanityAddressPhaseOutputClaims<C> {
-    #[opening(BooleanityAddrClaim)]
-    pub intermediate: C,
-}
-
 /// The address phase consumes no openings (its input claim is the constant zero).
-pub struct BooleanityAddressPhaseInputClaims<C> {
-    _cell: PhantomData<C>,
-}
-
-impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
-    fn default() -> Self {
-        Self { _cell: PhantomData }
-    }
-}
-
-impl<F: Field> BooleanityAddressPhaseInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream() -> Self {
-        Self::default()
-    }
-}
-
-impl<F: Field> crate::stages::relations::InputClaims<F>
-    for BooleanityAddressPhaseInputClaims<OpeningClaim<F>>
-{
-    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
-        None
-    }
+/// (Verifier-side constructor for the moved [`BooleanityAddressPhaseInputClaims`].)
+pub fn booleanity_address_phase_inputs_from_upstream<F: Field>(
+) -> BooleanityAddressPhaseInputClaims<OpeningClaim<F>> {
+    BooleanityAddressPhaseInputClaims::default()
 }
 
 pub struct BooleanityAddressPhase<F: Field> {
@@ -102,38 +69,12 @@ impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cycle phase (stage 6b)
-// ---------------------------------------------------------------------------
-
-/// The committed per-family `Ra` openings produced by the cycle phase; every
-/// opening shares the single booleanity opening point (`r_address ++ r_cycle`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(Booleanity)]
-pub struct BooleanityOutputClaims<C> {
-    #[opening(committed = InstructionRa)]
-    pub instruction_ra: Vec<C>,
-    #[opening(committed = BytecodeRa)]
-    pub bytecode_ra: Vec<C>,
-    #[opening(committed = RamRa)]
-    pub ram_ra: Vec<C>,
-}
-
 /// The `BooleanityAddrClaim` intermediate consumed from the address phase.
-#[derive(Clone, Debug, InputClaims)]
-pub struct BooleanityInputClaims<C> {
-    #[opening(BooleanityAddrClaim, from = Booleanity)]
-    pub address_phase: C,
-}
-
-impl<F: Field> BooleanityInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(address_phase: OpeningClaim<F>) -> Self {
-        Self { address_phase }
-    }
+/// (Verifier-side constructor for the moved [`BooleanityInputClaims`].)
+pub fn booleanity_inputs_from_upstream<F: Field>(
+    address_phase: OpeningClaim<F>,
+) -> BooleanityInputClaims<OpeningClaim<F>> {
+    BooleanityInputClaims { address_phase }
 }
 
 pub struct Booleanity<F: Field> {

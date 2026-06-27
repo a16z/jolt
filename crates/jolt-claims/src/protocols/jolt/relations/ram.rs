@@ -1,6 +1,9 @@
 //! RAM symbolic sumcheck relations.
 
-use jolt_field::RingCore;
+use core::marker::PhantomData;
+
+use jolt_field::{Field, RingCore};
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::{
     committed_ram_ra_product, ram_address_spartan, ram_hamming_weight, ram_inc, ram_inc_val_check,
@@ -16,7 +19,217 @@ use crate::protocols::jolt::{
     ReadWriteDimensions, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, constant, opening, derived};
+use crate::{challenge, constant, opening, derived, InputClaims, OutputClaims};
+
+/// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
+/// the single read-write opening point. Generic over the cell (`F` on the wire /
+/// serialized proof form, `OpeningClaim<F>` on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamReadWriteChecking)]
+pub struct RamReadWriteOutputClaims<C> {
+    #[opening(RamVal)]
+    pub val: C,
+    #[opening(RamRa)]
+    pub ra: C,
+    #[opening(committed = RamInc)]
+    pub inc: C,
+}
+
+/// Consumed RAM read/write value openings from stage 1's outer sumcheck, reduced
+/// by the read-write checking sumcheck. The relation reads only these values (its
+/// output points come from its own sumcheck point and `product_tau_low`), so the
+/// input points are left empty. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RamReadWriteInputClaims<C> {
+    #[opening(RamReadValue, from = SpartanOuter)]
+    pub ram_read_value: C,
+    #[opening(RamWriteValue, from = SpartanOuter)]
+    pub ram_write_value: C,
+}
+
+/// The produced RAM RAF `ram_ra` opening, sharing the single RAF opening point.
+/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
+/// on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamRafEvaluation)]
+pub struct RamRafEvaluationOutputClaims<C> {
+    #[opening(RamRa)]
+    pub ram_ra: C,
+}
+
+/// The consumed RAM address opening from stage 1's outer sumcheck. The relation
+/// reads only this value (its output point comes from its own sumcheck point), so
+/// the input point is left empty. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RamRafEvaluationInputClaims<C> {
+    #[opening(RamAddress, from = SpartanOuter)]
+    pub ram_address: C,
+}
+
+/// The produced RAM `val_final` opening, sharing the single output-check opening
+/// point. Generic over the cell (`F` on the wire / serialized proof form,
+/// `OpeningClaim<F>` on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamOutputCheck)]
+pub struct RamOutputCheckOutputClaims<C> {
+    #[opening(RamValFinal)]
+    pub val_final: C,
+}
+
+/// The RAM output check consumes no openings (its input claim is the constant
+/// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
+/// since the derive requires at least one `#[opening]` field.
+pub struct RamOutputCheckInputClaims<C> {
+    _cell: PhantomData<C>,
+}
+
+impl<C> Default for RamOutputCheckInputClaims<C> {
+    fn default() -> Self {
+        Self { _cell: PhantomData }
+    }
+}
+
+impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<crate::OpeningClaim<F>> {
+    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
+        None
+    }
+}
+
+/// Produced RAM value-check openings (`ram_ra`, `ram_inc`) sharing one opening
+/// point. Generic over the cell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamValCheck)]
+pub struct RamValCheckOutputClaims<C> {
+    #[opening(RamRa)]
+    pub ram_ra: C,
+    #[opening(committed = RamInc)]
+    pub ram_inc: C,
+}
+
+/// The staged advice openings contributing to `Val_init`: untrusted/trusted
+/// advice block evaluations, each present only when its commitment is. Appended
+/// before the register openings (see the `Stage4OutputClaims` field order).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamValCheck)]
+pub struct RamValCheckAdviceClaims<C> {
+    #[opening(untrusted_advice)]
+    pub untrusted: Option<C>,
+    #[opening(trusted_advice)]
+    pub trusted: Option<C>,
+}
+
+/// Consumed openings of the RAM value-check claim: the read-write `val` (stage 2)
+/// and output-check `val_final` (stage 2), reduced against `Val_init`, whose
+/// committed pieces (advice / program image) are present only in some proof
+/// configurations. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RamValCheckInputClaims<C> {
+    #[opening(RamVal, from = RamReadWriteChecking)]
+    pub ram_val: C,
+    #[opening(RamValFinal, from = RamOutputCheck)]
+    pub ram_val_final: C,
+    #[opening(untrusted_advice, from = RamValCheck)]
+    pub untrusted_advice: Option<C>,
+    #[opening(trusted_advice, from = RamValCheck)]
+    pub trusted_advice: Option<C>,
+    #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
+    pub program_image: Option<C>,
+}
+
+/// Produced RAM-RA reduced opening, generic over the cell (`F` on the wire,
+/// `Vec<F>` for ZK points, `OpeningClaim<F>` (point + value) on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamRaClaimReduction)]
+pub struct RamRaClaimReductionOutputClaims<C> {
+    #[opening(RamRa)]
+    pub ram_ra: C,
+}
+
+/// Consumed RAM-RA openings reduced by the `RamRaClaimReduction` sumcheck, wired
+/// from the upstream RAF-evaluation, read-write-checking, and val-check
+/// relations. Generic over the cell (`OpeningClaim<F>` on the clear path,
+/// `Vec<F>` for ZK points).
+#[derive(Clone, Debug, InputClaims)]
+pub struct RamRaClaimReductionInputClaims<C> {
+    #[opening(RamRa, from = RamRafEvaluation)]
+    pub raf: C,
+    #[opening(RamRa, from = RamReadWriteChecking)]
+    pub read_write: C,
+    #[opening(RamRa, from = RamValCheck)]
+    pub val_check: C,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamHammingBooleanity)]
+pub struct RamHammingBooleanityOutputClaims<C> {
+    #[opening(RamHammingWeight)]
+    pub ram_hamming_weight: C,
+}
+
+/// `RamHammingBooleanity` consumes no openings (its input claim is the constant
+/// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
+/// since the derive requires at least one `#[opening]` field.
+pub struct RamHammingBooleanityInputClaims<C> {
+    _cell: PhantomData<C>,
+}
+
+impl<C> Default for RamHammingBooleanityInputClaims<C> {
+    fn default() -> Self {
+        Self { _cell: PhantomData }
+    }
+}
+
+impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<crate::OpeningClaim<F>> {
+    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
+        None
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamRaVirtualization)]
+pub struct RamRaVirtualizationOutputClaims<C> {
+    #[opening(committed = RamRa)]
+    pub ram_ra: Vec<C>,
+}
+
+/// The single reduced `RamRa` opening from the stage-5 RAM RA claim reduction.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RamRaVirtualizationInputClaims<C> {
+    #[opening(RamRa, from = RamRaClaimReduction)]
+    pub ram_ra_reduced: C,
+}
 
 /// The RAM read/write-checking sumcheck: folds the read and write values by
 /// `gamma` on the input side, and reconstructs them from `ra`, `val`, and `inc`

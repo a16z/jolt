@@ -1,6 +1,8 @@
 //! Bytecode read-RAF symbolic sumcheck relations.
 
 use jolt_field::RingCore;
+use jolt_riscv::{CircuitFlags, InstructionFlags, CIRCUIT_FLAGS};
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::{
     bytecode_read_raf_address_phase_opening, pc_spartan_outer, pc_spartan_shift,
@@ -11,7 +13,102 @@ use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId,
     JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{challenge, opening, SymbolicSumcheck};
+use crate::{challenge, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+
+/// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
+/// intermediate, plus (committed-program mode only) the staged `BytecodeValStage`
+/// openings. In full-program mode `val_stages` is empty.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(BytecodeReadRaf)]
+pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
+    #[opening(BytecodeReadRafAddrClaim)]
+    pub intermediate: C,
+    #[opening(BytecodeValStage)]
+    pub val_stages: Vec<C>,
+}
+
+/// The prior-proof openings the address-phase input claim binds: every stage-1..5
+/// opening the `read_raf_address_phase` input `Expr` folds (plus the two PC
+/// claims). The generic `input_claim` evaluates the bind from these via that
+/// `Expr`, so the gamma-folding formula lives in one place rather than a
+/// hand-written 25-opening resolver. The `op_flags` / `lookup_table_flags`
+/// families are indexed openings (`OpFlags(CIRCUIT_FLAGS[i])` /
+/// `LookupTableFlag(i)`).
+#[derive(Clone, Debug, InputClaims)]
+pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
+    #[opening(UnexpandedPC, from = SpartanOuter)]
+    pub outer_unexpanded_pc: C,
+    #[opening(Imm, from = SpartanOuter)]
+    pub outer_imm: C,
+    #[opening(OpFlags(CIRCUIT_FLAGS), from = SpartanOuter)]
+    pub outer_op_flags: Vec<C>,
+    #[opening(PC, from = SpartanOuter)]
+    pub outer_pc: C,
+    #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
+    pub product_jump: C,
+    #[opening(InstructionFlags(InstructionFlags::Branch), from = SpartanProductVirtualization)]
+    pub product_branch: C,
+    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD), from = SpartanProductVirtualization)]
+    pub product_write_lookup_output_to_rd: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanProductVirtualization)]
+    pub product_virtual_instruction: C,
+    #[opening(Imm, from = InstructionInputVirtualization)]
+    pub instruction_input_imm: C,
+    #[opening(UnexpandedPC, from = SpartanShift)]
+    pub shift_unexpanded_pc: C,
+    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value), from = InstructionInputVirtualization)]
+    pub left_operand_is_rs1_value: C,
+    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsPC), from = InstructionInputVirtualization)]
+    pub left_operand_is_pc: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRs2Value), from = InstructionInputVirtualization)]
+    pub right_operand_is_rs2_value: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm), from = InstructionInputVirtualization)]
+    pub right_operand_is_imm: C,
+    #[opening(InstructionFlags(InstructionFlags::IsNoop), from = SpartanShift)]
+    pub is_noop: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanShift)]
+    pub shift_virtual_instruction: C,
+    #[opening(OpFlags(CircuitFlags::IsFirstInSequence), from = SpartanShift)]
+    pub shift_is_first_in_sequence: C,
+    #[opening(PC, from = SpartanShift)]
+    pub shift_pc: C,
+    #[opening(RdWa, from = RegistersReadWriteChecking)]
+    pub rd_wa_read_write: C,
+    #[opening(Rs1Ra, from = RegistersReadWriteChecking)]
+    pub rs1_ra: C,
+    #[opening(Rs2Ra, from = RegistersReadWriteChecking)]
+    pub rs2_ra: C,
+    #[opening(RdWa, from = RegistersValEvaluation)]
+    pub rd_wa_val_evaluation: C,
+    #[opening(InstructionRafFlag, from = InstructionReadRaf)]
+    pub instruction_raf_flag: C,
+    #[opening(LookupTableFlag, from = InstructionReadRaf)]
+    pub lookup_table_flags: Vec<C>,
+}
+
+/// The cycle-phase produced openings: the per-chunk committed `BytecodeRa` claims,
+/// all sharing the `r_address ++ r_cycle` opening point.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(BytecodeReadRaf)]
+pub struct BytecodeReadRafOutputClaims<C> {
+    #[opening(committed = BytecodeRa)]
+    pub bytecode_ra: Vec<C>,
+}
+
+/// The `BytecodeReadRafAddrClaim` intermediate consumed from the address phase.
+#[derive(Clone, Debug, InputClaims)]
+pub struct BytecodeReadRafInputClaims<C> {
+    #[opening(BytecodeReadRafAddrClaim, from = BytecodeReadRaf)]
+    pub address_phase: C,
+}
 
 /// The full bytecode read-RAF sumcheck: folds the five staged claims plus the
 /// Spartan outer/shift PC openings against the bytecode-table cycle output.

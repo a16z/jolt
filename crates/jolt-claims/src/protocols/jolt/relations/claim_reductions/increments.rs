@@ -1,6 +1,7 @@
 //! Increment claim-reduction symbolic sumcheck relation.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_read_write, ram_inc_reduced, ram_inc_val_check, rd_inc_read_write, rd_inc_reduced,
@@ -10,7 +11,34 @@ use crate::protocols::jolt::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId,
     JoltDerivedId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::{challenge, opening, derived, SymbolicSumcheck};
+use crate::{challenge, opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(IncClaimReduction)]
+pub struct IncClaimReductionOutputClaims<C> {
+    #[opening(committed = RamInc)]
+    pub ram_inc: C,
+    #[opening(committed = RdInc)]
+    pub rd_inc: C,
+}
+
+/// The four reduced `Inc` openings consumed from the read-write / value
+/// relations of RAM and registers.
+#[derive(Clone, Debug, InputClaims)]
+pub struct IncClaimReductionInputClaims<C> {
+    #[opening(committed = RamInc, from = RamReadWriteChecking)]
+    pub ram_inc_read_write: C,
+    #[opening(committed = RamInc, from = RamValCheck)]
+    pub ram_inc_val_check: C,
+    #[opening(committed = RdInc, from = RegistersReadWriteChecking)]
+    pub rd_inc_read_write: C,
+    #[opening(committed = RdInc, from = RegistersValEvaluation)]
+    pub rd_inc_val_evaluation: C,
+}
 
 /// Batches the RAM/register increment openings (`RamInc` read-write and
 /// val-check, `RdInc` read-write and val-evaluation) by `gamma` and reduces

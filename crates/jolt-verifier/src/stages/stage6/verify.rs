@@ -31,16 +31,16 @@ use num_traits::{One, Zero};
 use super::{
     batch::{Stage6Relations, Stage6RelationsParams},
     booleanity::{
-        BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
+        booleanity_address_phase_inputs_from_upstream, BooleanityAddressPhase,
         BooleanityAddressPhaseOutputClaims,
     },
     bytecode_read_raf::{
-        BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
-        BytecodeReadRafAddressPhaseOutputClaims,
+        bytecode_read_raf_address_phase_inputs_from_upstream, BytecodeReadRafAddressPhase,
+        BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
     },
     committed_reduction_cycle_phase::{
-        AdviceCyclePhase, AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
-        BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseInputClaims,
+        bytecode_reduction_cycle_phase_inputs_from_values, AdviceCyclePhase,
+        AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims, BytecodeReductionCyclePhase,
         BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhase,
         ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
     },
@@ -597,7 +597,7 @@ where
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening; the relation evaluates it through its input `Expr`
     // from these wired openings + the per-stage folding gammas.
-    let bytecode_address_inputs = BytecodeReadRafAddressPhaseInputClaims::from_upstream(
+    let bytecode_address_inputs = bytecode_read_raf_address_phase_inputs_from_upstream(
         stage1, stage2, stage3, stage4, stage5,
     )?;
     let num_bytecode_val_stages = if committed_program {
@@ -1909,7 +1909,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
+    let booleanity_inputs = booleanity_address_phase_inputs_from_upstream();
     let bytecode_read_raf_input = bytecode_relation.input_claim(bytecode_inputs)?;
     let booleanity_input = booleanity_relation.input_claim(&booleanity_inputs)?;
     let bytecode_spec = bytecode_relation.spec();
@@ -2215,7 +2215,7 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
         }
     };
     let relation = BytecodeReductionCyclePhase::new(layout, eta, weights.clone());
-    let inputs = BytecodeReductionCyclePhaseInputClaims::from_values(Vec::new());
+    let inputs = bytecode_reduction_cycle_phase_inputs_from_values(Vec::new());
     let derived = relation.derive_opening_points(point, &inputs)?;
     let outputs = zip_openings(&values, &derived);
     let expected_output_claim = relation.expected_output(&inputs, &outputs)?;

@@ -24,13 +24,14 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltRelationId, RamValCheckChallenge,
     RamValCheckPublic,
 };
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
+};
 use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::proof::JoltProof;
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
@@ -40,80 +41,30 @@ use crate::VerifierError;
 
 use super::outputs::Stage4OutputClaims;
 
-/// Produced RAM value-check openings (`ram_ra`, `ram_inc`) sharing one opening
-/// point. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamValCheck)]
-pub struct RamValCheckOutputClaims<C> {
-    #[opening(RamRa)]
-    pub ram_ra: C,
-    #[opening(committed = RamInc)]
-    pub ram_inc: C,
-}
-
-/// The staged advice openings contributing to `Val_init`: untrusted/trusted
-/// advice block evaluations, each present only when its commitment is. Appended
-/// before the register openings (see the `Stage4OutputClaims` field order).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamValCheck)]
-pub struct RamValCheckAdviceClaims<C> {
-    #[opening(untrusted_advice)]
-    pub untrusted: Option<C>,
-    #[opening(trusted_advice)]
-    pub trusted: Option<C>,
-}
-
-/// Consumed openings of the RAM value-check claim: the read-write `val` (stage 2)
-/// and output-check `val_final` (stage 2), reduced against `Val_init`, whose
-/// committed pieces (advice / program image) are present only in some proof
-/// configurations. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamValCheckInputClaims<C> {
-    #[opening(RamVal, from = RamReadWriteChecking)]
-    pub ram_val: C,
-    #[opening(RamValFinal, from = RamOutputCheck)]
-    pub ram_val_final: C,
-    #[opening(untrusted_advice, from = RamValCheck)]
-    pub untrusted_advice: Option<C>,
-    #[opening(trusted_advice, from = RamValCheck)]
-    pub trusted_advice: Option<C>,
-    #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
-    pub program_image: Option<C>,
-}
-
-impl<F: Field> RamValCheckInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed openings from stage 2's RAM read-write `val` and
-    /// output-check `val_final`, plus the reconstructed init contributions (the
-    /// same advice / program-image openings the init evaluation is decomposed
-    /// into). The init pieces carry their staged opening points for completeness,
-    /// though only their values feed the input claim.
-    pub fn from_upstream(
-        stage2: &Stage2ClearOutput<F>,
-        init: &RamValCheckInitialEvaluation<F>,
-    ) -> Self {
-        let advice =
-            |kind: JoltAdviceKind| init.advice_contribution(kind).map(|c| c.opening.clone());
-        Self {
-            ram_val: OpeningClaim {
-                point: stage2.output_claims.ram_read_write_point().to_vec(),
-                value: stage2.output_claims.ram_read_write.val.value,
-            },
-            ram_val_final: OpeningClaim {
-                point: stage2.output_claims.ram_output_check_point().to_vec(),
-                value: stage2.output_claims.ram_output_check.val_final.value,
-            },
-            untrusted_advice: advice(JoltAdviceKind::Untrusted),
-            trusted_advice: advice(JoltAdviceKind::Trusted),
-            program_image: init.program_image_contribution.clone(),
-        }
+/// Wire the consumed openings from stage 2's RAM read-write `val` and
+/// output-check `val_final`, plus the reconstructed init contributions (the
+/// same advice / program-image openings the init evaluation is decomposed
+/// into). The init pieces carry their staged opening points for completeness,
+/// though only their values feed the input claim. (Verifier-side constructor for
+/// the moved [`RamValCheckInputClaims`] — it reads the verifier-only
+/// [`Stage2ClearOutput`] and [`RamValCheckInitialEvaluation`].)
+pub fn ram_val_check_inputs_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+    init: &RamValCheckInitialEvaluation<F>,
+) -> RamValCheckInputClaims<OpeningClaim<F>> {
+    let advice = |kind: JoltAdviceKind| init.advice_contribution(kind).map(|c| c.opening.clone());
+    RamValCheckInputClaims {
+        ram_val: OpeningClaim {
+            point: stage2.output_claims.ram_read_write_point().to_vec(),
+            value: stage2.output_claims.ram_read_write.val.value,
+        },
+        ram_val_final: OpeningClaim {
+            point: stage2.output_claims.ram_output_check_point().to_vec(),
+            value: stage2.output_claims.ram_output_check.val_final.value,
+        },
+        untrusted_advice: advice(JoltAdviceKind::Untrusted),
+        trusted_advice: advice(JoltAdviceKind::Trusted),
+        program_image: init.program_image_contribution.clone(),
     }
 }
 

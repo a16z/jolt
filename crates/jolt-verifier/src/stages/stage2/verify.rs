@@ -22,18 +22,26 @@ use jolt_transcript::Transcript;
 
 use super::{
     instruction_claim_reduction::{
-        InstructionClaimReduction, InstructionClaimReductionInputClaims,
-        InstructionClaimReductionOutputClaims,
+        instruction_claim_reduction_inputs_from_upstream, InstructionClaimReduction,
+        InstructionClaimReductionInputClaims, InstructionClaimReductionOutputClaims,
     },
     outputs::{
         product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output,
         Stage2ProductUniSkipInputValues, Stage2PublicOutput, Stage2ZkOutput,
         VerifiedProductUniSkip,
     },
-    product_remainder::{ProductRemainder, ProductRemainderInputClaims},
-    ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims},
-    ram_raf_evaluation::{RamRafEvaluation, RamRafEvaluationInputClaims},
-    ram_read_write_checking::{RamReadWriteChecking, RamReadWriteInputClaims},
+    product_remainder::{
+        product_remainder_inputs_from_uniskip_output, ProductRemainder, ProductRemainderInputClaims,
+    },
+    ram_output_check::{
+        ram_output_check_inputs_from_upstream, RamOutputCheck, RamOutputCheckInputClaims,
+    },
+    ram_raf_evaluation::{
+        ram_raf_evaluation_inputs_from_upstream, RamRafEvaluation, RamRafEvaluationInputClaims,
+    },
+    ram_read_write_checking::{
+        ram_read_write_inputs_from_upstream, RamReadWriteChecking, RamReadWriteInputClaims,
+    },
 };
 use crate::{
     proof::JoltProof,
@@ -491,14 +499,14 @@ where
                 public_memory,
             );
 
-            let ram_read_write_inputs = RamReadWriteInputClaims::from_upstream(stage1);
-            let product_remainder_inputs = ProductRemainderInputClaims::from_uniskip_output(
+            let ram_read_write_inputs = ram_read_write_inputs_from_upstream(stage1);
+            let product_remainder_inputs = product_remainder_inputs_from_uniskip_output(
                 claims.product_uniskip_output_claim,
             );
             let instruction_reduction_inputs =
-                InstructionClaimReductionInputClaims::from_upstream(stage1);
-            let ram_raf_inputs = RamRafEvaluationInputClaims::from_upstream(stage1);
-            let ram_output_inputs = RamOutputCheckInputClaims::from_upstream();
+                instruction_claim_reduction_inputs_from_upstream(stage1);
+            let ram_raf_inputs = ram_raf_evaluation_inputs_from_upstream(stage1);
+            let ram_output_inputs = ram_output_check_inputs_from_upstream();
 
             // The claim order here must match the output-claim reconstruction below
             // and the transcript appends at the end of the stage.

@@ -8,6 +8,9 @@
 //! produced cycle to the stage-5 instruction read-RAF cycle.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::instruction::{
+    InstructionRaVirtualizationInputClaims, InstructionRaVirtualizationOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::{
         dimensions::committed_address_chunks, instruction::InstructionRaVirtualizationDimensions,
@@ -18,41 +21,23 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_claims_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage5::Stage5ClearOutput;
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(InstructionRaVirtualization)]
-pub struct InstructionRaVirtualizationOutputClaims<C> {
-    #[opening(committed = InstructionRa)]
-    pub committed_instruction_ra: Vec<C>,
-}
-
-/// The per-virtual reduced `InstructionRa` openings from the stage-5 instruction
-/// read-RAF.
-#[derive(Clone, Debug, InputClaims)]
-pub struct InstructionRaVirtualizationInputClaims<C> {
-    #[opening(InstructionRa, from = InstructionReadRaf)]
-    pub instruction_ra: Vec<C>,
-}
-
-impl<F: Field> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage5: &Stage5ClearOutput<F>) -> Self {
-        Self {
-            instruction_ra: stage5
-                .output_claims
-                .instruction_read_raf
-                .instruction_ra
-                .clone(),
-        }
+/// Wire the per-virtual reduced `InstructionRa` openings from the stage-5
+/// instruction read-RAF. (Verifier-side constructor for the moved
+/// [`InstructionRaVirtualizationInputClaims`].)
+pub fn instruction_ra_virtualization_inputs_from_upstream<F: Field>(
+    stage5: &Stage5ClearOutput<F>,
+) -> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
+    InstructionRaVirtualizationInputClaims {
+        instruction_ra: stage5
+            .output_claims
+            .instruction_read_raf
+            .instruction_ra
+            .clone(),
     }
 }
 

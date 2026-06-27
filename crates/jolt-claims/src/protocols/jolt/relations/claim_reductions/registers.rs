@@ -1,6 +1,7 @@
 //! Registers claim-reduction symbolic sumcheck relation.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::registers::{
     rd_write_value_reduced, rd_write_value_spartan, rs1_value_reduced, rs1_value_spartan,
@@ -10,7 +11,38 @@ use crate::protocols::jolt::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::{challenge, opening, derived, SymbolicSumcheck};
+use crate::{challenge, opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+
+/// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
+/// values reduced to the Spartan point), all sharing the single reduction opening
+/// point. Generic over the cell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RegistersClaimReduction)]
+pub struct RegistersClaimReductionOutputClaims<C> {
+    #[opening(RdWriteValue)]
+    pub rd_write_value: C,
+    #[opening(Rs1Value)]
+    pub rs1_value: C,
+    #[opening(Rs2Value)]
+    pub rs2_value: C,
+}
+
+/// Consumed register openings reduced by this sumcheck, wired from stage 1's outer
+/// sumcheck. The relation reads only these values, so the input points are left
+/// empty. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RegistersClaimReductionInputClaims<C> {
+    #[opening(RdWriteValue, from = SpartanOuter)]
+    pub rd_write_value: C,
+    #[opening(Rs1Value, from = SpartanOuter)]
+    pub rs1_value: C,
+    #[opening(Rs2Value, from = SpartanOuter)]
+    pub rs2_value: C,
+}
 
 /// Batches the Spartan-outer register openings (`RdWriteValue`, `Rs1Value`,
 /// `Rs2Value`) by `gamma` and reduces them to the registers-claim-reduction

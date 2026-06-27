@@ -27,23 +27,34 @@ use jolt_field::Field;
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::SumcheckClaim;
 
-use super::booleanity::{Booleanity, BooleanityInputClaims};
+use super::booleanity::{booleanity_inputs_from_upstream, Booleanity, BooleanityInputClaims};
 use super::bytecode_read_raf::{
-    BytecodeReadRaf, BytecodeReadRafCommitted, BytecodeReadRafCommittedCycleInputs,
-    BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
+    bytecode_read_raf_inputs_from_upstream, BytecodeReadRaf, BytecodeReadRafCommitted,
+    BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
+    BytecodeReadRafOutputClaims,
 };
 use super::committed_reduction_cycle_phase::{
-    AdviceCyclePhase, AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhase,
-    BytecodeReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhase,
-    ProgramImageReductionCyclePhaseInputClaims,
+    advice_cycle_phase_inputs_from_upstream, bytecode_reduction_cycle_phase_inputs_from_values,
+    program_image_reduction_cycle_phase_inputs_from_upstream, AdviceCyclePhase,
+    AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseInputClaims,
+    ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseInputClaims,
 };
-use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionInputClaims};
+use super::inc_claim_reduction::{
+    inc_claim_reduction_inputs_from_upstream, IncClaimReduction, IncClaimReductionInputClaims,
+};
 use super::instruction_ra_virtualization::{
-    InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
+    instruction_ra_virtualization_inputs_from_upstream, InstructionRaVirtualization,
+    InstructionRaVirtualizationInputClaims,
 };
 use super::outputs::BytecodeReductionWeights;
-use super::ram_hamming_booleanity::{RamHammingBooleanity, RamHammingBooleanityInputClaims};
-use super::ram_ra_virtualization::{RamRaVirtualization, RamRaVirtualizationInputClaims};
+use super::ram_hamming_booleanity::{
+    ram_hamming_booleanity_inputs_from_upstream, RamHammingBooleanity,
+    RamHammingBooleanityInputClaims,
+};
+use super::ram_ra_virtualization::{
+    ram_ra_virtualization_inputs_from_upstream, RamRaVirtualization,
+    RamRaVirtualizationInputClaims,
+};
 use crate::stages::relations::{ConcreteSumcheck, OpeningClaim};
 use crate::stages::{
     stage2::Stage2ClearOutput, stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
@@ -221,7 +232,7 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
                 },
             )),
         };
-        let bytecode_read_raf_inputs = BytecodeReadRafInputClaims::from_upstream(OpeningClaim {
+        let bytecode_read_raf_inputs = bytecode_read_raf_inputs_from_upstream(OpeningClaim {
             point: Vec::new(),
             value: params.address_bytecode_read_raf,
         });
@@ -233,14 +244,14 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             params.booleanity_reference_address.clone(),
             params.booleanity_reference_cycle.clone(),
         );
-        let booleanity_inputs = BooleanityInputClaims::from_upstream(OpeningClaim {
+        let booleanity_inputs = booleanity_inputs_from_upstream(OpeningClaim {
             point: Vec::new(),
             value: params.address_booleanity,
         });
 
         let ram_hamming =
             RamHammingBooleanity::new(params.trace_dimensions, params.stage1_cycle_binding.clone());
-        let ram_hamming_inputs = RamHammingBooleanityInputClaims::from_upstream();
+        let ram_hamming_inputs = ram_hamming_booleanity_inputs_from_upstream();
 
         let ram_ra = RamRaVirtualization::new(
             params.ram_ra_dimensions,
@@ -248,7 +259,7 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             params.ram_reduced_cycle.clone(),
             params.committed_chunk_bits,
         );
-        let ram_ra_inputs = RamRaVirtualizationInputClaims::from_upstream(stage5);
+        let ram_ra_inputs = ram_ra_virtualization_inputs_from_upstream(stage5);
 
         let instruction_ra = InstructionRaVirtualization::new(
             params.instruction_ra_dimensions,
@@ -257,7 +268,7 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             params.instruction_r_cycle.clone(),
             params.committed_chunk_bits,
         );
-        let instruction_ra_inputs = InstructionRaVirtualizationInputClaims::from_upstream(stage5);
+        let instruction_ra_inputs = instruction_ra_virtualization_inputs_from_upstream(stage5);
 
         let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
             params.inc_cycle_points.clone();
@@ -269,7 +280,7 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             registers_read_write_cycle,
             registers_val_evaluation_cycle,
         );
-        let inc_inputs = IncClaimReductionInputClaims::from_upstream(stage2, stage4, stage5);
+        let inc_inputs = inc_claim_reduction_inputs_from_upstream(stage2, stage4, stage5);
 
         let advice_relation =
             |kind: JoltAdviceKind, layout: Option<&AdviceClaimReductionLayout>| {
@@ -287,7 +298,7 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
         let trusted_advice = advice_relation(JoltAdviceKind::Trusted, params.trusted_advice_layout);
         let untrusted_advice =
             advice_relation(JoltAdviceKind::Untrusted, params.untrusted_advice_layout);
-        let advice_inputs = AdviceCyclePhaseInputClaims::from_upstream(stage4);
+        let advice_inputs = advice_cycle_phase_inputs_from_upstream(stage4);
 
         let bytecode_reduction = match (
             params.bytecode_reduction_layout,
@@ -302,7 +313,7 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             _ => None,
         };
         let bytecode_reduction_inputs = bytecode_reduction.as_ref().map(|_| {
-            BytecodeReductionCyclePhaseInputClaims::from_values(
+            bytecode_reduction_cycle_phase_inputs_from_values(
                 params
                     .address_val_stages
                     .iter()
@@ -319,7 +330,7 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
         });
         let program_image_reduction_inputs = program_image_reduction
             .as_ref()
-            .map(|_| ProgramImageReductionCyclePhaseInputClaims::from_upstream(stage4))
+            .map(|_| program_image_reduction_cycle_phase_inputs_from_upstream(stage4))
             .transpose()?;
 
         Ok(Self {

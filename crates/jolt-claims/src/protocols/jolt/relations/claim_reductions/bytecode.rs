@@ -1,6 +1,7 @@
 //! Two-phase committed-bytecode claim-reduction symbolic relations.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     assert_valid_chunk_count, bytecode_val_stage_opening, cycle_phase_intermediate_opening,
@@ -10,11 +11,54 @@ use crate::protocols::jolt::{
     BytecodeClaimReductionChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId,
     JoltRelationId, JoltSumcheckSpec, PrecommittedReductionDimensions,
 };
-use crate::{challenge, opening, SymbolicSumcheck};
+use crate::{challenge, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// `(two-phase dimensions, chunk count)` shape shared by the committed-bytecode
 /// cycle- and address-phase reductions.
 pub type BytecodeReductionShape = (PrecommittedReductionDimensions, usize);
+
+/// Produced per-chunk `BytecodeChunk(i)` openings, all sharing the reduction's
+/// final opening point. Generic over the cell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(BytecodeClaimReduction)]
+pub struct BytecodeReductionAddressPhaseOutputClaims<C> {
+    #[opening(committed = BytecodeChunk)]
+    pub chunks: Vec<C>,
+}
+
+/// Consumed intermediate opening from the stage-6b bytecode cycle phase.
+#[derive(Clone, Debug, InputClaims)]
+pub struct BytecodeReductionAddressPhaseInputClaims<C> {
+    #[opening(BytecodeClaimReductionIntermediate, from = BytecodeClaimReductionCyclePhase)]
+    pub cycle_phase_intermediate: C,
+}
+
+/// The produced bytecode-reduction openings: the intermediate when an address
+/// phase follows, else the per-chunk final `BytecodeChunk` openings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(BytecodeClaimReductionCyclePhase)]
+pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
+    #[opening(BytecodeClaimReductionIntermediate)]
+    pub intermediate: Option<C>,
+    #[opening(committed = BytecodeChunk)]
+    pub chunks: Vec<C>,
+}
+
+/// The consumed staged `BytecodeValStage` openings from the bytecode read-RAF
+/// address phase.
+#[derive(Clone, Debug, InputClaims)]
+pub struct BytecodeReductionCyclePhaseInputClaims<C> {
+    #[opening(BytecodeValStage, from = BytecodeReadRaf)]
+    pub val_stages: Vec<C>,
+}
 
 /// Cycle phase of the committed-bytecode reduction: batches the five staged
 /// `BytecodeValStage(i)` openings by powers of `eta` and reduces them to either
