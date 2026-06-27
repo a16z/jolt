@@ -30,6 +30,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/gather8.cu"),
     include_str!("cuda/hamming.cu"),
     include_str!("cuda/hamming_booleanity.cu"),
+    include_str!("cuda/ra_virtual_d4.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -86,6 +87,7 @@ pub struct CudaKernelContext {
     gather8_materialize: CudaFunction,
     hamming_pairs: CudaFunction,
     hamming_booleanity_pairs: CudaFunction,
+    ra_virtual_d4_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -393,6 +395,7 @@ impl CudaKernelContext {
             gather8_materialize: module.load_function("gather8_materialize")?,
             hamming_pairs: module.load_function("hamming_pairs")?,
             hamming_booleanity_pairs: module.load_function("hamming_booleanity_pairs")?,
+            ra_virtual_d4_pairs: module.load_function("ra_virtual_d4_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -676,12 +679,84 @@ impl CudaKernelContext {
         Ok((a.to_host()?, b.to_host()?))
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn ra_virtual_d4_round_poly(
         &self,
         inputs: RaVirtualD4Inputs<'_>,
     ) -> Result<[Fr; 4], CudaError> {
-        todo!()
+        use num_traits::Zero;
+        let half = inputs.chunks[0].len() / 2;
+        for chunk in inputs.chunks {
+            assert_eq!(chunk.len(), half * 2, "ra-virtual d4 chunks must have equal length");
+        }
+        assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
+        assert_eq!(
+            inputs.e_in.len() * inputs.e_out.len(),
+            half,
+            "e_in * e_out must equal the chunk row count"
+        );
+        if half == 0 {
+            return Ok([Fr::zero(); 4]);
+        }
+        let in_bits = inputs.e_in.len().trailing_zeros();
+
+        const WIDTH: usize = 4;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (half as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let half_arg = half as u64;
+        let in_bits_arg = in_bits;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.ra_virtual_d4_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.chunks[0].buf)
+            .arg(&inputs.chunks[1].buf)
+            .arg(&inputs.chunks[2].buf)
+            .arg(&inputs.chunks[3].buf)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&half_arg)
+            .arg(&in_bits_arg);
+        // SAFETY: one thread per row reads its pair from each of the 4 chunks and its
+        // e_in[row & mask] / e_out[row >> in_bits] weights (in range since
+        // e_in*e_out == half), writing one 4-lane tuple per block; shared memory holds
+        // `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 4-lane tuples across up to `block`
+            // blocks; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok(core::array::from_fn(|e| {
+            limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]])
+        }))
     }
 
     pub fn hamming_booleanity_round_poly(
@@ -2647,7 +2722,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::ra_virtual_d4_round_poly is todo!()"]
         fn ra_virtual_d4_round_poly_matches_cpu(
             num_vars in 1usize..10,
             point_seed in fr_strategy(),

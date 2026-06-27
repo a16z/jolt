@@ -1411,6 +1411,7 @@ pub(crate) struct HammingWeightClaimReductionState<F: Field> {
     pub(crate) gamma_powers: Vec<F>,
     pub(crate) outputs: Vec<Stage7RaOutputPlan>,
     pub(crate) active_scale: F,
+    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
     pub(crate) backend: &'static str,
 }
 

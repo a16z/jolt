@@ -4876,13 +4876,15 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
                     &tables_011,
                     &tables_111,
                 ];
-                let chunks = 'chunks: {
-                    #[cfg(feature = "cuda")]
-                    if backend == "cuda" {
-                        if let Some(chunks) = cuda::materialize_gather8(&table_groups, indices) {
-                            break 'chunks chunks;
-                        }
-                    }
+                #[cfg(feature = "cuda")]
+                let chunks = if backend == "cuda" {
+                    cuda::materialize_gather8(&table_groups, indices)
+                        .unwrap_or_else(|| materialize_gather8(&table_groups, indices))
+                } else {
+                    materialize_gather8(&table_groups, indices)
+                };
+                #[cfg(not(feature = "cuda"))]
+                let chunks = {
                     let _ = backend;
                     materialize_gather8(&table_groups, indices)
                 };
@@ -5115,6 +5117,19 @@ impl<F: Field> InstructionRaVirtualChunks<'_, F> {
             Self::Sparse(chunks) => chunks.bind(challenge, backend),
         }
     }
+
+    #[cfg(feature = "cuda")]
+    fn dense_chunk_vecs(&self) -> Option<Vec<Vec<F>>> {
+        match self {
+            Self::Dense(InstructionRaVirtualDenseChunks::Borrowed(chunks)) => {
+                Some(chunks.iter().map(|chunk| chunk.to_vec()).collect())
+            }
+            Self::Dense(InstructionRaVirtualDenseChunks::Bound { chunks, .. }) => {
+                Some(chunks.clone())
+            }
+            Self::Sparse(_) => None,
+        }
+    }
 }
 
 fn bind_dense_evals_to_vec<F: Field>(values: &[F], challenge: F) -> Vec<F> {
@@ -5138,6 +5153,8 @@ struct InstructionRaVirtualStage6State<'a, F: Field> {
     outputs: Vec<FactorOutput>,
     active_scale: F,
     backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaRaVirtualD4State>,
 }
 
 impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
@@ -5200,6 +5217,21 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             gamma_power *= gamma;
         }
 
+        // GPU d4 path covers only the RamRaVirtual shape: dense chunks, 1 virtual,
+        // chunks_per_virtual == 4. (InstructionRaVirtual is sparse / multi-virtual.)
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda"
+            && chunks_per_virtual == 4
+            && virtual_count == 1
+            && split_eq.is_some()
+        {
+            chunks
+                .dense_chunk_vecs()
+                .and_then(|chunk_vecs| cuda::CudaRaVirtualD4State::new(&chunk_vecs))
+        } else {
+            None
+        };
+
         Ok(Self {
             relation,
             eq_cycle,
@@ -5214,6 +5246,8 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             outputs,
             active_scale,
             backend,
+            #[cfg(feature = "cuda")]
+            cuda,
         })
     }
 
@@ -5356,6 +5390,30 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
     ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
         debug_assert_eq!(self.chunks_per_virtual, 4);
 
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(q) =
+                cuda.round_poly_evals(split_eq.e_in_current(), split_eq.e_out_current())
+            {
+                let evals: Option<Vec<F>> = q
+                    .iter()
+                    .map(|value| {
+                        crate::cuda::fr_into::<F>(*value).map(|v| v * self.active_scale)
+                    })
+                    .collect();
+                if let Some(evals) = evals {
+                    let poly = split_eq.gruen_poly_from_evals(&evals, previous_claim);
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage6 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
+
         let e_out = split_eq.e_out_current();
         let e_in = split_eq.e_in_current();
         let in_bits = e_in.len().trailing_zeros() as usize;
@@ -5492,6 +5550,17 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    if let Some(split_eq) = &mut self.split_eq {
+                        split_eq.bind(challenge);
+                    }
+                    return;
+                }
+            }
+        }
         if self.split_eq.is_none() {
             bind_dense_evals_reuse(&mut self.eq_cycle, &mut self.eq_scratch, challenge);
         }
@@ -5528,7 +5597,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             };
             for offset in 0..self.chunks_per_virtual {
                 let chunk = virtual_index * self.chunks_per_virtual + offset;
-                product *= self.chunks.final_sumcheck_claim(chunk);
+                product *= self.chunk_final_claim(chunk);
             }
             virtual_sum += product;
         }
@@ -5539,8 +5608,20 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         self.chunks.len() / self.chunks_per_virtual
     }
 
+    fn chunk_final_claim(&self, chunk: usize) -> F {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.chunk_first(chunk) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return value;
+                }
+            }
+        }
+        self.chunks.final_sumcheck_claim(chunk)
+    }
+
     fn unscaled_factor_eval(&self, factor: usize) -> F {
-        let mut eval = self.chunks.final_sumcheck_claim(factor);
+        let mut eval = self.chunk_final_claim(factor);
         if self.gamma_absorbed && factor.is_multiple_of(self.chunks_per_virtual) {
             eval *= self.gamma_powers_inv[factor / self.chunks_per_virtual];
         }

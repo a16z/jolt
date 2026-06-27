@@ -1,6 +1,52 @@
 use jolt_field::{Field, Fr};
 
-use crate::cuda::{CudaError, DeviceFrVec, Gather8Inputs, HammingBooleanityInputs, RoundPolyTerms};
+use crate::cuda::{
+    CudaError, DeviceFrVec, Gather8Inputs, HammingBooleanityInputs, RaVirtualD4Inputs,
+    RoundPolyTerms,
+};
+
+pub(crate) struct CudaRaVirtualD4State {
+    chunks: [DeviceFrVec; 4],
+    scratch: DeviceFrVec,
+}
+
+impl CudaRaVirtualD4State {
+    pub(crate) fn new<F: Field>(chunks: &[Vec<F>]) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        if chunks.len() != 4 {
+            return None;
+        }
+        let upload = |i: usize| ctx.upload(crate::cuda::as_fr_slice(&chunks[i])?).ok();
+        Some(Self {
+            chunks: [upload(0)?, upload(1)?, upload(2)?, upload(3)?],
+            scratch: ctx.upload(&[]).ok()?,
+        })
+    }
+
+    pub(crate) fn round_poly_evals<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 4]> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
+        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
+        ctx.ra_virtual_d4_round_poly(RaVirtualD4Inputs {
+            chunks: [&self.chunks[0], &self.chunks[1], &self.chunks[2], &self.chunks[3]],
+            e_in: &e_in_dev,
+            e_out: &e_out_dev,
+        })
+        .ok()
+    }
+
+    pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        for chunk in &mut self.chunks {
+            ctx.bind(chunk, &mut self.scratch, challenge)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn chunk_first(&self, chunk: usize) -> Option<Result<Fr, CudaError>> {
+        self.chunks.get(chunk).map(DeviceFrVec::first)
+    }
+}
 
 pub(crate) struct CudaHammingBooleanityState {
     hamming_weight: DeviceFrVec,
