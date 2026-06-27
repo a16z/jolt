@@ -12,7 +12,7 @@
 //! OVERRIDES [`ConcreteSumcheck::expected_output`] to recover the scale from the
 //! produced opening point via the layout's `cycle_phase_*_at_opening_point`
 //! helpers — see [`PrecommittedClaimReduction::cycle_phase_permuted_from_opening_point`].
-//! The output expression is bypassed (not the `resolve_public` path) because the
+//! The output expression is bypassed (not the `derive_output_term` path) because the
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 

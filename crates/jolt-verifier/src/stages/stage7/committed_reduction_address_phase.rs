@@ -9,7 +9,7 @@
 //! `ProgramImageInit` under a single `FinalScale` public.
 //!
 //! Both publics are functions of the reduction's final opening point — the same
-//! point `derive_opening_points` produces — so `resolve_public` recovers that
+//! point `derive_opening_points` produces — so `derive_output_term` recovers that
 //! point from the output claims and asks the layout for the scale/weights at it,
 //! exactly as stage 4's `RamValCheck` recovers the cycle from its output point.
 
@@ -101,14 +101,13 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
-        outputs: Option<&BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
+        outputs: &BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
             chunk_idx,
         )) = id
@@ -189,14 +188,13 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
-        outputs: Option<&ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
+        outputs: &ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
             id
         else {

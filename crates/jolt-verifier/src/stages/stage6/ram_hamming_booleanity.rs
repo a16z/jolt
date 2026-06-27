@@ -76,14 +76,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &RamHammingBooleanityInputClaims<C>,
-        outputs: Option<&RamHammingBooleanityOutputClaims<OpeningClaim<F>>>,
+        outputs: &RamHammingBooleanityOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

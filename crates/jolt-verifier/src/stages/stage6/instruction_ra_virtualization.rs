@@ -101,14 +101,13 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &InstructionRaVirtualizationInputClaims<C>,
-        outputs: Option<&InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>>,
+        outputs: &InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>,
         _challenges: &InstructionRaVirtualizationChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
             id
         else {

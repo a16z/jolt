@@ -121,14 +121,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         Ok(RamOutputCheckOutputClaims { val_final: address })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &RamOutputCheckInputClaims<C>,
-        outputs: Option<&RamOutputCheckOutputClaims<OpeningClaim<F>>>,
+        outputs: &RamOutputCheckOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamOutputCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

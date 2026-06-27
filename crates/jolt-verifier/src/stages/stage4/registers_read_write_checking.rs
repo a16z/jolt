@@ -89,14 +89,13 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         inputs: &RegistersReadWriteInputClaims<C>,
-        outputs: Option<&RegistersReadWriteOutputClaims<OpeningClaim<F>>>,
+        outputs: &RegistersReadWriteOutputClaims<OpeningClaim<F>>,
         _challenges: &RegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RegistersReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

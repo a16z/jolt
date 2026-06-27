@@ -88,14 +88,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &RamReadWriteInputClaims<C>,
-        outputs: Option<&RamReadWriteOutputClaims<OpeningClaim<F>>>,
+        outputs: &RamReadWriteOutputClaims<OpeningClaim<F>>,
         _challenges: &RamReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

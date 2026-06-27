@@ -85,9 +85,9 @@ impl<F: Field> RamValCheck<F> {
     /// Build the relation from its per-proof init decomposition. `init` carries
     /// the public initial-RAM evaluation plus the present advice/program-image
     /// contributions; their *structure* feeds the symbolic input `Expr` and their
-    /// *values* are supplied as `Public` symbols via [`resolve_public`].
+    /// *values* are supplied as `Derived` symbols via [`derive_input_term`].
     ///
-    /// [`resolve_public`]: ConcreteSumcheck::resolve_public
+    /// [`derive_input_term`]: ConcreteSumcheck::derive_input_term
     pub fn new(
         trace_dimensions: TraceDimensions,
         ram_log_k: usize,
@@ -180,20 +180,18 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_input_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
-        inputs: &RamValCheckInputClaims<C>,
-        outputs: Option<&RamValCheckOutputClaims<OpeningClaim<F>>>,
-        challenges: &RamValCheckChallenges<F>,
+        _inputs: &RamValCheckInputClaims<C>,
+        _challenges: &RamValCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamValCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
-            // The `Val_init` decomposition publics are input publics (resolved
-            // with `outputs == None`): the public initial-RAM evaluation and the
-            // negated committed-contribution selectors.
+            // The `Val_init` decomposition publics are input publics: the public
+            // initial-RAM evaluation and the negated committed-contribution selectors.
             RamValCheckPublic::InitEval => Ok(self.public_eval),
             RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => {
                 self.init_selectors
@@ -201,12 +199,28 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                     .find_map(|(selector, value)| (selector == public_id).then_some(*value))
                     .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
             }
-            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation
-            // of the produced cycle point against the fixed read-write cycle. The
-            // gamma comes from the drawn `challenges` struct (the same value
-            // `draw_challenges` produced), not a stored scalar.
+            // Output public — resolved in `derive_output_term`, never in the input expr.
             RamValCheckPublic::LtCyclePlusGamma => {
-                let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
+                Err(VerifierError::MissingStageClaimDerived { id: *id })
+            }
+        }
+    }
+
+    fn derive_output_term<C: GetPoint<F>>(
+        &self,
+        id: &JoltDerivedId,
+        inputs: &RamValCheckInputClaims<C>,
+        outputs: &RamValCheckOutputClaims<OpeningClaim<F>>,
+        challenges: &RamValCheckChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let JoltDerivedId::RamValCheck(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+        };
+        match public_id {
+            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation of
+            // the produced cycle point against the fixed read-write cycle. Gamma comes
+            // from the drawn `challenges` (the value `draw_challenges` produced).
+            RamValCheckPublic::LtCyclePlusGamma => {
                 let output_cycle = &outputs.ram_ra.point()[self.ram_log_k..];
                 let fixed_cycle = &inputs.ram_val.point()[self.ram_log_k..];
                 let gamma = challenges
@@ -215,6 +229,12 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                         id: JoltChallengeId::from(RamValCheckChallenge::Gamma),
                     })?;
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + gamma)
+            }
+            // Input publics — resolved in `derive_input_term`, never in the output expr.
+            RamValCheckPublic::InitEval
+            | RamValCheckPublic::InitSelector(_)
+            | RamValCheckPublic::InitSelectorProgramImage => {
+                Err(VerifierError::MissingStageClaimDerived { id: *id })
             }
         }
     }

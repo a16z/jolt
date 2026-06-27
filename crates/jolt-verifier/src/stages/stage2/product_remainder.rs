@@ -101,14 +101,13 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &ProductRemainderInputClaims<C>,
-        outputs: Option<&ProductRemainderOutputClaims<OpeningClaim<F>>>,
+        outputs: &ProductRemainderOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

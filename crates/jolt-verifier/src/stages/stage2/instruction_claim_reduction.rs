@@ -99,14 +99,13 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &InstructionClaimReductionInputClaims<C>,
-        outputs: Option<&InstructionClaimReductionOutputClaims<OpeningClaim<F>>>,
+        outputs: &InstructionClaimReductionOutputClaims<OpeningClaim<F>>,
         _challenges: &InstructionClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::InstructionClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

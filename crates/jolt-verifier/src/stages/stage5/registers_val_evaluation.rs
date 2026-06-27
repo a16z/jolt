@@ -91,14 +91,13 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         inputs: &RegistersValEvaluationInputClaims<C>,
-        outputs: Option<&RegistersValEvaluationOutputClaims<OpeningClaim<F>>>,
+        outputs: &RegistersValEvaluationOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         match id {
             JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                 let registers_cycle = &outputs.rd_inc.point()[REGISTER_ADDRESS_BITS..];

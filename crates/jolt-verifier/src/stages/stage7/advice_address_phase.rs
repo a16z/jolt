@@ -9,7 +9,7 @@
 //! claim structs stay fully derive-driven.
 //!
 //! As with the committed-program address phases, the `FinalScale` public is a
-//! function of the reduction's final opening point, which `resolve_public`
+//! function of the reduction's final opening point, which `derive_output_term`
 //! recovers from the output claims.
 
 use jolt_claims::protocols::jolt::relations;
@@ -112,14 +112,13 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &AdviceAddressPhaseInputClaims<C>,
-        outputs: Option<&AdviceAddressPhaseOutputClaims<OpeningClaim<F>>>,
+        outputs: &AdviceAddressPhaseOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
         else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });

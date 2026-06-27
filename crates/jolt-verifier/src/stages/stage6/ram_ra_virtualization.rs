@@ -92,14 +92,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
         Ok(RamRaVirtualizationOutputClaims { ram_ra })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &RamRaVirtualizationInputClaims<C>,
-        outputs: Option<&RamRaVirtualizationOutputClaims<OpeningClaim<F>>>,
+        outputs: &RamRaVirtualizationOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

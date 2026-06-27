@@ -104,14 +104,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &RamRafEvaluationInputClaims<C>,
-        outputs: Option<&RamRafEvaluationOutputClaims<OpeningClaim<F>>>,
+        outputs: &RamRafEvaluationOutputClaims<OpeningClaim<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamRafEvaluation(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

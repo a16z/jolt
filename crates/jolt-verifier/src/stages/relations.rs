@@ -160,20 +160,31 @@ where
         inputs: &Self::Inputs<C>,
     ) -> Result<Self::Outputs<Vec<F>>, VerifierError>;
 
-    /// Compute a public value the relation's input or output `Expr` references
-    /// (e.g. `EqCycle`, `LtCycle`, or `val_check`'s `InitEval`/`InitSelector`),
-    /// from the input points and — for output publics — the produced openings'
-    /// points. `outputs` is `None` while evaluating the input claim (the produced
-    /// openings aren't derived yet) and `Some` for the output claim, so a single
-    /// resolver serves both. The drawn `challenges` are threaded in for the few
-    /// relations whose derived publics fold a batching gamma into the algebra
-    /// (`RamValCheck`'s `LtCyclePlusGamma`, `InstructionReadRaf`'s RAF publics).
-    /// Defaults to "no publics"; overridden by relations that have them.
-    fn resolve_public<C: GetPoint<F>>(
+    /// Resolve a `Derived` in this relation's **input** expression: from the input
+    /// points and the drawn challenges. The input claim is the claimed sum *before*
+    /// binding, so no produced openings and no bound point are available here.
+    /// Defaults to "no input deriveds"; overridden by relations that have them
+    /// (e.g. `RamValCheck`'s `InitEval`/`InitSelector`).
+    fn derive_input_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &Self::Inputs<C>,
-        _outputs: Option<&Self::Outputs<OpeningClaim<F>>>,
+        _challenges: &ConcreteSumcheckChallenges<F, Self>,
+    ) -> Result<F, VerifierError> {
+        Err(VerifierError::MissingStageClaimDerived { id: *id })
+    }
+
+    /// Resolve a `Derived` in this relation's **output** expression: from the input
+    /// points, the produced openings' points (the bound point, post-binding), and the
+    /// drawn challenges. The output claim is checked *after* binding, so the produced
+    /// openings exist — hence `outputs` is non-optional. Most `eq`/`lt` deriveds live
+    /// here (they evaluate at this sumcheck's bound point). Defaults to "no output
+    /// deriveds"; overridden by relations that have them.
+    fn derive_output_term<C: GetPoint<F>>(
+        &self,
+        id: &JoltDerivedId,
+        _inputs: &Self::Inputs<C>,
+        _outputs: &Self::Outputs<OpeningClaim<F>>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: *id })
@@ -201,7 +212,7 @@ where
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
             },
-            |id| self.resolve_public(id, inputs, None, challenges),
+            |id| self.derive_input_term(id, inputs, challenges),
         )
     }
 
@@ -227,7 +238,7 @@ where
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
             },
-            |id| self.resolve_public(id, inputs, Some(outputs), challenges),
+            |id| self.derive_output_term(id, inputs, outputs, challenges),
         )
     }
 }

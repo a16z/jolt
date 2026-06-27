@@ -5,7 +5,7 @@
 //! *publics* (`EqTableValue`, `EqRafConstant`, `EqRafFlag`) computed from the
 //! instruction address/cycle points and the upstream claim-reduction point. The
 //! full instruction address is split across the virtual-RA opening points, so
-//! `resolve_public` reconstructs it from the output opening cells.
+//! `derive_output_term` reconstructs it from the output opening cells.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
@@ -142,14 +142,13 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         inputs: &InstructionReadRafInputClaims<C>,
-        outputs: Option<&InstructionReadRafOutputClaims<OpeningClaim<F>>>,
+        outputs: &InstructionReadRafOutputClaims<OpeningClaim<F>>,
         challenges: &InstructionReadRafChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::InstructionReadRaf(public) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };

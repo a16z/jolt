@@ -88,14 +88,13 @@ impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &SpartanShiftInputClaims<C>,
-        outputs: Option<&SpartanShiftOutputClaims<OpeningClaim<F>>>,
+        outputs: &SpartanShiftOutputClaims<OpeningClaim<F>>,
         _challenges: &SpartanShiftChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::SpartanShift(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
