@@ -15,7 +15,7 @@
 
 use jolt_field::Field;
 
-use crate::protocols::jolt::JoltOpeningId;
+use crate::protocols::jolt::{JoltChallengeId, JoltOpeningId};
 
 /// Canonical encoders and the output-formula resolver for a relation's
 /// *produced* opening-claim struct.
@@ -50,6 +50,19 @@ pub trait InputClaims<F: Field, O = JoltOpeningId> {
     /// Resolve a consumed opening's value by id, for evaluating the relation's
     /// input `Expr`. Returns `None` for ids this struct does not carry.
     fn resolve_input(&self, id: &O) -> Option<F>;
+}
+
+/// The challenge resolver for a relation's drawn Fiat-Shamir challenges.
+///
+/// Unlike the opening-claim resolvers, challenges carry no opening point, so the
+/// implementor is generic over the field `F` directly (not an opening cell) and
+/// reads each field's value without `GetValue` indirection.
+///
+/// Generic over the challenge-id type `C` (defaulting to [`JoltChallengeId`]).
+pub trait SumcheckChallenges<F: Field, C = JoltChallengeId> {
+    /// Resolve a drawn Fiat-Shamir challenge by id, for evaluating a relation's
+    /// input/output `Expr`. Returns `None` for ids this struct does not carry.
+    fn resolve_challenge(&self, id: &C) -> Option<F>;
 }
 
 /// One opening-claim cell: a `(point, value)` pair. The opening point is
@@ -117,4 +130,84 @@ pub trait ZipOpenings<F: Field>: Sized {
 /// that each stage's `*_output_claims_with_points` helper used to hand-write.
 pub fn zip_openings<F: Field, T: ZipOpenings<F>>(values: &T::Values, points: &T::Points) -> T {
     T::zip_openings(values, points)
+}
+
+#[cfg(test)]
+mod sumcheck_challenges_tests {
+    use crate::protocols::jolt::{
+        BooleanityChallenge, BytecodeClaimReductionChallenge, JoltChallengeId,
+        RamReadWriteChallenge,
+    };
+    // The `SumcheckChallenges` re-export from the crate root covers both the trait
+    // (type namespace) and the derive macro (macro namespace).
+    use crate::SumcheckChallenges;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    #[derive(SumcheckChallenges)]
+    struct ScalarChallenge<F> {
+        #[challenge(RamReadWriteChallenge::Gamma)]
+        gamma: F,
+    }
+
+    #[test]
+    fn scalar_resolves_matching_id_and_misses_others() {
+        let challenges = ScalarChallenge { gamma: fr(7) };
+
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
+            Some(fr(7)),
+        );
+        // An unrelated id (different sub-enum) resolves to `None`.
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
+            None,
+        );
+    }
+
+    #[derive(SumcheckChallenges)]
+    struct OptionChallenge<F> {
+        #[challenge(BytecodeClaimReductionChallenge::Eta)]
+        eta: Option<F>,
+    }
+
+    #[test]
+    fn option_resolves_only_when_present() {
+        let id = JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta);
+
+        let present = OptionChallenge { eta: Some(fr(9)) };
+        assert_eq!(present.resolve_challenge(&id), Some(fr(9)));
+
+        let absent: OptionChallenge<Fr> = OptionChallenge { eta: None };
+        assert_eq!(absent.resolve_challenge(&id), None);
+    }
+
+    #[derive(SumcheckChallenges)]
+    struct MultiChallenge<F> {
+        #[challenge(RamReadWriteChallenge::Gamma)]
+        ram: F,
+        #[challenge(BooleanityChallenge::Gamma)]
+        booleanity: F,
+    }
+
+    #[test]
+    fn multi_field_disambiguates_by_full_path() {
+        let challenges = MultiChallenge {
+            ram: fr(1),
+            booleanity: fr(2),
+        };
+
+        // Same `Gamma` leaf name, different sub-enum → resolves to the right field.
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
+            Some(fr(1)),
+        );
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
+            Some(fr(2)),
+        );
+    }
 }

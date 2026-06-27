@@ -53,6 +53,18 @@
 //!   families keyed by an enum rather than a contiguous index.
 //!
 //! `InputClaims` leaves additionally take `, from = ProducingRelation`.
+//!
+//! ## `#[derive(SumcheckChallenges)]`
+//!
+//! For a relation's drawn Fiat-Shamir challenges. The struct is generic over the
+//! field `F` directly (challenges carry no opening point, so there is no opening
+//! *cell* / `GetValue` indirection — field values are read directly). Each field
+//! carries `#[challenge(SubEnum::Variant)]` naming a challenge sub-enum *unit*
+//! variant; the resolved id is `JoltChallengeId::from(SubEnum::Variant)` (relying
+//! on the `From<SubEnum> for JoltChallengeId` impls). A field is either scalar `F`
+//! or `Option<F>` (a conditional challenge that resolves only when `Some`). A
+//! `Vec<F>` field is rejected: every challenge sub-enum variant is a unit variant,
+//! so there is no indexed challenge id to map elements onto.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -73,6 +85,16 @@ pub fn derive_output_claims(input: TokenStream) -> TokenStream {
 pub fn derive_input_claims(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_input(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Each field names its challenge via `#[challenge(SubEnum::Variant)]`; the id is
+/// `JoltChallengeId::from(SubEnum::Variant)`.
+#[proc_macro_derive(SumcheckChallenges, attributes(challenge))]
+pub fn derive_sumcheck_challenges(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_challenges(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -534,6 +556,115 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltOpeningId,
             ) -> ::core::option::Option<#value> {
+                #(#resolve_arms)*
+                ::core::option::Option::None
+            }
+        }
+    })
+}
+
+/// One challenge field: its identifier, the `SubEnum::Variant` path it names, and
+/// whether the field is `Option<F>` (a conditional challenge).
+struct ChallengeFieldPlan {
+    ident: Ident,
+    is_option: bool,
+    path: syn::Path,
+}
+
+fn challenge_attr(field: &syn::Field) -> Option<&Attribute> {
+    field
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("challenge"))
+}
+
+fn parse_challenge(attr: &Attribute) -> syn::Result<syn::Path> {
+    attr.parse_args::<syn::Path>()
+}
+
+fn plan_challenge_field(field: &syn::Field) -> syn::Result<ChallengeFieldPlan> {
+    let ident = field
+        .ident
+        .clone()
+        .ok_or_else(|| syn::Error::new_spanned(field, "fields must be named"))?;
+    let attr = challenge_attr(field).ok_or_else(|| {
+        syn::Error::new_spanned(
+            field,
+            "every field needs a #[challenge(SubEnum::Variant)] annotation",
+        )
+    })?;
+    let path = parse_challenge(attr)?;
+    if is_vec_type(&field.ty) {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "challenges are scalar; a `Vec` challenge field has no indexed id \
+             (every challenge sub-enum variant is a unit variant)",
+        ));
+    }
+    Ok(ChallengeFieldPlan {
+        ident,
+        is_option: is_option_type(&field.ty),
+        path,
+    })
+}
+
+/// The single field type generic parameter (the field type, conventionally `F`).
+fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
+    generics
+        .params
+        .iter()
+        .find_map(|param| match param {
+            GenericParam::Type(param) => Some(param.ident.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            syn::Error::new_spanned(
+                generics,
+                "expected a field-type generic parameter (e.g. `<F>`)",
+            )
+        })
+}
+
+fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let field = field_type_param(&input.generics)?;
+    let fields = named_fields(&input.data, name.span())?;
+    let plans = fields
+        .iter()
+        .map(plan_challenge_field)
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let mut resolve_arms = Vec::new();
+    for plan in &plans {
+        let ChallengeFieldPlan {
+            ident,
+            is_option,
+            path,
+        } = plan;
+        let id = quote!(::jolt_claims::protocols::jolt::JoltChallengeId::from(#path));
+        if *is_option {
+            resolve_arms.push(quote! {
+                if let ::core::option::Option::Some(__v) = self.#ident {
+                    if *id == #id {
+                        return ::core::option::Option::Some(__v);
+                    }
+                }
+            });
+        } else {
+            resolve_arms.push(quote! {
+                if *id == #id {
+                    return ::core::option::Option::Some(self.#ident);
+                }
+            });
+        }
+    }
+
+    Ok(quote! {
+        impl<#field: ::jolt_field::Field> ::jolt_claims::SumcheckChallenges<#field> for #name<#field> {
+            fn resolve_challenge(
+                &self,
+                id: &::jolt_claims::protocols::jolt::JoltChallengeId,
+            ) -> ::core::option::Option<#field> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
             }
