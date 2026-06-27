@@ -1,6 +1,42 @@
 use jolt_field::{Field, Fr};
 
-use crate::cuda::{CudaError, DeviceFrVec, Gather8Inputs, RoundPolyTerms};
+use crate::cuda::{CudaError, DeviceFrVec, Gather8Inputs, HammingBooleanityInputs, RoundPolyTerms};
+
+pub(crate) struct CudaHammingBooleanityState {
+    hamming_weight: DeviceFrVec,
+    scratch: DeviceFrVec,
+}
+
+impl CudaHammingBooleanityState {
+    pub(crate) fn new<F: Field>(hamming_weight: &[F]) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        Some(Self {
+            hamming_weight: ctx.upload(crate::cuda::as_fr_slice(hamming_weight)?).ok()?,
+            scratch: ctx.upload(&[]).ok()?,
+        })
+    }
+
+    pub(crate) fn round_poly_q<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 2]> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
+        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
+        ctx.hamming_booleanity_round_poly(HammingBooleanityInputs {
+            hamming_weight: &self.hamming_weight,
+            e_in: &e_in_dev,
+            e_out: &e_out_dev,
+        })
+        .ok()
+    }
+
+    pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        ctx.bind(&mut self.hamming_weight, &mut self.scratch, challenge)
+    }
+
+    pub(crate) fn hamming_weight_first(&self) -> Result<Fr, CudaError> {
+        self.hamming_weight.first()
+    }
+}
 
 pub(crate) struct CudaIncState {
     eq_ram: DeviceFrVec,

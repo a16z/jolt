@@ -29,6 +29,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/uniskip.cu"),
     include_str!("cuda/gather8.cu"),
     include_str!("cuda/hamming.cu"),
+    include_str!("cuda/hamming_booleanity.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -84,6 +85,7 @@ pub struct CudaKernelContext {
     uniskip_pairs: CudaFunction,
     gather8_materialize: CudaFunction,
     hamming_pairs: CudaFunction,
+    hamming_booleanity_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -384,6 +386,7 @@ impl CudaKernelContext {
             uniskip_pairs: module.load_function("uniskip_pairs")?,
             gather8_materialize: module.load_function("gather8_materialize")?,
             hamming_pairs: module.load_function("hamming_pairs")?,
+            hamming_booleanity_pairs: module.load_function("hamming_booleanity_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -667,12 +670,79 @@ impl CudaKernelContext {
         Ok((a.to_host()?, b.to_host()?))
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn hamming_booleanity_round_poly(
         &self,
         inputs: HammingBooleanityInputs<'_>,
     ) -> Result<[Fr; 2], CudaError> {
-        todo!()
+        use num_traits::Zero;
+        let half = inputs.hamming_weight.len() / 2;
+        assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
+        assert_eq!(
+            inputs.e_in.len() * inputs.e_out.len(),
+            half,
+            "e_in * e_out must equal the hamming-weight row count"
+        );
+        if half == 0 {
+            return Ok([Fr::zero(); 2]);
+        }
+        let in_bits = inputs.e_in.len().trailing_zeros();
+
+        const WIDTH: usize = 2;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (half as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let half_arg = half as u64;
+        let in_bits_arg = in_bits;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.hamming_booleanity_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.hamming_weight.buf)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&half_arg)
+            .arg(&in_bits_arg);
+        // SAFETY: one thread per row reads hamming_weight[2row], [2row+1] and its
+        // e_in[row & mask] / e_out[row >> in_bits] weights (in range since
+        // e_in*e_out == half), writing one 2-lane tuple per block; shared memory
+        // holds `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block`
+            // blocks; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok([
+            limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]),
+            limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]),
+        ])
     }
 
     pub fn hamming_round_poly(
@@ -2509,34 +2579,37 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::hamming_booleanity_round_poly is todo!()"]
         fn hamming_booleanity_round_poly_matches_cpu(
             num_vars in 1usize..10,
             previous_claim in fr_strategy(),
-            scale in fr_strategy(),
             point_seed in fr_strategy(),
             seed in fr_strategy(),
         ) {
             use crate::stage6::{FactorOutput, HammingBooleanityStage6State};
             use crate::stage6::Stage6Relation;
 
+            // active_scale is 1 for hamming booleanity (it spans all rounds); the Gruen
+            // poly is built so poly(0)+poly(1) == previous_claim, so any claim is valid.
+            let scale = Fr::from_u64(1);
             let len = 1usize << num_vars;
             let point: Vec<Fr> = (0..num_vars)
                 .map(|i| point_seed + Fr::from_u64(i as u64))
                 .collect();
             let hamming_weight: Vec<Fr> =
                 (0..len).map(|j| seed + Fr::from_u64((j + 1) as u64)).collect();
+
             let output = FactorOutput {
                 name: "test",
                 oracle: "test",
                 factor: 0,
             };
-            let state = HammingBooleanityStage6State::new(
+            let state = HammingBooleanityStage6State::new_with_backend(
                 &point,
                 hamming_weight.clone(),
                 output,
                 scale,
                 3,
+                "cpu",
             )
             .unwrap();
             let expected = state

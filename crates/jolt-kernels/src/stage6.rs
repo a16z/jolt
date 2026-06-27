@@ -1868,7 +1868,7 @@ enum Stage6ProverInstanceState<'a, F: Field> {
     Booleanity(BooleanityStage6State<F>),
     CoreBooleanity(Box<CoreBooleanityStage6State<'a, F>>),
     BytecodeReadRaf(Box<BytecodeReadRafStage6State<F>>),
-    HammingBooleanity(HammingBooleanityStage6State<F>),
+    HammingBooleanity(Box<HammingBooleanityStage6State<F>>),
     RamRaVirtual(InstructionRaVirtualStage6State<'a, F>),
     InstructionRaVirtual(InstructionRaVirtualStage6State<'a, F>),
     IncClaimReduction(Box<IncClaimReductionStage6State<F>>),
@@ -1892,8 +1892,8 @@ impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
                 booleanity_state(program, claim, inputs, store, active_scale)
             }
             Stage6Relation::HammingBooleanity => {
-                hamming_booleanity_state(program, claim, inputs, store, active_scale)
-                    .map(Self::HammingBooleanity)
+                hamming_booleanity_state(program, claim, inputs, store, active_scale, backend)
+                    .map(|state| Self::HammingBooleanity(Box::new(state)))
             }
             Stage6Relation::IncClaimReduction => {
                 inc_claim_reduction_state(program, claim, inputs, store, active_scale, backend)
@@ -3912,15 +3912,18 @@ pub(crate) struct HammingBooleanityStage6State<F: Field> {
     hamming_weight_scratch: Vec<F>,
     output: FactorOutput,
     pub(crate) active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaHammingBooleanityState>,
 }
 
 impl<F: Field> HammingBooleanityStage6State<F> {
-    pub(crate) fn new(
+    pub(crate) fn new_with_backend(
         point: &[F],
         hamming_weight: Vec<F>,
         output: FactorOutput,
         active_scale: F,
         degree_bound: usize,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         if degree_bound < 3 {
             return Err(Stage6KernelError::InvalidProof {
@@ -3933,12 +3936,22 @@ impl<F: Field> HammingBooleanityStage6State<F> {
             hamming_weight.len(),
             1usize << point.len(),
         )?;
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            cuda::CudaHammingBooleanityState::new(&hamming_weight)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Ok(Self {
             eq: GruenSplitEqPolynomial::new(point, BindingOrder::LowToHigh),
             hamming_weight,
             hamming_weight_scratch: Vec::new(),
             output,
             active_scale,
+            #[cfg(feature = "cuda")]
+            cuda,
         })
     }
 
@@ -3952,6 +3965,28 @@ impl<F: Field> HammingBooleanityStage6State<F> {
                 driver: relation.symbol(),
                 reason: "wrong relation for hamming booleanity state",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(q) =
+                cuda.round_poly_q(self.eq.e_in_current(), self.eq.e_out_current())
+            {
+                if let (Some(q_constant), Some(q_top)) =
+                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
+                {
+                    let mut poly = self.eq.gruen_poly_deg_3(q_constant, q_top, previous_claim);
+                    if self.active_scale != F::one() {
+                        poly *= self.active_scale;
+                    }
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage6 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
         }
         let e_out = self.eq.e_out_current();
         let e_in = self.eq.e_in_current();
@@ -3998,6 +4033,15 @@ impl<F: Field> HammingBooleanityStage6State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.eq.bind(challenge);
+                    return;
+                }
+            }
+        }
         self.eq.bind(challenge);
         bind_dense_evals_reuse(
             &mut self.hamming_weight,
@@ -4007,6 +4051,15 @@ impl<F: Field> HammingBooleanityStage6State<F> {
     }
 
     fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(hw) = cuda.hamming_weight_first() {
+                if let Some(hamming_weight) = crate::cuda::fr_into::<F>(hw) {
+                    return Ok(self.eq.current_scalar()
+                        * (hamming_weight.square() - hamming_weight));
+                }
+            }
+        }
         let hamming_weight =
             self.hamming_weight
                 .first()
@@ -4022,6 +4075,14 @@ impl<F: Field> HammingBooleanityStage6State<F> {
         &self,
         relation: Stage6Relation,
     ) -> Result<Vec<Stage6NamedEval<F>>, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(hw) = cuda.hamming_weight_first() {
+                if let Some(value) = crate::cuda::fr_into::<F>(hw) {
+                    return Ok(vec![named_eval(self.output.name, self.output.oracle, value)]);
+                }
+            }
+        }
         Ok(vec![named_eval(
             self.output.name,
             self.output.oracle,
@@ -5845,6 +5906,7 @@ fn hamming_booleanity_state<F: Field>(
     inputs: &Stage6ProverInputs<'_, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<HammingBooleanityStage6State<F>, Stage6KernelError> {
     let witness = inputs
         .hamming_booleanity
@@ -5880,12 +5942,13 @@ fn hamming_booleanity_state<F: Field>(
             symbol: "stage6.hamming_booleanity.eval.HammingWeight",
         })?;
 
-    HammingBooleanityStage6State::new(
+    HammingBooleanityStage6State::new_with_backend(
         &lookup_output_point,
         witness.hamming_weight.to_vec(),
         output,
         active_scale,
         claim.degree,
+        backend,
     )
 }
 
