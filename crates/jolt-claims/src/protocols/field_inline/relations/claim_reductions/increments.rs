@@ -6,11 +6,11 @@ use crate::protocols::field_inline::geometry::claim_reductions::increments::{
     field_rd_inc_read_write, field_rd_inc_reduced, field_rd_inc_val_evaluation,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineDerivedId,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic, FieldRegistersTraceDimensions,
 };
-use crate::{challenge, opening, derived, SymbolicSumcheck};
+use crate::{challenge, derived, opening, SymbolicSumcheck};
 
 /// Reduces the two `FieldRdInc` openings (read/write and val-evaluation) to a
 /// single reduced `FieldRdInc` opening, folding by `eta` and weighting by the

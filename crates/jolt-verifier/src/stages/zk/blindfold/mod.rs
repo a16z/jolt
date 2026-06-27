@@ -57,7 +57,7 @@
 use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::{
-    opening,
+    derived, opening,
     protocols::jolt::{
         geometry::{
             booleanity::{self, BooleanityDimensions},
@@ -86,7 +86,7 @@ use jolt_claims::{
         InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-        JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltDerivedId,
+        JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId,
         JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
         ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
         RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
@@ -96,7 +96,7 @@ use jolt_claims::{
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanShiftChallenge, SpartanShiftPublic,
     },
-    derived, Expr, Source, SymbolicSumcheck, Term,
+    Expr, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, FromPrimitiveInt, RingCore};

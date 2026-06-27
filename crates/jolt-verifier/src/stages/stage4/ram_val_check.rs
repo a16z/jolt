@@ -14,6 +14,9 @@
 //! fields and in the serialized `Stage4OutputClaims` aggregate. Only their values feed
 //! the input claim; their staged points are carried for completeness.
 
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::{
         claim_reductions::program_image,
@@ -23,9 +26,6 @@ use jolt_claims::protocols::jolt::{
     relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
     JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltRelationId, RamValCheckChallenge,
     RamValCheckPublic,
-};
-pub use jolt_claims::protocols::jolt::relations::ram::{
-    RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;

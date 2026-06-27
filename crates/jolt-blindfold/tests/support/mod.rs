@@ -8,7 +8,7 @@ use jolt_blindfold::{
     BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
     FinalOpeningBinding, WitnessCoordinate,
 };
-use jolt_claims::{challenge, constant, opening, derived, Expr};
+use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };

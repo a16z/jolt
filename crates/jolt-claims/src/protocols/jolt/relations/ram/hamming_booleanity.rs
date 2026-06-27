@@ -108,7 +108,9 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => eq_cycle,
+                JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => {
+                    eq_cycle
+                }
                 _ => zero,
             },
         );

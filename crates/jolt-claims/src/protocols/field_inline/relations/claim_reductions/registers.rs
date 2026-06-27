@@ -7,11 +7,11 @@ use crate::protocols::field_inline::geometry::claim_reductions::registers::{
     field_rs1_value_spartan, field_rs2_value_reduced, field_rs2_value_spartan,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineDerivedId,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic, FieldRegistersTraceDimensions,
 };
-use crate::{challenge, opening, derived, SymbolicSumcheck};
+use crate::{challenge, derived, opening, SymbolicSumcheck};
 
 /// Batches the native field-register Spartan-outer openings (`FieldRdValue`,
 /// `FieldRs1Value`, `FieldRs2Value`) by `gamma` and reduces them to the

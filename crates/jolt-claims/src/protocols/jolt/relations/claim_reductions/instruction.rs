@@ -10,7 +10,7 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     right_lookup_operand_spartan, weighted_claims,
 };
 use crate::protocols::jolt::{
-    InstructionClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId,
+    InstructionClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
 use crate::{derived, InputClaims, OutputClaims, SymbolicSumcheck};

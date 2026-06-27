@@ -8,13 +8,13 @@ use crate::protocols::field_inline::geometry::registers::{
     field_rs1_ra_read_write, field_rs1_value_claim, field_rs2_ra_read_write, field_rs2_value_claim,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineDerivedId,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersReadWriteChallenge,
     FieldRegistersReadWriteDimensions, FieldRegistersReadWritePublic,
     FieldRegistersTraceDimensions, FieldRegistersValEvaluationPublic,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, opening, derived};
+use crate::{challenge, derived, opening};
 
 /// The native field-register read/write checking sumcheck: relates the read-value
 /// claims (`FieldRdValue`, `FieldRs1Value`, `FieldRs2Value`) folded by `gamma` to

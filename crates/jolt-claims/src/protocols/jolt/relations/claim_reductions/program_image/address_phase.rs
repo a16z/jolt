@@ -7,7 +7,7 @@ use crate::protocols::jolt::geometry::claim_reductions::program_image::{
     cycle_phase_program_image_opening, final_output_expr,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
     PrecommittedReductionDimensions,
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};

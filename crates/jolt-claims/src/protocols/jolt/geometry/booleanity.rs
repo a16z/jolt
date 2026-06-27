@@ -1,6 +1,6 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening, derived};
+use crate::{challenge, derived, opening};
 
 use super::super::{
     BooleanityChallenge, BooleanityPublic, JoltExpr, JoltOpeningId, JoltRelationId,

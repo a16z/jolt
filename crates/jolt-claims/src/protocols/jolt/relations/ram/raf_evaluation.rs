@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::ram::{
     ram_address_spartan, ram_ra_raf_evaluation, RamRafEvaluationDimensions,
 };
-use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, RamRafEvaluationPublic,
-};
+use crate::protocols::jolt::{JoltExpr, JoltRelationId, JoltSumcheckSpec, RamRafEvaluationPublic};
 use crate::SymbolicSumcheck;
 use crate::{constant, derived, opening, InputClaims, OutputClaims};
 

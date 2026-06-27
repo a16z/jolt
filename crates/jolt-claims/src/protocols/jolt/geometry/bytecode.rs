@@ -6,7 +6,7 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
-use crate::{challenge, opening, derived};
+use crate::{challenge, derived, opening};
 
 use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltCommittedPolynomial, JoltExpr,

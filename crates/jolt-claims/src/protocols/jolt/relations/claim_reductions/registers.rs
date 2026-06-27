@@ -8,10 +8,10 @@ use crate::protocols::jolt::geometry::claim_reductions::registers::{
     rs2_value_reduced, rs2_value_spartan,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::{challenge, opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
 /// values reduced to the Spartan point), all sharing the single reduction opening
@@ -167,9 +167,9 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltDerivedId::RegistersClaimReduction(RegistersClaimReductionPublic::EqSpartan) => {
-                    eq_spartan
-                }
+                JoltDerivedId::RegistersClaimReduction(
+                    RegistersClaimReductionPublic::EqSpartan,
+                ) => eq_spartan,
                 _ => zero,
             },
         );
@@ -217,7 +217,9 @@ mod tests {
         );
         assert_eq!(
             relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan)]
+            vec![JoltDerivedId::from(
+                RegistersClaimReductionPublic::EqSpartan
+            )]
         );
     }
 }

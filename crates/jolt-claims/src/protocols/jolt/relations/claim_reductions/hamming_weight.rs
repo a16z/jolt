@@ -9,9 +9,9 @@ use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
 };
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
+    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{challenge, opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// Produced one-hot `Ra` opening claims, grouped by family (instruction,
 /// bytecode, RAM) in canonical layout order. Every produced opening shares the

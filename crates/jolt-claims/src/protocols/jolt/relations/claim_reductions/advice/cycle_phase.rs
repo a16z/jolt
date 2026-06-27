@@ -8,10 +8,10 @@ use crate::protocols::jolt::geometry::claim_reductions::advice::{
     cycle_phase_advice_opening, final_advice_opening, ram_val_check_advice_opening,
 };
 use crate::protocols::jolt::{
-    AdviceClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId,
-    JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
+    AdviceClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
+    JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// The produced advice opening (the intermediate when an address phase follows,
 /// else the final advice opening), keyed by kind.

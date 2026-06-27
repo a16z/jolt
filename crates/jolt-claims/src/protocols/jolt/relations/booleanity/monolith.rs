@@ -75,7 +75,7 @@ mod tests {
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use crate::protocols::jolt::{
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltCommittedPolynomial,
-        JoltOpeningId, JoltDerivedId, JoltSumcheckSpec,
+        JoltDerivedId, JoltOpeningId, JoltSumcheckSpec,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 

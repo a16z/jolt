@@ -1,7 +1,7 @@
 //! Verifier error types.
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltDerivedId, JoltRelationId,
+    JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 
 use crate::config::JoltProtocolConfig;

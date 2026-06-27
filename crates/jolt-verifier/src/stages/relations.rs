@@ -17,7 +17,7 @@ pub use jolt_claims::{
 };
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckDomain,
+    JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
     JoltSumcheckSpec,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -187,9 +187,9 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
+    use jolt_claims_derive::{InputClaims, OutputClaims};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_riscv::{CircuitFlags, CIRCUIT_FLAGS};
-    use jolt_claims_derive::{InputClaims, OutputClaims};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

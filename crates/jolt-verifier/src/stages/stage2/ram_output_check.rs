@@ -27,8 +27,8 @@ use crate::VerifierError;
 /// The RAM output check consumes no openings (its input claim is the constant
 /// zero), so its consumed-claim struct is empty. (Verifier-side constructor for the
 /// moved [`RamOutputCheckInputClaims`].)
-pub fn ram_output_check_inputs_from_upstream<F: Field>() -> RamOutputCheckInputClaims<OpeningClaim<F>>
-{
+pub fn ram_output_check_inputs_from_upstream<F: Field>(
+) -> RamOutputCheckInputClaims<OpeningClaim<F>> {
     RamOutputCheckInputClaims::default()
 }
 

@@ -410,7 +410,7 @@ fn validate_final_opening_count<F, O, P, Ch, C>(
 mod tests {
     use super::*;
     use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
-    use jolt_claims::{challenge, constant, opening, derived, Expr};
+    use jolt_claims::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_r1cs::{ClaimLoweringError, ClaimSourceTable, R1csBuilderError};
     use jolt_sumcheck::{

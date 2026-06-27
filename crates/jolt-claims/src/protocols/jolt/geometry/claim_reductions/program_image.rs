@@ -9,10 +9,10 @@
 
 use jolt_field::{Field, RingCore};
 
-use crate::{opening, derived};
+use crate::{derived, opening};
 
 use super::super::super::{
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId,
+    JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
 };
 use super::super::dimensions::{log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder};

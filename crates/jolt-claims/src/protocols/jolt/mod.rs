@@ -26,7 +26,7 @@ pub use ids::{
     InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltDerivedId,
+    JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId,
     JoltRelationId, JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
     RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
     RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,

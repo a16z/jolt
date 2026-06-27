@@ -32,7 +32,7 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::bytecode::bytecode_val_stage_opening,
         dimensions::committed_address_chunks,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltDerivedId, JoltRelationId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
 use jolt_claims::SymbolicSumcheck;

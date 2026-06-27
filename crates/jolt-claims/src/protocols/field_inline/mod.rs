@@ -10,8 +10,8 @@ pub use geometry::dimensions::{
     FieldRegistersReadWriteOpeningPoint, FieldRegistersTraceDimensions,
 };
 pub use ids::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineExpr, FieldInlineOpFlag,
-    FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlineDerivedId, FieldInlineRelationId,
+    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlineExpr,
+    FieldInlineOpFlag, FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlineRelationId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic, FieldRegistersReadWriteChallenge,

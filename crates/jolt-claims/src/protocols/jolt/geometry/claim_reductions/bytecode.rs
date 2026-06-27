@@ -14,10 +14,10 @@ use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
-use crate::{opening, derived};
+use crate::{derived, opening};
 
 use super::super::super::{
-    BytecodeClaimReductionPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltDerivedId,
+    BytecodeClaimReductionPublic, JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltVirtualPolynomial,
 };
 use super::super::dimensions::{

@@ -197,9 +197,9 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqTableValue(index)) => {
-                    table_values[index]
-                }
+                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqTableValue(
+                    index,
+                )) => table_values[index],
                 JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqRafConstant) => {
                     raf_constant
                 }

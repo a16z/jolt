@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use jolt_claims::protocols::jolt::{
     geometry::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltOpeningId,
-    JoltPolynomialId, JoltDerivedId, JoltVirtualPolynomial,
+    JoltCommittedPolynomial, JoltDerivedId, JoltFormulaDimensions, JoltOneHotConfig, JoltOpeningId,
+    JoltPolynomialId, JoltVirtualPolynomial,
 };
 use jolt_field::{
     signed::{S128, S64},

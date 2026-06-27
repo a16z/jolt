@@ -118,7 +118,8 @@ impl SymbolicSumcheck for RamValCheck {
         let mut init = derived(JoltDerivedId::from(RamValCheckPublic::InitEval));
         for contribution in &self.shape.contributions {
             init = init
-                - derived(JoltDerivedId::from(contribution.selector)) * opening(contribution.opening);
+                - derived(JoltDerivedId::from(contribution.selector))
+                    * opening(contribution.opening);
         }
         opening(ram_val()) + gamma.clone() * opening(ram_val_final())
             - (JoltExpr::one() + gamma) * init

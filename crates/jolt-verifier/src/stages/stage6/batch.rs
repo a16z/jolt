@@ -36,8 +36,9 @@ use super::bytecode_read_raf::{
 use super::committed_reduction_cycle_phase::{
     advice_cycle_phase_inputs_from_upstream, bytecode_reduction_cycle_phase_inputs_from_values,
     program_image_reduction_cycle_phase_inputs_from_upstream, AdviceCyclePhase,
-    AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseInputClaims,
-    ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseInputClaims,
+    AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhase,
+    BytecodeReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhase,
+    ProgramImageReductionCyclePhaseInputClaims,
 };
 use super::inc_claim_reduction::{
     inc_claim_reduction_inputs_from_upstream, IncClaimReduction, IncClaimReductionInputClaims,
@@ -52,8 +53,7 @@ use super::ram_hamming_booleanity::{
     RamHammingBooleanityInputClaims,
 };
 use super::ram_ra_virtualization::{
-    ram_ra_virtualization_inputs_from_upstream, RamRaVirtualization,
-    RamRaVirtualizationInputClaims,
+    ram_ra_virtualization_inputs_from_upstream, RamRaVirtualization, RamRaVirtualizationInputClaims,
 };
 use crate::stages::relations::{ConcreteSumcheck, OpeningClaim};
 use crate::stages::{

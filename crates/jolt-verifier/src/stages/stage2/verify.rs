@@ -500,9 +500,8 @@ where
             );
 
             let ram_read_write_inputs = ram_read_write_inputs_from_upstream(stage1);
-            let product_remainder_inputs = product_remainder_inputs_from_uniskip_output(
-                claims.product_uniskip_output_claim,
-            );
+            let product_remainder_inputs =
+                product_remainder_inputs_from_uniskip_output(claims.product_uniskip_output_claim);
             let instruction_reduction_inputs =
                 instruction_claim_reduction_inputs_from_upstream(stage1);
             let ram_raf_inputs = ram_raf_evaluation_inputs_from_upstream(stage1);

@@ -251,7 +251,7 @@ fn lower_product<F: Field>(
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_claims::{challenge, constant, opening, derived, Expr};
+    use jolt_claims::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

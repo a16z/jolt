@@ -8,7 +8,7 @@ use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     assert_valid_chunk_count, cycle_phase_intermediate_opening, final_output_expr,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 

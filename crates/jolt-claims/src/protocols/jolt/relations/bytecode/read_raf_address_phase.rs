@@ -9,7 +9,7 @@ use crate::protocols::jolt::geometry::bytecode::{
     stage2_claim, stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
 };
 use crate::protocols::jolt::{
-    BytecodeReadRafChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltSumcheckSpec,
 };
 use crate::{challenge, opening, InputClaims, OutputClaims, SymbolicSumcheck};

@@ -7,7 +7,7 @@ use crate::protocols::field_inline::geometry::product::{
     field_product_opening, field_rs1_value_product, field_rs2_value_product,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineDerivedId,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
     FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersTraceDimensions,
 };
 use crate::SymbolicSumcheck;

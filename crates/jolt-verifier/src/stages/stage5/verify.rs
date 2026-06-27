@@ -11,7 +11,8 @@ use jolt_transcript::Transcript;
 
 use super::{
     instruction_read_raf::{
-        instruction_read_raf_inputs_from_upstream, InstructionReadRaf, InstructionReadRafInputClaims,
+        instruction_read_raf_inputs_from_upstream, InstructionReadRaf,
+        InstructionReadRafInputClaims,
     },
     outputs::{
         Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5OutputClaims, Stage5ZkOutput,

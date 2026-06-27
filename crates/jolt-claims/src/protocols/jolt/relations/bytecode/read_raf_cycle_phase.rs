@@ -6,7 +6,7 @@ use crate::protocols::jolt::geometry::bytecode::{
     bytecode_read_raf_address_phase_opening, read_raf_cycle_output, BytecodeReadRafDimensions,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
 };
 use crate::{opening, SymbolicSumcheck};
 

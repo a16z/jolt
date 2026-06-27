@@ -10,7 +10,7 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use crate::derived;
 
 use super::super::{
-    JoltExpr, JoltOpeningId, JoltDerivedId, JoltRelationId, JoltVirtualPolynomial,
+    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
 use super::dimensions::{

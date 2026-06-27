@@ -8,10 +8,10 @@ use crate::protocols::jolt::geometry::claim_reductions::increments::{
     rd_inc_val_evaluation,
 };
 use crate::protocols::jolt::{
-    IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId,
-    JoltDerivedId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
+    IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr,
+    JoltOpeningId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::{challenge, opening, derived, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(

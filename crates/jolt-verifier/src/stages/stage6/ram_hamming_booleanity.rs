@@ -10,7 +10,8 @@ pub use jolt_claims::protocols::jolt::relations::ram::{
     RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId, RamHammingBooleanityPublic,
+    geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId,
+    RamHammingBooleanityPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
