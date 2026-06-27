@@ -3,6 +3,7 @@
 - [Intro](./intro.md)
 - [Usage](./usage/usage.md)
     - [Quickstart](./usage/quickstart.md)
+    - [AI Agent Workflow](./usage/agent_workflow.md)
     - [Guests and hosts](./usage/guests_hosts/guests_hosts.md)
         - [Guests](./usage/guests_hosts/guests.md)
         - [Hosts](./usage/guests_hosts/hosts.md)

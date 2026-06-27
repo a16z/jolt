@@ -88,7 +88,18 @@ cargo nextest run --cargo-quiet
 # Primary correctness check
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
+
+# Docs scaffold check
+python3 scripts/ci/check_docs_scaffold.py
+mdbook build ./book
 ```
+
+### Documentation Changes
+
+The quickstart mirrors the `jolt new` scaffold embedded in `src/main.rs`.
+If you change the generated host or guest templates, update the quickstart and
+run `python3 scripts/ci/check_docs_scaffold.py`. The same check also verifies
+that the AI Agent Workflow page is linked from the book summary and README.
 
 ## Code Style
 
