@@ -1,46 +1,11 @@
-//! Booleanity symbolic sumcheck relations.
+//! The full (monolithic) booleanity symbolic sumcheck relation.
 
-use core::marker::PhantomData;
-
-use jolt_field::{Field, RingCore};
+use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
-use crate::opening;
-use crate::protocols::jolt::geometry::booleanity::{
-    booleanity_address_phase_opening, booleanity_cycle_output, BooleanityDimensions,
-};
-use crate::protocols::jolt::{JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec};
+use crate::protocols::jolt::geometry::booleanity::{booleanity_cycle_output, BooleanityDimensions};
+use crate::protocols::jolt::{JoltExpr, JoltRelationId, JoltSumcheckSpec};
 use crate::{InputClaims, OutputClaims, SymbolicSumcheck};
-
-/// The staged `BooleanityAddrClaim` intermediate produced by the address phase
-/// and consumed by the cycle phase.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(Booleanity)]
-pub struct BooleanityAddressPhaseOutputClaims<C> {
-    #[opening(BooleanityAddrClaim)]
-    pub intermediate: C,
-}
-
-/// The address phase consumes no openings (its input claim is the constant zero).
-pub struct BooleanityAddressPhaseInputClaims<C> {
-    _cell: PhantomData<C>,
-}
-
-impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
-    fn default() -> Self {
-        Self { _cell: PhantomData }
-    }
-}
-
-impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<crate::OpeningClaim<F>> {
-    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
-        None
-    }
-}
 
 /// The committed per-family `Ra` openings produced by the cycle phase; every
 /// opening shares the single booleanity opening point (`r_address ++ r_cycle`).
@@ -96,75 +61,6 @@ impl SymbolicSumcheck for Booleanity {
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
-    }
-
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        booleanity_cycle_output(self.shape)
-    }
-}
-
-/// The address-phase split of the booleanity sumcheck: binds the address
-/// variables and reduces to the intermediate `BooleanityAddrClaim` opening.
-pub struct BooleanityAddressPhase {
-    shape: BooleanityDimensions,
-}
-
-impl SymbolicSumcheck for BooleanityAddressPhase {
-    type RelationId = JoltRelationId;
-    type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type DerivedId = crate::protocols::jolt::JoltDerivedId;
-    type ChallengeId = crate::protocols::jolt::JoltChallengeId;
-    type Shape = BooleanityDimensions;
-
-    fn new(shape: BooleanityDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::Booleanity
-    }
-
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.address_sumcheck()
-    }
-
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        JoltExpr::zero()
-    }
-
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        opening(booleanity_address_phase_opening())
-    }
-}
-
-/// The cycle-phase split of the booleanity sumcheck: takes the
-/// `BooleanityAddrClaim` opening as input and reduces to the boolean-constraint
-/// output over the cycle variables.
-pub struct BooleanityCyclePhase {
-    shape: BooleanityDimensions,
-}
-
-impl SymbolicSumcheck for BooleanityCyclePhase {
-    type RelationId = JoltRelationId;
-    type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type DerivedId = crate::protocols::jolt::JoltDerivedId;
-    type ChallengeId = crate::protocols::jolt::JoltChallengeId;
-    type Shape = BooleanityDimensions;
-
-    fn new(shape: BooleanityDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::Booleanity
-    }
-
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.cycle_sumcheck()
-    }
-
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        opening(booleanity_address_phase_opening())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -257,42 +153,6 @@ mod tests {
             .input_expression::<Fr>()
             .required_openings()
             .is_empty());
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
-        );
-    }
-
-    #[test]
-    fn booleanity_address_phase_symbolic_matches_dependencies() {
-        let relation = BooleanityAddressPhase::new(dimensions(1, 1, 1));
-        assert_eq!(BooleanityAddressPhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(8, 3));
-        assert!(relation
-            .input_expression::<Fr>()
-            .required_openings()
-            .is_empty());
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![booleanity_address_phase_opening()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
-    }
-
-    #[test]
-    fn booleanity_cycle_phase_symbolic_matches_dependencies() {
-        let relation = BooleanityCyclePhase::new(dimensions(1, 1, 1));
-        assert_eq!(BooleanityCyclePhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(5, 3));
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![booleanity_address_phase_opening()]
-        );
         assert_eq!(
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
