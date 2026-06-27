@@ -45,6 +45,7 @@ impl SymbolicSumcheck for AddressPhase {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReductionShape;
+    type Challenges<F> = crate::NoChallenges<F>;
 
     fn new(shape: BytecodeReductionShape) -> Self {
         assert_valid_chunk_count(shape.1);

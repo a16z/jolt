@@ -12,7 +12,7 @@ use crate::protocols::jolt::{
     BytecodeClaimReductionChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{challenge, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The produced bytecode-reduction openings: the intermediate when an address
 /// phase follows, else the per-chunk final `BytecodeChunk` openings.
@@ -37,6 +37,13 @@ pub struct BytecodeReductionCyclePhaseInputClaims<C> {
     pub val_stages: Vec<C>,
 }
 
+/// Fiat-Shamir challenge drawn by the committed-bytecode reduction cycle phase.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct BytecodeReductionCyclePhaseChallenges<F> {
+    #[challenge(BytecodeClaimReductionChallenge::Eta)]
+    pub eta: F,
+}
+
 /// Cycle phase of the committed-bytecode reduction: batches the five staged
 /// `BytecodeValStage(i)` openings by powers of `eta` and reduces them to either
 /// the cycle-phase intermediate opening (when an address phase follows) or the
@@ -51,6 +58,7 @@ impl SymbolicSumcheck for CyclePhase {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReductionShape;
+    type Challenges<F> = BytecodeReductionCyclePhaseChallenges<F>;
 
     fn new(shape: BytecodeReductionShape) -> Self {
         assert_valid_chunk_count(shape.1);
@@ -88,7 +96,9 @@ impl SymbolicSumcheck for CyclePhase {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::claim_reductions::bytecode::final_bytecode_chunk_opening;
-    use crate::protocols::jolt::{BytecodeClaimReductionPublic, PrecommittedReductionDimensions};
+    use crate::protocols::jolt::{
+        BooleanityChallenge, BytecodeClaimReductionPublic, PrecommittedReductionDimensions,
+    };
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn fr(value: u64) -> Fr {
@@ -171,6 +181,21 @@ mod tests {
                 JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
                 JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
             ]
+        );
+    }
+
+    #[test]
+    fn challenges_resolve_eta_and_miss_others() {
+        let challenges = BytecodeReductionCyclePhaseChallenges { eta: fr(31) };
+
+        assert_eq!(
+            challenges
+                .resolve_challenge(&JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta)),
+            Some(fr(31)),
+        );
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
+            None,
         );
     }
 }

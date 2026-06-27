@@ -11,7 +11,9 @@ use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{
+    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
+};
 
 /// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
 /// values reduced to the Spartan point), all sharing the single reduction opening
@@ -44,6 +46,13 @@ pub struct RegistersClaimReductionInputClaims<C> {
     pub rs2_value: C,
 }
 
+/// Fiat-Shamir challenge drawn by the registers claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct RegistersClaimReductionChallenges<F> {
+    #[challenge(RegistersClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// Batches the Spartan-outer register openings (`RdWriteValue`, `Rs1Value`,
 /// `Rs2Value`) by `gamma` and reduces them to the registers-claim-reduction
 /// openings weighted by the `EqSpartan` public.
@@ -57,6 +66,7 @@ impl SymbolicSumcheck for ClaimReduction {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = RegistersClaimReductionChallenges<F>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

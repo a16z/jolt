@@ -7,9 +7,18 @@ use crate::protocols::jolt::geometry::bytecode::{
     BytecodeReadRafDimensions,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
+    JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{opening, SumcheckChallenges, SymbolicSumcheck};
+
+/// Fiat-Shamir challenge drawn by the committed-program cycle phase of the
+/// bytecode read-RAF sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct BytecodeReadRafCyclePhaseCommittedChallenges<F> {
+    #[challenge(BytecodeReadRafChallenge::Gamma)]
+    pub gamma: F,
+}
 
 /// Committed-program cycle phase: the per-stage Val factors come from the
 /// `BytecodeValStage(s)` openings staged at the end of the address phase
@@ -24,6 +33,7 @@ impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
+    type Challenges<F> = BytecodeReadRafCyclePhaseCommittedChallenges<F>;
 
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }

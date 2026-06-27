@@ -11,7 +11,7 @@ use crate::protocols::jolt::{
     RamValCheckChallenge, RamValCheckPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced RAM value-check openings (`ram_ra`, `ram_inc`) sharing one opening
 /// point. Generic over the cell.
@@ -83,6 +83,13 @@ pub struct RamValCheckShape {
     pub contributions: Vec<RamValContribution>,
 }
 
+/// Fiat-Shamir challenge drawn by the RAM value-check sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct RamValCheckChallenges<F> {
+    #[challenge(RamValCheckChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The RAM value-check sumcheck. The input reconstructs `Val_init(r_address)` as
 /// `derived(InitEval) - Σ derived(InitSelector)·opening(advice)` and folds it
 /// against the read-write `val` and output-check `val_final` by `gamma`; the
@@ -100,6 +107,7 @@ impl SymbolicSumcheck for RamValCheck {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = RamValCheckShape;
+    type Challenges<F> = RamValCheckChallenges<F>;
 
     fn new(shape: RamValCheckShape) -> Self {
         Self { shape }

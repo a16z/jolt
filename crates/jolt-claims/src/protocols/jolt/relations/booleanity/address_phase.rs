@@ -54,6 +54,7 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = BooleanityDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
 
     fn new(shape: BooleanityDimensions) -> Self {
         Self { shape }

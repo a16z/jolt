@@ -14,7 +14,7 @@ use crate::protocols::jolt::{
     JoltSumcheckSpec,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -43,6 +43,13 @@ pub struct InstructionReadRafInputClaims<C> {
     pub right_lookup_operand: C,
 }
 
+/// Fiat-Shamir challenge drawn by the instruction read-RAF sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct InstructionReadRafChallenges<F> {
+    #[challenge(InstructionReadRafChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The instruction read-RAF sumcheck: relates the reduced lookup
 /// output/operands to the per-table flag products (weighted by `EqTableValue`
 /// publics) and the read-address-flag terms, all folded by `gamma`.
@@ -56,6 +63,7 @@ impl SymbolicSumcheck for ReadRaf {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = InstructionReadRafDimensions;
+    type Challenges<F> = InstructionReadRafChallenges<F>;
 
     fn new(shape: InstructionReadRafDimensions) -> Self {
         Self { shape }

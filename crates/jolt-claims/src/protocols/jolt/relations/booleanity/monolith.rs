@@ -4,8 +4,8 @@ use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::booleanity::{booleanity_cycle_output, BooleanityDimensions};
-use crate::protocols::jolt::{JoltExpr, JoltRelationId, JoltSumcheckSpec};
-use crate::{InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::protocols::jolt::{BooleanityChallenge, JoltExpr, JoltRelationId, JoltSumcheckSpec};
+use crate::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The committed per-family `Ra` openings produced by the cycle phase; every
 /// opening shares the single booleanity opening point (`r_address ++ r_cycle`).
@@ -31,6 +31,16 @@ pub struct BooleanityInputClaims<C> {
     pub address_phase: C,
 }
 
+/// Fiat-Shamir challenge drawn by the full booleanity sumcheck. The `gamma`
+/// folding the RA family is built inside the `booleanity_cycle_output` geometry
+/// helper rather than appearing as a literal `challenge(..)` here, so this set is
+/// derived from `required_challenges()`, not a textual scan of the expressions.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct BooleanityChallenges<F> {
+    #[challenge(BooleanityChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The full booleanity sumcheck over both the address and cycle variables:
 /// asserts every one-hot `ra` opening is boolean (`ra^2 - ra == 0`), folded
 /// across the RA family by `gamma` and weighted by the `EqAddressCycle` public.
@@ -46,6 +56,7 @@ impl SymbolicSumcheck for Booleanity {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = BooleanityDimensions;
+    type Challenges<F> = BooleanityChallenges<F>;
 
     fn new(shape: BooleanityDimensions) -> Self {
         Self { shape }
@@ -160,6 +171,27 @@ mod tests {
         assert_eq!(
             relation.required_deriveds::<Fr>(),
             vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
+        );
+    }
+
+    /// The `gamma` is folded inside `booleanity_cycle_output`, so it never appears
+    /// as a literal `challenge(..)` in this file. This guards that the
+    /// `Challenges` struct's field set still matches the challenge the relation
+    /// actually draws (per `required_challenges`).
+    #[test]
+    fn challenges_resolve_helper_built_gamma() {
+        let challenges = BooleanityChallenges {
+            gamma: Fr::from_u64(5),
+        };
+
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
+            Some(Fr::from_u64(5)),
+        );
+        // The relation draws exactly this one challenge.
+        assert_eq!(
+            Booleanity::new(dimensions(1, 1, 1)).required_challenges::<Fr>(),
+            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)],
         );
     }
 }

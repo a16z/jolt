@@ -6,8 +6,17 @@ use crate::opening;
 use crate::protocols::jolt::geometry::booleanity::{
     booleanity_address_phase_opening, booleanity_cycle_output, BooleanityDimensions,
 };
-use crate::protocols::jolt::{JoltExpr, JoltRelationId, JoltSumcheckSpec};
-use crate::SymbolicSumcheck;
+use crate::protocols::jolt::{BooleanityChallenge, JoltExpr, JoltRelationId, JoltSumcheckSpec};
+use crate::{SumcheckChallenges, SymbolicSumcheck};
+
+/// Fiat-Shamir challenge drawn by the cycle-phase split of the booleanity
+/// sumcheck. As in the monolith, the `gamma` is built inside
+/// `booleanity_cycle_output`, so this set is derived from `required_challenges()`.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct BooleanityCyclePhaseChallenges<F> {
+    #[challenge(BooleanityChallenge::Gamma)]
+    pub gamma: F,
+}
 
 /// The cycle-phase split of the booleanity sumcheck: takes the
 /// `BooleanityAddrClaim` opening as input and reduces to the boolean-constraint
@@ -22,6 +31,7 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = BooleanityDimensions;
+    type Challenges<F> = BooleanityCyclePhaseChallenges<F>;
 
     fn new(shape: BooleanityDimensions) -> Self {
         Self { shape }

@@ -13,7 +13,9 @@ use crate::protocols::jolt::{
     JoltExpr, JoltRelationId, JoltSumcheckSpec, SpartanShiftChallenge, SpartanShiftPublic,
     TraceDimensions,
 };
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{
+    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
+};
 
 /// Produced Spartan shift openings (the shifted unexpanded-PC / PC / virtual /
 /// first-in-sequence / noop columns), all sharing the single shift opening point.
@@ -54,6 +56,13 @@ pub struct SpartanShiftInputClaims<C> {
     pub next_is_noop: C,
 }
 
+/// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct SpartanShiftChallenges<F> {
+    #[challenge(SpartanShiftChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The Spartan shift sumcheck: relates each `Next*` column from the outer
 /// sumcheck (and `next_is_noop` from the product remainder) to the shifted
 /// column at the same cycle, folded by `gamma` and weighted by the `EqPlusOne`
@@ -68,6 +77,7 @@ impl SymbolicSumcheck for Shift {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = SpartanShiftChallenges<F>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

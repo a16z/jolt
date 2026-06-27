@@ -65,6 +65,17 @@ pub trait SumcheckChallenges<F: Field, C = JoltChallengeId> {
     fn resolve_challenge(&self, id: &C) -> Option<F>;
 }
 
+/// `Challenges` for a relation that draws no Fiat-Shamir challenges: resolves
+/// every id to `None`. Generic over the field so it fits `type Challenges<F>`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoChallenges<F>(::core::marker::PhantomData<F>);
+
+impl<F: Field, C> SumcheckChallenges<F, C> for NoChallenges<F> {
+    fn resolve_challenge(&self, _id: &C) -> Option<F> {
+        None
+    }
+}
+
 /// One opening-claim cell: a `(point, value)` pair. The opening point is
 /// verifier-derived (from the sumcheck), so it never crosses the wire — only the
 /// value is serialized into the proof.

@@ -10,10 +10,10 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     right_lookup_operand_spartan, weighted_claims,
 };
 use crate::protocols::jolt::{
-    InstructionClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
-    JoltRelationId, JoltSumcheckSpec, TraceDimensions,
+    InstructionClaimReductionChallenge, InstructionClaimReductionPublic, JoltChallengeId,
+    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::{derived, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{derived, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// Produced reduced instruction-lookup openings, all sharing the single reduced
 /// opening point. The three aliased openings are [`Option`] (absent on the wire ⇒
@@ -58,6 +58,13 @@ pub struct InstructionClaimReductionInputClaims<C> {
     pub right_instruction_input: C,
 }
 
+/// Fiat-Shamir challenge drawn by the instruction claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct InstructionClaimReductionChallenges<F> {
+    #[challenge(InstructionClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// Batches the Spartan-outer instruction-lookup openings (lookup output, left/
 /// right lookup operands, left/right instruction inputs) by `gamma` and reduces
 /// them to the instruction-claim-reduction openings weighted by `EqSpartan`.
@@ -71,6 +78,7 @@ impl SymbolicSumcheck for ClaimReduction {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = InstructionClaimReductionChallenges<F>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

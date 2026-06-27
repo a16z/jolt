@@ -11,7 +11,7 @@ use crate::protocols::jolt::{
     ReadWriteDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
 /// the single read-write opening point. Generic over the cell (`F` on the wire /
@@ -43,6 +43,13 @@ pub struct RamReadWriteInputClaims<C> {
     pub ram_write_value: C,
 }
 
+/// Fiat-Shamir challenge drawn by the RAM read/write-checking sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct RamReadWriteChallenges<F> {
+    #[challenge(RamReadWriteChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The RAM read/write-checking sumcheck: folds the read and write values by
 /// `gamma` on the input side, and reconstructs them from `ra`, `val`, and `inc`
 /// weighted by the cycle-`eq` public on the output side.
@@ -56,6 +63,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
+    type Challenges<F> = RamReadWriteChallenges<F>;
 
     fn new(shape: ReadWriteDimensions) -> Self {
         Self { shape }
@@ -90,7 +98,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::protocols::jolt::{BooleanityChallenge, JoltChallengeId, JoltDerivedId};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
@@ -199,6 +207,22 @@ mod tests {
         assert_eq!(
             relation.required_deriveds::<Fr>(),
             vec![JoltDerivedId::from(RamReadWritePublic::EqCycle)]
+        );
+    }
+
+    #[test]
+    fn challenges_resolve_gamma_and_miss_others() {
+        let challenges = RamReadWriteChallenges {
+            gamma: Fr::from_u64(7),
+        };
+
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
+            Some(Fr::from_u64(7)),
+        );
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
+            None,
         );
     }
 }

@@ -12,7 +12,7 @@ use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{challenge, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
 /// intermediate, plus (committed-program mode only) the staged `BytecodeValStage`
@@ -89,6 +89,25 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub lookup_table_flags: Vec<C>,
 }
 
+/// Fiat-Shamir challenges drawn by the address phase of the bytecode read-RAF
+/// sumcheck: the batching `gamma` plus the five per-stage gammas (the same set
+/// the full monolith folds).
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct BytecodeReadRafAddressPhaseChallenges<F> {
+    #[challenge(BytecodeReadRafChallenge::Gamma)]
+    pub gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage1Gamma)]
+    pub stage1_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage2Gamma)]
+    pub stage2_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage3Gamma)]
+    pub stage3_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage4Gamma)]
+    pub stage4_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage5Gamma)]
+    pub stage5_gamma: F,
+}
+
 /// The address phase of the bytecode read-RAF sumcheck: the same folded input
 /// claim, reduced to the staged address-phase opening.
 pub struct ReadRafAddressPhase {
@@ -101,6 +120,7 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
+    type Challenges<F> = BytecodeReadRafAddressPhaseChallenges<F>;
 
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }

@@ -45,6 +45,7 @@ impl SymbolicSumcheck for ValEvaluation {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

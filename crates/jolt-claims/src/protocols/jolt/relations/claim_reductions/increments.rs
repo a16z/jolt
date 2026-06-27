@@ -11,7 +11,9 @@ use crate::protocols::jolt::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr,
     JoltOpeningId, JoltRelationId, JoltSumcheckSpec, TraceDimensions,
 };
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{
+    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -40,6 +42,13 @@ pub struct IncClaimReductionInputClaims<C> {
     pub rd_inc_val_evaluation: C,
 }
 
+/// Fiat-Shamir challenge drawn by the increment claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct IncClaimReductionChallenges<F> {
+    #[challenge(IncClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// Batches the RAM/register increment openings (`RamInc` read-write and
 /// val-check, `RdInc` read-write and val-evaluation) by `gamma` and reduces
 /// them to the increment-claim-reduction openings weighted by the eq publics.
@@ -53,6 +62,7 @@ impl SymbolicSumcheck for ClaimReduction {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = IncClaimReductionChallenges<F>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

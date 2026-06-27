@@ -18,6 +18,11 @@ pub trait SymbolicSumcheck {
     /// expressions and sumcheck spec). Field-independent for every relation.
     type Shape;
 
+    /// The relation's drawn Fiat-Shamir challenges, parameterized by the field
+    /// (challenges carry no opening point). A relation with no challenges uses
+    /// [`NoChallenges`](crate::NoChallenges).
+    type Challenges<F>;
+
     fn new(shape: Self::Shape) -> Self;
 
     /// The relation this sumcheck belongs to. A type-level constant; NOT a unique
@@ -99,6 +104,7 @@ mod tests {
         type DerivedId = P;
         type ChallengeId = Ch;
         type Shape = ();
+        type Challenges<F> = crate::NoChallenges<F>;
         fn new((): ()) -> Self {
             Self
         }

@@ -12,7 +12,7 @@ use crate::protocols::jolt::{
     RegistersReadWritePublic,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced register read-write openings, all sharing the single read-write
 /// opening point. Generic over the cell (`F` on the wire, `Vec<F>` for ZK points,
@@ -49,6 +49,13 @@ pub struct RegistersReadWriteInputClaims<C> {
     pub rs2_value: C,
 }
 
+/// Fiat-Shamir challenge drawn by the registers read/write-checking sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct RegistersReadWriteChallenges<F> {
+    #[challenge(RegistersReadWriteChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The registers read/write checking sumcheck: relates the read-value claims
 /// (`RdWriteValue`, `Rs1Value`, `Rs2Value`) folded by `gamma` to the register
 /// `val`/`ra`/`inc` openings weighted by the `EqCycle` public.
@@ -62,6 +69,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
+    type Challenges<F> = RegistersReadWriteChallenges<F>;
 
     fn new(shape: ReadWriteDimensions) -> Self {
         Self { shape }

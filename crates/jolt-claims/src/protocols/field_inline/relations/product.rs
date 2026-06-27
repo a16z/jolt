@@ -24,6 +24,7 @@ impl SymbolicSumcheck for FieldProduct {
     type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
 
     fn new(shape: FieldRegistersTraceDimensions) -> Self {
         Self { shape }

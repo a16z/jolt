@@ -11,7 +11,7 @@ use crate::protocols::jolt::{
     RamRaClaimReductionPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced RAM-RA reduced opening, generic over the cell (`F` on the wire,
 /// `Vec<F>` for ZK points, `OpeningClaim<F>` (point + value) on the clear path).
@@ -40,6 +40,13 @@ pub struct RamRaClaimReductionInputClaims<C> {
     pub val_check: C,
 }
 
+/// Fiat-Shamir challenge drawn by the RAM `ra` claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct RamRaClaimReductionChallenges<F> {
+    #[challenge(RamRaClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The RAM `ra` claim-reduction sumcheck: folds the three `ra` openings (RAF,
 /// read/write, val-check) by `gamma` on the input side, and matches the reduced
 /// `ra` opening weighted by the matching cycle-`eq` publics on the output side.
@@ -53,6 +60,7 @@ impl SymbolicSumcheck for RaClaimReduction {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = RamRaClaimReductionChallenges<F>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

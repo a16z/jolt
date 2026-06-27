@@ -11,7 +11,9 @@ use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
     JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{
+    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
+};
 
 /// Produced one-hot `Ra` opening claims, grouped by family (instruction,
 /// bytecode, RAM) in canonical layout order. Every produced opening shares the
@@ -54,6 +56,13 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
     pub ram_virtualization: Vec<C>,
 }
 
+/// Fiat-Shamir challenge drawn by the hamming-weight claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct HammingWeightClaimReductionChallenges<F> {
+    #[challenge(HammingWeightClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// Batches each RA polynomial's hamming-weight, booleanity, and virtualization
 /// claims by powers of `gamma` and reduces them to the per-polynomial
 /// hamming-weight-claim-reduction openings weighted by the eq publics.
@@ -67,6 +76,7 @@ impl SymbolicSumcheck for ClaimReduction {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = HammingWeightClaimReductionDimensions;
+    type Challenges<F> = HammingWeightClaimReductionChallenges<F>;
 
     fn new(shape: HammingWeightClaimReductionDimensions) -> Self {
         Self { shape }

@@ -29,6 +29,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
     type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersReadWriteDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
 
     fn new(shape: FieldRegistersReadWriteDimensions) -> Self {
         Self { shape }
@@ -79,6 +80,7 @@ impl SymbolicSumcheck for ValEvaluation {
     type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
 
     fn new(shape: FieldRegistersTraceDimensions) -> Self {
         Self { shape }

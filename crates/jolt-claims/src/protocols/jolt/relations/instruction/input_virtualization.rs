@@ -13,7 +13,7 @@ use crate::protocols::jolt::{
     TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims};
+use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::RingCore;
 
 /// Produced instruction-input virtualization openings (the left/right operand
@@ -55,6 +55,13 @@ pub struct InstructionInputInputClaims<C> {
     pub left_instruction_input: C,
 }
 
+/// Fiat-Shamir challenge drawn by the instruction input-virtualization sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct InstructionInputChallenges<F> {
+    #[challenge(InstructionInputChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The instruction input-virtualization sumcheck: relates the left/right
 /// instruction-input products from the product sumcheck to the per-operand
 /// flag/value openings, folded by `gamma` and weighted by the `EqProduct` public.
@@ -68,6 +75,7 @@ impl SymbolicSumcheck for InputVirtualization {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = InstructionInputChallenges<F>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }

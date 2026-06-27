@@ -10,7 +10,25 @@ use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{challenge, opening, SymbolicSumcheck};
+use crate::{challenge, opening, SumcheckChallenges, SymbolicSumcheck};
+
+/// Fiat-Shamir challenges drawn by the full bytecode read-RAF sumcheck: the
+/// batching `gamma` plus the five per-stage gammas folding the staged claims.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct BytecodeReadRafChallenges<F> {
+    #[challenge(BytecodeReadRafChallenge::Gamma)]
+    pub gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage1Gamma)]
+    pub stage1_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage2Gamma)]
+    pub stage2_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage3Gamma)]
+    pub stage3_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage4Gamma)]
+    pub stage4_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage5Gamma)]
+    pub stage5_gamma: F,
+}
 
 /// The full bytecode read-RAF sumcheck: folds the five staged claims plus the
 /// Spartan outer/shift PC openings against the bytecode-table cycle output.
@@ -24,6 +42,7 @@ impl SymbolicSumcheck for ReadRaf {
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
+    type Challenges<F> = BytecodeReadRafChallenges<F>;
 
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }
@@ -283,5 +302,39 @@ mod tests {
                 JoltDerivedId::from(BytecodeReadRafPublic::Entry),
             ]
         );
+    }
+
+    /// Every staged gamma the relation draws (`stage_gammas`) must resolve to a
+    /// distinct field of the `Challenges` struct. A missing or mismatched
+    /// `#[challenge(..)]` among the six fields would surface here as a `None` or a
+    /// wrong value.
+    #[test]
+    fn challenges_resolve_every_stage_gamma() {
+        let challenges = BytecodeReadRafChallenges {
+            gamma: Fr::from_u64(2),
+            stage1_gamma: Fr::from_u64(3),
+            stage2_gamma: Fr::from_u64(5),
+            stage3_gamma: Fr::from_u64(7),
+            stage4_gamma: Fr::from_u64(11),
+            stage5_gamma: Fr::from_u64(13),
+        };
+        let expected = [
+            (BytecodeReadRafChallenge::Gamma, Fr::from_u64(2)),
+            (BytecodeReadRafChallenge::Stage1Gamma, Fr::from_u64(3)),
+            (BytecodeReadRafChallenge::Stage2Gamma, Fr::from_u64(5)),
+            (BytecodeReadRafChallenge::Stage3Gamma, Fr::from_u64(7)),
+            (BytecodeReadRafChallenge::Stage4Gamma, Fr::from_u64(11)),
+            (BytecodeReadRafChallenge::Stage5Gamma, Fr::from_u64(13)),
+        ];
+        for (id, value) in expected {
+            assert_eq!(
+                challenges.resolve_challenge(&JoltChallengeId::from(id)),
+                Some(value),
+            );
+        }
+        // Each id the relation declares it draws resolves under the struct.
+        for id in stage_gammas() {
+            assert!(challenges.resolve_challenge(&id).is_some());
+        }
     }
 }

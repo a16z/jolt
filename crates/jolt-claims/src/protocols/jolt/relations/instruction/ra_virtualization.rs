@@ -12,7 +12,7 @@ use crate::protocols::jolt::{
     JoltRelationId, JoltSumcheckSpec,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, InputClaims, OutputClaims};
+use crate::{challenge, derived, InputClaims, OutputClaims, SumcheckChallenges};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -33,6 +33,13 @@ pub struct InstructionRaVirtualizationInputClaims<C> {
     pub instruction_ra: Vec<C>,
 }
 
+/// Fiat-Shamir challenge drawn by the instruction RA-virtualization sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct InstructionRaVirtualizationChallenges<F> {
+    #[challenge(InstructionRaVirtualizationChallenge::Gamma)]
+    pub gamma: F,
+}
+
 /// The instruction RA-virtualization sumcheck: relates the virtual
 /// instruction-RA openings (folded by `gamma`) to the per-virtual products of
 /// committed instruction-RA openings, weighted by the `EqCycle` public.
@@ -46,6 +53,7 @@ impl SymbolicSumcheck for RaVirtualization {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = InstructionRaVirtualizationDimensions;
+    type Challenges<F> = InstructionRaVirtualizationChallenges<F>;
 
     fn new(shape: InstructionRaVirtualizationDimensions) -> Self {
         Self { shape }

@@ -59,6 +59,7 @@ impl SymbolicSumcheck for OutputCheck {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
 
     fn new(shape: ReadWriteDimensions) -> Self {
         Self { shape }
