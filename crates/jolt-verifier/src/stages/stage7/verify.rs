@@ -33,8 +33,8 @@ use super::hamming_weight_claim_reduction::{
     HammingWeightClaimReductionInputClaims,
 };
 use super::outputs::{
-    PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7OutputClaims,
-    Stage7PublicOutput, Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7Output,
+    Stage7OutputClaims, Stage7ZkOutput,
 };
 use crate::{
     proof::JoltProof,
@@ -143,13 +143,12 @@ where
 
     // The hamming-weight reduction's batching gamma is drawn path-agnostically before
     // the ZK/clear branch (a single `challenge_scalar`, matching the relation's default
-    // `draw_challenges`). The ZK path builds no relation object, so the struct is built
-    // here directly and its scalar is recorded in `Stage7PublicOutput`; the clear path
-    // threads the struct into the hamming relation's input/output claims.
+    // `draw_challenges`). The ZK path builds no relation object, so its scalar is carried
+    // in the `Stage7Challenges` aggregate for BlindFold to source `gamma` from; the clear
+    // path threads this struct into the hamming relation's input/output claims.
     let hamming_challenges = HammingWeightClaimReductionChallenges {
         gamma: transcript.challenge_scalar(),
     };
-    let hamming_gamma = hamming_challenges.gamma;
 
     if checked.zk {
         let stage6 = stage6.zk()?;
@@ -345,7 +344,9 @@ where
         }
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
-            public: Stage7PublicOutput { hamming_gamma },
+            challenges: Stage7Challenges {
+                hamming_gamma: hamming_challenges.gamma,
+            },
             batch_consistency,
             batch_output_claims,
             hamming_weight_opening_point: hamming_opening_point,
