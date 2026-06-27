@@ -472,3 +472,64 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         )
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+    use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+    use jolt_riscv::NUM_CIRCUIT_FLAGS;
+    use jolt_transcript::Transcript;
+
+    // The address phase has the only multi-field `Challenges` (gamma + five stage
+    // gammas), so it exercises that the default draws one `challenge_scalar` per
+    // field in declaration order. Each inline draw is a `challenge_scalar_powers(..)`
+    // whose single squeeze's degree-1 power equals that squeezed scalar, so the
+    // default's six `challenge_scalar` squeezes reproduce the inline byte stream
+    // (six squeezes) and the six stored values. The cycle and committed variants are
+    // single-field and use the same default path.
+    #[test]
+    fn default_draw_challenges_matches_inline_bytecode_address_gammas() {
+        let relation = BytecodeReadRafAddressPhase::<Fr>::new(
+            BytecodeReadRafDimensions::new(3, 4, 2),
+            Fr::from(0u64),
+            [Fr::from(0u64); 5],
+            0,
+        );
+
+        // Inline (stage6/verify.rs L214-221): six `challenge_scalar_powers(..)`,
+        // each contributing its degree-1 power.
+        let (inline_events, inline_gammas) = record(|t| {
+            [
+                t.challenge_scalar_powers(8)[1],
+                t.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS)[1],
+                t.challenge_scalar_powers(4)[1],
+                t.challenge_scalar_powers(9)[1],
+                t.challenge_scalar_powers(3)[1],
+                t.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT)[1],
+            ]
+        });
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        // Six squeezes in the same order, byte-for-byte.
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(
+            draw_events,
+            (1..=6).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+        );
+        // Each field stores the corresponding inline degree-1 power.
+        assert_eq!(
+            [
+                challenges.gamma,
+                challenges.stage1_gamma,
+                challenges.stage2_gamma,
+                challenges.stage3_gamma,
+                challenges.stage4_gamma,
+                challenges.stage5_gamma,
+            ],
+            inline_gammas,
+        );
+    }
+}

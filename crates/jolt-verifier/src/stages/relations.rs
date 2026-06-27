@@ -110,6 +110,39 @@ where
         self.symbolic().spec()
     }
 
+    /// Draw this instance's own (instance-private) Fiat-Shamir challenges from the
+    /// transcript, in the exact order the stage's inline draw uses. Batch-level
+    /// coefficients and the shared binding vector are NOT drawn here.
+    ///
+    /// The default draws one `challenge_scalar` per `Challenges` field, in
+    /// declaration order, via [`SumcheckChallenges::from_transcript_values`]. This is
+    /// the correct draw for the common case — a relation whose challenges are each a
+    /// single `challenge_scalar` (and for [`NoChallenges`](::jolt_claims::NoChallenges),
+    /// which has no fields, it draws nothing). A `challenge_scalar_powers(n)` draw
+    /// reduces to this case: it performs exactly one squeeze and the relation keeps
+    /// the degree-1 power, which equals that squeezed scalar. Only relations whose
+    /// draw is genuinely different — an extra transcript append (a domain
+    /// separator), a value re-roll, or a powers draw whose kept value is not the
+    /// squeezed scalar — override this.
+    ///
+    /// The bound is `SumcheckChallenges` — which every `Challenges` already
+    /// implements — so the default needs no separate `Default` derive. It errors
+    /// only if the per-field draw cannot populate the struct, which cannot happen for
+    /// the infinite `challenge_scalar` stream the default supplies.
+    fn draw_challenges<T: Transcript<Challenge = F>>(
+        &self,
+        transcript: &mut T,
+    ) -> Result<<Self::Symbolic as ::jolt_claims::SymbolicSumcheck>::Challenges<F>, VerifierError>
+    where
+        <Self::Symbolic as ::jolt_claims::SymbolicSumcheck>::Challenges<F>:
+            ::jolt_claims::SumcheckChallenges<F>,
+    {
+        ::jolt_claims::SumcheckChallenges::from_transcript_values(::core::iter::repeat_with(|| {
+            transcript.challenge_scalar()
+        }))
+        .map_err(VerifierError::from)
+    }
+
     /// Map this instance's sumcheck point and the upstream input points into the
     /// produced openings' points. Value-independent, so it runs in both the clear
     /// and ZK paths; any cross-input consistency required for a well-defined point
@@ -177,6 +210,79 @@ where
             |id| self.resolve_challenge(id),
             |id| self.resolve_public(id, inputs, Some(outputs)),
         )
+    }
+}
+
+/// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
+/// reproduces a stage's inline Fiat-Shamir draw exactly.
+///
+/// Unlike the `append_openings` recorder, challenge *squeezes*
+/// (`challenge`/`challenge_scalar`/`challenge_scalar_powers`) append no bytes, so a
+/// byte-chunk recorder cannot observe them. This double instead records an ordered
+/// event log that distinguishes a squeeze from a byte-append (e.g. the
+/// `ram_val_check` gamma domain separator), and returns a *distinct sequential*
+/// scalar from each squeeze so a relation's stored challenge can be checked against
+/// the squeeze that produced it.
+#[cfg(test)]
+pub(crate) mod draw_recording {
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_transcript::Transcript;
+
+    /// One observable transcript operation a `draw_challenges` performs.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) enum DrawEvent {
+        /// A challenge squeeze (`challenge`/`challenge_scalar`/the single squeeze
+        /// inside `challenge_scalar_powers`). Carries the 1-based squeeze index so
+        /// the value a relation kept can be matched to its squeeze.
+        Squeeze(u64),
+        /// A raw byte append (a domain separator preceding a squeeze).
+        Append(Vec<u8>),
+    }
+
+    /// A `Transcript` that logs every squeeze and byte-append in order. Each
+    /// squeeze returns `Fr(index)` for the 1-based squeeze counter, so the powers
+    /// `challenge_scalar_powers` derives are distinct and a stored `gamma` can be
+    /// asserted to equal the squeezed value.
+    #[derive(Clone, Default)]
+    pub(crate) struct DrawRecordingTranscript {
+        pub(crate) events: Vec<DrawEvent>,
+        squeezes: u64,
+    }
+
+    impl Transcript for DrawRecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(_label: &'static [u8]) -> Self {
+            Self::default()
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.events.push(DrawEvent::Append(bytes.to_vec()));
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            self.squeezes += 1;
+            self.events.push(DrawEvent::Squeeze(self.squeezes));
+            Fr::from_u64(self.squeezes)
+        }
+
+        fn state(&self) -> [u8; 32] {
+            [0u8; 32]
+        }
+    }
+
+    /// Run `draw` against a fresh recorder, returning its ordered event log and the
+    /// draw's result. A `draw_challenges` and a hand-written replica of the inline
+    /// draw, each passed through this, are directly comparable: equal event logs
+    /// prove the same squeeze/append sequence, and the recorder's distinct
+    /// sequential squeeze values let the returned challenge be checked against the
+    /// replica's captured value.
+    pub(crate) fn record<R>(
+        draw: impl FnOnce(&mut DrawRecordingTranscript) -> R,
+    ) -> (Vec<DrawEvent>, R) {
+        let mut transcript = DrawRecordingTranscript::default();
+        let result = draw(&mut transcript);
+        (transcript.events, result)
     }
 }
 

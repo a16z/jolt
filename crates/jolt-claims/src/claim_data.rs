@@ -14,8 +14,21 @@
 //! so it cannot disagree with the canonical order defined here.
 
 use jolt_field::Field;
+use thiserror::Error;
 
 use crate::protocols::jolt::{JoltChallengeId, JoltOpeningId};
+
+/// A `Challenges` struct could not be built from a drawn-value stream because the
+/// stream ran dry before every required (scalar) field was populated. Surfaced by
+/// [`SumcheckChallenges::from_transcript_values`]; a relation that draws challenges
+/// but does not override `ConcreteSumcheck::draw_challenges` (so the draw-nothing
+/// default feeds it an empty stream) is the typical cause.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
+#[error("challenge value stream exhausted: only {populated} of {required} required challenge field(s) populated")]
+pub struct ChallengeDrawError {
+    pub required: usize,
+    pub populated: usize,
+}
 
 /// Canonical encoders and the output-formula resolver for a relation's
 /// *produced* opening-claim struct.
@@ -59,7 +72,25 @@ pub trait InputClaims<F: Field, O = JoltOpeningId> {
 /// reads each field's value without `GetValue` indirection.
 ///
 /// Generic over the challenge-id type `C` (defaulting to [`JoltChallengeId`]).
-pub trait SumcheckChallenges<F: Field, C = JoltChallengeId> {
+pub trait SumcheckChallenges<F: Field, C = JoltChallengeId>: Sized {
+    /// Build this `Challenges` struct from already-drawn Fiat-Shamir scalars,
+    /// consuming one value per field in canonical (field-declaration) order.
+    ///
+    /// This lets a transcript-side caller draw challenges and populate the struct
+    /// without restating the field order. The verifier's
+    /// `ConcreteSumcheck::draw_challenges` uses it for its draw-nothing default
+    /// (passing an empty iterator), so the bound that enables the default is
+    /// `SumcheckChallenges` — which every `Challenges` already implements — rather
+    /// than `Default`.
+    ///
+    /// Each scalar field consumes one value; a scalar field with no value left
+    /// returns [`ChallengeDrawError`] (a relation that draws challenges must
+    /// override the draw, not rely on the empty-stream default). An `Option` field
+    /// is conditional: it takes the next value if present and stays `None`
+    /// otherwise.
+    fn from_transcript_values<I: Iterator<Item = F>>(values: I)
+        -> Result<Self, ChallengeDrawError>;
+
     /// Resolve a drawn Fiat-Shamir challenge by id, for evaluating a relation's
     /// input/output `Expr`. Returns `None` for ids this struct does not carry.
     fn resolve_challenge(&self, id: &C) -> Option<F>;
@@ -71,6 +102,12 @@ pub trait SumcheckChallenges<F: Field, C = JoltChallengeId> {
 pub struct NoChallenges<F>(::core::marker::PhantomData<F>);
 
 impl<F: Field, C> SumcheckChallenges<F, C> for NoChallenges<F> {
+    fn from_transcript_values<I: Iterator<Item = F>>(
+        _values: I,
+    ) -> Result<Self, ChallengeDrawError> {
+        Ok(Self(::core::marker::PhantomData))
+    }
+
     fn resolve_challenge(&self, _id: &C) -> Option<F> {
         None
     }
@@ -144,14 +181,12 @@ pub fn zip_openings<F: Field, T: ZipOpenings<F>>(values: &T::Values, points: &T:
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod sumcheck_challenges_tests {
-    use crate::protocols::jolt::{
-        BooleanityChallenge, BytecodeClaimReductionChallenge, JoltChallengeId,
-        RamReadWriteChallenge,
-    };
+    use crate::protocols::jolt::{BooleanityChallenge, JoltChallengeId, RamReadWriteChallenge};
     // The `SumcheckChallenges` re-export from the crate root covers both the trait
     // (type namespace) and the derive macro (macro namespace).
-    use crate::SumcheckChallenges;
+    use crate::{ChallengeDrawError, SumcheckChallenges};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn fr(value: u64) -> Fr {
@@ -180,23 +215,6 @@ mod sumcheck_challenges_tests {
     }
 
     #[derive(SumcheckChallenges)]
-    struct OptionChallenge<F> {
-        #[challenge(BytecodeClaimReductionChallenge::Eta)]
-        eta: Option<F>,
-    }
-
-    #[test]
-    fn option_resolves_only_when_present() {
-        let id = JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta);
-
-        let present = OptionChallenge { eta: Some(fr(9)) };
-        assert_eq!(present.resolve_challenge(&id), Some(fr(9)));
-
-        let absent: OptionChallenge<Fr> = OptionChallenge { eta: None };
-        assert_eq!(absent.resolve_challenge(&id), None);
-    }
-
-    #[derive(SumcheckChallenges)]
     struct MultiChallenge<F> {
         #[challenge(RamReadWriteChallenge::Gamma)]
         ram: F,
@@ -219,6 +237,35 @@ mod sumcheck_challenges_tests {
         assert_eq!(
             challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
             Some(fr(2)),
+        );
+    }
+
+    #[test]
+    fn from_transcript_values_fills_fields_in_declaration_order() {
+        // Two values populate `ram` then `booleanity` (declaration order); extra
+        // stream values are ignored.
+        let challenges: MultiChallenge<Fr> =
+            MultiChallenge::from_transcript_values([fr(1), fr(2), fr(3)].into_iter()).unwrap();
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
+            Some(fr(1)),
+        );
+        assert_eq!(
+            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
+            Some(fr(2)),
+        );
+    }
+
+    #[test]
+    fn from_transcript_values_errors_when_stream_runs_dry() {
+        // One value cannot fill the two scalar fields; the error reports progress.
+        let result = MultiChallenge::<Fr>::from_transcript_values([fr(1)].into_iter());
+        assert_eq!(
+            result.err(),
+            Some(ChallengeDrawError {
+                required: 2,
+                populated: 1,
+            }),
         );
     }
 }

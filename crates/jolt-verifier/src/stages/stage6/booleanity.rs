@@ -12,8 +12,8 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::booleanity::{
-    BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims, BooleanityInputClaims,
-    BooleanityOutputClaims,
+    BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims,
+    BooleanityCyclePhaseChallenges, BooleanityInputClaims, BooleanityOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
@@ -182,5 +182,38 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
             .copied()
             .collect::<Vec<_>>();
         try_eq_mle(&full_sumcheck_point, &reference_eq_point).map_err(public_input_failed)
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+    use jolt_field::Fr;
+    use jolt_transcript::Transcript;
+
+    // Booleanity inherits the default `draw_challenges` (one `challenge_scalar`): the
+    // inline draw is a single `challenge()`. The historical zero-gamma re-roll was
+    // dropped — a real Fiat-Shamir transcript never yields zero, and nothing else
+    // checks for it.
+    #[test]
+    fn default_draw_challenges_matches_inline_booleanity_gamma() {
+        let layout = JoltRaPolynomialLayout::new(1, 1, 1).unwrap();
+        let relation = Booleanity::<Fr>::new(
+            BooleanityDimensions::new(layout, 3, 2),
+            Fr::from(0u64),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let (inline_events, inline_gamma) = record(|t| t.challenge());
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
+        assert_eq!(challenges.gamma, inline_gamma);
     }
 }

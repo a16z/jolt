@@ -74,6 +74,9 @@ pub enum VerifierError {
     #[error("missing stage claim challenge input {id:?}")]
     MissingStageClaimChallenge { id: JoltChallengeId },
 
+    #[error(transparent)]
+    ChallengeDraw(#[from] jolt_claims::ChallengeDrawError),
+
     #[error("missing stage claim public input {id:?}")]
     MissingStageClaimDerived { id: JoltDerivedId },
 

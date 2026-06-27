@@ -123,3 +123,33 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         }
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+    use jolt_transcript::Transcript;
+
+    // Representative of the 14 single-`challenge_scalar` relations that inherit the
+    // default `draw_challenges`: the inline `ram_read_write_gamma = challenge_scalar()`
+    // is one squeeze, and the default's one-`challenge_scalar`-per-field draw stores
+    // exactly that scalar.
+    #[test]
+    fn default_draw_challenges_matches_inline_ram_read_write_gamma() {
+        let relation = RamReadWriteChecking::<Fr>::new(
+            ReadWriteDimensions::new(4, 3, 2, 1),
+            3,
+            Fr::from(0u64),
+            Vec::new(),
+        );
+
+        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar());
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
+        assert_eq!(challenges.gamma, inline_gamma);
+    }
+}

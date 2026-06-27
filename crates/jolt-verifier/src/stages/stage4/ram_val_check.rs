@@ -15,7 +15,7 @@
 //! the input claim; their staged points are carried for completeness.
 
 pub use jolt_claims::protocols::jolt::relations::ram::{
-    RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
+    RamValCheckAdviceClaims, RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::{
@@ -32,10 +32,12 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
+use jolt_transcript::Transcript;
 
 use crate::proof::JoltProof;
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage2::outputs::Stage2ClearOutput;
+use crate::stages::stage4::verify::append_ram_val_check_gamma_domain_separator;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
@@ -135,6 +137,20 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    /// Reproduces the stage-4 inline RAM value-check gamma draw: the
+    /// `b"ram_val_check_gamma"` domain separator (an empty labeled append) followed
+    /// by `ram_val_check_gamma = challenge_scalar()`. The separator's empty append
+    /// is part of the soundness-critical byte stream, so it is replayed here too.
+    fn draw_challenges<T: Transcript<Challenge = F>>(
+        &self,
+        transcript: &mut T,
+    ) -> Result<RamValCheckChallenges<F>, VerifierError> {
+        append_ram_val_check_gamma_domain_separator(transcript);
+        Ok(RamValCheckChallenges {
+            gamma: transcript.challenge_scalar(),
+        })
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -406,4 +422,44 @@ fn collect_advice_contribution<F: Field>(
         },
     });
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+
+    // Overrides the default to prepend the `b"ram_val_check_gamma"` domain separator
+    // (an empty labeled append) before the gamma squeeze; the append is part of the
+    // soundness-critical byte stream, so it must appear in `draw_challenges` too.
+    #[test]
+    fn draw_challenges_appends_domain_separator_then_draws_gamma() {
+        let relation = RamValCheck::<Fr>::new(
+            TraceDimensions::new(4),
+            3,
+            Fr::from(0u64),
+            RamValCheckInit::from(Fr::from(0u64)),
+        );
+
+        // Inline (stage4/verify.rs L125-126): domain-separator append, then
+        // `ram_val_check_gamma = challenge_scalar()`.
+        let (inline_events, inline_gamma) = record(|t| {
+            append_ram_val_check_gamma_domain_separator(t);
+            t.challenge_scalar()
+        });
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        // The draw is the domain-separator append(s) followed by exactly one squeeze;
+        // no challenge is squeezed before the gamma.
+        assert!(draw_events.len() >= 2);
+        let (separator, last) = draw_events.split_at(draw_events.len() - 1);
+        assert_eq!(last, [DrawEvent::Squeeze(1)]);
+        assert!(separator
+            .iter()
+            .all(|event| matches!(event, DrawEvent::Append(_))));
+        assert_eq!(challenges.gamma, inline_gamma);
+    }
 }

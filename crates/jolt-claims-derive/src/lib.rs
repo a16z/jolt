@@ -61,10 +61,15 @@
 //! *cell* / `GetValue` indirection — field values are read directly). Each field
 //! carries `#[challenge(SubEnum::Variant)]` naming a challenge sub-enum *unit*
 //! variant; the resolved id is `JoltChallengeId::from(SubEnum::Variant)` (relying
-//! on the `From<SubEnum> for JoltChallengeId` impls). A field is either scalar `F`
-//! or `Option<F>` (a conditional challenge that resolves only when `Some`). A
-//! `Vec<F>` field is rejected: every challenge sub-enum variant is a unit variant,
-//! so there is no indexed challenge id to map elements onto.
+//! on the `From<SubEnum> for JoltChallengeId` impls). Every field is a scalar `F`
+//! (one drawn Fiat-Shamir scalar). A `Vec<F>` field is rejected (challenge sub-enum
+//! variants are unit, so there is no indexed id), and an `Option<F>` field is
+//! rejected (no relation draws a conditional challenge, and the `draw_challenges`
+//! default treats every field as one unconditional `challenge_scalar`).
+//!
+//! Generates both halves of [`SumcheckChallenges`]: `resolve_challenge` (id →
+//! value) and `from_transcript_values` (consume one drawn scalar per field in
+//! declaration order, erroring if the stream runs dry).
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -563,11 +568,10 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-/// One challenge field: its identifier, the `SubEnum::Variant` path it names, and
-/// whether the field is `Option<F>` (a conditional challenge).
+/// One challenge field: its identifier and the `SubEnum::Variant` path it names.
+/// Challenge fields are always a scalar `F` (one drawn Fiat-Shamir scalar).
 struct ChallengeFieldPlan {
     ident: Ident,
-    is_option: bool,
     path: syn::Path,
 }
 
@@ -601,11 +605,15 @@ fn plan_challenge_field(field: &syn::Field) -> syn::Result<ChallengeFieldPlan> {
              (every challenge sub-enum variant is a unit variant)",
         ));
     }
-    Ok(ChallengeFieldPlan {
-        ident,
-        is_option: is_option_type(&field.ty),
-        path,
-    })
+    if is_option_type(&field.ty) {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "challenge fields are an unconditional scalar `F`; a conditional \
+             `Option<F>` challenge is not supported (no relation draws one, and the \
+             `draw_challenges` default treats every field as one `challenge_scalar`)",
+        ));
+    }
+    Ok(ChallengeFieldPlan { ident, path })
 }
 
 /// The single field type generic parameter (the field type, conventionally `F`).
@@ -635,32 +643,45 @@ fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
         .collect::<syn::Result<Vec<_>>>()?;
 
     let mut resolve_arms = Vec::new();
-    for plan in &plans {
-        let ChallengeFieldPlan {
-            ident,
-            is_option,
-            path,
-        } = plan;
+    let mut build_stmts = Vec::new();
+    let mut field_idents = Vec::new();
+    // Every challenge field is a scalar, so the struct requires one drawn value per
+    // field; `required` is the field count.
+    let required = plans.len();
+    for (index, plan) in plans.iter().enumerate() {
+        let ChallengeFieldPlan { ident, path } = plan;
+        field_idents.push(ident.clone());
         let id = quote!(::jolt_claims::protocols::jolt::JoltChallengeId::from(#path));
-        if *is_option {
-            resolve_arms.push(quote! {
-                if let ::core::option::Option::Some(__v) = self.#ident {
-                    if *id == #id {
-                        return ::core::option::Option::Some(__v);
-                    }
-                }
-            });
-        } else {
-            resolve_arms.push(quote! {
-                if *id == #id {
-                    return ::core::option::Option::Some(self.#ident);
-                }
-            });
-        }
+        resolve_arms.push(quote! {
+            if *id == #id {
+                return ::core::option::Option::Some(self.#ident);
+            }
+        });
+        // Each scalar field consumes one drawn value; a dry stream is an error. The
+        // already-populated count (`index`) is baked per field so the error reports
+        // progress without a runtime counter.
+        build_stmts.push(quote! {
+            let #ident = __values.next().ok_or(
+                ::jolt_claims::ChallengeDrawError {
+                    required: #required,
+                    populated: #index,
+                },
+            )?;
+        });
     }
 
     Ok(quote! {
         impl<#field: ::jolt_field::Field> ::jolt_claims::SumcheckChallenges<#field> for #name<#field> {
+            fn from_transcript_values<__I: ::core::iter::Iterator<Item = #field>>(
+                values: __I,
+            ) -> ::core::result::Result<Self, ::jolt_claims::ChallengeDrawError> {
+                let mut __values = values;
+                #(#build_stmts)*
+                ::core::result::Result::Ok(Self {
+                    #(#field_idents),*
+                })
+            }
+
             fn resolve_challenge(
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltChallengeId,
