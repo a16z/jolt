@@ -1,6 +1,7 @@
 //! Spartan product univariate-skip symbolic sumcheck relation.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::spartan::{
     product_outer_opening, product_should_branch_outer_opening, product_should_jump_outer_opening,
@@ -9,10 +10,39 @@ use crate::protocols::jolt::geometry::spartan::{
 use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
 };
-use crate::{opening, SymbolicSumcheck};
+use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
-/// The Spartan product univariate-skip sumcheck (first round). Symbolic-only:
-/// special-cased in the verifier's stage 2.
+/// Consumed product uni-skip inputs: the three Spartan-outer openings the first
+/// round reduces (`product`, `should_branch`, `should_jump`), each reweighted by a
+/// `UniskipLagrangeWeight`. The relation reads only their values (the input claim
+/// is the pre-binding sum), so the input points are left empty. Generic over the
+/// cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct ProductUniskipInputClaims<C> {
+    #[opening(Product, from = SpartanOuter)]
+    pub product: C,
+    #[opening(ShouldBranch, from = SpartanOuter)]
+    pub should_branch: C,
+    #[opening(ShouldJump, from = SpartanOuter)]
+    pub should_jump: C,
+}
+
+/// Produced product uni-skip opening (the single reduced univariate-skip value).
+/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
+/// on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(SpartanProductVirtualization)]
+pub struct ProductUniskipOutputClaims<C> {
+    #[opening(UnivariateSkip)]
+    pub uniskip: C,
+}
+
+/// The Spartan product univariate-skip sumcheck (first round). A standalone
+/// centered-integer sumcheck whose reduced opening feeds the product remainder.
 pub struct ProductUniskip {
     shape: SpartanProductDimensions,
 }
@@ -24,8 +54,8 @@ impl SymbolicSumcheck for ProductUniskip {
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanProductDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
-    type Inputs<C> = crate::NoInputs<C>;
-    type Outputs<C> = crate::NoOutputs<C>;
+    type Inputs<C> = ProductUniskipInputClaims<C>;
+    type Outputs<C> = ProductUniskipOutputClaims<C>;
 
     fn new(shape: SpartanProductDimensions) -> Self {
         Self { shape }

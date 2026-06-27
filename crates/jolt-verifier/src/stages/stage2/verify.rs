@@ -9,7 +9,6 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::lagrange::centered_lagrange_evals;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_r1cs::constraints::jolt::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
@@ -27,13 +26,13 @@ use super::{
         InstructionClaimReductionOutputClaims,
     },
     outputs::{
-        product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output,
-        Stage2ProductUniSkipInputValues, Stage2PublicOutput, Stage2ZkOutput,
-        VerifiedProductUniSkip,
+        Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output, Stage2PublicOutput,
+        Stage2ZkOutput, VerifiedProductUniSkip,
     },
     product_remainder::{
         product_remainder_inputs_from_uniskip_output, ProductRemainder, ProductRemainderInputClaims,
     },
+    product_uniskip::{product_uniskip_inputs_from_stage1, ProductUniskip},
     ram_output_check::{
         ram_output_check_inputs_from_upstream, RamOutputCheck, RamOutputCheckInputClaims,
     },
@@ -269,7 +268,7 @@ where
 {
     let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
-    let _dimensions = SpartanProductDimensions::new(log_t);
+    let product_dimensions = SpartanProductDimensions::new(log_t);
     let stage1_public = stage1.public();
     let mut tau_low = stage1_public
         .remainder_challenges
@@ -308,17 +307,12 @@ where
     match stage1 {
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
-            let weights = centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage,
-                    reason: error.to_string(),
-                })?;
+            let uniskip = ProductUniskip::new(product_dimensions, tau_high);
+            let uniskip_inputs = product_uniskip_inputs_from_stage1(stage1);
 
             let uniskip_claim = claims.product_uniskip_output_claim;
-            let uniskip_input_claim = product_uniskip_input_claim(
-                Stage2ProductUniSkipInputValues::from_stage1(stage1),
-                &weights,
-            )?;
+            let uniskip_input_claim =
+                uniskip.input_claim(&uniskip_inputs, &NoChallenges::default())?;
 
             let uniskip_reduction = proof
                 .stages

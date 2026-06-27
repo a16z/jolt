@@ -8,7 +8,6 @@ use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims};
-use crate::stages::stage1::Stage1ClearOutput;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
@@ -17,58 +16,6 @@ pub use super::product_remainder::ProductRemainderOutputClaims;
 pub use super::ram_output_check::RamOutputCheckOutputClaims;
 pub use super::ram_raf_evaluation::RamRafEvaluationOutputClaims;
 pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
-
-/// Stage 1 outputs that feed the stage 2 product uni-skip input claim. Extracted
-/// into a typed value so the prover and verifier derive the same input claim from
-/// the shared [`product_uniskip_input_claim`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2ProductUniSkipInputValues<F: Field> {
-    pub product: F,
-    pub should_branch: F,
-    pub should_jump: F,
-}
-
-impl<F: Field> Stage2ProductUniSkipInputValues<F> {
-    pub fn from_stage1(stage1: &Stage1ClearOutput<F>) -> Self {
-        Self {
-            product: stage1.outer.product,
-            should_branch: stage1.outer.should_branch,
-            should_jump: stage1.outer.should_jump,
-        }
-    }
-}
-
-/// Combines the stage 1 product values against the uni-skip Lagrange `weights`
-/// (derived from `tau_high`) into the stage 2 product uni-skip input claim.
-pub fn product_uniskip_input_claim<F: Field>(
-    values: Stage2ProductUniSkipInputValues<F>,
-    weights: &[F],
-) -> Result<F, VerifierError> {
-    let [product, should_branch, should_jump, rest @ ..] = weights else {
-        return Err(stage2_product_public_input_failed(format!(
-            "Stage 2 product uni-skip expected at least 3 weights, got {}",
-            weights.len()
-        )));
-    };
-    let claim = *product * values.product
-        + *should_branch * values.should_branch
-        + *should_jump * values.should_jump;
-
-    if !rest.is_empty() {
-        return Err(stage2_product_public_input_failed(format!(
-            "Stage 2 product uni-skip expected 3 weights, got {}",
-            weights.len()
-        )));
-    }
-    Ok(claim)
-}
-
-fn stage2_product_public_input_failed(reason: String) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::SpartanProductVirtualization,
-        reason,
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
