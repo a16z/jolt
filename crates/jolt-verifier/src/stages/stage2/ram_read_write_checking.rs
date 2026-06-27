@@ -9,11 +9,10 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
-    RamReadWriteInputClaims, RamReadWriteOutputClaims,
+    RamReadWriteChallenges, RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::ReadWriteDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
-    RamReadWriteChallenge, RamReadWritePublic,
+    geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -42,22 +41,15 @@ pub struct RamReadWriteChecking<F: Field> {
     symbolic: relations::ram::ReadWriteChecking,
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
-    gamma: F,
     product_tau_low: Vec<F>,
 }
 
 impl<F: Field> RamReadWriteChecking<F> {
-    pub fn new(
-        dimensions: ReadWriteDimensions,
-        ram_log_k: usize,
-        gamma: F,
-        product_tau_low: Vec<F>,
-    ) -> Self {
+    pub fn new(dimensions: ReadWriteDimensions, ram_log_k: usize, product_tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
-            gamma,
             product_tau_low,
         }
     }
@@ -96,18 +88,12 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RamReadWrite(RamReadWriteChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &RamReadWriteInputClaims<C>,
         outputs: Option<&RamReadWriteOutputClaims<OpeningClaim<F>>>,
+        _challenges: &RamReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamReadWrite(public_id) = id else {
@@ -138,12 +124,8 @@ mod tests {
     // exactly that scalar.
     #[test]
     fn default_draw_challenges_matches_inline_ram_read_write_gamma() {
-        let relation = RamReadWriteChecking::<Fr>::new(
-            ReadWriteDimensions::new(4, 3, 2, 1),
-            3,
-            Fr::from(0u64),
-            Vec::new(),
-        );
+        let relation =
+            RamReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(4, 3, 2, 1), 3, Vec::new());
 
         let (inline_events, inline_gamma) = record(|t| t.challenge_scalar());
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());

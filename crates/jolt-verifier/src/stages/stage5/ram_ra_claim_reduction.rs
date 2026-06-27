@@ -10,11 +10,10 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
-    RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,
+    RamRaClaimReductionChallenges, RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
-    RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
+    geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId, RamRaClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -50,16 +49,16 @@ pub struct RamRaClaimReduction<F: Field> {
     symbolic: relations::ram::RaClaimReduction,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
-    gamma: F,
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> RamRaClaimReduction<F> {
-    pub fn new(trace_dimensions: TraceDimensions, ram_log_k: usize, gamma: F) -> Self {
+    pub fn new(trace_dimensions: TraceDimensions, ram_log_k: usize) -> Self {
         Self {
             symbolic: relations::ram::RaClaimReduction::new(trace_dimensions),
             trace_dimensions,
             ram_log_k,
-            gamma,
+            _field: core::marker::PhantomData,
         }
     }
 }
@@ -117,20 +116,12 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => {
-                Ok(self.gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         inputs: &RamRaClaimReductionInputClaims<C>,
         outputs: Option<&RamRaClaimReductionOutputClaims<OpeningClaim<F>>>,
+        _challenges: &RamRaClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamRaClaimReduction(public_id) = id else {

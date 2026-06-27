@@ -16,8 +16,7 @@ pub use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityCyclePhaseChallenges, BooleanityInputClaims, BooleanityOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
-    JoltChallengeId, JoltDerivedId, JoltRelationId,
+    geometry::booleanity::BooleanityDimensions, BooleanityPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -80,7 +79,6 @@ pub fn booleanity_inputs_from_upstream<F: Field>(
 pub struct Booleanity<F: Field> {
     symbolic: relations::booleanity::BooleanityCyclePhase,
     dimensions: BooleanityDimensions,
-    gamma: F,
     /// The address opening prefix from the stage-6a phase.
     r_address: Vec<F>,
     /// The reference address/cycle the `EqAddressCycle` public compares against.
@@ -91,7 +89,6 @@ pub struct Booleanity<F: Field> {
 impl<F: Field> Booleanity<F> {
     pub fn new(
         dimensions: BooleanityDimensions,
-        gamma: F,
         r_address: Vec<F>,
         reference_address: Vec<F>,
         reference_cycle: Vec<F>,
@@ -99,7 +96,6 @@ impl<F: Field> Booleanity<F> {
         Self {
             symbolic: relations::booleanity::BooleanityCyclePhase::new(dimensions),
             dimensions,
-            gamma,
             r_address,
             reference_address,
             reference_cycle,
@@ -138,18 +134,12 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::Booleanity(BooleanityChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &BooleanityInputClaims<C>,
         outputs: Option<&BooleanityOutputClaims<OpeningClaim<F>>>,
+        _challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
@@ -203,7 +193,6 @@ mod tests {
         let layout = JoltRaPolynomialLayout::new(1, 1, 1).unwrap();
         let relation = Booleanity::<Fr>::new(
             BooleanityDimensions::new(layout, 3, 2),
-            Fr::from(0u64),
             Vec::new(),
             Vec::new(),
             Vec::new(),

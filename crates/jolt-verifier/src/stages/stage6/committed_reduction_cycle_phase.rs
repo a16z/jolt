@@ -21,17 +21,18 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
     AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
 };
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
-    BytecodeReductionCyclePhaseInputClaims, BytecodeReductionCyclePhaseOutputClaims,
+    BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
+    BytecodeReductionCyclePhaseOutputClaims,
 };
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::{
     ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs, AdviceClaimReductionLayout,
-    BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, JoltAdviceKind, JoltChallengeId,
-    JoltRelationId, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
 use super::outputs::BytecodeReductionWeights;
@@ -144,6 +145,7 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
         &self,
         _inputs: &AdviceCyclePhaseInputClaims<C>,
         outputs: &AdviceCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening = self.output(outputs)?;
         if self.layout.dimensions().has_address_phase() {
@@ -233,6 +235,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
         &self,
         _inputs: &ProgramImageReductionCyclePhaseInputClaims<C>,
         outputs: &ProgramImageReductionCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening = &outputs.program_image;
         if self.layout.dimensions().has_address_phase() {
@@ -259,7 +262,6 @@ pub fn bytecode_reduction_cycle_phase_inputs_from_values<F: Field>(
 pub struct BytecodeReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::CyclePhase,
     layout: BytecodeClaimReductionLayout,
-    eta: F,
     weights: BytecodeReductionWeights<F>,
     chunk_count: usize,
 }
@@ -267,7 +269,6 @@ pub struct BytecodeReductionCyclePhase<F: Field> {
 impl<F: Field> BytecodeReductionCyclePhase<F> {
     pub fn new(
         layout: &BytecodeClaimReductionLayout,
-        eta: F,
         weights: BytecodeReductionWeights<F>,
     ) -> Self {
         Self {
@@ -276,7 +277,6 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
                 layout.chunk_count(),
             )),
             layout: layout.clone(),
-            eta,
             weights,
             chunk_count: layout.chunk_count(),
         }
@@ -329,19 +329,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::BytecodeClaimReduction(BytecodeClaimReductionChallenge::Eta) => {
-                Ok(self.eta)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn expected_output<C: GetPoint<F>>(
         &self,
         _inputs: &BytecodeReductionCyclePhaseInputClaims<C>,
         outputs: &BytecodeReductionCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &BytecodeReductionCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         if self.layout.dimensions().has_address_phase() {
             let intermediate = outputs.intermediate.as_ref().ok_or_else(|| {

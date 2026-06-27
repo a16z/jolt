@@ -14,11 +14,10 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
-    InstructionInputInputClaims, InstructionInputOutputClaims,
+    InstructionInputChallenges, InstructionInputInputClaims, InstructionInputOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, InstructionInputChallenge, InstructionInputPublic,
-    JoltChallengeId, JoltDerivedId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, InstructionInputPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -60,19 +59,13 @@ pub fn instruction_input_inputs_from_upstream<F: Field>(
 
 pub struct InstructionInput<F: Field> {
     symbolic: relations::instruction::InputVirtualization,
-    gamma: F,
     product_remainder_opening_point: Vec<F>,
 }
 
 impl<F: Field> InstructionInput<F> {
-    pub fn new(
-        trace_dimensions: TraceDimensions,
-        gamma: F,
-        product_remainder_opening_point: Vec<F>,
-    ) -> Self {
+    pub fn new(trace_dimensions: TraceDimensions, product_remainder_opening_point: Vec<F>) -> Self {
         Self {
             symbolic: relations::instruction::InputVirtualization::new(trace_dimensions),
-            gamma,
             product_remainder_opening_point,
         }
     }
@@ -105,18 +98,12 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &InstructionInputInputClaims<C>,
         outputs: Option<&InstructionInputOutputClaims<OpeningClaim<F>>>,
+        _challenges: &InstructionInputChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::InstructionInput(public_id) = id else {

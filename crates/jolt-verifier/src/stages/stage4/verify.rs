@@ -21,12 +21,12 @@ use super::{
     },
     ram_val_check::{
         ram_val_check_initial_evaluation, ram_val_check_inputs_from_upstream, RamValCheck,
-        RamValCheckAdviceClaims, RamValCheckInitialEvaluation, RamValCheckInputClaims,
-        RamValCheckOutputClaims,
+        RamValCheckAdviceClaims, RamValCheckChallenges, RamValCheckInitialEvaluation,
+        RamValCheckInputClaims, RamValCheckOutputClaims,
     },
     registers_read_write_checking::{
-        registers_read_write_inputs_from_upstream, RegistersReadWriteChecking,
-        RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
+        registers_read_write_inputs_from_upstream, RegistersReadWriteChallenges,
+        RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
     },
 };
 use crate::{
@@ -86,8 +86,12 @@ where
         relations::registers::ReadWriteChecking::id(),
         &registers_claims,
     )?;
-    let registers_gamma = transcript.challenge_scalar();
-    let registers_relation = RegistersReadWriteChecking::new(register_dimensions, registers_gamma);
+    let registers_relation = RegistersReadWriteChecking::new(register_dimensions);
+    // The registers batching gamma (a single `challenge_scalar`, matching the
+    // relation's default `draw_challenges`), drawn before the RAM value-check gamma.
+    let registers_challenges = RegistersReadWriteChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
 
     let (ram_read_write_opening_point, ram_output_check_opening_point) = match stage2 {
         Stage2Output::Clear(stage2) => (
@@ -122,8 +126,15 @@ where
     let ram_val_check_public_eval =
         public_initial_ram_evaluation(checked, preprocessing, r_address)?;
 
+    // The RAM value-check batching gamma is drawn after its `b"ram_val_check_gamma"`
+    // domain separator (an empty labeled append, kept inline so the separator stays
+    // at its exact transcript position). This matches `RamValCheck::draw_challenges`,
+    // whose override prepends the same separator; the relation is rebuilt per ZK/clear
+    // arm below (with arm-specific init), so its gamma is drawn here once for both.
     append_ram_val_check_gamma_domain_separator(transcript);
-    let ram_val_check_gamma = transcript.challenge_scalar();
+    let ram_val_check_challenges = RamValCheckChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
 
     // Only the sumcheck shape (rounds/degree/domain) is read from this spec, and that
     // shape is init- and contribution-independent, so the empty-contribution shape
@@ -137,8 +148,8 @@ where
     check_relation_boolean_hypercube(relations::ram::RamValCheck::id(), &ram_val_check_claims)?;
 
     let challenges = Stage4Challenges {
-        registers_gamma,
-        ram_val_check_gamma,
+        registers_gamma: registers_challenges.gamma,
+        ram_val_check_gamma: ram_val_check_challenges.gamma,
     };
 
     if checked.zk {
@@ -185,7 +196,6 @@ where
         let ram_relation = RamValCheck::new(
             trace_dimensions,
             log_k,
-            ram_val_check_gamma,
             RamValCheckInit::full(ram_val_check_public_eval),
         );
         let ram_points = ram_relation
@@ -226,17 +236,14 @@ where
     // The init decomposition (public eval + advice/program-image contributions) is
     // shared with the prover and the BlindFold constraint via `decomposition()`, so
     // the contribution order and selectors cannot drift between them.
-    let ram_relation = RamValCheck::new(
-        trace_dimensions,
-        log_k,
-        ram_val_check_gamma,
-        ram_val_check_init.decomposition(),
-    );
+    let ram_relation =
+        RamValCheck::new(trace_dimensions, log_k, ram_val_check_init.decomposition());
 
     let registers_inputs = registers_read_write_inputs_from_upstream(stage3);
     let ram_inputs = ram_val_check_inputs_from_upstream(stage2, &ram_val_check_init);
-    let registers_input_claim = registers_relation.input_claim(&registers_inputs)?;
-    let ram_input_claim = ram_relation.input_claim(&ram_inputs)?;
+    let registers_input_claim =
+        registers_relation.input_claim(&registers_inputs, &registers_challenges)?;
+    let ram_input_claim = ram_relation.input_claim(&ram_inputs, &ram_val_check_challenges)?;
 
     let sumcheck_claims = [
         SumcheckClaim::new(
@@ -285,9 +292,16 @@ where
         &ram_output_points.ram_ra,
         &ram_val_check_init,
     );
-    let registers_output = registers_relation
-        .expected_output(&registers_inputs, &output_claims.registers_read_write)?;
-    let ram_output = ram_relation.expected_output(&ram_inputs, &output_claims.ram_val_check)?;
+    let registers_output = registers_relation.expected_output(
+        &registers_inputs,
+        &output_claims.registers_read_write,
+        &registers_challenges,
+    )?;
+    let ram_output = ram_relation.expected_output(
+        &ram_inputs,
+        &output_claims.ram_val_check,
+        &ram_val_check_challenges,
+    )?;
 
     let expected_final_claim =
         stage4_expected_final_claim(&batch.batching_coefficients, registers_output, ram_output)?;

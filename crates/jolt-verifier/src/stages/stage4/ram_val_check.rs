@@ -27,7 +27,7 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltRelationId, RamValCheckChallenge,
     RamValCheckPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -74,7 +74,6 @@ pub struct RamValCheck<F: Field> {
     symbolic: RamValCheckSymbolic,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
-    gamma: F,
     /// `Val_init(r_address)`'s public portion — resolves the `InitEval` input public.
     public_eval: F,
     /// The negated block selector for each present `Val_init` contribution —
@@ -92,7 +91,6 @@ impl<F: Field> RamValCheck<F> {
     pub fn new(
         trace_dimensions: TraceDimensions,
         ram_log_k: usize,
-        gamma: F,
         init: RamValCheckInit<F>,
     ) -> Self {
         let public_eval = init.public_eval;
@@ -116,7 +114,6 @@ impl<F: Field> RamValCheck<F> {
             symbolic,
             trace_dimensions,
             ram_log_k,
-            gamma,
             public_eval,
             init_selectors,
         }
@@ -183,18 +180,12 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RamValCheck(RamValCheckChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         inputs: &RamValCheckInputClaims<C>,
         outputs: Option<&RamValCheckOutputClaims<OpeningClaim<F>>>,
+        challenges: &RamValCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamValCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
@@ -211,12 +202,19 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                     .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
             }
             // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation
-            // of the produced cycle point against the fixed read-write cycle.
+            // of the produced cycle point against the fixed read-write cycle. The
+            // gamma comes from the drawn `challenges` struct (the same value
+            // `draw_challenges` produced), not a stored scalar.
             RamValCheckPublic::LtCyclePlusGamma => {
                 let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
                 let output_cycle = &outputs.ram_ra.point()[self.ram_log_k..];
                 let fixed_cycle = &inputs.ram_val.point()[self.ram_log_k..];
-                Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + self.gamma)
+                let gamma = challenges
+                    .resolve_challenge(&JoltChallengeId::from(RamValCheckChallenge::Gamma))
+                    .ok_or(VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(RamValCheckChallenge::Gamma),
+                    })?;
+                Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + gamma)
             }
         }
     }
@@ -439,7 +437,6 @@ mod tests {
         let relation = RamValCheck::<Fr>::new(
             TraceDimensions::new(4),
             3,
-            Fr::from(0u64),
             RamValCheckInit::from(Fr::from(0u64)),
         );
 

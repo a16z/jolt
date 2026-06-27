@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{
     geometry::{dimensions::ReadWriteDimensions, ram::RamRafEvaluationDimensions},
     JoltDerivedId, JoltRelationId, RamRafEvaluationPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 
@@ -109,6 +109,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         id: &JoltDerivedId,
         _inputs: &RamRafEvaluationInputClaims<C>,
         outputs: Option<&RamRafEvaluationOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamRafEvaluation(public_id) = id else {

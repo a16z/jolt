@@ -11,7 +11,7 @@ use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltRelationId, JoltSumcheckSpec, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -29,7 +29,8 @@ use super::committed_reduction_address_phase::{
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseInputClaims,
 };
 use super::hamming_weight_claim_reduction::{
-    HammingWeightClaimReduction, HammingWeightClaimReductionInputClaims,
+    HammingWeightClaimReduction, HammingWeightClaimReductionChallenges,
+    HammingWeightClaimReductionInputClaims,
 };
 use super::outputs::{
     PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7OutputClaims,
@@ -140,7 +141,15 @@ where
         check_relation_boolean_hypercube(relation, spec)?;
     }
 
-    let hamming_gamma = transcript.challenge_scalar();
+    // The hamming-weight reduction's batching gamma is drawn path-agnostically before
+    // the ZK/clear branch (a single `challenge_scalar`, matching the relation's default
+    // `draw_challenges`). The ZK path builds no relation object, so the struct is built
+    // here directly and its scalar is recorded in `Stage7PublicOutput`; the clear path
+    // threads the struct into the hamming relation's input/output claims.
+    let hamming_challenges = HammingWeightClaimReductionChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
+    let hamming_gamma = hamming_challenges.gamma;
 
     if checked.zk {
         let stage6 = stage6.zk()?;
@@ -348,8 +357,13 @@ where
     let stage6 = stage6.clear()?;
     let claims = &proof.clear_claims()?.stage7;
 
-    let relations =
-        Stage7Relations::build(hamming_dimensions, hamming_gamma, &layouts, stage4, stage6)?;
+    let relations = Stage7Relations::build(
+        hamming_dimensions,
+        hamming_challenges,
+        &layouts,
+        stage4,
+        stage6,
+    )?;
 
     // Reject opening claims supplied for phases that did not run.
     if relations.trusted_advice.is_none() && claims.advice_address_phase.trusted.is_some() {
@@ -429,7 +443,7 @@ pub struct Stage7Layouts<'a> {
 /// stage-4/stage-6 outputs and shared by the verifier and the prover, so the
 /// input-claim and output-claim algebra cannot drift between them.
 pub struct Stage7Relations<F: Field> {
-    hamming_gamma: F,
+    hamming_challenges: HammingWeightClaimReductionChallenges<F>,
     pub hamming: HammingWeightClaimReduction<F>,
     pub hamming_inputs: HammingWeightClaimReductionInputClaims<OpeningClaim<F>>,
     pub trusted_advice: Option<AdviceAddressPhase<F>>,
@@ -461,7 +475,7 @@ pub struct Stage7ClearOutputParts<F: Field> {
 impl<F: Field> Stage7Relations<F> {
     pub fn build(
         hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
-        hamming_gamma: F,
+        hamming_challenges: HammingWeightClaimReductionChallenges<F>,
         layouts: &Stage7Layouts<'_>,
         stage4: &Stage4ClearOutput<F>,
         stage6: &Stage6ClearOutput<F>,
@@ -476,7 +490,6 @@ impl<F: Field> Stage7Relations<F> {
             booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
         let hamming = HammingWeightClaimReduction::new(
             hamming_dimensions,
-            hamming_gamma,
             booleanity_r_cycle.to_vec(),
             booleanity_r_address.to_vec(),
             stage7_hamming_virtualization_address_points(hamming_dimensions, stage6)?,
@@ -492,7 +505,7 @@ impl<F: Field> Stage7Relations<F> {
             .map(|_| clear_program_image_input_claims(stage6))
             .transpose()?;
         Ok(Self {
-            hamming_gamma,
+            hamming_challenges,
             hamming,
             hamming_inputs: hamming_input_claims(stage6),
             trusted_advice: clear_advice_relation(
@@ -518,7 +531,7 @@ impl<F: Field> Stage7Relations<F> {
     /// The hamming-weight reduction's batching gamma, drawn before the stage-7
     /// batch and recorded in the stage-7 public output.
     pub fn hamming_gamma(&self) -> F {
-        self.hamming_gamma
+        self.hamming_challenges.gamma
     }
 
     /// The per-instance batched-sumcheck claims, in canonical batch order: hamming,
@@ -527,10 +540,12 @@ impl<F: Field> Stage7Relations<F> {
         &self,
         hamming_claims: &JoltSumcheckSpec,
     ) -> Result<Vec<SumcheckClaim<F>>, VerifierError> {
+        let no_challenges = NoChallenges::default();
         let mut claims = vec![SumcheckClaim::new(
             hamming_claims.rounds,
             hamming_claims.degree,
-            self.hamming.input_claim(&self.hamming_inputs)?,
+            self.hamming
+                .input_claim(&self.hamming_inputs, &self.hamming_challenges)?,
         )];
         for relation in [&self.trusted_advice, &self.untrusted_advice]
             .into_iter()
@@ -540,7 +555,7 @@ impl<F: Field> Stage7Relations<F> {
             claims.push(SumcheckClaim::new(
                 spec.rounds,
                 spec.degree,
-                relation.input_claim(&self.advice_inputs)?,
+                relation.input_claim(&self.advice_inputs, &no_challenges)?,
             ));
         }
         if let (Some(relation), Some(inputs)) = (&self.bytecode, &self.bytecode_inputs) {
@@ -548,7 +563,7 @@ impl<F: Field> Stage7Relations<F> {
             claims.push(SumcheckClaim::new(
                 spec.rounds,
                 spec.degree,
-                relation.input_claim(inputs)?,
+                relation.input_claim(inputs, &no_challenges)?,
             ));
         }
         if let (Some(relation), Some(inputs)) = (&self.program_image, &self.program_image_inputs) {
@@ -556,7 +571,7 @@ impl<F: Field> Stage7Relations<F> {
             claims.push(SumcheckClaim::new(
                 spec.rounds,
                 spec.degree,
-                relation.input_claim(inputs)?,
+                relation.input_claim(inputs, &no_challenges)?,
             ));
         }
         Ok(claims)
@@ -673,32 +688,35 @@ impl<F: Field> Stage7Relations<F> {
             program_image_address_phase: program_image_output,
         };
 
+        let no_challenges = NoChallenges::default();
         let mut expected_outputs = vec![self.hamming.expected_output(
             &self.hamming_inputs,
             &output_claims.hamming_weight_claim_reduction,
+            &self.hamming_challenges,
         )?];
         for relation in [&self.trusted_advice, &self.untrusted_advice]
             .into_iter()
             .flatten()
         {
-            expected_outputs.push(
-                relation
-                    .expected_output(&self.advice_inputs, &output_claims.advice_address_phase)?,
-            );
+            expected_outputs.push(relation.expected_output(
+                &self.advice_inputs,
+                &output_claims.advice_address_phase,
+                &no_challenges,
+            )?);
         }
         if let (Some(relation), Some(inputs), Some(output)) = (
             &self.bytecode,
             &self.bytecode_inputs,
             &output_claims.bytecode_address_phase,
         ) {
-            expected_outputs.push(relation.expected_output(inputs, output)?);
+            expected_outputs.push(relation.expected_output(inputs, output, &no_challenges)?);
         }
         if let (Some(relation), Some(inputs), Some(output)) = (
             &self.program_image,
             &self.program_image_inputs,
             &output_claims.program_image_address_phase,
         ) {
-            expected_outputs.push(relation.expected_output(inputs, output)?);
+            expected_outputs.push(relation.expected_output(inputs, output, &no_challenges)?);
         }
 
         let precommitted_final_openings =

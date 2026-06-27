@@ -8,12 +8,11 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::registers::{
-    RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
+    RegistersReadWriteChallenges, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
-    JoltChallengeId, JoltDerivedId, JoltRelationId, RegistersReadWriteChallenge,
-    RegistersReadWritePublic,
+    JoltDerivedId, JoltRelationId, RegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -42,15 +41,15 @@ pub fn registers_read_write_inputs_from_upstream<F: Field>(
 pub struct RegistersReadWriteChecking<F: Field> {
     symbolic: relations::registers::ReadWriteChecking,
     register_dimensions: ReadWriteDimensions,
-    gamma: F,
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> RegistersReadWriteChecking<F> {
-    pub fn new(register_dimensions: ReadWriteDimensions, gamma: F) -> Self {
+    pub fn new(register_dimensions: ReadWriteDimensions) -> Self {
         Self {
             symbolic: relations::registers::ReadWriteChecking::new(register_dimensions),
             register_dimensions,
-            gamma,
+            _field: core::marker::PhantomData,
         }
     }
 }
@@ -90,20 +89,12 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => {
-                Ok(self.gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         inputs: &RegistersReadWriteInputClaims<C>,
         outputs: Option<&RegistersReadWriteOutputClaims<OpeningClaim<F>>>,
+        _challenges: &RegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RegistersReadWrite(public_id) = id else {

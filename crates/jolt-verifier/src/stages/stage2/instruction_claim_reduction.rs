@@ -17,11 +17,12 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::{
-    InstructionClaimReductionInputClaims, InstructionClaimReductionOutputClaims,
+    InstructionClaimReductionChallenges, InstructionClaimReductionInputClaims,
+    InstructionClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, InstructionClaimReductionChallenge,
-    InstructionClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, InstructionClaimReductionPublic, JoltDerivedId,
+    JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -53,17 +54,15 @@ pub fn instruction_claim_reduction_inputs_from_upstream<F: Field>(
 
 pub struct InstructionClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::instruction::ClaimReduction,
-    gamma: F,
     tau_low: Vec<F>,
 }
 
 impl<F: Field> InstructionClaimReduction<F> {
-    pub fn new(trace_dimensions: TraceDimensions, gamma: F, tau_low: Vec<F>) -> Self {
+    pub fn new(trace_dimensions: TraceDimensions, tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::claim_reductions::instruction::ClaimReduction::new(
                 trace_dimensions,
             ),
-            gamma,
             tau_low,
         }
     }
@@ -100,20 +99,12 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::InstructionClaimReduction(
-                InstructionClaimReductionChallenge::Gamma,
-            ) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &InstructionClaimReductionInputClaims<C>,
         outputs: Option<&InstructionClaimReductionOutputClaims<OpeningClaim<F>>>,
+        _challenges: &InstructionClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::InstructionClaimReduction(public_id) = id else {

@@ -8,11 +8,12 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
-    RegistersClaimReductionInputClaims, RegistersClaimReductionOutputClaims,
+    RegistersClaimReductionChallenges, RegistersClaimReductionInputClaims,
+    RegistersClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltDerivedId, JoltRelationId,
-    RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+    geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId,
+    RegistersClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -42,19 +43,13 @@ pub fn registers_claim_reduction_inputs_from_upstream<F: Field>(
 
 pub struct RegistersClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::registers::ClaimReduction,
-    gamma: F,
     product_uniskip_tau_low: Vec<F>,
 }
 
 impl<F: Field> RegistersClaimReduction<F> {
-    pub fn new(
-        trace_dimensions: TraceDimensions,
-        gamma: F,
-        product_uniskip_tau_low: Vec<F>,
-    ) -> Self {
+    pub fn new(trace_dimensions: TraceDimensions, product_uniskip_tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::claim_reductions::registers::ClaimReduction::new(trace_dimensions),
-            gamma,
             product_uniskip_tau_low,
         }
     }
@@ -82,20 +77,12 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RegistersClaimReduction(RegistersClaimReductionChallenge::Gamma) => {
-                Ok(self.gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &RegistersClaimReductionInputClaims<C>,
         outputs: Option<&RegistersClaimReductionOutputClaims<OpeningClaim<F>>>,
+        _challenges: &RegistersClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RegistersClaimReduction(public_id) = id else {

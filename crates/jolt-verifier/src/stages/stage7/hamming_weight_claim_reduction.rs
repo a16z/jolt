@@ -11,12 +11,12 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{
-    HammingWeightClaimReductionInputClaims, HammingWeightClaimReductionOutputClaims,
+    HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
+    HammingWeightClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions,
-    HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltDerivedId, JoltRelationId,
+    HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -28,7 +28,6 @@ use crate::VerifierError;
 pub struct HammingWeightClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::hamming_weight::ClaimReduction,
     dimensions: HammingWeightClaimReductionDimensions,
-    gamma: F,
     /// The shared cycle suffix appended to every produced opening point (the
     /// stage-6 booleanity cycle point).
     r_cycle: Vec<F>,
@@ -42,7 +41,6 @@ pub struct HammingWeightClaimReduction<F: Field> {
 impl<F: Field> HammingWeightClaimReduction<F> {
     pub fn new(
         dimensions: HammingWeightClaimReductionDimensions,
-        gamma: F,
         r_cycle: Vec<F>,
         r_address: Vec<F>,
         virtualization_points: Vec<Vec<F>>,
@@ -50,7 +48,6 @@ impl<F: Field> HammingWeightClaimReduction<F> {
         Self {
             symbolic: relations::claim_reductions::hamming_weight::ClaimReduction::new(dimensions),
             dimensions,
-            gamma,
             r_cycle,
             r_address,
             virtualization_points,
@@ -119,20 +116,12 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::HammingWeightClaimReduction(
-                HammingWeightClaimReductionChallenge::Gamma,
-            ) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &HammingWeightClaimReductionInputClaims<C>,
         outputs: Option<&HammingWeightClaimReductionOutputClaims<OpeningClaim<F>>>,
+        _challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {

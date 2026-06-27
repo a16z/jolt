@@ -9,14 +9,14 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
-    InstructionRaVirtualizationInputClaims, InstructionRaVirtualizationOutputClaims,
+    InstructionRaVirtualizationChallenges, InstructionRaVirtualizationInputClaims,
+    InstructionRaVirtualizationOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::{
         dimensions::committed_address_chunks, instruction::InstructionRaVirtualizationDimensions,
     },
-    InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltChallengeId,
-    JoltDerivedId, JoltRelationId,
+    InstructionRaVirtualizationPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -44,7 +44,6 @@ pub fn instruction_ra_virtualization_inputs_from_upstream<F: Field>(
 pub struct InstructionRaVirtualization<F: Field> {
     symbolic: relations::instruction::RaVirtualization,
     dimensions: InstructionRaVirtualizationDimensions,
-    gamma: F,
     /// The stage-5 instruction address point, chunked into the per-chunk committed
     /// opening points.
     instruction_address: Vec<F>,
@@ -56,7 +55,6 @@ pub struct InstructionRaVirtualization<F: Field> {
 impl<F: Field> InstructionRaVirtualization<F> {
     pub fn new(
         dimensions: InstructionRaVirtualizationDimensions,
-        gamma: F,
         instruction_address: Vec<F>,
         instruction_read_raf_cycle: Vec<F>,
         committed_chunk_bits: usize,
@@ -64,7 +62,6 @@ impl<F: Field> InstructionRaVirtualization<F> {
         Self {
             symbolic: relations::instruction::RaVirtualization::new(dimensions),
             dimensions,
-            gamma,
             instruction_address,
             instruction_read_raf_cycle,
             committed_chunk_bits,
@@ -104,20 +101,12 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::InstructionRaVirtualization(
-                InstructionRaVirtualizationChallenge::Gamma,
-            ) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &InstructionRaVirtualizationInputClaims<C>,
         outputs: Option<&InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>>,
+        _challenges: &InstructionRaVirtualizationChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
@@ -156,7 +145,7 @@ mod tests {
             NonZeroUsize::new(1).unwrap(),
         )
         .unwrap();
-        InstructionRaVirtualization::new(dimensions, Fr::from(0u64), Vec::new(), Vec::new(), 1)
+        InstructionRaVirtualization::new(dimensions, Vec::new(), Vec::new(), 1)
     }
 
     // Inherits the default `draw_challenges`: the inline draw is

@@ -20,8 +20,10 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
-    BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
-    BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
+    BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafAddressPhaseInputClaims,
+    BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCyclePhaseChallenges,
+    BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
+    BytecodeReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::{
@@ -35,7 +37,7 @@ use jolt_claims::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_riscv::{JoltInstructionRow, CIRCUIT_FLAGS};
 
@@ -126,27 +128,17 @@ pub fn bytecode_read_raf_address_phase_inputs_from_upstream<F: Field>(
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     symbolic: relations::bytecode::ReadRafAddressPhase,
-    /// The bytecode read-RAF gamma and the five per-stage folding gammas
-    /// (`stageN_gammas[1]`) the input bind multiplies the stage sub-claims by; the
-    /// generic `input_claim` resolves them through [`Self::resolve_challenge`].
-    gamma: F,
-    stage_gammas: [F; 5],
     /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, else 0.
     num_val_stages: usize,
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
-    pub fn new(
-        dimensions: BytecodeReadRafDimensions,
-        gamma: F,
-        stage_gammas: [F; 5],
-        num_val_stages: usize,
-    ) -> Self {
+    pub fn new(dimensions: BytecodeReadRafDimensions, num_val_stages: usize) -> Self {
         Self {
             symbolic: relations::bytecode::ReadRafAddressPhase::new(dimensions),
-            gamma,
-            stage_gammas,
             num_val_stages,
+            _field: core::marker::PhantomData,
         }
     }
 }
@@ -158,20 +150,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        let JoltChallengeId::BytecodeReadRaf(challenge) = id else {
-            return Err(VerifierError::MissingStageClaimChallenge { id: *id });
-        };
-        Ok(match challenge {
-            BytecodeReadRafChallenge::Gamma => self.gamma,
-            BytecodeReadRafChallenge::Stage1Gamma => self.stage_gammas[0],
-            BytecodeReadRafChallenge::Stage2Gamma => self.stage_gammas[1],
-            BytecodeReadRafChallenge::Stage3Gamma => self.stage_gammas[2],
-            BytecodeReadRafChallenge::Stage4Gamma => self.stage_gammas[3],
-            BytecodeReadRafChallenge::Stage5Gamma => self.stage_gammas[4],
-        })
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -203,7 +181,6 @@ pub fn bytecode_read_raf_inputs_from_upstream<F: Field>(
 /// `stage_gammas` are indexed by stage (1..=5) in order.
 pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
     pub dimensions: BytecodeReadRafDimensions,
-    pub gamma: F,
     pub bytecode: &'a [JoltInstructionRow],
     pub r_address: Vec<F>,
     pub stage_cycle_points: [Vec<F>; 5],
@@ -280,20 +257,17 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
         Ok(BytecodeReadRafOutputClaims { bytecode_ra })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
-                Ok(self.inputs.gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn expected_output<C: GetPoint<F>>(
         &self,
         _inputs: &BytecodeReadRafInputClaims<C>,
         outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
+        let gamma = challenges
+            .resolve_challenge(&JoltChallengeId::from(BytecodeReadRafChallenge::Gamma))
+            .ok_or(VerifierError::MissingStageClaimChallenge {
+                id: JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
+            })?;
         let opening_point = outputs
             .bytecode_ra
             .first()
@@ -331,7 +305,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
             dimensions: self.inputs.dimensions,
             public_values: &public_values,
             bytecode_ra: &bytecode_ra,
-            gamma: self.inputs.gamma,
+            gamma,
         })
     }
 }
@@ -339,7 +313,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
 /// Construction inputs for the committed-program bytecode cycle relation.
 pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
     pub dimensions: BytecodeReadRafDimensions,
-    pub gamma: F,
     pub r_address: Vec<F>,
     pub stage_cycle_points: [Vec<F>; 5],
     pub entry_bytecode_index: usize,
@@ -359,7 +332,6 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 pub struct BytecodeReadRafCommitted<F: Field> {
     symbolic: relations::bytecode::ReadRafCyclePhaseCommitted,
     dimensions: BytecodeReadRafDimensions,
-    gamma: F,
     r_address: Vec<F>,
     stage_cycle_points: [Vec<F>; 5],
     entry_bytecode_index: usize,
@@ -372,7 +344,6 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
         Self {
             symbolic: relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
             dimensions: inputs.dimensions,
-            gamma: inputs.gamma,
             r_address: inputs.r_address,
             stage_cycle_points: inputs.stage_cycle_points,
             entry_bytecode_index: inputs.entry_bytecode_index,
@@ -411,17 +382,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         Ok(BytecodeReadRafOutputClaims { bytecode_ra })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn expected_output<C: GetPoint<F>>(
         &self,
         _inputs: &BytecodeReadRafInputClaims<C>,
         outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening_point = outputs
             .bytecode_ra
@@ -462,7 +427,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                 }
                 Err(VerifierError::MissingOpeningClaim { id: *id })
             },
-            |id| self.resolve_challenge(id),
+            |id| {
+                challenges
+                    .resolve_challenge(id)
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+            },
             |id| match id {
                 JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                     .value(*public_id)
@@ -492,12 +461,8 @@ mod tests {
     // single-field and use the same default path.
     #[test]
     fn default_draw_challenges_matches_inline_bytecode_address_gammas() {
-        let relation = BytecodeReadRafAddressPhase::<Fr>::new(
-            BytecodeReadRafDimensions::new(3, 4, 2),
-            Fr::from(0u64),
-            [Fr::from(0u64); 5],
-            0,
-        );
+        let relation =
+            BytecodeReadRafAddressPhase::<Fr>::new(BytecodeReadRafDimensions::new(3, 4, 2), 0);
 
         // Inline (stage6/verify.rs L214-221): six `challenge_scalar_powers(..)`,
         // each contributing its degree-1 power.

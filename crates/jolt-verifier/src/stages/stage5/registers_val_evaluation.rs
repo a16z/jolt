@@ -10,7 +10,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
     JoltDerivedId, JoltRelationId, RegistersValEvaluationPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::LtPolynomial;
 
@@ -96,6 +96,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
         id: &JoltDerivedId,
         inputs: &RegistersValEvaluationInputClaims<C>,
         outputs: Option<&RegistersValEvaluationOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         match id {

@@ -8,11 +8,10 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
-    SpartanShiftInputClaims, SpartanShiftOutputClaims,
+    SpartanShiftChallenges, SpartanShiftInputClaims, SpartanShiftOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltChallengeId, JoltDerivedId, SpartanShiftChallenge,
-    SpartanShiftPublic,
+    geometry::dimensions::TraceDimensions, JoltDerivedId, SpartanShiftPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -47,7 +46,6 @@ pub fn spartan_shift_inputs_from_upstream<F: Field>(
 
 pub struct SpartanShift<F: Field> {
     symbolic: relations::spartan::Shift,
-    gamma: F,
     product_uniskip_tau_low: Vec<F>,
     product_remainder_opening_point: Vec<F>,
 }
@@ -55,13 +53,11 @@ pub struct SpartanShift<F: Field> {
 impl<F: Field> SpartanShift<F> {
     pub fn new(
         trace_dimensions: TraceDimensions,
-        gamma: F,
         product_uniskip_tau_low: Vec<F>,
         product_remainder_opening_point: Vec<F>,
     ) -> Self {
         Self {
             symbolic: relations::spartan::Shift::new(trace_dimensions),
-            gamma,
             product_uniskip_tau_low,
             product_remainder_opening_point,
         }
@@ -92,18 +88,12 @@ impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::SpartanShift(SpartanShiftChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &SpartanShiftInputClaims<C>,
         outputs: Option<&SpartanShiftOutputClaims<OpeningClaim<F>>>,
+        _challenges: &SpartanShiftChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::SpartanShift(public_id) = id else {

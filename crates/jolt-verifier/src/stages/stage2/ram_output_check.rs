@@ -16,7 +16,7 @@ pub use jolt_claims::protocols::jolt::relations::ram::{
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamOutputCheckPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
@@ -126,6 +126,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         id: &JoltDerivedId,
         _inputs: &RamOutputCheckInputClaims<C>,
         outputs: Option<&RamOutputCheckOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamOutputCheck(public_id) = id else {

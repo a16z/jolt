@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{
     geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltRelationId,
     SpartanProductVirtualizationPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
@@ -106,6 +106,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         id: &JoltDerivedId,
         _inputs: &ProductRemainderInputClaims<C>,
         outputs: Option<&ProductRemainderOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {

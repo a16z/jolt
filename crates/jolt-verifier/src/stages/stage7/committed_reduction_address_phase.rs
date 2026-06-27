@@ -25,7 +25,7 @@ use jolt_claims::protocols::jolt::{
     BytecodeClaimReductionPublic, JoltDerivedId, JoltRelationId, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
@@ -106,6 +106,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         id: &JoltDerivedId,
         _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
         outputs: Option<&BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
@@ -193,6 +194,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         id: &JoltDerivedId,
         _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
         outputs: Option<&ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =

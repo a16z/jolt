@@ -13,7 +13,8 @@
 //! stays transcript-free while the Fiat-Shamir order remains single-sourced.
 
 pub use jolt_claims::{
-    zip_openings, GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, ZipOpenings,
+    zip_openings, GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, SumcheckChallenges,
+    ZipOpenings,
 };
 
 use jolt_claims::protocols::jolt::{
@@ -67,6 +68,15 @@ pub trait OutputAppend<F: Field>: OutputClaims<F> {
 
 impl<F: Field, C: OutputClaims<F>> OutputAppend<F> for C {}
 
+/// The drawn Fiat-Shamir challenges of a [`ConcreteSumcheck`] instance: a readable
+/// alias for the relation's `Challenges<F>` projection through its symbolic
+/// relation. This is the struct [`ConcreteSumcheck::draw_challenges`] returns and
+/// that [`input_claim`](ConcreteSumcheck::input_claim) /
+/// [`expected_output`](ConcreteSumcheck::expected_output) resolve the challenge leg
+/// against.
+pub type ConcreteSumcheckChallenges<F, S> =
+    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Challenges<F>;
+
 /// A single sumcheck instance, driven identically by the prover (while producing
 /// its proof) and the verifier (after checking it).
 ///
@@ -81,6 +91,7 @@ pub trait ConcreteSumcheck<F: Field>
 where
     Self::Inputs<OpeningClaim<F>>: InputClaims<F>,
     Self::Outputs<OpeningClaim<F>>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, JoltChallengeId>,
 {
     /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
     /// input/output `Expr`s. The concrete instance holds its `Self::Symbolic` and
@@ -132,12 +143,8 @@ where
     fn draw_challenges<T: Transcript<Challenge = F>>(
         &self,
         transcript: &mut T,
-    ) -> Result<<Self::Symbolic as ::jolt_claims::SymbolicSumcheck>::Challenges<F>, VerifierError>
-    where
-        <Self::Symbolic as ::jolt_claims::SymbolicSumcheck>::Challenges<F>:
-            ::jolt_claims::SumcheckChallenges<F>,
-    {
-        ::jolt_claims::SumcheckChallenges::from_transcript_values(::core::iter::repeat_with(|| {
+    ) -> Result<ConcreteSumcheckChallenges<F, Self>, VerifierError> {
+        SumcheckChallenges::from_transcript_values(::core::iter::repeat_with(|| {
             transcript.challenge_scalar()
         }))
         .map_err(VerifierError::from)
@@ -153,46 +160,53 @@ where
         inputs: &Self::Inputs<C>,
     ) -> Result<Self::Outputs<Vec<F>>, VerifierError>;
 
-    /// Resolve a raw Fiat-Shamir transcript scalar the relation holds (e.g.
-    /// `gamma`, `eta`). Point-free, so it serves both the input claim and any
-    /// transcript scalar the output `Expr` references. Defaults to "none";
-    /// overridden by relations that hold such scalars.
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        Err(VerifierError::MissingStageClaimChallenge { id: *id })
-    }
-
     /// Compute a public value the relation's input or output `Expr` references
     /// (e.g. `EqCycle`, `LtCycle`, or `val_check`'s `InitEval`/`InitSelector`),
     /// from the input points and — for output publics — the produced openings'
     /// points. `outputs` is `None` while evaluating the input claim (the produced
     /// openings aren't derived yet) and `Some` for the output claim, so a single
-    /// resolver serves both. Defaults to "no publics"; overridden by relations
-    /// that have them.
+    /// resolver serves both. The drawn `challenges` are threaded in for the few
+    /// relations whose derived publics fold a batching gamma into the algebra
+    /// (`RamValCheck`'s `LtCyclePlusGamma`, `InstructionReadRaf`'s RAF publics).
+    /// Defaults to "no publics"; overridden by relations that have them.
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltDerivedId,
         _inputs: &Self::Inputs<C>,
         _outputs: Option<&Self::Outputs<OpeningClaim<F>>>,
+        _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: *id })
     }
 
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
-    /// wired input opening values. Shared by prover and verifier; clear only.
-    fn input_claim(&self, inputs: &Self::Inputs<OpeningClaim<F>>) -> Result<F, VerifierError> {
+    /// wired input opening values and the drawn `challenges`. Shared by prover and
+    /// verifier; clear only. The challenge leg resolves through the drawn
+    /// [`Challenges`](SumcheckChallenges) struct (not a stored scalar), so the value
+    /// the verifier folds is exactly the one [`draw_challenges`](Self::draw_challenges)
+    /// produced.
+    fn input_claim(
+        &self,
+        inputs: &Self::Inputs<OpeningClaim<F>>,
+        challenges: &ConcreteSumcheckChallenges<F, Self>,
+    ) -> Result<F, VerifierError> {
         self.symbolic().input_expression::<F>().try_evaluate(
             |id| {
                 inputs
                     .resolve_input(id)
                     .ok_or(VerifierError::MissingOpeningClaim { id: *id })
             },
-            |id| self.resolve_challenge(id),
-            |id| self.resolve_public(id, inputs, None),
+            |id| {
+                challenges
+                    .resolve_challenge(id)
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+            },
+            |id| self.resolve_public(id, inputs, None, challenges),
         )
     }
 
     /// The expected output claim, evaluated from the output `Expr` against the
-    /// produced opening values, the relation's transcript scalars, and its derived
+    /// produced opening values, the drawn `challenges`, and the relation's derived
     /// public values. The input points feed those derivations but the input
     /// *values* are not needed, so the inputs are taken over any [`GetPoint`] cell.
     /// Shared by prover and verifier; clear only.
@@ -200,6 +214,7 @@ where
         &self,
         inputs: &Self::Inputs<C>,
         outputs: &Self::Outputs<OpeningClaim<F>>,
+        challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
@@ -207,8 +222,12 @@ where
                     .resolve_output(id)
                     .ok_or(VerifierError::MissingOpeningClaim { id: *id })
             },
-            |id| self.resolve_challenge(id),
-            |id| self.resolve_public(id, inputs, Some(outputs)),
+            |id| {
+                challenges
+                    .resolve_challenge(id)
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+            },
+            |id| self.resolve_public(id, inputs, Some(outputs), challenges),
         )
     }
 }

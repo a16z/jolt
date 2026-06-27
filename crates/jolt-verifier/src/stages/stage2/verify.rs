@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::{
     },
     relations, JoltRelationId, JoltSumcheckDomain,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -23,7 +23,8 @@ use jolt_transcript::Transcript;
 use super::{
     instruction_claim_reduction::{
         instruction_claim_reduction_inputs_from_upstream, InstructionClaimReduction,
-        InstructionClaimReductionInputClaims, InstructionClaimReductionOutputClaims,
+        InstructionClaimReductionChallenges, InstructionClaimReductionInputClaims,
+        InstructionClaimReductionOutputClaims,
     },
     outputs::{
         product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output,
@@ -40,7 +41,8 @@ use super::{
         ram_raf_evaluation_inputs_from_upstream, RamRafEvaluation, RamRafEvaluationInputClaims,
     },
     ram_read_write_checking::{
-        ram_read_write_inputs_from_upstream, RamReadWriteChecking, RamReadWriteInputClaims,
+        ram_read_write_inputs_from_upstream, RamReadWriteChallenges, RamReadWriteChecking,
+        RamReadWriteInputClaims,
     },
 };
 use crate::{
@@ -420,8 +422,19 @@ where
         relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions).spec();
     let ram_raf_evaluation_claims = relations::ram::RafEvaluation::new(raf_dimensions).spec();
     let ram_output_check_claims = relations::ram::OutputCheck::new(read_write_dimensions).spec();
-    let ram_read_write_gamma = transcript.challenge_scalar();
-    let instruction_gamma = transcript.challenge_scalar();
+    // The RAM read-write and instruction-reduction batching gammas (each a single
+    // `challenge_scalar`, matching their default `draw_challenges`), drawn in inline
+    // order. The other three batch relations draw no challenges. The scalars also feed
+    // `Stage2PublicOutput`, so they are kept as locals. The non-challenge
+    // `output_address_challenges` point draw stays in place, after both gammas.
+    let ram_read_write_challenges = RamReadWriteChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
+    let instruction_challenges = InstructionClaimReductionChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
+    let ram_read_write_gamma = ram_read_write_challenges.gamma;
+    let instruction_gamma = instruction_challenges.gamma;
     let output_address_challenges = (0..log_k)
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
@@ -472,7 +485,6 @@ where
             let ram_read_write = RamReadWriteChecking::new(
                 read_write_dimensions,
                 log_k,
-                ram_read_write_gamma,
                 product_uniskip.tau_low.clone(),
             );
             let product_remainder = ProductRemainder::new(
@@ -481,11 +493,8 @@ where
                 product_uniskip.tau_high,
                 product_uniskip.tau_low.clone(),
             );
-            let instruction_reduction = InstructionClaimReduction::new(
-                trace_dimensions,
-                instruction_gamma,
-                product_uniskip.tau_low.clone(),
-            );
+            let instruction_reduction =
+                InstructionClaimReduction::new(trace_dimensions, product_uniskip.tau_low.clone());
             let ram_raf = RamRafEvaluation::new(
                 read_write_dimensions,
                 raf_dimensions,
@@ -506,6 +515,9 @@ where
                 instruction_claim_reduction_inputs_from_upstream(stage1);
             let ram_raf_inputs = ram_raf_evaluation_inputs_from_upstream(stage1);
             let ram_output_inputs = ram_output_check_inputs_from_upstream();
+            // The three batch relations that draw no challenges (product remainder,
+            // RAM RAF evaluation, RAM output check) resolve against this empty set.
+            let no_challenges = NoChallenges::default();
 
             // The claim order here must match the output-claim reconstruction below
             // and the transcript appends at the end of the stage.
@@ -513,27 +525,29 @@ where
                 SumcheckClaim::new(
                     ram_read_write_claims.rounds,
                     ram_read_write_claims.degree,
-                    ram_read_write.input_claim(&ram_read_write_inputs)?,
+                    ram_read_write
+                        .input_claim(&ram_read_write_inputs, &ram_read_write_challenges)?,
                 ),
                 SumcheckClaim::new(
                     product_remainder_claims.rounds,
                     product_remainder_claims.degree,
-                    product_remainder.input_claim(&product_remainder_inputs)?,
+                    product_remainder.input_claim(&product_remainder_inputs, &no_challenges)?,
                 ),
                 SumcheckClaim::new(
                     instruction_claim_reduction_claims.rounds,
                     instruction_claim_reduction_claims.degree,
-                    instruction_reduction.input_claim(&instruction_reduction_inputs)?,
+                    instruction_reduction
+                        .input_claim(&instruction_reduction_inputs, &instruction_challenges)?,
                 ),
                 SumcheckClaim::new(
                     ram_raf_evaluation_claims.rounds,
                     ram_raf_evaluation_claims.degree,
-                    ram_raf.input_claim(&ram_raf_inputs)?,
+                    ram_raf.input_claim(&ram_raf_inputs, &no_challenges)?,
                 ),
                 SumcheckClaim::new(
                     ram_output_check_claims.rounds,
                     ram_output_check_claims.degree,
-                    ram_output.input_claim(&ram_output_inputs)?,
+                    ram_output.input_claim(&ram_output_inputs, &no_challenges)?,
                 ),
             ];
             let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
@@ -605,16 +619,31 @@ where
 
             let expected_final_claim = stage2_expected_final_claim(
                 &batch.batching_coefficients,
-                ram_read_write
-                    .expected_output(&ram_read_write_inputs, &output_claims.ram_read_write)?,
-                product_remainder
-                    .expected_output(&product_remainder_inputs, &output_claims.product_remainder)?,
+                ram_read_write.expected_output(
+                    &ram_read_write_inputs,
+                    &output_claims.ram_read_write,
+                    &ram_read_write_challenges,
+                )?,
+                product_remainder.expected_output(
+                    &product_remainder_inputs,
+                    &output_claims.product_remainder,
+                    &no_challenges,
+                )?,
                 instruction_reduction.expected_output(
                     &instruction_reduction_inputs,
                     &output_claims.instruction_claim_reduction,
+                    &instruction_challenges,
                 )?,
-                ram_raf.expected_output(&ram_raf_inputs, &output_claims.ram_raf_evaluation)?,
-                ram_output.expected_output(&ram_output_inputs, &output_claims.ram_output_check)?,
+                ram_raf.expected_output(
+                    &ram_raf_inputs,
+                    &output_claims.ram_raf_evaluation,
+                    &no_challenges,
+                )?,
+                ram_output.expected_output(
+                    &ram_output_inputs,
+                    &output_claims.ram_output_check,
+                    &no_challenges,
+                )?,
             )?;
             if batch.reduction.value != expected_final_claim {
                 return Err(VerifierError::StageClaimOutputMismatch {
@@ -730,7 +759,6 @@ where
             let ram_read_write = RamReadWriteChecking::new(
                 read_write_dimensions,
                 log_k,
-                ram_read_write_gamma,
                 product_uniskip.tau_low.clone(),
             );
             let product_remainder = ProductRemainder::new(
@@ -739,11 +767,8 @@ where
                 product_uniskip.tau_high,
                 product_uniskip.tau_low.clone(),
             );
-            let instruction_reduction = InstructionClaimReduction::new(
-                trace_dimensions,
-                instruction_gamma,
-                product_uniskip.tau_low.clone(),
-            );
+            let instruction_reduction =
+                InstructionClaimReduction::new(trace_dimensions, product_uniskip.tau_low.clone());
             let ram_raf = RamRafEvaluation::new(
                 read_write_dimensions,
                 raf_dimensions,

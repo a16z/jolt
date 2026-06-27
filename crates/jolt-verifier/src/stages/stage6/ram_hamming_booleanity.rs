@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId,
     RamHammingBooleanityPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
@@ -81,6 +81,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         id: &JoltDerivedId,
         _inputs: &RamHammingBooleanityInputClaims<C>,
         outputs: Option<&RamHammingBooleanityOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {

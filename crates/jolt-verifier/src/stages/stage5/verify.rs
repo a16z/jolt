@@ -112,17 +112,20 @@ where
     ] {
         check_relation_boolean_hypercube(relation, spec)?;
     }
-    let instruction_gamma = transcript.challenge_scalar();
-    let ram_gamma = transcript.challenge_scalar();
-    let challenges = Stage5Challenges {
-        instruction_gamma,
-        ram_gamma,
-    };
-
-    let instruction_relation =
-        InstructionReadRaf::new(formula_dimensions.instruction_read_raf, instruction_gamma);
-    let ram_relation = RamRaClaimReduction::new(trace_dimensions, log_k, ram_gamma);
+    let instruction_relation = InstructionReadRaf::new(formula_dimensions.instruction_read_raf);
+    let ram_relation = RamRaClaimReduction::new(trace_dimensions, log_k);
     let registers_relation = RegistersValEvaluation::new(trace_dimensions);
+
+    // Draw each relation's batching gamma in the inline order (instruction, then
+    // RAM); registers draws nothing. The drawn structs feed the input/output claims;
+    // their scalars also populate the stage aggregate carried downstream.
+    let instruction_challenges = instruction_relation.draw_challenges(transcript)?;
+    let ram_challenges = ram_relation.draw_challenges(transcript)?;
+    let registers_challenges = registers_relation.draw_challenges(transcript)?;
+    let challenges = Stage5Challenges {
+        instruction_gamma: instruction_challenges.gamma,
+        ram_gamma: ram_challenges.gamma,
+    };
 
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
@@ -251,17 +254,17 @@ where
         SumcheckClaim::new(
             instruction_claims.rounds,
             instruction_claims.degree,
-            instruction_relation.input_claim(&instruction_inputs)?,
+            instruction_relation.input_claim(&instruction_inputs, &instruction_challenges)?,
         ),
         SumcheckClaim::new(
             ram_claims.rounds,
             ram_claims.degree,
-            ram_relation.input_claim(&ram_inputs)?,
+            ram_relation.input_claim(&ram_inputs, &ram_challenges)?,
         ),
         SumcheckClaim::new(
             registers_claims.rounds,
             registers_claims.degree,
-            registers_relation.input_claim(&registers_inputs)?,
+            registers_relation.input_claim(&registers_inputs, &registers_challenges)?,
         ),
     ];
     let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
@@ -302,12 +305,21 @@ where
     };
     let output_claims = stage5_output_claims_with_points(claims, &points);
 
-    let instruction_output = instruction_relation
-        .expected_output(&instruction_inputs, &output_claims.instruction_read_raf)?;
-    let ram_output =
-        ram_relation.expected_output(&ram_inputs, &output_claims.ram_ra_claim_reduction)?;
-    let registers_output = registers_relation
-        .expected_output(&registers_inputs, &output_claims.registers_val_evaluation)?;
+    let instruction_output = instruction_relation.expected_output(
+        &instruction_inputs,
+        &output_claims.instruction_read_raf,
+        &instruction_challenges,
+    )?;
+    let ram_output = ram_relation.expected_output(
+        &ram_inputs,
+        &output_claims.ram_ra_claim_reduction,
+        &ram_challenges,
+    )?;
+    let registers_output = registers_relation.expected_output(
+        &registers_inputs,
+        &output_claims.registers_val_evaluation,
+        &registers_challenges,
+    )?;
 
     let expected_final_claim = stage5_expected_final_claim(
         batch.batching_coefficients.as_slice(),

@@ -15,7 +15,7 @@ use jolt_claims::protocols::jolt::{
     geometry::{dimensions::committed_address_chunks, ram::RamRaVirtualizationDimensions},
     JoltDerivedId, JoltRelationId, RamRaVirtualizationPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
@@ -97,6 +97,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
         id: &JoltDerivedId,
         _inputs: &RamRaVirtualizationInputClaims<C>,
         outputs: Option<&RamRaVirtualizationOutputClaims<OpeningClaim<F>>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let outputs = outputs.ok_or(VerifierError::MissingStageClaimDerived { id: *id })?;
         let JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
