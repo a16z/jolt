@@ -728,7 +728,8 @@ where
         .try_instance_point(bytecode_claims.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
-    let stage1_cycle = input.stage1.public.remainder_challenges[1..]
+    let stage1_remainder_challenges = input.stage1.remainder_consistency.challenges();
+    let stage1_cycle = stage1_remainder_challenges[1..]
         .iter()
         .rev()
         .copied()
@@ -899,7 +900,7 @@ where
         .batch_consistency
         .try_instance_point(ram_hamming_claims.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
-    let stage1_cycle_binding = &input.stage1.public.remainder_challenges[1..];
+    let stage1_cycle_binding = &stage1_remainder_challenges[1..];
     values.public(
         JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle),
         try_eq_mle(&ram_hamming_point, stage1_cycle_binding)

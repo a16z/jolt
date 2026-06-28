@@ -32,10 +32,14 @@ where
     )?;
 
     let opening_order = spartan_outer_opening_order(&dimensions);
+    // The remainder sumcheck point is opening-derived: for the singleton remainder
+    // batch the committed round challenges are the raw (un-reversed) point that the
+    // clear path obtains from the bound remainder reduction.
+    let remainder_challenges = input.stage1.remainder_consistency.challenges();
     let remainder_formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-        tau: &input.stage1.public.tau,
-        uniskip: input.stage1.public.uniskip_challenge,
-        remainder: &input.stage1.public.remainder_challenges,
+        tau: &input.stage1.challenges.tau,
+        uniskip: input.stage1.challenges.uniskip_challenge,
+        remainder: &remainder_challenges,
     })
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::SpartanOuter,

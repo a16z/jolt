@@ -21,7 +21,7 @@ use super::outer_remainder::{
 };
 use super::outer_uniskip::OuterUniskip;
 use super::outputs::{
-    spartan_outer_opening_order, Stage1ClearOutput, Stage1Output, Stage1PublicOutput,
+    spartan_outer_opening_order, stage1_challenges, Stage1ClearOutput, Stage1Output,
     Stage1ZkOutput, VerifiedSpartanOuterSumcheck,
 };
 use crate::stages::relations::{zip_openings, ConcreteSumcheck, OutputAppend};
@@ -155,12 +155,7 @@ where
         });
     }
     let remainder_statement = SumcheckStatement::new(remainder_spec.rounds, remainder_spec.degree);
-    let (
-        remainder_batching_coefficient,
-        remainder_challenges,
-        clear_remainder,
-        zk_remainder_consistency,
-    ) = if checked.zk {
+    let (clear_remainder, zk_remainder_consistency) = if checked.zk {
         let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
             &[remainder_statement],
             &proof.stages.stage1_sumcheck_proof,
@@ -178,7 +173,10 @@ where
                 output_claim_count: spartan_outer_opening_order(&dimensions).len(),
                 stage,
             })?;
-        let [remainder_batching_coefficient] = consistency.batching_coefficients.as_slice() else {
+        // Validate the singleton batch shape early; BlindFold re-reads the
+        // coefficient itself from `remainder_consistency.batching_coefficients`,
+        // and the remainder point is recovered there via `challenges()`.
+        let [_] = consistency.batching_coefficients.as_slice() else {
             return Err(VerifierError::StageClaimSumcheckFailed {
                 stage,
                 reason:
@@ -186,13 +184,7 @@ where
                         .to_string(),
             });
         };
-        let remainder_challenges = consistency.challenges();
-        (
-            *remainder_batching_coefficient,
-            remainder_challenges,
-            None,
-            Some((consistency, remainder_output_claims)),
-        )
+        (None, Some((consistency, remainder_output_claims)))
     } else {
         let claims = &proof.clear_claims()?.stage1;
         let uniskip = clear_uniskip
@@ -281,20 +273,7 @@ where
         // order as the previous explicit `r1cs_input_claims` loop.
         remainder_output_claims.append_openings(transcript);
 
-        let remainder_challenges = remainder.sumcheck_point.as_slice().to_vec();
-        (
-            *remainder_batching_coefficient,
-            remainder_challenges,
-            Some(remainder),
-            None,
-        )
-    };
-
-    let public = Stage1PublicOutput {
-        tau,
-        uniskip_challenge,
-        remainder_batching_coefficient,
-        remainder_challenges,
+        (Some(remainder), None)
     };
 
     if checked.zk {
@@ -310,7 +289,7 @@ where
             })?;
 
         return Ok(Stage1Output::Zk(Stage1ZkOutput {
-            public,
+            challenges: stage1_challenges(tau, uniskip_challenge),
             uniskip_consistency,
             uniskip_output_claims,
             remainder_consistency,
@@ -329,7 +308,6 @@ where
     })?;
 
     Ok(Stage1Output::Clear(Stage1ClearOutput {
-        public,
         uniskip,
         remainder,
         outer: claims.outer.clone(),

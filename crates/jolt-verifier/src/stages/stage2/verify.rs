@@ -269,9 +269,8 @@ where
     let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
     let product_dimensions = SpartanProductDimensions::new(log_t);
-    let stage1_public = stage1.public();
-    let mut tau_low = stage1_public
-        .remainder_challenges
+    let stage1_remainder = stage1.remainder_point();
+    let mut tau_low = stage1_remainder
         .get(1..)
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
             stage,
