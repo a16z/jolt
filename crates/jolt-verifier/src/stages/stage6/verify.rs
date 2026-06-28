@@ -9,7 +9,6 @@ use jolt_claims::protocols::jolt::{
         },
         dimensions::{committed_address_chunks, JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction::{self, InstructionRaVirtualizationDimensions},
-        ram,
     },
     relations, AdviceClaimReductionLayout, BytecodeClaimReductionChallenge,
     BytecodeClaimReductionLayout, BytecodeReadRafChallenge, JoltAdviceKind, JoltChallengeId,
@@ -61,7 +60,7 @@ use crate::{
     stages::{
         relations::{
             check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-            OutputAppend,
+            OutputAppend, OutputClaims,
         },
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},
@@ -476,8 +475,15 @@ where
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
         let booleanity_output_openings =
             booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
-        let ram_ra_output_openings =
-            ram::ra_virtualization_output_openings(formula_dimensions.ram_ra_virtualization);
+        let ram_ra_output_openings = RamRaVirtualizationOutputClaims::<PCS::Field> {
+            ram_ra: vec![
+                PCS::Field::zero();
+                formula_dimensions
+                    .ram_ra_virtualization
+                    .num_committed_ra_polys()
+            ],
+        }
+        .canonical_order();
         let instruction_ra_output_openings = instruction::ra_virtualization_output_openings(
             formula_dimensions.instruction_ra_virtualization,
         );

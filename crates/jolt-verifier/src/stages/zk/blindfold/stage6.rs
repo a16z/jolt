@@ -210,10 +210,21 @@ where
         booleanity_opening_point,
     );
     output_ids.extend(map_jolt_opening_ids(
-        ram::hamming_booleanity_output_openings().to_vec(),
+        relations::ram::RamHammingBooleanityOutputClaims::<PCS::Field> {
+            ram_hamming_weight: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::ra_virtualization_output_openings(formula_dimensions.ram_ra_virtualization),
+        relations::ram::RamRaVirtualizationOutputClaims::<PCS::Field> {
+            ram_ra: vec![
+                PCS::Field::zero();
+                formula_dimensions
+                    .ram_ra_virtualization
+                    .num_committed_ra_polys()
+            ],
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
         instruction::ra_virtualization_output_openings(
@@ -222,7 +233,11 @@ where
         .all(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        increments::claim_reduction_output_openings().to_vec(),
+        relations::claim_reductions::increments::IncClaimReductionOutputClaims::<PCS::Field> {
+            ram_inc: PCS::Field::zero(),
+            rd_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     if let Some(layout) = trusted_layout {
         output_ids.extend(map_jolt_opening_ids(advice::cycle_phase_output_openings(

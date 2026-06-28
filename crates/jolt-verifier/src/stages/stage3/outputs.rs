@@ -90,22 +90,18 @@ impl<F: Field> Stage3OutputClaims<F> {
             });
         }
 
-        let [_, rs2_value_instruction, _, _, _, rs1_value_instruction, _, _] =
-            instruction::input_virtualization_output_openings();
-        let [_, rs1_value_reduced, rs2_value_reduced] =
-            registers_claim_reduction::claim_reduction_output_openings();
         if self.registers_claim_reduction.rs1_value != self.instruction_input.rs1_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: JoltRelationId::RegistersReadWriteChecking,
-                left: rs1_value_reduced,
-                right: rs1_value_instruction,
+                left: registers_claim_reduction::rs1_value_reduced(),
+                right: instruction::rs1_value(),
             });
         }
         if self.registers_claim_reduction.rs2_value != self.instruction_input.rs2_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: JoltRelationId::RegistersReadWriteChecking,
-                left: rs2_value_reduced,
-                right: rs2_value_instruction,
+                left: registers_claim_reduction::rs2_value_reduced(),
+                right: instruction::rs2_value(),
             });
         }
         Ok(())

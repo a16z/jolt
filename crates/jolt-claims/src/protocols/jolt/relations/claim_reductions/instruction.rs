@@ -17,9 +17,9 @@ use crate::{derived, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumc
 
 /// Produced reduced instruction-lookup openings, all sharing the single reduced
 /// opening point. The three aliased openings are [`Option`] (absent on the wire ⇒
-/// they alias the product-remainder openings; the opening-claims helper fills
-/// them). Generic over the cell. Field order is the canonical Fiat-Shamir order
-/// and must match [`instruction_claim_reduction::claim_reduction_output_openings`].
+/// they alias the product-remainder openings; the clear opening-claim projection
+/// fills them). Generic over the cell. Field declaration order is the canonical
+/// Fiat-Shamir order (single-sourced via [`OutputClaims::canonical_order`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

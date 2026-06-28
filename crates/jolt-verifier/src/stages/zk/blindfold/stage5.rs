@@ -136,10 +136,17 @@ where
         instruction_output_openings.instruction_raf_flag,
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::ra_claim_reduction_output_openings().to_vec(),
+        relations::ram::RamRaClaimReductionOutputClaims::<PCS::Field> {
+            ram_ra: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        registers::val_evaluation_output_openings().to_vec(),
+        relations::registers::RegistersValEvaluationOutputClaims::<PCS::Field> {
+            rd_inc: PCS::Field::zero(),
+            rd_wa: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
 
     let batch_claims = [

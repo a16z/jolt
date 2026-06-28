@@ -118,10 +118,21 @@ where
         ));
     }
     output_ids.extend(map_jolt_opening_ids(
-        registers::read_write_checking_output_openings().to_vec(),
+        relations::registers::RegistersReadWriteOutputClaims::<PCS::Field> {
+            registers_val: PCS::Field::zero(),
+            rs1_ra: PCS::Field::zero(),
+            rs2_ra: PCS::Field::zero(),
+            rd_wa: PCS::Field::zero(),
+            rd_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::val_check_output_openings().to_vec(),
+        relations::ram::RamValCheckOutputClaims::<PCS::Field> {
+            ram_ra: PCS::Field::zero(),
+            ram_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
 
     let mut batch_claims = vec![(

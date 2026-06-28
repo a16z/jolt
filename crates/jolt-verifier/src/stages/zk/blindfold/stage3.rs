@@ -92,28 +92,31 @@ where
             .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
     )?;
 
-    let instruction_outputs = instruction::input_virtualization_output_openings();
-    let register_outputs =
-        jolt_claims::protocols::jolt::geometry::claim_reductions::registers::claim_reduction_output_openings();
     let output_ids = vec![
-        shift_output_openings()[0],
-        shift_output_openings()[1],
-        shift_output_openings()[2],
-        shift_output_openings()[3],
-        shift_output_openings()[4],
-        instruction_outputs[4],
-        instruction_outputs[5],
-        instruction_outputs[6],
-        instruction_outputs[0],
-        instruction_outputs[1],
-        instruction_outputs[2],
-        instruction_outputs[3],
-        register_outputs[0],
+        spartan::unexpanded_pc_shift(),
+        spartan::pc_shift(),
+        spartan::is_virtual_shift(),
+        spartan::is_first_in_sequence_shift(),
+        spartan::is_noop_shift(),
+        instruction::left_operand_is_rs1(),
+        instruction::rs1_value(),
+        instruction::left_operand_is_pc(),
+        instruction::right_operand_is_rs2(),
+        instruction::rs2_value(),
+        instruction::right_operand_is_imm(),
+        instruction::imm(),
+        registers_claim_reduction::rd_write_value_reduced(),
     ];
     let aliases = vec![
-        OpeningAlias::new(instruction_outputs[7], shift_output_openings()[0]),
-        OpeningAlias::new(register_outputs[1], instruction_outputs[5]),
-        OpeningAlias::new(register_outputs[2], instruction_outputs[1]),
+        OpeningAlias::new(instruction::unexpanded_pc(), spartan::unexpanded_pc_shift()),
+        OpeningAlias::new(
+            registers_claim_reduction::rs1_value_reduced(),
+            instruction::rs1_value(),
+        ),
+        OpeningAlias::new(
+            registers_claim_reduction::rs2_value_reduced(),
+            instruction::rs2_value(),
+        ),
     ];
     add_batched_stage(
         builder,

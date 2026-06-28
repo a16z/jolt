@@ -115,11 +115,10 @@ where
     }
     let (r_address, _r_cycle) = ram_read_write_opening_point.split_at(log_k);
     if ram_output_check_opening_point != r_address {
-        let [ram_val, ram_val_final] = ram::val_check_input_openings();
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltRelationId::RamValCheck,
-            left: ram_val,
-            right: ram_val_final,
+            left: ram::ram_val(),
+            right: ram::ram_val_final(),
         });
     }
 

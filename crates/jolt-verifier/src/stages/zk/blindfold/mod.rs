@@ -67,15 +67,16 @@ use jolt_claims::{
             claim_reductions::{
                 advice,
                 bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
-                hamming_weight, increments, program_image,
+                hamming_weight, program_image, registers as registers_claim_reduction,
             },
             dimensions::{JoltFormulaDimensions, JoltSumcheckSpec, REGISTER_ADDRESS_BITS},
-            instruction, ram, registers,
+            instruction, ram,
             spartan::{
-                outer_opening, outer_uniskip_opening, product_outer_opening,
-                product_remainder_output_openings, product_should_branch_outer_opening,
-                product_should_jump_outer_opening, product_uniskip_opening, shift_output_openings,
-                SpartanOuterDimensions, SpartanProductDimensions,
+                self, branch_flag_product, jump_flag_product, left_instruction_input_product,
+                lookup_output_product, next_is_noop_product, outer_opening, outer_uniskip_opening,
+                product_outer_opening, product_should_branch_outer_opening,
+                product_should_jump_outer_opening, product_uniskip_opening,
+                right_instruction_input_product, SpartanOuterDimensions, SpartanProductDimensions,
             },
         },
         AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
@@ -96,7 +97,7 @@ use jolt_claims::{
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanShiftChallenge, SpartanShiftPublic,
     },
-    Expr, Source, SymbolicSumcheck, Term,
+    Expr, OutputClaims, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, FromPrimitiveInt, RingCore};
@@ -119,7 +120,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
-use num_traits::One;
+use num_traits::{One, Zero};
 
 use super::{
     inputs::BlindFoldInputs,

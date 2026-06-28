@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    geometry::{dimensions::JoltFormulaDimensions, instruction, ram, registers},
+    geometry::{dimensions::JoltFormulaDimensions, instruction},
     relations, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -8,6 +8,7 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
+use num_traits::Zero;
 
 use super::{
     instruction_read_raf::{
@@ -31,6 +32,7 @@ use crate::{
     stages::{
         relations::{
             check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
+            OutputClaims,
         },
         stage2::Stage2Output,
         stage4::Stage4Output,
@@ -130,8 +132,17 @@ where
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
     let committed_output_claims = instruction_output_openings.opening_count()
-        + ram::ra_claim_reduction_output_openings().len()
-        + registers::val_evaluation_output_openings().len();
+        + relations::ram::RamRaClaimReductionOutputClaims::<PCS::Field> {
+            ram_ra: PCS::Field::zero(),
+        }
+        .canonical_order()
+        .len()
+        + relations::registers::RegistersValEvaluationOutputClaims::<PCS::Field> {
+            rd_inc: PCS::Field::zero(),
+            rd_wa: PCS::Field::zero(),
+        }
+        .canonical_order()
+        .len();
 
     if checked.zk {
         let stage2 = stage2.zk()?;

@@ -171,35 +171,65 @@ where
         output_publics.1,
     )?;
 
+    let product_order = relations::spartan::ProductRemainderOutputClaims::<PCS::Field> {
+        left_instruction_input: PCS::Field::zero(),
+        right_instruction_input: PCS::Field::zero(),
+        jump_flag: PCS::Field::zero(),
+        write_lookup_output_to_rd: PCS::Field::zero(),
+        lookup_output: PCS::Field::zero(),
+        branch_flag: PCS::Field::zero(),
+        next_is_noop: PCS::Field::zero(),
+        virtual_instruction: PCS::Field::zero(),
+    }
+    .canonical_order();
+    let instruction_outputs =
+        relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims::<
+            PCS::Field,
+        > {
+            lookup_output: Some(PCS::Field::zero()),
+            left_lookup_operand: PCS::Field::zero(),
+            right_lookup_operand: PCS::Field::zero(),
+            left_instruction_input: Some(PCS::Field::zero()),
+            right_instruction_input: Some(PCS::Field::zero()),
+        }
+        .canonical_order();
+
     let mut output_ids = Vec::new();
     output_ids.extend(map_jolt_opening_ids(
-        ram::read_write_checking_output_openings().to_vec(),
+        relations::ram::RamReadWriteOutputClaims::<PCS::Field> {
+            val: PCS::Field::zero(),
+            ra: PCS::Field::zero(),
+            inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
-    output_ids.extend(map_jolt_opening_ids(
-        product_remainder_output_openings().to_vec(),
-    ));
-    let instruction_outputs =
-        jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::claim_reduction_output_openings();
+    output_ids.extend(map_jolt_opening_ids(product_order.clone()));
     output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[1]));
     output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[2]));
     output_ids.extend(map_jolt_opening_ids(
-        ram::raf_evaluation_output_openings().to_vec(),
+        relations::ram::RamRafEvaluationOutputClaims::<PCS::Field> {
+            ram_ra: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::output_check_output_openings().to_vec(),
+        relations::ram::RamOutputCheckOutputClaims::<PCS::Field> {
+            val_final: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     let aliases = vec![
         OpeningAlias::new(
             VerifierOpeningId::Jolt(instruction_outputs[0]),
-            VerifierOpeningId::Jolt(product_remainder_output_openings()[4]),
+            VerifierOpeningId::Jolt(product_order[4]),
         ),
         OpeningAlias::new(
             VerifierOpeningId::Jolt(instruction_outputs[3]),
-            VerifierOpeningId::Jolt(product_remainder_output_openings()[0]),
+            VerifierOpeningId::Jolt(product_order[0]),
         ),
         OpeningAlias::new(
             VerifierOpeningId::Jolt(instruction_outputs[4]),
-            VerifierOpeningId::Jolt(product_remainder_output_openings()[1]),
+            VerifierOpeningId::Jolt(product_order[1]),
         ),
     ];
 
@@ -325,28 +355,25 @@ fn selected_product_remainder_output_expr<F: Field>(
             ),
         });
     };
-    let [left_instruction_input, right_instruction_input, jump_flag, _write_lookup_output_to_rd, lookup_output, branch_flag, next_is_noop, _virtual_instruction] =
-        product_remainder_output_openings();
-
     let left_base = scale_expr(
-        opening(VerifierOpeningId::Jolt(left_instruction_input)),
+        opening(VerifierOpeningId::Jolt(left_instruction_input_product())),
         *instruction_product_weight,
     ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(lookup_output)),
+        opening(VerifierOpeningId::Jolt(lookup_output_product())),
         *should_branch_weight,
     ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(jump_flag)),
+        opening(VerifierOpeningId::Jolt(jump_flag_product())),
         *should_jump_weight,
     );
     let right_base = scale_expr(
-        opening(VerifierOpeningId::Jolt(right_instruction_input)),
+        opening(VerifierOpeningId::Jolt(right_instruction_input_product())),
         *instruction_product_weight,
     ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(branch_flag)),
+        opening(VerifierOpeningId::Jolt(branch_flag_product())),
         *should_branch_weight,
     ) + scale_expr(VerifierExpr::one(), *should_jump_weight)
         + scale_expr(
-            opening(VerifierOpeningId::Jolt(next_is_noop)),
+            opening(VerifierOpeningId::Jolt(next_is_noop_product())),
             -*should_jump_weight,
         );
 
