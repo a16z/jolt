@@ -41,6 +41,10 @@ impl<C> Default for RamOutputCheckInputClaims<C> {
 }
 
 impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<crate::OpeningClaim<F>> {
+    fn canonical_order(&self) -> Vec<JoltOpeningId> {
+        Vec::new()
+    }
+
     fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
         None
     }

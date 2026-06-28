@@ -402,12 +402,15 @@ mod tests {
             instruction_raf_flag: fr(6),
         };
 
-        assert_eq!(claims.opening_count(), 6);
+        assert_eq!(claims.opening_values().len(), 6);
         assert_eq!(
             claims.opening_values(),
             vec![fr(1), fr(2), fr(3), fr(4), fr(5), fr(6)],
         );
-        assert_eq!(claims.opening_values().len(), claims.opening_count());
+        assert_eq!(
+            claims.canonical_order().len(),
+            claims.opening_values().len()
+        );
         assert_append_matches_values(&claims);
     }
 
@@ -463,7 +466,7 @@ mod tests {
         };
         let relation = JoltRelationId::RamReadWriteChecking;
 
-        assert_eq!(claims.opening_count(), 3);
+        assert_eq!(claims.opening_values().len(), 3);
         assert_eq!(claims.opening_values(), vec![fr(7), fr(8), fr(9)]);
         assert_eq!(
             claims.resolve_output(&committed(JoltCommittedPolynomial::RamInc, relation)),
@@ -496,7 +499,7 @@ mod tests {
         };
         let relation = JoltRelationId::SpartanShift;
 
-        assert_eq!(claims.opening_count(), 2);
+        assert_eq!(claims.opening_values().len(), 2);
         assert_eq!(claims.opening_values(), vec![fr(1), fr(2)]);
         assert_eq!(
             claims.resolve_output(&virt(JoltVirtualPolynomial::UnexpandedPC, relation)),
@@ -536,7 +539,7 @@ mod tests {
             untrusted: Some(fr(7)),
             ram_inc: fr(8),
         };
-        assert_eq!(present.opening_count(), 2);
+        assert_eq!(present.opening_values().len(), 2);
         assert_eq!(present.opening_values(), vec![fr(7), fr(8)]);
         assert_eq!(
             present.resolve_output(&JoltOpeningId::untrusted_advice(relation)),
@@ -554,13 +557,97 @@ mod tests {
             untrusted: None,
             ram_inc: fr(8),
         };
-        assert_eq!(absent.opening_count(), 1);
+        assert_eq!(absent.opening_values().len(), 1);
         assert_eq!(absent.opening_values(), vec![fr(8)]);
         assert_eq!(
             absent.resolve_output(&JoltOpeningId::untrusted_advice(relation)),
             None,
         );
         assert_append_matches_values(&absent);
+    }
+
+    #[test]
+    fn canonical_order_lists_ids_in_declaration_order() {
+        // A struct mixing `Vec` (element-wise) and scalar leaves: the ids appear in
+        // field-declaration order, each `Vec` expanded by index, and the list lines
+        // up one-for-one with `opening_values()`.
+        let relation = JoltRelationId::InstructionReadRaf;
+        let claims = InstructionLeaf {
+            lookup_table_flags: vec![fr(1), fr(2)],
+            instruction_ra: vec![fr(3), fr(4), fr(5)],
+            instruction_raf_flag: fr(6),
+        };
+        assert_eq!(
+            claims.canonical_order(),
+            vec![
+                virt(JoltVirtualPolynomial::LookupTableFlag(0), relation),
+                virt(JoltVirtualPolynomial::LookupTableFlag(1), relation),
+                virt(JoltVirtualPolynomial::InstructionRa(0), relation),
+                virt(JoltVirtualPolynomial::InstructionRa(1), relation),
+                virt(JoltVirtualPolynomial::InstructionRa(2), relation),
+                virt(JoltVirtualPolynomial::InstructionRafFlag, relation),
+            ],
+        );
+        // The canonical order is the id of each value at the same index.
+        assert_eq!(
+            claims.canonical_order().len(),
+            claims.opening_values().len()
+        );
+        for id in claims.canonical_order() {
+            assert!(claims.resolve_output(&id).is_some());
+        }
+    }
+
+    #[test]
+    fn canonical_order_skips_absent_options() {
+        // An `Option` leaf contributes its id only when `Some`, so a present and an
+        // absent struct list different ids — the order tracks instance presence.
+        let relation = JoltRelationId::RamValCheck;
+        let present = OptionalOutput {
+            untrusted: Some(fr(7)),
+            ram_inc: fr(8),
+        };
+        assert_eq!(
+            present.canonical_order(),
+            vec![
+                JoltOpeningId::untrusted_advice(relation),
+                committed(JoltCommittedPolynomial::RamInc, relation),
+            ],
+        );
+
+        let absent = OptionalOutput {
+            untrusted: None,
+            ram_inc: fr(8),
+        };
+        assert_eq!(
+            absent.canonical_order(),
+            vec![committed(JoltCommittedPolynomial::RamInc, relation)],
+        );
+    }
+
+    #[test]
+    fn input_canonical_order_lists_ids_in_declaration_order() {
+        // The `InputClaims` derive emits `canonical_order` too: same polynomial
+        // across three producing relations, listed in field order.
+        let inputs = ReductionInputs {
+            raf: fr(1),
+            read_write: fr(2),
+            val_check: fr(3),
+        };
+        assert_eq!(
+            inputs.canonical_order(),
+            vec![
+                virt(
+                    JoltVirtualPolynomial::RamRa,
+                    JoltRelationId::RamRafEvaluation
+                ),
+                virt(
+                    JoltVirtualPolynomial::RamRa,
+                    JoltRelationId::RamReadWriteChecking,
+                ),
+                virt(JoltVirtualPolynomial::RamRa, JoltRelationId::RamValCheck),
+            ],
+        );
     }
 
     #[test]
@@ -770,7 +857,7 @@ mod tests {
             )),
             None,
         );
-        assert_eq!(outputs.opening_count(), CIRCUIT_FLAGS.len());
+        assert_eq!(outputs.opening_values().len(), CIRCUIT_FLAGS.len());
         assert_eq!(outputs.opening_values(), values);
         assert_append_matches_values(&outputs);
     }

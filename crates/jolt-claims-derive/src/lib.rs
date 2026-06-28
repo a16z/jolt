@@ -1,9 +1,9 @@
 //! Derive macros generating the opening-claim plumbing for Jolt relations.
 //!
 //! These derives operate on a single relation's claim struct. They emit the
-//! per-struct encode/resolve impls so that the canonical opening **order** and
-//! **count** are single-sourced from the struct's field declaration order
-//! (rather than hand-written three times, where they drift). They generate impls
+//! per-struct encode/resolve impls so that the canonical opening **order** is
+//! single-sourced from the struct's field declaration order (rather than
+//! hand-written, where copies drift). They generate impls
 //! of the `OutputClaims` / `InputClaims` traits defined in `jolt_claims`; the
 //! generated code references those traits through `::jolt_claims::*` (absolute
 //! paths), so the derives can be applied to structs in any crate that depends on
@@ -21,7 +21,7 @@
 //! has leaf opening fields. Each field is either a leaf opening (annotated with
 //! `#[opening(..)]`) or a nested aggregate (no annotation; its type must also
 //! implement `OutputClaims`). An `Option<C>` leaf is a *conditional* opening: it
-//! contributes to `opening_values` / `opening_count` and resolves by id only when
+//! contributes to `opening_values` / `canonical_order` and resolves by id only when
 //! `Some` (used for advice / committed-program openings that are present only in
 //! some proof configurations).
 //!
@@ -386,8 +386,12 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         .collect::<syn::Result<Vec<_>>>()?;
 
     let get = quote!(::jolt_claims::GetValue::value);
+    let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
     let mut value_chains = Vec::new();
-    let mut count_terms = Vec::new();
+    // `order_chains` mirrors `value_chains` one-for-one (same iteration, id instead
+    // of value), so `canonical_order().len() == opening_values().len()` and
+    // `canonical_order()[k]` is the id of `opening_values()[k]` by construction.
+    let mut order_chains = Vec::new();
     let mut resolve_arms = Vec::new();
 
     for plan in &plans {
@@ -401,7 +405,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         if *is_many {
             let id = id_expr(kind, relation, Some(quote!(index)));
             value_chains.push(quote!(.chain(self.#ident.iter().map(|__cell| #get(__cell)))));
-            count_terms.push(quote!(self.#ident.len()));
+            order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
                 for (index, __cell) in self.#ident.iter().enumerate() {
                     if *id == #id {
@@ -412,7 +416,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         } else if *is_option {
             let id = id_expr(kind, relation, None);
             value_chains.push(quote!(.chain(self.#ident.as_ref().map(|__cell| #get(__cell)))));
-            count_terms.push(quote!(::core::primitive::usize::from(self.#ident.is_some())));
+            order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__cell) = &self.#ident {
                     if *id == #id {
@@ -423,7 +427,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         } else {
             let id = id_expr(kind, relation, None);
             value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
-            count_terms.push(quote!(1usize));
+            order_chains.push(quote!(.chain(::core::iter::once(#id))));
             resolve_arms.push(quote! {
                 if *id == #id {
                     return ::core::option::Option::Some(#get(&self.#ident));
@@ -431,12 +435,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             });
         }
     }
-
-    let count_body = if count_terms.is_empty() {
-        quote!(0usize)
-    } else {
-        quote!(#(#count_terms)+*)
-    };
 
     // Field-wise zip of the value-only (`F`) and point-only (`Vec<F>`) cell forms
     // into the clear `OpeningClaim<F>` form: one `OpeningClaim` per leaf,
@@ -482,8 +480,10 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .collect()
             }
 
-            fn opening_count(&self) -> usize {
-                #count_body
+            fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
+                ::core::iter::empty::<#id_ty>()
+                    #(#order_chains)*
+                    .collect()
             }
 
             fn resolve_output(
@@ -519,7 +519,12 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
         .collect::<syn::Result<Vec<_>>>()?;
 
     let get = quote!(::jolt_claims::GetValue::value);
+    let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
     let mut resolve_arms = Vec::new();
+    // Mirrors the resolve iteration (id per leaf, per `Vec` element, per `Some`
+    // `Option`), so `canonical_order()` lists exactly the ids `resolve_input`
+    // would hit, in field-declaration order.
+    let mut order_chains = Vec::new();
     for plan in &plans {
         let FieldPlan {
             ident,
@@ -530,6 +535,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
         } = plan;
         if *is_many {
             let id = id_expr(kind, relation, Some(quote!(index)));
+            order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
                 for (index, __cell) in self.#ident.iter().enumerate() {
                     if *id == #id {
@@ -539,6 +545,11 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
             });
         } else {
             let id = id_expr(kind, relation, None);
+            if *is_option {
+                order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
+            } else {
+                order_chains.push(quote!(.chain(::core::iter::once(#id))));
+            }
             let hit = if *is_option {
                 // The field is `Option<C>`; surface the value if present.
                 quote!(return self.#ident.as_ref().map(|__cell| #get(__cell));)
@@ -557,6 +568,12 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
         impl #impl_generics ::jolt_claims::InputClaims<#value>
             for #name #ty_generics #where_clause
         {
+            fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
+                ::core::iter::empty::<#id_ty>()
+                    #(#order_chains)*
+                    .collect()
+            }
+
             fn resolve_input(
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltOpeningId,

@@ -35,7 +35,7 @@ pub struct ChallengeDrawError {
 ///
 /// The implementor's field declaration order is the single definition of
 /// canonical opening order: [`opening_values`](Self::opening_values) and
-/// [`opening_count`](Self::opening_count) derive from it, so the Fiat-Shamir
+/// [`canonical_order`](Self::canonical_order) derive from it, so the Fiat-Shamir
 /// `append_openings` (in `jolt-verifier`) that iterates `opening_values()` cannot
 /// disagree.
 ///
@@ -45,9 +45,12 @@ pub trait OutputClaims<F: Field, O = JoltOpeningId> {
     /// Produced opening scalars in canonical (field-declaration) order.
     fn opening_values(&self) -> Vec<F>;
 
-    /// Number of produced openings; equals `opening_values().len()` but is
-    /// computed without allocating.
-    fn opening_count(&self) -> usize;
+    /// The produced opening ids in canonical (field-declaration) order. Mirrors
+    /// [`opening_values`](Self::opening_values) one-for-one: same length, and
+    /// `canonical_order()[k]` is the id of `opening_values()[k]`. Takes `&self`
+    /// because `Vec`/`Option` fields make the length and presence
+    /// instance-dependent.
+    fn canonical_order(&self) -> Vec<O>;
 
     /// Resolve a produced opening's value by id, for evaluating the relation's
     /// output `Expr`. Returns `None` for ids this struct does not carry (callers
@@ -60,6 +63,11 @@ pub trait OutputClaims<F: Field, O = JoltOpeningId> {
 ///
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]).
 pub trait InputClaims<F: Field, O = JoltOpeningId> {
+    /// The consumed opening ids in canonical (field-declaration) order. Takes
+    /// `&self` because `Vec`/`Option` fields make the length and presence
+    /// instance-dependent.
+    fn canonical_order(&self) -> Vec<O>;
+
     /// Resolve a consumed opening's value by id, for evaluating the relation's
     /// input `Expr`. Returns `None` for ids this struct does not carry.
     fn resolve_input(&self, id: &O) -> Option<F>;
