@@ -42,8 +42,24 @@ pub struct ChallengeDrawError {
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]) so the
 /// trait can live in the framework half and be reused by other protocol families.
 pub trait OutputClaims<F: Field, O = JoltOpeningId> {
-    /// Produced opening scalars in canonical (field-declaration) order.
-    fn opening_values(&self) -> Vec<F>;
+    /// Produced opening scalars in canonical (field-declaration) order. Built from
+    /// [`canonical_order`](Self::canonical_order) + [`resolve_output`](Self::resolve_output),
+    /// both derived from the same fields, so `opening_values()[k]` is exactly
+    /// `resolve_output(canonical_order()[k])`. The ids within one `OutputClaims`
+    /// struct are distinct, so each canonical-order id resolves to its own value.
+    #[expect(
+        clippy::expect_used,
+        reason = "every canonical_order id is emitted from the same field as resolve_output, so resolution is infallible by construction"
+    )]
+    fn opening_values(&self) -> Vec<F> {
+        self.canonical_order()
+            .iter()
+            .map(|id| {
+                self.resolve_output(id)
+                    .expect("every canonical_order id resolves via resolve_output by construction")
+            })
+            .collect()
+    }
 
     /// The produced opening ids in canonical (field-declaration) order. Mirrors
     /// [`opening_values`](Self::opening_values) one-for-one: same length, and

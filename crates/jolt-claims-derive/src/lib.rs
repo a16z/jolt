@@ -387,10 +387,10 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let get = quote!(::jolt_claims::GetValue::value);
     let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
-    let mut value_chains = Vec::new();
-    // `order_chains` mirrors `value_chains` one-for-one (same iteration, id instead
-    // of value), so `canonical_order().len() == opening_values().len()` and
-    // `canonical_order()[k]` is the id of `opening_values()[k]` by construction.
+    // `order_chains` lists each leaf's id (per `Vec` element, per `Some` `Option`) in
+    // field-declaration order, so it lists exactly the ids `resolve_output` hits.
+    // `OutputClaims::opening_values` reconstructs the values from this order via
+    // `resolve_output`, so the canonical order is single-sourced here.
     let mut order_chains = Vec::new();
     let mut resolve_arms = Vec::new();
 
@@ -404,7 +404,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         } = plan;
         if *is_many {
             let id = id_expr(kind, relation, Some(quote!(index)));
-            value_chains.push(quote!(.chain(self.#ident.iter().map(|__cell| #get(__cell)))));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
                 for (index, __cell) in self.#ident.iter().enumerate() {
@@ -415,7 +414,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             });
         } else if *is_option {
             let id = id_expr(kind, relation, None);
-            value_chains.push(quote!(.chain(self.#ident.as_ref().map(|__cell| #get(__cell)))));
             order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__cell) = &self.#ident {
@@ -426,7 +424,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             });
         } else {
             let id = id_expr(kind, relation, None);
-            value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
             resolve_arms.push(quote! {
                 if *id == #id {
@@ -474,12 +471,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         impl #impl_generics ::jolt_claims::OutputClaims<#value>
             for #name #ty_generics #where_clause
         {
-            fn opening_values(&self) -> ::std::vec::Vec<#value> {
-                ::core::iter::empty::<#value>()
-                    #(#value_chains)*
-                    .collect()
-            }
-
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
