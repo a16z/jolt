@@ -439,6 +439,28 @@ where
     })
 }
 
+/// Recompute stage 1's remainder cycle point — the low half of the Spartan outer
+/// remainder sumcheck point — from the singleton remainder batch's committed
+/// challenges. This is the value the stage-2 carrier previously stored as its
+/// `product_tau_low` field; it is opening-derived (identical to the clear path's
+/// `product_uniskip.tau_low`), so BlindFold reconstructs it here. Orientation matches
+/// `stage2/verify.rs::verify_product_uniskip`: drop the leading challenge, then
+/// reverse (`reverse(challenges()[1..])`). Used as `product_tau_low` by stages 2 and
+/// 3 and as the stage-1 cycle binding within `add_stage6_publics_and_challenges`.
+fn stage1_remainder_cycle<PCS, VC, ZkProof>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+) -> Vec<PCS::Field>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    input.stage1.remainder_consistency.challenges()[1..]
+        .iter()
+        .rev()
+        .copied()
+        .collect()
+}
+
 fn ram_output_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     output_address_challenges: &[PCS::Field],
@@ -729,11 +751,7 @@ where
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
     let stage1_remainder_challenges = input.stage1.remainder_consistency.challenges();
-    let stage1_cycle = stage1_remainder_challenges[1..]
-        .iter()
-        .rev()
-        .copied()
-        .collect::<Vec<_>>();
+    let stage1_cycle = stage1_remainder_cycle(input);
     let stage2_product_point = input
         .stage2
         .batch_consistency

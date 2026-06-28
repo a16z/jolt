@@ -38,8 +38,11 @@ where
         .try_instance_point(shift.spec().rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_plus_one_outer = EqPlusOnePolynomial::new(input.stage2.public.product_tau_low.clone())
-        .evaluate(&shift_opening_point);
+    // Stage 1's remainder cycle point, recomputed from `stage1.remainder_consistency`
+    // (the stage-2 carrier no longer stores it as a `product_tau_low` field).
+    let product_tau_low = stage1_remainder_cycle(input);
+    let eq_plus_one_outer =
+        EqPlusOnePolynomial::new(product_tau_low.clone()).evaluate(&shift_opening_point);
     let product_point = input
         .stage2
         .batch_consistency
@@ -85,11 +88,8 @@ where
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(
         JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan),
-        try_eq_mle(
-            &registers_opening_point,
-            &input.stage2.public.product_tau_low,
-        )
-        .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
+        try_eq_mle(&registers_opening_point, &product_tau_low)
+            .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
     )?;
 
     let instruction_outputs = instruction::input_virtualization_output_openings();

@@ -14,7 +14,7 @@ pub use instruction_claim_reduction::{
     InstructionClaimReductionOutputClaims,
 };
 pub use outputs::{
-    Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2ZkOutput,
+    Stage2BatchOutputClaims, Stage2Challenges, Stage2ClearOutput, Stage2Output, Stage2ZkOutput,
     VerifiedProductUniSkip,
 };
 pub use product_remainder::{

@@ -26,8 +26,8 @@ use super::{
         InstructionClaimReductionOutputClaims,
     },
     outputs::{
-        Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output, Stage2PublicOutput,
-        Stage2ZkOutput, VerifiedProductUniSkip,
+        Stage2BatchOutputClaims, Stage2Challenges, Stage2ClearOutput, Stage2Output, Stage2ZkOutput,
+        VerifiedProductUniSkip,
     },
     product_remainder::{
         product_remainder_inputs_from_uniskip_output, ProductRemainder, ProductRemainderInputClaims,
@@ -83,7 +83,6 @@ struct Stage2ZkBatch<F: Field, C> {
 // carries committed consistency plus the point-only `output_points`.
 enum Stage2Batch<F: Field, C> {
     Clear {
-        public: Stage2PublicOutput<F>,
         output_claims: Stage2BatchOutputClaims<OpeningClaim<F>>,
     },
     Zk(Stage2ZkBatch<F, C>),
@@ -212,21 +211,15 @@ where
     )?;
 
     match (product_uniskip, batch) {
-        (
-            Stage2ProductUniSkip::Clear(product_uniskip),
-            Stage2Batch::Clear {
-                public,
+        (Stage2ProductUniSkip::Clear(product_uniskip), Stage2Batch::Clear { output_claims }) => {
+            Ok(Stage2Output::Clear(Stage2ClearOutput {
                 output_claims,
-            },
-        ) => Ok(Stage2Output::Clear(Stage2ClearOutput {
-            public,
-            output_claims,
-            product_uniskip,
-        })),
+                product_uniskip,
+            }))
+        }
         (Stage2ProductUniSkip::Zk(product_uniskip), Stage2Batch::Zk(batch)) => {
-            let public = Stage2PublicOutput {
+            let challenges = Stage2Challenges {
                 product_uniskip_challenge: product_uniskip.product_uniskip_challenge,
-                product_tau_low: product_uniskip.tau_low,
                 product_tau_high: product_uniskip.tau_high,
                 ram_read_write_gamma: batch.ram_read_write_gamma,
                 instruction_gamma: batch.instruction_gamma,
@@ -234,7 +227,7 @@ where
             };
 
             Ok(Stage2Output::Zk(Stage2ZkOutput {
-                public,
+                challenges,
                 product_uniskip_consistency: product_uniskip.consistency,
                 product_uniskip_output_claims: product_uniskip.output_claims,
                 batch_consistency: batch.consistency,
@@ -418,7 +411,7 @@ where
     // The RAM read-write and instruction-reduction batching gammas (each a single
     // `challenge_scalar`, matching their default `draw_challenges`), drawn in inline
     // order. The other three batch relations draw no challenges. The scalars also feed
-    // `Stage2PublicOutput`, so they are kept as locals. The non-challenge
+    // the ZK arm's `Stage2Challenges`, so they are kept as locals. The non-challenge
     // `output_address_challenges` point draw stays in place, after both gammas.
     let ram_read_write_challenges = RamReadWriteChallenges {
         gamma: transcript.challenge_scalar(),
@@ -646,18 +639,7 @@ where
 
             claims.batch_outputs.append_to_transcript(transcript);
 
-            let public = Stage2PublicOutput {
-                product_uniskip_challenge,
-                product_tau_low: product_uniskip.tau_low.clone(),
-                product_tau_high: product_uniskip.tau_high,
-                ram_read_write_gamma,
-                instruction_gamma,
-                output_address_challenges,
-            };
-            Ok(Stage2Batch::Clear {
-                public,
-                output_claims,
-            })
+            Ok(Stage2Batch::Clear { output_claims })
         }
         (Stage1Output::Zk(_), Stage2ProductUniSkip::Zk(product_uniskip)) => {
             let statements = vec![

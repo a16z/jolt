@@ -190,10 +190,19 @@ impl<F: Field> Stage2BatchOutputClaims<OpeningClaim<F>> {
     }
 }
 
+/// The Fiat-Shamir values the verifier draws during stage 2: the product uni-skip
+/// reduction challenge, the freshly-drawn `product_tau_high` scalar, the RAM
+/// read-write and instruction-reduction batching gammas, and the RAM output-check
+/// address reference point (folded in like stage 6's booleanity reference points).
+/// Carried on [`Stage2ZkOutput`] so BlindFold sources them from
+/// `challenges.<field>` (matching the `input.stageN.challenges.<field>` idiom used
+/// by the sibling stages). `product_tau_low` is opening-derived — it is stage 1's
+/// remainder sumcheck point low half — so it is not stored here: the clear path
+/// reads it off the produced `product_uniskip.tau_low`, and BlindFold recomputes it
+/// from `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2PublicOutput<F: Field> {
+pub struct Stage2Challenges<F: Field> {
     pub product_uniskip_challenge: F,
-    pub product_tau_low: Vec<F>,
     pub product_tau_high: F,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
@@ -202,7 +211,6 @@ pub struct Stage2PublicOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ClearOutput<F: Field> {
-    pub public: Stage2PublicOutput<F>,
     /// The produced batch openings paired with their points (point + value) via the
     /// `OpeningClaim` cell. The opening points are derived from each relation's
     /// sumcheck point; later stages read them through the
@@ -214,7 +222,7 @@ pub struct Stage2ClearOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ZkOutput<F: Field, C> {
-    pub public: Stage2PublicOutput<F>,
+    pub challenges: Stage2Challenges<F>,
     pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
