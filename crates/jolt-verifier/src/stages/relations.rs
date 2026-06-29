@@ -874,3 +874,74 @@ mod tests {
         assert_append_matches_values(&outputs);
     }
 }
+
+#[cfg(test)]
+// `FixtureSumchecks` and the sibling generated aggregates exist only to exercise
+// `#[derive(SumcheckBatch)]`; they are never constructed at runtime.
+#[expect(dead_code)]
+mod sumcheck_batch_derive_tests {
+    use super::SumcheckBatch;
+    use crate::stages::stage5::{
+        InstructionReadRaf, InstructionReadRafOutputClaims, RegistersValEvaluation,
+        RegistersValEvaluationOutputClaims,
+    };
+    use jolt_field::{Field, Fr, FromPrimitiveInt};
+
+    #[derive(SumcheckBatch)]
+    struct FixtureSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: RegistersValEvaluation<F>,
+    }
+
+    #[test]
+    fn output_aggregate_opening_values_follow_declaration_order() {
+        let fr = Fr::from_u64;
+        let claims = FixtureOutputClaims::<Fr, Fr> {
+            instruction_read_raf: InstructionReadRafOutputClaims {
+                lookup_table_flags: vec![fr(1), fr(2)],
+                instruction_ra: vec![fr(3)],
+                instruction_raf_flag: fr(4),
+            },
+            registers_val_evaluation: RegistersValEvaluationOutputClaims {
+                rd_inc: fr(5),
+                rd_wa: fr(6),
+            },
+        };
+
+        assert_eq!(
+            claims.opening_values(),
+            vec![fr(1), fr(2), fr(3), fr(4), fr(5), fr(6)],
+        );
+    }
+
+    #[derive(SumcheckBatch)]
+    struct FixtureOptionSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: Option<RegistersValEvaluation<F>>,
+    }
+
+    #[test]
+    fn output_aggregate_chains_present_and_skips_absent_option_members() {
+        let fr = Fr::from_u64;
+        let instruction = || InstructionReadRafOutputClaims {
+            lookup_table_flags: vec![fr(1)],
+            instruction_ra: vec![fr(2)],
+            instruction_raf_flag: fr(3),
+        };
+
+        let present = FixtureOptionOutputClaims::<Fr, Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: Some(RegistersValEvaluationOutputClaims {
+                rd_inc: fr(4),
+                rd_wa: fr(5),
+            }),
+        };
+        assert_eq!(present.opening_values(), vec![fr(1), fr(2), fr(3), fr(4), fr(5)]);
+
+        let absent = FixtureOptionOutputClaims::<Fr, Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: None,
+        };
+        assert_eq!(absent.opening_values(), vec![fr(1), fr(2), fr(3)]);
+    }
+}
