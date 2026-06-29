@@ -17,6 +17,11 @@ pub use jolt_claims::{
     ZipOpenings,
 };
 
+/// `#[derive(SumcheckBatch)]` generates a stage's aggregate claim types from a
+/// struct of [`ConcreteSumcheck`] instances; re-exported here alongside the
+/// per-relation claim plumbing it composes. See `specs/sumcheck-batch-derive.md`.
+pub use jolt_verifier_derive::SumcheckBatch;
+
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
 };
