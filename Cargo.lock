@@ -3720,12 +3720,17 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-verifier-derive",
  "num-traits",
  "postcard",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "jolt-verifier-derive"
+version = "0.1.0"
 
 [[package]]
 name = "jolt-witness"
