@@ -46,7 +46,7 @@ where
     let hamming_point = input
         .stage7
         .batch_consistency
-        .try_instance_point(hamming_claims.spec().rounds)
+        .try_instance_point(hamming_claims.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::HammingWeightClaimReduction, error)
         })?;
@@ -77,56 +77,57 @@ where
     // The stage-7 ZK output no longer carries each address phase's sumcheck point;
     // recompute the prefix-aligned point from the committed consistency, matching
     // `try_instance_point_at(0, rounds)` in the verifier's ZK arm.
-    let address_phase_point = |spec: JoltSumcheckSpec, stage| {
+    let address_phase_point = |rounds: usize, stage| {
         input
             .stage7
             .batch_consistency
-            .try_instance_point_at(0, spec.rounds)
+            .try_instance_point_at(0, rounds)
             .map_err(|error| stage_sumcheck_error(stage, error))
     };
     if let (Some(layout), Some(claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
-        let point = address_phase_point(claim.spec(), JoltRelationId::AdviceClaimReduction)?;
+        let point = address_phase_point(claim.rounds(), JoltRelationId::AdviceClaimReduction)?;
         add_advice_address_publics(input, values, layout, JoltAdviceKind::Trusted, &point)?;
     }
     if let (Some(layout), Some(claim)) = (untrusted_layout.as_ref(), untrusted_claims.as_ref()) {
-        let point = address_phase_point(claim.spec(), JoltRelationId::AdviceClaimReduction)?;
+        let point = address_phase_point(claim.rounds(), JoltRelationId::AdviceClaimReduction)?;
         add_advice_address_publics(input, values, layout, JoltAdviceKind::Untrusted, &point)?;
     }
     if let (Some(layout), Some(claim)) = (
         bytecode_reduction_layout.as_ref(),
         bytecode_reduction_claims.as_ref(),
     ) {
-        let point = address_phase_point(claim.spec(), JoltRelationId::BytecodeClaimReduction)?;
+        let point = address_phase_point(claim.rounds(), JoltRelationId::BytecodeClaimReduction)?;
         add_bytecode_reduction_address_publics(input, values, layout, &point)?;
     }
     if let (Some(layout), Some(claim)) = (
         program_image_reduction_layout.as_ref(),
         program_image_reduction_claims.as_ref(),
     ) {
-        let point = address_phase_point(claim.spec(), JoltRelationId::ProgramImageClaimReduction)?;
+        let point =
+            address_phase_point(claim.rounds(), JoltRelationId::ProgramImageClaimReduction)?;
         add_program_image_reduction_address_publics(input, values, layout, &point)?;
     }
 
-    let mut specs = vec![hamming_claims.spec()];
+    let mut rounds = vec![hamming_claims.rounds()];
     let mut inputs = vec![hamming_claims.input_expression::<PCS::Field>()];
     let mut outputs = vec![hamming_claims.output_expression::<PCS::Field>()];
     if let Some(claim) = trusted_claims {
-        specs.push(claim.spec());
+        rounds.push(claim.rounds());
         inputs.push(claim.input_expression::<PCS::Field>());
         outputs.push(claim.output_expression::<PCS::Field>());
     }
     if let Some(claim) = untrusted_claims {
-        specs.push(claim.spec());
+        rounds.push(claim.rounds());
         inputs.push(claim.input_expression::<PCS::Field>());
         outputs.push(claim.output_expression::<PCS::Field>());
     }
     if let Some(claim) = bytecode_reduction_claims {
-        specs.push(claim.spec());
+        rounds.push(claim.rounds());
         inputs.push(claim.input_expression::<PCS::Field>());
         outputs.push(claim.output_expression::<PCS::Field>());
     }
     if let Some(claim) = program_image_reduction_claims {
-        specs.push(claim.spec());
+        rounds.push(claim.rounds());
         inputs.push(claim.input_expression::<PCS::Field>());
         outputs.push(claim.output_expression::<PCS::Field>());
     }
@@ -157,7 +158,8 @@ where
     add_batched_stage(
         builder,
         "stage7.batch",
-        &specs,
+        hamming_claims.domain(),
+        &rounds,
         &inputs,
         &outputs,
         &input.stage7.batch_consistency,

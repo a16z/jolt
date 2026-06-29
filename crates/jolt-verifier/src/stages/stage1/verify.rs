@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    geometry::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain, JoltSumcheckSpec,
+    geometry::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
@@ -43,24 +43,22 @@ where
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = transcript.challenge_vector(log_t + 2);
 
-    let uniskip_spec = JoltSumcheckSpec::centered_integer(
-        SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
-        1,
-        SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-    );
-    if uniskip_spec.degree == 0 {
+    let uniskip_domain = JoltSumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
+    let uniskip_rounds = 1;
+    let uniskip_degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
+    if uniskip_degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
-            degree: uniskip_spec.degree,
+            degree: uniskip_degree,
         });
     }
-    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_spec.domain else {
+    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_domain else {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage,
             reason: "Stage 1 uni-skip sumcheck must use the centered-integer domain".to_string(),
         });
     };
-    let uniskip_statement = SumcheckStatement::new(uniskip_spec.rounds, uniskip_spec.degree);
+    let uniskip_statement = SumcheckStatement::new(uniskip_rounds, uniskip_degree);
     let (uniskip_challenge, clear_uniskip, zk_uniskip_consistency) = if checked.zk {
         let consistency = proof
             .stages
@@ -105,11 +103,7 @@ where
             .stages
             .stage1_uni_skip_first_round_proof
             .verify(
-                &SumcheckClaim::new(
-                    uniskip_spec.rounds,
-                    uniskip_spec.degree,
-                    uniskip_input_claim,
-                ),
+                &SumcheckClaim::new(uniskip_rounds, uniskip_degree, uniskip_input_claim),
                 CenteredIntegerDomain::new(domain_size),
                 UNISKIP_ROUND_TRANSCRIPT_LABEL,
                 transcript,
@@ -141,20 +135,15 @@ where
         (*uniskip_challenge, Some(uniskip), None)
     };
 
-    let remainder_spec = JoltSumcheckSpec::boolean(1 + log_t, SPARTAN_OUTER_REMAINDER_DEGREE);
-    if remainder_spec.degree == 0 {
+    let remainder_rounds = 1 + log_t;
+    let remainder_degree = SPARTAN_OUTER_REMAINDER_DEGREE;
+    if remainder_degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
-            degree: remainder_spec.degree,
+            degree: remainder_degree,
         });
     }
-    if !matches!(remainder_spec.domain, JoltSumcheckDomain::BooleanHypercube) {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: "Stage 1 remainder sumcheck must use the Boolean hypercube".to_string(),
-        });
-    }
-    let remainder_statement = SumcheckStatement::new(remainder_spec.rounds, remainder_spec.degree);
+    let remainder_statement = SumcheckStatement::new(remainder_rounds, remainder_degree);
     let (clear_remainder, zk_remainder_consistency) = if checked.zk {
         let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
             &[remainder_statement],
@@ -205,8 +194,8 @@ where
         let no_challenges = NoChallenges::default();
         let remainder_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
             &[SumcheckClaim::new(
-                remainder_spec.rounds,
-                remainder_spec.degree,
+                remainder_rounds,
+                remainder_degree,
                 remainder_input_claim,
             )],
             &proof.stages.stage1_sumcheck_proof,

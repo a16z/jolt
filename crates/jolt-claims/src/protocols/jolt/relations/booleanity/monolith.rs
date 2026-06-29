@@ -4,7 +4,7 @@ use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::booleanity::{booleanity_cycle_output, BooleanityDimensions};
-use crate::protocols::jolt::{BooleanityChallenge, JoltExpr, JoltRelationId, JoltSumcheckSpec};
+use crate::protocols::jolt::{BooleanityChallenge, JoltExpr, JoltRelationId};
 use crate::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The committed per-family `Ra` openings produced by the cycle phase; every
@@ -68,8 +68,12 @@ impl SymbolicSumcheck for Booleanity {
         JoltRelationId::Booleanity
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.sumcheck_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -88,7 +92,7 @@ mod tests {
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use crate::protocols::jolt::{
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltCommittedPolynomial,
-        JoltDerivedId, JoltOpeningId, JoltSumcheckSpec,
+        JoltDerivedId, JoltOpeningId,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -161,7 +165,8 @@ mod tests {
     fn booleanity_symbolic_matches_dependencies() {
         let relation = Booleanity::new(dimensions(1, 1, 1));
         assert_eq!(Booleanity::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(13, 3));
+        assert_eq!(relation.rounds(), 13);
+        assert_eq!(relation.degree(), 3);
         assert!(relation
             .input_expression::<Fr>()
             .required_openings()

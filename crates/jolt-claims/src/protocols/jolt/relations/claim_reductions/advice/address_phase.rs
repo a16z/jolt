@@ -7,9 +7,10 @@ use super::AdviceReductionShape;
 use crate::protocols::jolt::geometry::claim_reductions::advice::{
     cycle_phase_advice_opening, final_advice_opening,
 };
+use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::{
     AdviceClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
-    JoltRelationId, JoltSumcheckSpec,
+    JoltRelationId,
 };
 use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
@@ -61,8 +62,12 @@ impl SymbolicSumcheck for AddressPhase {
         JoltRelationId::AdviceClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.1.address_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.1.address_phase_total_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        TWO_PHASE_DEGREE_BOUND
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -128,7 +133,11 @@ mod tests {
         let relation = AddressPhase::new((JoltAdviceKind::Trusted, with_address_phase()));
 
         assert_eq!(AddressPhase::id(), JoltRelationId::AdviceClaimReduction);
-        assert_eq!(relation.spec(), with_address_phase().address_sumcheck());
+        assert_eq!(
+            relation.rounds(),
+            with_address_phase().address_phase_total_rounds()
+        );
+        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]

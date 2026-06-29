@@ -7,7 +7,7 @@ use crate::protocols::jolt::geometry::registers::{
     rd_inc_val_evaluation, rd_wa_val_evaluation, registers_val_read_write,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, RegistersValEvaluationPublic, TraceDimensions,
+    JoltExpr, JoltRelationId, RegistersValEvaluationPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
 use crate::{derived, opening, InputClaims, OutputClaims};
@@ -57,8 +57,12 @@ impl SymbolicSumcheck for ValEvaluation {
         JoltRelationId::RegistersValEvaluation
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(3)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -140,7 +144,8 @@ mod tests {
     fn val_evaluation_symbolic_matches_dependencies() {
         let relation = ValEvaluation::new(trace_dimensions());
         assert_eq!(ValEvaluation::id(), JoltRelationId::RegistersValEvaluation);
-        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
+        assert_eq!(relation.rounds(), trace_dimensions().log_t());
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![

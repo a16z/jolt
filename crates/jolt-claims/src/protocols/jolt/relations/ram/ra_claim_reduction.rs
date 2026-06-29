@@ -7,8 +7,8 @@ use crate::protocols::jolt::geometry::ram::{
     ram_ra, ram_ra_claim_reduction, ram_ra_raf_evaluation, ram_ra_val_check,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, RamRaClaimReductionChallenge,
-    RamRaClaimReductionPublic, TraceDimensions,
+    JoltExpr, JoltRelationId, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
+    TraceDimensions,
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
@@ -72,8 +72,12 @@ impl SymbolicSumcheck for RaClaimReduction {
         JoltRelationId::RamRaClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(2)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -189,7 +193,8 @@ mod tests {
         let relation = RaClaimReduction::new(trace_dimensions());
 
         assert_eq!(RaClaimReduction::id(), JoltRelationId::RamRaClaimReduction);
-        assert_eq!(relation.spec(), trace_dimensions().sumcheck(2));
+        assert_eq!(relation.rounds(), trace_dimensions().log_t());
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![

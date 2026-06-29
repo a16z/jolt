@@ -3,11 +3,12 @@
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
+use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::geometry::claim_reductions::program_image::{
     cycle_phase_program_image_opening, final_output_expr, ram_val_check_contribution_opening,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
     PrecommittedReductionDimensions,
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
@@ -57,8 +58,12 @@ impl SymbolicSumcheck for CyclePhase {
         JoltRelationId::ProgramImageClaimReductionCyclePhase
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.cycle_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.cycle_phase_total_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        TWO_PHASE_DEGREE_BOUND
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -90,7 +95,8 @@ mod tests {
             CyclePhase::id(),
             JoltRelationId::ProgramImageClaimReductionCyclePhase
         );
-        assert_eq!(relation.spec(), dimensions.cycle_sumcheck());
+        assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
+        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![ram_val_check_contribution_opening()]

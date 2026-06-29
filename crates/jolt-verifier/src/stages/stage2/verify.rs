@@ -91,11 +91,17 @@ enum Stage2Batch<F: Field, C> {
 const PRODUCT_UNISKIP_OUTPUT_CLAIMS: usize = 1;
 const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 15;
 
-fn selected_product_uniskip_sumcheck() -> jolt_claims::protocols::jolt::JoltSumcheckSpec {
-    jolt_claims::protocols::jolt::JoltSumcheckSpec::centered_integer(
+fn selected_product_uniskip_rounds() -> usize {
+    1
+}
+
+fn selected_product_uniskip_degree() -> usize {
+    SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
+}
+
+fn selected_product_uniskip_domain() -> jolt_claims::protocols::jolt::JoltSumcheckDomain {
+    jolt_claims::protocols::jolt::JoltSumcheckDomain::centered_integer(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        1,
-        SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
     )
 }
 
@@ -282,14 +288,16 @@ where
     tau_low.reverse();
 
     let tau_high = transcript.challenge();
-    let uniskip_spec = selected_product_uniskip_sumcheck();
-    if uniskip_spec.degree == 0 {
+    let uniskip_rounds = selected_product_uniskip_rounds();
+    let uniskip_degree = selected_product_uniskip_degree();
+    let uniskip_domain = selected_product_uniskip_domain();
+    if uniskip_degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
-            degree: uniskip_spec.degree,
+            degree: uniskip_degree,
         });
     }
-    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_spec.domain else {
+    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_domain else {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage,
             reason: "Stage 2 product uni-skip sumcheck must use the centered-integer domain"
@@ -310,11 +318,7 @@ where
                 .stages
                 .stage2_uni_skip_first_round_proof
                 .verify(
-                    &SumcheckClaim::new(
-                        uniskip_spec.rounds,
-                        uniskip_spec.degree,
-                        uniskip_input_claim,
-                    ),
+                    &SumcheckClaim::new(uniskip_rounds, uniskip_degree, uniskip_input_claim),
                     CenteredIntegerDomain::new(domain_size),
                     UNISKIP_ROUND_TRANSCRIPT_LABEL,
                     transcript,
@@ -340,7 +344,7 @@ where
                 .stages
                 .stage2_uni_skip_first_round_proof
                 .verify_committed_consistency(
-                    SumcheckStatement::new(uniskip_spec.rounds, uniskip_spec.degree),
+                    SumcheckStatement::new(uniskip_rounds, uniskip_degree),
                     transcript,
                 )
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -400,14 +404,43 @@ where
             }
         })?;
 
-    let ram_read_write_claims =
-        relations::ram::ReadWriteChecking::new(read_write_dimensions).spec();
-    let product_remainder_claims =
-        relations::spartan::ProductRemainder::new(product_dimensions).spec();
-    let instruction_claim_reduction_claims =
-        relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions).spec();
-    let ram_raf_evaluation_claims = relations::ram::RafEvaluation::new(raf_dimensions).spec();
-    let ram_output_check_claims = relations::ram::OutputCheck::new(read_write_dimensions).spec();
+    let ram_read_write_rel = relations::ram::ReadWriteChecking::new(read_write_dimensions);
+    let product_remainder_rel = relations::spartan::ProductRemainder::new(product_dimensions);
+    let instruction_claim_reduction_rel =
+        relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions);
+    let ram_raf_evaluation_rel = relations::ram::RafEvaluation::new(raf_dimensions);
+    let ram_output_check_rel = relations::ram::OutputCheck::new(read_write_dimensions);
+
+    struct RelSpec {
+        rounds: usize,
+        degree: usize,
+        domain: JoltSumcheckDomain,
+    }
+    let ram_read_write_claims = RelSpec {
+        rounds: ram_read_write_rel.rounds(),
+        degree: ram_read_write_rel.degree(),
+        domain: ram_read_write_rel.domain(),
+    };
+    let product_remainder_claims = RelSpec {
+        rounds: product_remainder_rel.rounds(),
+        degree: product_remainder_rel.degree(),
+        domain: product_remainder_rel.domain(),
+    };
+    let instruction_claim_reduction_claims = RelSpec {
+        rounds: instruction_claim_reduction_rel.rounds(),
+        degree: instruction_claim_reduction_rel.degree(),
+        domain: instruction_claim_reduction_rel.domain(),
+    };
+    let ram_raf_evaluation_claims = RelSpec {
+        rounds: ram_raf_evaluation_rel.rounds(),
+        degree: ram_raf_evaluation_rel.degree(),
+        domain: ram_raf_evaluation_rel.domain(),
+    };
+    let ram_output_check_claims = RelSpec {
+        rounds: ram_output_check_rel.rounds(),
+        degree: ram_output_check_rel.degree(),
+        domain: ram_output_check_rel.domain(),
+    };
     // The RAM read-write and instruction-reduction batching gammas (each a single
     // `challenge_scalar`, matching their default `draw_challenges`), drawn in inline
     // order. The other three batch relations draw no challenges. The scalars also feed
@@ -425,26 +458,34 @@ where
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
 
-    for (relation, spec) in [
+    for (relation, domain, degree) in [
         (
             relations::ram::ReadWriteChecking::id(),
-            &ram_read_write_claims,
+            ram_read_write_claims.domain,
+            ram_read_write_claims.degree,
         ),
         (
             relations::spartan::ProductRemainder::id(),
-            &product_remainder_claims,
+            product_remainder_claims.domain,
+            product_remainder_claims.degree,
         ),
         (
             relations::claim_reductions::instruction::ClaimReduction::id(),
-            &instruction_claim_reduction_claims,
+            instruction_claim_reduction_claims.domain,
+            instruction_claim_reduction_claims.degree,
         ),
         (
             relations::ram::RafEvaluation::id(),
-            &ram_raf_evaluation_claims,
+            ram_raf_evaluation_claims.domain,
+            ram_raf_evaluation_claims.degree,
         ),
-        (relations::ram::OutputCheck::id(), &ram_output_check_claims),
+        (
+            relations::ram::OutputCheck::id(),
+            ram_output_check_claims.domain,
+            ram_output_check_claims.degree,
+        ),
     ] {
-        check_relation_boolean_hypercube(relation, spec)?;
+        check_relation_boolean_hypercube(relation, domain, degree)?;
     }
 
     match (stage1, product_uniskip) {

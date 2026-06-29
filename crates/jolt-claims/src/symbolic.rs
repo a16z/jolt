@@ -1,7 +1,7 @@
 use jolt_field::RingCore;
 
 use crate::util::extend_unique;
-use crate::{Expr, SumcheckSpec};
+use crate::{Expr, SumcheckDomain};
 
 /// Pure symbolic description of one sumcheck relation: its id, sumcheck spec, and
 /// input/output algebra over the relation's id types. The expression methods are
@@ -39,8 +39,20 @@ pub trait SymbolicSumcheck {
     /// pairs).
     fn id() -> Self::RelationId;
 
-    /// The sumcheck spec, derived from [`Shape`](Self::Shape).
-    fn spec(&self) -> SumcheckSpec;
+    /// The domain this sumcheck runs over. Defaults to the Boolean hypercube;
+    /// only the univariate-skip relations override it (centered-integer domain).
+    /// A fixed constant per relation, independent of the [`Shape`](Self::Shape);
+    /// it takes `&self` only so it reads like its `rounds`/`degree` siblings at
+    /// the (instance) call sites.
+    fn domain(&self) -> SumcheckDomain {
+        SumcheckDomain::BooleanHypercube
+    }
+
+    /// The sumcheck round count, derived from [`Shape`](Self::Shape).
+    fn rounds(&self) -> usize;
+
+    /// The per-round degree bound, derived from [`Shape`](Self::Shape).
+    fn degree(&self) -> usize;
 
     fn input_expression<F: RingCore>(
         &self,
@@ -88,7 +100,7 @@ pub trait SymbolicSumcheck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{challenge, derived, opening, Expr, SumcheckSpec};
+    use crate::{challenge, derived, opening, Expr};
     use jolt_field::Fr;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -121,8 +133,11 @@ mod tests {
         fn id() -> u8 {
             7
         }
-        fn spec(&self) -> SumcheckSpec {
-            SumcheckSpec::boolean(3, 1)
+        fn rounds(&self) -> usize {
+            3
+        }
+        fn degree(&self) -> usize {
+            1
         }
         fn input_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {
             opening(O::A) + challenge(Ch::G) * opening(O::B)

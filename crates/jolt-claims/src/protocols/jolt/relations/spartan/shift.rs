@@ -10,8 +10,7 @@ use crate::protocols::jolt::geometry::spartan::{
     unexpanded_pc_shift, SHIFT_DEGREE,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, SpartanShiftChallenge, SpartanShiftPublic,
-    TraceDimensions,
+    JoltExpr, JoltRelationId, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
 };
 use crate::{
     challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
@@ -89,8 +88,12 @@ impl SymbolicSumcheck for Shift {
         JoltRelationId::SpartanShift
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(SHIFT_DEGREE)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        SHIFT_DEGREE
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -206,10 +209,8 @@ mod tests {
     fn shift_symbolic_matches_dependencies() {
         let relation = Shift::new(TraceDimensions::new(5));
         assert_eq!(Shift::id(), JoltRelationId::SpartanShift);
-        assert_eq!(
-            relation.spec(),
-            TraceDimensions::new(5).sumcheck(SHIFT_DEGREE)
-        );
+        assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
+        assert_eq!(relation.degree(), SHIFT_DEGREE);
         assert_eq!(
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(SpartanShiftChallenge::Gamma)]

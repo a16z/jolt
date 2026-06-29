@@ -5,11 +5,14 @@ use core::marker::PhantomData;
 use jolt_field::{Field, RingCore};
 use serde::{Deserialize, Serialize};
 
+use crate::protocols::jolt::geometry::dimensions::{
+    OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use crate::protocols::jolt::geometry::spartan::{outer_uniskip_opening, SpartanOuterDimensions};
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
 };
-use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{opening, InputClaims, OutputClaims, SumcheckDomain, SymbolicSumcheck};
 
 /// The Spartan outer uni-skip consumes no openings (its input claim is the constant
 /// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
@@ -52,9 +55,7 @@ pub struct OuterUniskipOutputClaims<C> {
 /// verification is special-cased (centered-integer domain) in the verifier's stage
 /// 1; this relation supplies the input/output claim algebra. The input claim is
 /// zero (the first round has no consumed openings), so the inputs stay empty.
-pub struct OuterUniskip {
-    shape: SpartanOuterDimensions,
-}
+pub struct OuterUniskip;
 
 impl SymbolicSumcheck for OuterUniskip {
     type RelationId = JoltRelationId;
@@ -66,16 +67,24 @@ impl SymbolicSumcheck for OuterUniskip {
     type Inputs<C> = OuterUniskipInputClaims<C>;
     type Outputs<C> = OuterUniskipOutputClaims<C>;
 
-    fn new(shape: SpartanOuterDimensions) -> Self {
-        Self { shape }
+    fn new(_shape: SpartanOuterDimensions) -> Self {
+        Self
     }
 
     fn id() -> JoltRelationId {
         JoltRelationId::SpartanOuter
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.uniskip_sumcheck()
+    fn domain(&self) -> SumcheckDomain {
+        JoltSumcheckDomain::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE)
+    }
+
+    fn rounds(&self) -> usize {
+        1
+    }
+
+    fn degree(&self) -> usize {
+        OUTER_UNISKIP_FIRST_ROUND_DEGREE
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {

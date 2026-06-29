@@ -13,13 +13,10 @@ use super::super::{
     JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
-use super::dimensions::{
-    JoltSumcheckSpec, OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-    PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-};
+use super::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 
-const OUTER_REMAINDER_DEGREE: usize = 3;
-const PRODUCT_REMAINDER_DEGREE: usize = 3;
+pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
+pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
 const SPARTAN_OUTER_RV64_ROW_COUNT: usize = 19;
 const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
@@ -139,16 +136,8 @@ impl SpartanOuterDimensions {
         self.include_constant_term
     }
 
-    pub const fn uniskip_sumcheck(&self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::centered_integer(
-            OUTER_UNISKIP_DOMAIN_SIZE,
-            1,
-            OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-        )
-    }
-
-    pub const fn remainder_sumcheck(&self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(1 + self.log_t, OUTER_REMAINDER_DEGREE)
+    pub const fn remainder_rounds(&self) -> usize {
+        1 + self.log_t
     }
 
     pub fn rv64(log_t: usize) -> Self {
@@ -297,18 +286,6 @@ impl SpartanProductDimensions {
 
     pub const fn log_t(self) -> usize {
         self.log_t
-    }
-
-    pub const fn uniskip_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::centered_integer(
-            PRODUCT_UNISKIP_DOMAIN_SIZE,
-            1,
-            PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-        )
-    }
-
-    pub const fn remainder_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, PRODUCT_REMAINDER_DEGREE)
     }
 }
 

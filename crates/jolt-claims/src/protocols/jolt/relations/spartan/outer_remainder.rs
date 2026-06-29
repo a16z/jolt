@@ -5,11 +5,10 @@ use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::spartan::{
-    outer_opening, outer_uniskip_opening, SpartanOuterDimensions,
+    outer_opening, outer_uniskip_opening, SpartanOuterDimensions, OUTER_REMAINDER_DEGREE,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
-    SpartanOuterPublic,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, SpartanOuterPublic,
 };
 use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
@@ -131,8 +130,12 @@ impl SymbolicSumcheck for OuterRemainder {
         JoltRelationId::SpartanOuter
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.remainder_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.remainder_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        OUTER_REMAINDER_DEGREE
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {

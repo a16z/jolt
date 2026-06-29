@@ -8,7 +8,7 @@ use crate::protocols::jolt::geometry::registers::{
     rs1_ra_read_write, rs1_value_claim, rs2_ra_read_write, rs2_value_claim,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, ReadWriteDimensions, RegistersReadWriteChallenge,
+    JoltExpr, JoltRelationId, ReadWriteDimensions, RegistersReadWriteChallenge,
     RegistersReadWritePublic,
 };
 use crate::SymbolicSumcheck;
@@ -81,8 +81,12 @@ impl SymbolicSumcheck for ReadWriteChecking {
         JoltRelationId::RegistersReadWriteChecking
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.read_write_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.read_write_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -211,9 +215,10 @@ mod tests {
             JoltRelationId::RegistersReadWriteChecking
         );
         assert_eq!(
-            relation.spec(),
-            read_write_dimensions().read_write_sumcheck()
+            relation.rounds(),
+            read_write_dimensions().read_write_rounds()
         );
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![

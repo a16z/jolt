@@ -3,7 +3,7 @@ use jolt_field::{Field, RingCore};
 use crate::opening;
 
 use super::super::super::{JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial};
-use super::super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
+use super::super::dimensions::JoltFormulaPointError;
 use super::super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -18,10 +18,6 @@ impl HammingWeightClaimReductionDimensions {
             layout,
             log_k_chunk,
         }
-    }
-
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_k_chunk, 2)
     }
 
     pub fn opening_point<F: Field>(

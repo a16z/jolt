@@ -8,7 +8,7 @@ use crate::protocols::jolt::geometry::claim_reductions::registers::{
     rs2_value_reduced, rs2_value_spartan,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
 use crate::{
@@ -78,8 +78,12 @@ impl SymbolicSumcheck for ClaimReduction {
         JoltRelationId::RegistersClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(2)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -204,7 +208,8 @@ mod tests {
             ClaimReduction::id(),
             JoltRelationId::RegistersClaimReduction
         );
-        assert_eq!(relation.spec(), dimensions().sumcheck(2));
+        assert_eq!(relation.rounds(), dimensions().log_t());
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![

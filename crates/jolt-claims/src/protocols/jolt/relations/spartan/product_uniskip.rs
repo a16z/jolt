@@ -3,12 +3,15 @@
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
+use crate::protocols::jolt::geometry::dimensions::{
+    PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use crate::protocols::jolt::geometry::spartan::{
     product_outer_opening, product_should_branch_outer_opening, product_should_jump_outer_opening,
     product_uniskip_opening, product_uniskip_weight, SpartanProductDimensions,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
@@ -43,9 +46,7 @@ pub struct ProductUniskipOutputClaims<C> {
 
 /// The Spartan product univariate-skip sumcheck (first round). A standalone
 /// centered-integer sumcheck whose reduced opening feeds the product remainder.
-pub struct ProductUniskip {
-    shape: SpartanProductDimensions,
-}
+pub struct ProductUniskip;
 
 impl SymbolicSumcheck for ProductUniskip {
     type RelationId = JoltRelationId;
@@ -57,16 +58,24 @@ impl SymbolicSumcheck for ProductUniskip {
     type Inputs<C> = ProductUniskipInputClaims<C>;
     type Outputs<C> = ProductUniskipOutputClaims<C>;
 
-    fn new(shape: SpartanProductDimensions) -> Self {
-        Self { shape }
+    fn new(_shape: SpartanProductDimensions) -> Self {
+        Self
     }
 
     fn id() -> JoltRelationId {
         JoltRelationId::SpartanProductVirtualization
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.uniskip_sumcheck()
+    fn domain(&self) -> JoltSumcheckDomain {
+        JoltSumcheckDomain::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE)
+    }
+
+    fn rounds(&self) -> usize {
+        1
+    }
+
+    fn degree(&self) -> usize {
+        PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {

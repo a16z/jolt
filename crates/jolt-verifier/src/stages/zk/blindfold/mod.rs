@@ -69,7 +69,7 @@ use jolt_claims::{
                 bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
                 hamming_weight, program_image, registers as registers_claim_reduction,
             },
-            dimensions::{JoltFormulaDimensions, JoltSumcheckSpec, REGISTER_ADDRESS_BITS},
+            dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
             instruction, ram,
             spartan::{
                 self, branch_flag_product, jump_flag_product, left_instruction_input_product,
@@ -112,9 +112,8 @@ use jolt_poly::{
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
-    SPARTAN_OUTER_REMAINDER_DEGREE, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
-    SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-    SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
@@ -221,7 +220,8 @@ where
 fn add_batched_stage<F, C>(
     builder: Builder<F, C>,
     name: &'static str,
-    specs: &[JoltSumcheckSpec],
+    batch_domain: JoltSumcheckDomain,
+    rounds: &[usize],
     inputs: &[JoltExpr<F>],
     outputs: &[JoltExpr<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
@@ -234,13 +234,13 @@ where
     F: Field,
     C: Clone,
 {
-    let Some(first) = specs.first() else {
+    if rounds.is_empty() {
         return Err(VerifierError::BlindFoldConstructionFailed {
             reason: format!("{name}: empty batched claims"),
         });
-    };
-    let domain = domain_spec(*first);
-    let input_claim = batched_input_expr(specs, inputs, consistency);
+    }
+    let domain = domain_spec(batch_domain);
+    let input_claim = batched_input_expr(rounds, inputs, consistency);
     let output_claim = batched_output_expr(outputs, consistency);
     add_stage(
         builder,
@@ -307,7 +307,7 @@ where
 }
 
 fn batched_input_expr<F, C>(
-    specs: &[JoltSumcheckSpec],
+    rounds: &[usize],
     inputs: &[JoltExpr<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
 ) -> VerifierExpr<F>
@@ -316,12 +316,15 @@ where
 {
     inputs
         .iter()
-        .zip(specs)
+        .zip(rounds)
         .zip(&consistency.batching_coefficients)
-        .fold(VerifierExpr::zero(), |acc, ((input, spec), coefficient)| {
-            let scale = *coefficient * F::pow2(consistency.max_num_vars - spec.rounds);
-            acc + scale_expr(map_jolt_expr(input.clone()), scale)
-        })
+        .fold(
+            VerifierExpr::zero(),
+            |acc, ((input, instance_rounds), coefficient)| {
+                let scale = *coefficient * F::pow2(consistency.max_num_vars - *instance_rounds);
+                acc + scale_expr(map_jolt_expr(input.clone()), scale)
+            },
+        )
 }
 
 fn batched_output_expr<F, C>(
@@ -411,8 +414,8 @@ fn require_expr_sources<F: Field>(
     Ok(())
 }
 
-fn domain_spec(spec: JoltSumcheckSpec) -> SumcheckDomainSpec {
-    match spec.domain {
+fn domain_spec(domain: JoltSumcheckDomain) -> SumcheckDomainSpec {
+    match domain {
         JoltSumcheckDomain::BooleanHypercube => SumcheckDomainSpec::BooleanHypercube,
         JoltSumcheckDomain::CenteredInteger { domain_size } => {
             SumcheckDomainSpec::CenteredInteger { domain_size }
@@ -673,14 +676,14 @@ where
 fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
-    bytecode_address_claims: JoltSumcheckSpec,
-    bytecode_claims: JoltSumcheckSpec,
-    booleanity_address_claims: JoltSumcheckSpec,
-    booleanity_claims: JoltSumcheckSpec,
-    ram_hamming_claims: JoltSumcheckSpec,
-    ram_ra_claims: JoltSumcheckSpec,
-    instruction_ra_claims: JoltSumcheckSpec,
-    inc_claims: JoltSumcheckSpec,
+    bytecode_address_rounds: usize,
+    bytecode_rounds: usize,
+    booleanity_address_rounds: usize,
+    booleanity_rounds: usize,
+    ram_hamming_rounds: usize,
+    ram_ra_rounds: usize,
+    instruction_ra_rounds: usize,
+    inc_rounds: usize,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -738,7 +741,7 @@ where
     let bytecode_address_point = input
         .stage6
         .address_phase_consistency
-        .try_instance_point(bytecode_address_claims.rounds)
+        .try_instance_point(bytecode_address_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_address = bytecode_address_point
         .iter()
@@ -748,7 +751,7 @@ where
     let bytecode_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(bytecode_claims.rounds)
+        .try_instance_point(bytecode_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
     let stage1_remainder_challenges = input.stage1.remainder_consistency.challenges();
@@ -756,11 +759,7 @@ where
     let stage2_product_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(
-            SpartanProductDimensions::new(log_t)
-                .remainder_sumcheck()
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
         })?;
@@ -772,11 +771,7 @@ where
     let stage3_shift_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(
-            jolt_claims::protocols::jolt::TraceDimensions::new(log_t)
-                .sumcheck(2)
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let stage3_cycle = stage3_shift_point.iter().rev().copied().collect::<Vec<_>>();
     let stage4_cycle =
@@ -880,12 +875,12 @@ where
     let booleanity_address_point = input
         .stage6
         .address_phase_consistency
-        .try_instance_point(booleanity_address_claims.rounds)
+        .try_instance_point(booleanity_address_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let booleanity_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(booleanity_claims.rounds)
+        .try_instance_point(booleanity_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let reference_eq_point = input
         .stage6
@@ -917,7 +912,7 @@ where
     let ram_hamming_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(ram_hamming_claims.rounds)
+        .try_instance_point(ram_hamming_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
     let stage1_cycle_binding = &stage1_remainder_challenges[1..];
     values.public(
@@ -929,7 +924,7 @@ where
     let ram_ra_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(ram_ra_claims.rounds)
+        .try_instance_point(ram_ra_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaVirtualization, error))?;
     let ram_ra_cycle = trace_dimensions
         .cycle_opening_point(&ram_ra_point)
@@ -944,7 +939,7 @@ where
     let instruction_ra_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(instruction_ra_claims.rounds)
+        .try_instance_point(instruction_ra_rounds)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::InstructionRaVirtualization, error)
         })?;
@@ -963,7 +958,7 @@ where
     let inc_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(inc_claims.rounds)
+        .try_instance_point(inc_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::IncClaimReduction, error))?;
     let inc_opening_point = trace_dimensions
         .cycle_opening_point(&inc_point)

@@ -9,8 +9,7 @@ use crate::protocols::jolt::geometry::instruction::{
     rs2_value, unexpanded_pc, INPUT_VIRTUALIZATION_DEGREE,
 };
 use crate::protocols::jolt::{
-    InstructionInputChallenge, InstructionInputPublic, JoltExpr, JoltRelationId, JoltSumcheckSpec,
-    TraceDimensions,
+    InstructionInputChallenge, InstructionInputPublic, JoltExpr, JoltRelationId, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
@@ -87,8 +86,12 @@ impl SymbolicSumcheck for InputVirtualization {
         JoltRelationId::InstructionInputVirtualization
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(INPUT_VIRTUALIZATION_DEGREE)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        INPUT_VIRTUALIZATION_DEGREE
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -222,10 +225,8 @@ mod tests {
             InputVirtualization::id(),
             JoltRelationId::InstructionInputVirtualization
         );
-        assert_eq!(
-            relation.spec(),
-            TraceDimensions::new(5).sumcheck(INPUT_VIRTUALIZATION_DEGREE)
-        );
+        assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
+        assert_eq!(relation.degree(), INPUT_VIRTUALIZATION_DEGREE);
         assert_eq!(
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(InstructionInputChallenge::Gamma)]

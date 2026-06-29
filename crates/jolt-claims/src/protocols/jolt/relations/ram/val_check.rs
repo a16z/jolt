@@ -7,8 +7,8 @@ use crate::protocols::jolt::geometry::ram::{
     ram_inc_val_check, ram_ra_val_check, ram_val, ram_val_final,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
-    RamValCheckChallenge, RamValCheckPublic, TraceDimensions,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, RamValCheckChallenge,
+    RamValCheckPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
@@ -119,8 +119,12 @@ impl SymbolicSumcheck for RamValCheck {
         JoltRelationId::RamValCheck
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.dimensions.sumcheck(3)
+    fn rounds(&self) -> usize {
+        self.shape.dimensions.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -159,7 +163,8 @@ mod tests {
         });
 
         assert_eq!(RamValCheck::id(), JoltRelationId::RamValCheck);
-        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
+        assert_eq!(relation.rounds(), trace_dimensions().log_t());
+        assert_eq!(relation.degree(), 3);
         // Full-init form (no committed contributions): only the read-write and
         // output-check openings on the input side.
         assert_eq!(

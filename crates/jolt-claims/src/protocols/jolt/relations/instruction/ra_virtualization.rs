@@ -9,7 +9,7 @@ use crate::protocols::jolt::geometry::instruction::{
 };
 use crate::protocols::jolt::{
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltExpr,
-    JoltRelationId, JoltSumcheckSpec,
+    JoltRelationId,
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, InputClaims, OutputClaims, SumcheckChallenges};
@@ -65,8 +65,12 @@ impl SymbolicSumcheck for RaVirtualization {
         JoltRelationId::InstructionRaVirtualization
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        self.shape.num_committed_per_virtual() + 1
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -215,7 +219,11 @@ mod tests {
             RaVirtualization::id(),
             JoltRelationId::InstructionRaVirtualization
         );
-        assert_eq!(relation.spec(), dimensions.sumcheck());
+        assert_eq!(relation.rounds(), dimensions.log_t());
+        assert_eq!(
+            relation.degree(),
+            dimensions.num_committed_per_virtual() + 1
+        );
         assert_eq!(
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(

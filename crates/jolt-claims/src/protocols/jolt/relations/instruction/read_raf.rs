@@ -7,11 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::instruction::{
     eq_table_value, instruction_ra_product, instruction_raf_flag, left_lookup_operand_reduced,
     lookup_output_reduced, lookup_table_flag, right_lookup_operand_reduced,
-    InstructionReadRafDimensions,
+    InstructionReadRafDimensions, READ_RAF_BASE_DEGREE,
 };
 use crate::protocols::jolt::{
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltExpr, JoltRelationId,
-    JoltSumcheckSpec,
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
@@ -75,8 +74,12 @@ impl SymbolicSumcheck for ReadRaf {
         JoltRelationId::InstructionReadRaf
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.sumcheck_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        self.shape.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -239,7 +242,11 @@ mod tests {
         let dimensions = read_raf_dimensions(2);
         let relation = ReadRaf::new(dimensions);
         assert_eq!(ReadRaf::id(), JoltRelationId::InstructionReadRaf);
-        assert_eq!(relation.spec(), dimensions.sumcheck());
+        assert_eq!(relation.rounds(), dimensions.sumcheck_rounds());
+        assert_eq!(
+            relation.degree(),
+            dimensions.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
+        );
         assert_eq!(
             relation.required_challenges::<Fr>(),
             vec![JoltChallengeId::from(InstructionReadRafChallenge::Gamma)]

@@ -9,7 +9,7 @@ use crate::opening;
 use crate::protocols::jolt::geometry::booleanity::{
     booleanity_address_phase_opening, BooleanityDimensions,
 };
-use crate::protocols::jolt::{JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec};
+use crate::protocols::jolt::{JoltExpr, JoltOpeningId, JoltRelationId};
 use crate::{InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// The staged `BooleanityAddrClaim` intermediate produced by the address phase
@@ -70,8 +70,12 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
         JoltRelationId::Booleanity
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.address_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_k_chunk
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -88,7 +92,6 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use crate::protocols::jolt::JoltSumcheckSpec;
     use jolt_field::Fr;
 
     fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
@@ -100,7 +103,8 @@ mod tests {
     fn booleanity_address_phase_symbolic_matches_dependencies() {
         let relation = BooleanityAddressPhase::new(dimensions(1, 1, 1));
         assert_eq!(BooleanityAddressPhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(8, 3));
+        assert_eq!(relation.rounds(), 8);
+        assert_eq!(relation.degree(), 3);
         assert!(relation
             .input_expression::<Fr>()
             .required_openings()

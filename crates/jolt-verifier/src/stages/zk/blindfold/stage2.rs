@@ -28,11 +28,10 @@ where
     // with the same orientation the clear path uses for `product_uniskip.tau_low`.
     let product_tau_low = stage1_remainder_cycle(input);
 
-    let product_uniskip = JoltSumcheckSpec::centered_integer(
-        SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        1,
-        SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-    );
+    let product_uniskip_rounds = 1;
+    let product_uniskip_degree = SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
+    let product_uniskip_domain =
+        JoltSumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE);
     let product_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
         input.stage2.challenges.product_tau_high,
@@ -46,8 +45,8 @@ where
     builder = add_stage(
         builder,
         "stage2.product_uniskip",
-        SumcheckStatement::new(product_uniskip.rounds, product_uniskip.degree),
-        domain_spec(product_uniskip),
+        SumcheckStatement::new(product_uniskip_rounds, product_uniskip_degree),
+        domain_spec(product_uniskip_domain),
         input.stage2.product_uniskip_consistency.clone(),
         &input.stage2.product_uniskip_output_claims,
         values,
@@ -67,7 +66,7 @@ where
     let ram_read_write_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(ram_read_write.spec().rounds)
+        .try_instance_point(ram_read_write.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamReadWriteChecking, error))?;
     let ram_read_write_opening = read_write_dimensions
         .read_write_opening_point(&ram_read_write_point)
@@ -83,7 +82,7 @@ where
     let product_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(product_remainder.spec().rounds)
+        .try_instance_point(product_remainder.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
         })?;
@@ -110,7 +109,7 @@ where
     let instruction_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(instruction_reduction.spec().rounds)
+        .try_instance_point(instruction_reduction.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_spartan = try_eq_mle(&instruction_opening_point, &product_tau_low)
@@ -136,7 +135,7 @@ where
     let ram_raf_point = input
         .stage2
         .batch_consistency
-        .try_instance_point_at(phase1_offset, ram_raf.spec().rounds)
+        .try_instance_point_at(phase1_offset, ram_raf.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?;
     let ram_raf_address = read_write_dimensions
         .address_opening_point(&ram_raf_point)
@@ -152,7 +151,7 @@ where
     let ram_output_point = input
         .stage2
         .batch_consistency
-        .try_instance_point_at(phase1_offset, ram_output.spec().rounds)
+        .try_instance_point_at(phase1_offset, ram_output.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamOutputCheck, error))?;
     let ram_output_address = read_write_dimensions
         .address_opening_point(&ram_output_point)
@@ -235,29 +234,29 @@ where
 
     let mut batch_claims = vec![
         (
-            ram_read_write.spec().rounds,
+            ram_read_write.rounds(),
             map_jolt_expr(ram_read_write.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_read_write.output_expression::<PCS::Field>()),
         ),
         (
-            product_remainder.spec().rounds,
+            product_remainder.rounds(),
             map_jolt_expr(product_remainder.input_expression::<PCS::Field>()),
             product_remainder_output,
         ),
         (
-            instruction_reduction.spec().rounds,
+            instruction_reduction.rounds(),
             map_jolt_expr(instruction_reduction.input_expression::<PCS::Field>()),
             map_jolt_expr(instruction_reduction.output_expression::<PCS::Field>()),
         ),
     ];
     batch_claims.extend([
         (
-            ram_raf.spec().rounds,
+            ram_raf.rounds(),
             map_jolt_expr(ram_raf.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_raf.output_expression::<PCS::Field>()),
         ),
         (
-            ram_output.spec().rounds,
+            ram_output.rounds(),
             map_jolt_expr(ram_output.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_output.output_expression::<PCS::Field>()),
         ),
@@ -294,7 +293,7 @@ where
             input.stage2.batch_consistency.max_num_vars,
             input.stage2.batch_consistency.max_degree,
         ),
-        domain_spec(ram_read_write.spec()),
+        domain_spec(ram_read_write.domain()),
         input.stage2.batch_consistency.consistency.clone(),
         &input.stage2.batch_output_claims,
         values,

@@ -6,8 +6,8 @@ mod ids;
 
 pub use config::{FieldInlineConfig, FieldInlineRepresentation, FIELD_REGISTERS_LOG_K};
 pub use geometry::dimensions::{
-    FieldInlineSumcheckSpec, FieldRegistersReadWriteDimensions,
-    FieldRegistersReadWriteOpeningPoint, FieldRegistersTraceDimensions,
+    FieldRegistersReadWriteDimensions, FieldRegistersReadWriteOpeningPoint,
+    FieldRegistersTraceDimensions,
 };
 pub use ids::{
     FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlineExpr,

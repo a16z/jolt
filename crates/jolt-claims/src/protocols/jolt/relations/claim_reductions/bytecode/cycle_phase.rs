@@ -8,9 +8,10 @@ use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     assert_valid_chunk_count, bytecode_val_stage_opening, cycle_phase_intermediate_opening,
     final_output_expr, NUM_BYTECODE_VAL_STAGES,
 };
+use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::{
     BytecodeClaimReductionChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
-    JoltRelationId, JoltSumcheckSpec,
+    JoltRelationId,
 };
 use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
@@ -71,8 +72,12 @@ impl SymbolicSumcheck for CyclePhase {
         JoltRelationId::BytecodeClaimReductionCyclePhase
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.0.cycle_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.0.cycle_phase_total_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        TWO_PHASE_DEGREE_BOUND
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -147,7 +152,8 @@ mod tests {
             CyclePhase::id(),
             JoltRelationId::BytecodeClaimReductionCyclePhase
         );
-        assert_eq!(relation.spec(), dimensions.cycle_sumcheck());
+        assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
+        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             (0..NUM_BYTECODE_VAL_STAGES)

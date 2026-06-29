@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
 use crate::protocols::jolt::{
-    JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec, RamHammingBooleanityPublic,
-    TraceDimensions,
+    JoltExpr, JoltOpeningId, JoltRelationId, RamHammingBooleanityPublic, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
 use crate::{derived, opening, InputClaims, OutputClaims};
@@ -72,8 +71,12 @@ impl SymbolicSumcheck for HammingBooleanity {
         JoltRelationId::RamHammingBooleanity
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(3)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -134,7 +137,8 @@ mod tests {
             HammingBooleanity::id(),
             JoltRelationId::RamHammingBooleanity
         );
-        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
+        assert_eq!(relation.rounds(), trace_dimensions().log_t());
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![ram_hamming_weight()]

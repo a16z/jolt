@@ -10,10 +10,10 @@ use super::super::{
     InstructionReadRafPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
-use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec};
+use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError};
 
 pub(crate) const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
-const READ_RAF_BASE_DEGREE: usize = 2;
+pub(crate) const READ_RAF_BASE_DEGREE: usize = 2;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct InstructionReadRafDimensions {
@@ -47,11 +47,8 @@ impl InstructionReadRafDimensions {
         self.num_virtual_ra_polys.get()
     }
 
-    pub fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(
-            self.instruction_address_bits + self.log_t,
-            self.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE,
-        )
+    pub const fn sumcheck_rounds(self) -> usize {
+        self.instruction_address_bits + self.log_t
     }
 
     pub fn opening_point<F: Field>(
@@ -153,10 +150,6 @@ impl InstructionRaVirtualizationDimensions {
 
     pub fn num_committed_ra_polys(self) -> usize {
         self.committed_ra_polys.get()
-    }
-
-    pub fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, self.num_committed_per_virtual() + 1)
     }
 }
 

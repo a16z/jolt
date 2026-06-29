@@ -51,7 +51,7 @@ where
     let registers_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(registers_claims.spec().rounds)
+        .try_instance_point(registers_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_opening = register_dimensions
         .read_write_opening_point(&registers_point)
@@ -59,11 +59,7 @@ where
     let registers_reduction_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(
-            jolt_claims::protocols::jolt::TraceDimensions::new(log_t)
-                .sumcheck(3)
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_reduction_opening = registers_reduction_point
         .iter()
@@ -83,7 +79,7 @@ where
     let ram_val_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(ram_val_claims.spec().rounds)
+        .try_instance_point(ram_val_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamValCheck, error))?;
     let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
     let r_cycle = input
@@ -136,12 +132,12 @@ where
     ));
 
     let mut batch_claims = vec![(
-        registers_claims.spec().rounds,
+        registers_claims.rounds(),
         map_jolt_expr(registers_claims.input_expression::<PCS::Field>()),
         map_jolt_expr(registers_claims.output_expression::<PCS::Field>()),
     )];
     batch_claims.push((
-        ram_val_claims.spec().rounds,
+        ram_val_claims.rounds(),
         map_jolt_expr(ram_val_claims.input_expression::<PCS::Field>()),
         map_jolt_expr(ram_val_claims.output_expression::<PCS::Field>()),
     ));
@@ -178,7 +174,7 @@ where
             input.stage4.batch_consistency.max_num_vars,
             input.stage4.batch_consistency.max_degree,
         ),
-        domain_spec(registers_claims.spec()),
+        domain_spec(registers_claims.domain()),
         input.stage4.batch_consistency.consistency.clone(),
         &input.stage4.batch_output_claims,
         values,

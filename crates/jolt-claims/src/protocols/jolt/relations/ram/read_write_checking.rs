@@ -7,8 +7,7 @@ use crate::protocols::jolt::geometry::ram::{
     ram_inc, ram_ra, ram_read_value, ram_val, ram_write_value,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, RamReadWriteChallenge, RamReadWritePublic,
-    ReadWriteDimensions,
+    JoltExpr, JoltRelationId, RamReadWriteChallenge, RamReadWritePublic, ReadWriteDimensions,
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
@@ -75,8 +74,12 @@ impl SymbolicSumcheck for ReadWriteChecking {
         JoltRelationId::RamReadWriteChecking
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.read_write_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.read_write_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -189,9 +192,10 @@ mod tests {
             JoltRelationId::RamReadWriteChecking
         );
         assert_eq!(
-            relation.spec(),
-            read_write_dimensions().read_write_sumcheck()
+            relation.rounds(),
+            read_write_dimensions().read_write_rounds()
         );
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![

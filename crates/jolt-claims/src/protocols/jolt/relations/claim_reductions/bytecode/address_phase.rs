@@ -7,8 +7,9 @@ use super::BytecodeReductionShape;
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     assert_valid_chunk_count, cycle_phase_intermediate_opening, final_output_expr,
 };
+use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
@@ -58,8 +59,12 @@ impl SymbolicSumcheck for AddressPhase {
         JoltRelationId::BytecodeClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.0.address_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.0.address_phase_total_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        TWO_PHASE_DEGREE_BOUND
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -130,7 +135,8 @@ mod tests {
         let relation = AddressPhase::new((dimensions, 2));
 
         assert_eq!(AddressPhase::id(), JoltRelationId::BytecodeClaimReduction);
-        assert_eq!(relation.spec(), dimensions.address_sumcheck());
+        assert_eq!(relation.rounds(), dimensions.address_phase_total_rounds());
+        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![cycle_phase_intermediate_opening()]

@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::TraceDimensions, instruction::InstructionRaVirtualizationDimensions,
         ram::RamRaVirtualizationDimensions,
     },
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltSumcheckSpec,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
     ProgramImageClaimReductionLayout,
 };
 use jolt_claims::NoChallenges;
@@ -77,10 +77,17 @@ pub enum BytecodeReadRafCycle<'a, F: Field> {
 }
 
 impl<F: Field> BytecodeReadRafCycle<'_, F> {
-    pub fn spec(&self) -> JoltSumcheckSpec {
+    pub fn rounds(&self) -> usize {
         match self {
-            Self::Full(relation) => relation.spec(),
-            Self::Committed(relation) => relation.spec(),
+            Self::Full(relation) => relation.rounds(),
+            Self::Committed(relation) => relation.rounds(),
+        }
+    }
+
+    pub fn degree(&self) -> usize {
+        match self {
+            Self::Full(relation) => relation.degree(),
+            Self::Committed(relation) => relation.degree(),
         }
     }
 
@@ -408,37 +415,43 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
     /// claim of each instance is the claimed sum of its sumcheck.
     pub fn sumcheck_claims(&self) -> Result<Vec<SumcheckClaim<F>>, VerifierError> {
         let claim =
-            |spec: JoltSumcheckSpec, input: F| SumcheckClaim::new(spec.rounds, spec.degree, input);
+            |rounds: usize, degree: usize, input: F| SumcheckClaim::new(rounds, degree, input);
         // Relations that draw no challenges resolve against this empty set.
         let no_challenges = NoChallenges::default();
         let mut claims = vec![
             claim(
-                self.bytecode_read_raf.spec(),
+                self.bytecode_read_raf.rounds(),
+                self.bytecode_read_raf.degree(),
                 self.bytecode_read_raf
                     .input_claim(&self.bytecode_read_raf_inputs, self.bytecode_gamma)?,
             ),
             claim(
-                self.booleanity.spec(),
+                self.booleanity.rounds(),
+                self.booleanity.degree(),
                 self.booleanity
                     .input_claim(&self.booleanity_inputs, &self.booleanity_challenges)?,
             ),
             claim(
-                self.ram_hamming.spec(),
+                self.ram_hamming.rounds(),
+                self.ram_hamming.degree(),
                 self.ram_hamming
                     .input_claim(&self.ram_hamming_inputs, &no_challenges)?,
             ),
             claim(
-                self.ram_ra.spec(),
+                self.ram_ra.rounds(),
+                self.ram_ra.degree(),
                 self.ram_ra
                     .input_claim(&self.ram_ra_inputs, &no_challenges)?,
             ),
             claim(
-                self.instruction_ra.spec(),
+                self.instruction_ra.rounds(),
+                self.instruction_ra.degree(),
                 self.instruction_ra
                     .input_claim(&self.instruction_ra_inputs, &self.instruction_ra_challenges)?,
             ),
             claim(
-                self.inc.spec(),
+                self.inc.rounds(),
+                self.inc.degree(),
                 self.inc
                     .input_claim(&self.inc_inputs, &self.inc_challenges)?,
             ),
@@ -448,7 +461,8 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             .flatten()
         {
             claims.push(claim(
-                relation.spec(),
+                relation.rounds(),
+                relation.degree(),
                 relation.input_claim(&self.advice_inputs, &no_challenges)?,
             ));
         }
@@ -458,7 +472,8 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             &self.bytecode_reduction_challenges,
         ) {
             claims.push(claim(
-                relation.spec(),
+                relation.rounds(),
+                relation.degree(),
                 relation.input_claim(inputs, challenges)?,
             ));
         }
@@ -467,7 +482,8 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             &self.program_image_reduction_inputs,
         ) {
             claims.push(claim(
-                relation.spec(),
+                relation.rounds(),
+                relation.degree(),
                 relation.input_claim(inputs, &no_challenges)?,
             ));
         }

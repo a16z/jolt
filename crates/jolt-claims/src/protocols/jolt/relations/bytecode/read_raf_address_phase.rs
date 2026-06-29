@@ -10,7 +10,7 @@ use crate::protocols::jolt::geometry::bytecode::{
 };
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
-    JoltRelationId, JoltSumcheckSpec,
+    JoltRelationId,
 };
 use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
@@ -132,8 +132,12 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
         JoltRelationId::BytecodeReadRaf
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.address_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_k()
+    }
+
+    fn degree(&self) -> usize {
+        self.shape.num_committed_ra_polys() + 1
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -178,7 +182,11 @@ mod tests {
     fn read_raf_address_phase_symbolic_matches_dependencies() {
         let relation = ReadRafAddressPhase::new(dimensions(2));
         assert_eq!(ReadRafAddressPhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.spec(), dimensions(2).address_sumcheck());
+        assert_eq!(relation.rounds(), dimensions(2).log_k());
+        assert_eq!(
+            relation.degree(),
+            dimensions(2).num_committed_ra_polys() + 1
+        );
         assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
         assert_eq!(
             relation.output_expression::<Fr>().required_openings(),

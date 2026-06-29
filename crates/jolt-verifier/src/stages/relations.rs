@@ -19,7 +19,6 @@ pub use jolt_claims::{
 
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
-    JoltSumcheckSpec,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -33,15 +32,13 @@ use crate::VerifierError;
 /// it keeps the two error conditions identical across stages.
 pub fn check_relation_boolean_hypercube(
     stage: JoltRelationId,
-    spec: &JoltSumcheckSpec,
+    domain: JoltSumcheckDomain,
+    degree: usize,
 ) -> Result<(), VerifierError> {
-    if spec.degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage,
-            degree: spec.degree,
-        });
+    if degree == 0 {
+        return Err(VerifierError::InvalidStageSumcheckDegree { stage, degree });
     }
-    if !matches!(spec.domain, JoltSumcheckDomain::BooleanHypercube) {
+    if !matches!(domain, JoltSumcheckDomain::BooleanHypercube) {
         return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage });
     }
     Ok(())
@@ -119,9 +116,19 @@ where
         Self::Symbolic::id()
     }
 
-    /// The sumcheck spec (rounds, degree, domain), from the symbolic relation.
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.symbolic().spec()
+    /// The sumcheck domain, from the symbolic relation.
+    fn domain(&self) -> JoltSumcheckDomain {
+        self.symbolic().domain()
+    }
+
+    /// The sumcheck round count, from the symbolic relation.
+    fn rounds(&self) -> usize {
+        self.symbolic().rounds()
+    }
+
+    /// The per-round degree bound, from the symbolic relation.
+    fn degree(&self) -> usize {
+        self.symbolic().degree()
     }
 
     /// Draw this instance's own (instance-private) Fiat-Shamir challenges from the

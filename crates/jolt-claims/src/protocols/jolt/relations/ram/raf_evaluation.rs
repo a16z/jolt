@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::ram::{
     ram_address_spartan, ram_ra_raf_evaluation, RamRafEvaluationDimensions,
 };
-use crate::protocols::jolt::{JoltExpr, JoltRelationId, JoltSumcheckSpec, RamRafEvaluationPublic};
+use crate::protocols::jolt::{JoltExpr, JoltRelationId, RamRafEvaluationPublic};
 use crate::SymbolicSumcheck;
 use crate::{constant, derived, opening, InputClaims, OutputClaims};
 
@@ -58,8 +58,12 @@ impl SymbolicSumcheck for RafEvaluation {
         JoltRelationId::RamRafEvaluation
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.read_write().raf_evaluation_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -127,7 +131,13 @@ mod tests {
         let relation = RafEvaluation::new(raf_evaluation_dimensions());
 
         assert_eq!(RafEvaluation::id(), JoltRelationId::RamRafEvaluation);
-        assert_eq!(relation.spec(), raf_evaluation_dimensions().sumcheck());
+        assert_eq!(
+            relation.rounds(),
+            raf_evaluation_dimensions()
+                .read_write()
+                .raf_evaluation_rounds()
+        );
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![ram_address_spartan(), ram_ra_raf_evaluation()]

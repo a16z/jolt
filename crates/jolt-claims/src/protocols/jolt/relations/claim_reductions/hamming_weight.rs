@@ -9,7 +9,7 @@ use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
 };
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
 use crate::{
     challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
@@ -88,8 +88,12 @@ impl SymbolicSumcheck for ClaimReduction {
         JoltRelationId::HammingWeightClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_k_chunk
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -270,7 +274,8 @@ mod tests {
             ClaimReduction::id(),
             JoltRelationId::HammingWeightClaimReduction
         );
-        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(8, 2));
+        assert_eq!(relation.rounds(), 8);
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![

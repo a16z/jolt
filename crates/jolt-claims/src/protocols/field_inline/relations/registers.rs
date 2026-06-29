@@ -9,9 +9,9 @@ use crate::protocols::field_inline::geometry::registers::{
 };
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersReadWriteChallenge,
-    FieldRegistersReadWriteDimensions, FieldRegistersReadWritePublic,
-    FieldRegistersTraceDimensions, FieldRegistersValEvaluationPublic,
+    FieldInlineRelationId, FieldRegistersReadWriteChallenge, FieldRegistersReadWriteDimensions,
+    FieldRegistersReadWritePublic, FieldRegistersTraceDimensions,
+    FieldRegistersValEvaluationPublic,
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening};
@@ -41,8 +41,12 @@ impl SymbolicSumcheck for ReadWriteChecking {
         FieldInlineRelationId::FieldRegistersReadWriteChecking
     }
 
-    fn spec(&self) -> FieldInlineSumcheckSpec {
-        self.shape.read_write_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.read_write_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -94,8 +98,12 @@ impl SymbolicSumcheck for ValEvaluation {
         FieldInlineRelationId::FieldRegistersValEvaluation
     }
 
-    fn spec(&self) -> FieldInlineSumcheckSpec {
-        self.shape.sumcheck(3)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -135,9 +143,10 @@ mod tests {
             FieldInlineRelationId::FieldRegistersReadWriteChecking
         );
         assert_eq!(
-            relation.spec(),
-            read_write_dimensions().read_write_sumcheck()
+            relation.rounds(),
+            read_write_dimensions().read_write_rounds()
         );
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             read_write_checking_input_openings().to_vec()
@@ -240,7 +249,8 @@ mod tests {
             ValEvaluation::id(),
             FieldInlineRelationId::FieldRegistersValEvaluation
         );
-        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
+        assert_eq!(relation.rounds(), trace_dimensions().log_t());
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             val_evaluation_input_openings().to_vec()

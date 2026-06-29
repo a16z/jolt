@@ -46,36 +46,39 @@ where
 
     // The committed and uncommitted cycle-phase relations are distinct types, so
     // collapse the active one into its spec and input/output expressions here.
-    let (bytecode_spec, bytecode_input, bytecode_output) = if bytecode_reduction_layout.is_some() {
-        let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new(
-            formula_dimensions.bytecode_read_raf,
-        );
-        (
-            claims.spec(),
-            claims.input_expression::<PCS::Field>(),
-            claims.output_expression::<PCS::Field>(),
-        )
-    } else {
-        let claims =
-            relations::bytecode::ReadRafCyclePhase::new(formula_dimensions.bytecode_read_raf);
-        (
-            claims.spec(),
-            claims.input_expression::<PCS::Field>(),
-            claims.output_expression::<PCS::Field>(),
-        )
-    };
+    let (bytecode_rounds, bytecode_domain, bytecode_input, bytecode_output) =
+        if bytecode_reduction_layout.is_some() {
+            let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new(
+                formula_dimensions.bytecode_read_raf,
+            );
+            (
+                claims.rounds(),
+                claims.domain(),
+                claims.input_expression::<PCS::Field>(),
+                claims.output_expression::<PCS::Field>(),
+            )
+        } else {
+            let claims =
+                relations::bytecode::ReadRafCyclePhase::new(formula_dimensions.bytecode_read_raf);
+            (
+                claims.rounds(),
+                claims.domain(),
+                claims.input_expression::<PCS::Field>(),
+                claims.output_expression::<PCS::Field>(),
+            )
+        };
 
     add_stage6_publics_and_challenges(
         input,
         values,
-        bytecode_address_claims.spec(),
-        bytecode_spec,
-        booleanity_address_claims.spec(),
-        booleanity_claims.spec(),
-        ram_hamming_claims.spec(),
-        ram_ra_claims.spec(),
-        instruction_ra_claims.spec(),
-        inc_claims.spec(),
+        bytecode_address_claims.rounds(),
+        bytecode_rounds,
+        booleanity_address_claims.rounds(),
+        booleanity_claims.rounds(),
+        ram_hamming_claims.rounds(),
+        ram_ra_claims.rounds(),
+        instruction_ra_claims.rounds(),
+        inc_claims.rounds(),
     )?;
     if let (Some(layout), Some(_claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted)?;
@@ -114,9 +117,10 @@ where
     let builder = add_batched_stage(
         builder,
         "stage6.address_phase",
+        bytecode_address_claims.domain(),
         &[
-            bytecode_address_claims.spec(),
-            booleanity_address_claims.spec(),
+            bytecode_address_claims.rounds(),
+            booleanity_address_claims.rounds(),
         ],
         &[
             bytecode_address_claims.input_expression::<PCS::Field>(),
@@ -137,60 +141,60 @@ where
 
     let mut batch_claims = vec![
         (
-            bytecode_spec.rounds,
+            bytecode_rounds,
             bytecode_input_expr,
             map_jolt_expr(bytecode_output),
         ),
         (
-            booleanity_claims.spec().rounds,
+            booleanity_claims.rounds(),
             map_jolt_expr(booleanity_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(booleanity_claims.output_expression::<PCS::Field>()),
         ),
         (
-            ram_hamming_claims.spec().rounds,
+            ram_hamming_claims.rounds(),
             map_jolt_expr(ram_hamming_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_hamming_claims.output_expression::<PCS::Field>()),
         ),
         (
-            ram_ra_claims.spec().rounds,
+            ram_ra_claims.rounds(),
             map_jolt_expr(ram_ra_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_ra_claims.output_expression::<PCS::Field>()),
         ),
         (
-            instruction_ra_claims.spec().rounds,
+            instruction_ra_claims.rounds(),
             map_jolt_expr(instruction_ra_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(instruction_ra_claims.output_expression::<PCS::Field>()),
         ),
         (
-            inc_claims.spec().rounds,
+            inc_claims.rounds(),
             map_jolt_expr(inc_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(inc_claims.output_expression::<PCS::Field>()),
         ),
     ];
     if let Some(claim) = trusted_claims {
         batch_claims.push((
-            claim.spec().rounds,
+            claim.rounds(),
             map_jolt_expr(claim.input_expression::<PCS::Field>()),
             map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
     }
     if let Some(claim) = untrusted_claims {
         batch_claims.push((
-            claim.spec().rounds,
+            claim.rounds(),
             map_jolt_expr(claim.input_expression::<PCS::Field>()),
             map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
     }
     if let Some(claim) = &bytecode_reduction_claims {
         batch_claims.push((
-            claim.spec().rounds,
+            claim.rounds(),
             map_jolt_expr(claim.input_expression::<PCS::Field>()),
             map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
     }
     if let Some(claim) = &program_image_reduction_claims {
         batch_claims.push((
-            claim.spec().rounds,
+            claim.rounds(),
             map_jolt_expr(claim.input_expression::<PCS::Field>()),
             map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
@@ -297,7 +301,7 @@ where
             input.stage6.batch_consistency.max_num_vars,
             input.stage6.batch_consistency.max_degree,
         ),
-        domain_spec(bytecode_spec),
+        domain_spec(bytecode_domain),
         input.stage6.batch_consistency.consistency.clone(),
         &input.stage6.batch_output_claims,
         values,

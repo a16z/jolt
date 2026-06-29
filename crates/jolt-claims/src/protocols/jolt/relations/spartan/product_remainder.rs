@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, product_tau_kernel, product_uniskip_opening, product_weight,
-    right_instruction_input_product, SpartanProductDimensions,
+    right_instruction_input_product, SpartanProductDimensions, PRODUCT_REMAINDER_DEGREE,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
@@ -77,8 +77,12 @@ impl SymbolicSumcheck for ProductRemainder {
         JoltRelationId::SpartanProductVirtualization
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.remainder_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        PRODUCT_REMAINDER_DEGREE
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {

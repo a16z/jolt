@@ -6,7 +6,7 @@ use super::super::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial, RamRaClaimReductionPublic, RamValCheckPublic,
 };
-use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions};
+use super::dimensions::ReadWriteDimensions;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RamRafEvaluationDimensions(ReadWriteDimensions);
@@ -33,10 +33,6 @@ impl RamRafEvaluationDimensions {
     pub const fn phase3_cycle_rounds(self) -> usize {
         self.0.phase3_cycle_rounds()
     }
-
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        self.0.raf_evaluation_sumcheck()
-    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -59,10 +55,6 @@ impl RamRaVirtualizationDimensions {
 
     pub const fn num_committed_ra_polys(self) -> usize {
         self.committed_ra_polys
-    }
-
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, self.committed_ra_polys + 1)
     }
 }
 

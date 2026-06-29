@@ -16,9 +16,9 @@ pub const OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize = 27;
 pub const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = 3;
 pub const PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize = 6;
 
-// The sumcheck spec/domain are now protocol-agnostic crate-root types; these
-// aliases keep the `Jolt*` spelling that the rest of the codebase uses.
-pub use crate::{SumcheckDomain as JoltSumcheckDomain, SumcheckSpec as JoltSumcheckSpec};
+// The sumcheck domain is a protocol-agnostic crate-root type; this alias keeps
+// the `Jolt*` spelling that the rest of the codebase uses.
+pub use crate::SumcheckDomain as JoltSumcheckDomain;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TracePolynomialOrder {
@@ -73,10 +73,6 @@ impl TraceDimensions {
 
     pub const fn log_t(self) -> usize {
         self.log_t
-    }
-
-    pub const fn sumcheck(self, degree: usize) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, degree)
     }
 
     pub fn cycle_opening_point<F: Field>(
@@ -137,16 +133,16 @@ impl ReadWriteDimensions {
         self.log_t - self.phase1_num_rounds
     }
 
-    pub const fn read_write_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t + self.log_k, 3)
+    pub const fn read_write_rounds(self) -> usize {
+        self.log_t + self.log_k
     }
 
-    pub const fn raf_evaluation_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t + self.log_k - self.phase1_num_rounds, 2)
+    pub const fn raf_evaluation_rounds(self) -> usize {
+        self.log_t + self.log_k - self.phase1_num_rounds
     }
 
-    pub const fn output_check_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t + self.log_k - self.phase1_num_rounds, 3)
+    pub const fn output_check_rounds(self) -> usize {
+        self.log_t + self.log_k - self.phase1_num_rounds
     }
 
     pub fn read_write_opening_point<F: Field>(
@@ -520,10 +516,7 @@ mod tests {
         assert_eq!(dimensions.trace.log_t(), 20);
         assert_eq!(dimensions.ra_layout.bytecode(), 2);
         assert_eq!(dimensions.ra_layout.ram(), 2);
-        assert_eq!(
-            dimensions.instruction_read_raf.sumcheck(),
-            JoltSumcheckSpec::boolean(148, 6)
-        );
+        assert_eq!(dimensions.instruction_read_raf.sumcheck_rounds(), 148);
         assert_eq!(dimensions.instruction_read_raf.num_virtual_ra_polys(), 4);
         assert_eq!(
             dimensions

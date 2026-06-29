@@ -13,7 +13,7 @@ use super::super::{
     JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
+use super::dimensions::JoltFormulaPointError;
 use super::error::require_len;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -44,16 +44,8 @@ impl BytecodeReadRafDimensions {
         self.committed_ra_polys
     }
 
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t + self.log_k, self.committed_ra_polys + 1)
-    }
-
-    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_k, self.committed_ra_polys + 1)
-    }
-
-    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, self.committed_ra_polys + 1)
+    pub const fn sumcheck_rounds(self) -> usize {
+        self.log_t + self.log_k
     }
 }
 

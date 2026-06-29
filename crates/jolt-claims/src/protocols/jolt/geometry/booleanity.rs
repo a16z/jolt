@@ -6,7 +6,6 @@ use super::super::{
     BooleanityChallenge, BooleanityPublic, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
-use super::dimensions::JoltSumcheckSpec;
 use super::ra::JoltRaPolynomialLayout;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -25,16 +24,8 @@ impl BooleanityDimensions {
         }
     }
 
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t + self.log_k_chunk, 3)
-    }
-
-    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_k_chunk, 3)
-    }
-
-    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, 3)
+    pub const fn sumcheck_rounds(self) -> usize {
+        self.log_t + self.log_k_chunk
     }
 }
 

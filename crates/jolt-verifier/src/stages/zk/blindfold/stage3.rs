@@ -35,7 +35,7 @@ where
     let shift_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(shift.spec().rounds)
+        .try_instance_point(shift.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
     // Stage 1's remainder cycle point, recomputed from `stage1.remainder_consistency`
@@ -46,11 +46,7 @@ where
     let product_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(
-            SpartanProductDimensions::new(log_t)
-                .remainder_sumcheck()
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
         })?;
@@ -69,7 +65,7 @@ where
     let instruction_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(instruction_input.spec().rounds)
+        .try_instance_point(instruction_input.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::InstructionInputVirtualization, error)
         })?;
@@ -83,7 +79,7 @@ where
     let registers_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(registers_reduction.spec().rounds)
+        .try_instance_point(registers_reduction.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(
@@ -121,10 +117,11 @@ where
     add_batched_stage(
         builder,
         "stage3.batch",
+        shift.domain(),
         &[
-            shift.spec(),
-            instruction_input.spec(),
-            registers_reduction.spec(),
+            shift.rounds(),
+            instruction_input.rounds(),
+            registers_reduction.rounds(),
         ],
         &[
             shift.input_expression::<PCS::Field>(),

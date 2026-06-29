@@ -2,10 +2,6 @@ use jolt_field::Field;
 
 use crate::protocols::jolt::geometry::dimensions::JoltFormulaPointError;
 
-// field_inline shares the protocol-agnostic crate-root sumcheck spec; it gains a
-// `domain` field, always `BooleanHypercube` via `::boolean`.
-pub use crate::SumcheckSpec as FieldInlineSumcheckSpec;
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct FieldRegistersTraceDimensions {
     log_t: usize,
@@ -18,10 +14,6 @@ impl FieldRegistersTraceDimensions {
 
     pub const fn log_t(self) -> usize {
         self.log_t
-    }
-
-    pub const fn sumcheck(self, degree: usize) -> FieldInlineSumcheckSpec {
-        FieldInlineSumcheckSpec::boolean(self.log_t, degree)
     }
 }
 
@@ -64,8 +56,8 @@ impl FieldRegistersReadWriteDimensions {
         self.phase2_num_rounds
     }
 
-    pub const fn read_write_sumcheck(self) -> FieldInlineSumcheckSpec {
-        FieldInlineSumcheckSpec::boolean(self.log_t + self.log_k, 3)
+    pub const fn read_write_rounds(self) -> usize {
+        self.log_t + self.log_k
     }
 
     pub fn read_write_opening_point<F: Field>(

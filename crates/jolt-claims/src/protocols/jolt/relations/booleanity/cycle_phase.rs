@@ -7,7 +7,7 @@ use crate::opening;
 use crate::protocols::jolt::geometry::booleanity::{
     booleanity_address_phase_opening, booleanity_cycle_output, BooleanityDimensions,
 };
-use crate::protocols::jolt::{BooleanityChallenge, JoltExpr, JoltRelationId, JoltSumcheckSpec};
+use crate::protocols::jolt::{BooleanityChallenge, JoltExpr, JoltRelationId};
 use crate::{SumcheckChallenges, SymbolicSumcheck};
 
 /// Fiat-Shamir challenge drawn by the cycle-phase split of the booleanity
@@ -44,8 +44,12 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
         JoltRelationId::Booleanity
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.cycle_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_t
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -63,7 +67,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use crate::protocols::jolt::{
-        BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltDerivedId, JoltSumcheckSpec,
+        BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltDerivedId,
     };
     use jolt_field::Fr;
 
@@ -76,7 +80,8 @@ mod tests {
     fn booleanity_cycle_phase_symbolic_matches_dependencies() {
         let relation = BooleanityCyclePhase::new(dimensions(1, 1, 1));
         assert_eq!(BooleanityCyclePhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(5, 3));
+        assert_eq!(relation.rounds(), 5);
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![booleanity_address_phase_opening()]

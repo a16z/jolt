@@ -8,7 +8,7 @@ use crate::protocols::field_inline::geometry::claim_reductions::registers::{
 };
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersClaimReductionChallenge,
+    FieldInlineRelationId, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic, FieldRegistersTraceDimensions,
 };
 use crate::{challenge, derived, opening, SymbolicSumcheck};
@@ -38,8 +38,12 @@ impl SymbolicSumcheck for ClaimReduction {
         FieldInlineRelationId::FieldRegistersClaimReduction
     }
 
-    fn spec(&self) -> FieldInlineSumcheckSpec {
-        self.shape.sumcheck(2)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -80,7 +84,8 @@ mod tests {
             ClaimReduction::id(),
             FieldInlineRelationId::FieldRegistersClaimReduction
         );
-        assert_eq!(relation.spec(), dimensions().sumcheck(2));
+        assert_eq!(relation.rounds(), dimensions().log_t());
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             claim_reduction_input_openings().to_vec()

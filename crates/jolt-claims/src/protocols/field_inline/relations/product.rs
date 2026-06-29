@@ -8,7 +8,7 @@ use crate::protocols::field_inline::geometry::product::{
 };
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersTraceDimensions,
+    FieldInlineRelationId, FieldRegistersTraceDimensions,
 };
 use crate::SymbolicSumcheck;
 
@@ -36,8 +36,12 @@ impl SymbolicSumcheck for FieldProduct {
         FieldInlineRelationId::FieldRegistersProduct
     }
 
-    fn spec(&self) -> FieldInlineSumcheckSpec {
-        self.shape.sumcheck(2)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -71,7 +75,8 @@ mod tests {
             FieldProduct::id(),
             FieldInlineRelationId::FieldRegistersProduct
         );
-        assert_eq!(relation.spec(), dimensions().sumcheck(2));
+        assert_eq!(relation.rounds(), dimensions().log_t());
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             field_product_input_openings().to_vec()

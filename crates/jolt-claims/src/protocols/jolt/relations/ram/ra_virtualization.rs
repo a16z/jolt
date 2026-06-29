@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::ram::{
     committed_ram_ra_product, ram_ra_claim_reduction, RamRaVirtualizationDimensions,
 };
-use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, RamRaVirtualizationPublic,
-};
+use crate::protocols::jolt::{JoltExpr, JoltRelationId, RamRaVirtualizationPublic};
 use crate::SymbolicSumcheck;
 use crate::{derived, opening, InputClaims, OutputClaims};
 
@@ -55,8 +53,12 @@ impl SymbolicSumcheck for RaVirtualization {
         JoltRelationId::RamRaVirtualization
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        self.shape.num_committed_ra_polys() + 1
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -134,7 +136,11 @@ mod tests {
         let relation = RaVirtualization::new(ra_virtualization_dimensions(3));
 
         assert_eq!(RaVirtualization::id(), JoltRelationId::RamRaVirtualization);
-        assert_eq!(relation.spec(), ra_virtualization_dimensions(3).sumcheck());
+        assert_eq!(relation.rounds(), ra_virtualization_dimensions(3).log_t());
+        assert_eq!(
+            relation.degree(),
+            ra_virtualization_dimensions(3).num_committed_ra_polys() + 1
+        );
         assert_eq!(
             relation.required_openings::<Fr>(),
             vec![
