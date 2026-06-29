@@ -124,13 +124,6 @@ where
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
             reason: "lattice packing opening artifacts do not carry a lattice payload".to_string(),
         })?;
-    validate_akita_precommitted_opening_inputs(
-        &payload.packed_witness,
-        &statement.precommitted_statements,
-        precommitted_inputs,
-    )?;
-    let packed =
-        prove_akita_packing_openings(setup, transcript, artifacts, source, &statement.statement)?;
     let precommitted = prove_akita_precommitted_opening_batches(
         setup,
         transcript,
@@ -138,6 +131,8 @@ where
         &statement.precommitted_statements,
         precommitted_inputs,
     )?;
+    let packed =
+        prove_akita_packing_openings(setup, transcript, artifacts, source, &statement.statement)?;
     Ok(AkitaStage8ClearOpeningProofs {
         packed,
         precommitted,
@@ -419,7 +414,7 @@ mod tests {
     use crate::{
         akita::commit_akita_packing_witness,
         akita_validation::{
-            validate_akita_opening_proof_payload_shape,
+            validate_akita_packed_target_opening_proof_payload_shape,
             validate_akita_packing_opening_proof_payload_shape,
             validate_akita_precommitted_opening_proof_payload_shapes,
         },
@@ -427,7 +422,7 @@ mod tests {
             Stage8ClearBatchStatement, Stage8LogicalManifest, Stage8PhysicalManifest,
         },
     };
-    use jolt_akita::{AkitaScheme, AkitaSetupParams, AKITA_FIELD_MODULUS};
+    use jolt_akita::{AkitaBatchProof, AkitaScheme, AkitaSetupParams, AKITA_FIELD_MODULUS};
     use jolt_claims::protocols::jolt::{
         unsigned_inc_msb_opening, JoltCommittedPolynomial, JoltOpeningId, JoltPackingFamilyId,
         JoltRelationId,
@@ -482,6 +477,49 @@ mod tests {
             row: 0,
             limb: 0,
             symbol,
+        }
+    }
+
+    fn commitment_with_layout_digest(
+        commitment: &AkitaCommitment,
+        layout_digest: [u8; 32],
+    ) -> AkitaCommitment {
+        let mut value = serde_json::to_value(commitment).expect("commitment should serialize");
+        let object = value
+            .as_object_mut()
+            .expect("commitment should serialize as an object");
+        let _ = object.insert(
+            "layout_digest".to_string(),
+            serde_json::json!(layout_digest),
+        );
+        serde_json::from_value(value).expect("tampered commitment should deserialize")
+    }
+
+    fn proof_with_parts(
+        proof: &AkitaBatchProof,
+        commitment: AkitaCommitment,
+        proof_bytes: Vec<u8>,
+    ) -> AkitaBatchProof {
+        let mut value = serde_json::to_value(proof).expect("proof should serialize");
+        let object = value
+            .as_object_mut()
+            .expect("proof should serialize as an object");
+        let _ = object.insert(
+            "commitment".to_string(),
+            serde_json::to_value(commitment).expect("commitment should serialize"),
+        );
+        let _ = object.insert("proof".to_string(), serde_json::json!(proof_bytes));
+        serde_json::from_value(value).expect("tampered proof should deserialize")
+    }
+
+    fn packing_proof_with_native(
+        proof: &AkitaPackingBatchProof,
+        native: AkitaBatchProof,
+    ) -> AkitaPackingBatchProof {
+        if let Some(reduction) = proof.reduction() {
+            AkitaPackingBatchProof::packed(reduction.clone(), native)
+        } else {
+            AkitaPackingBatchProof::direct(native)
         }
     }
 
@@ -594,14 +632,15 @@ mod tests {
             &stage8_statement,
         )
         .expect("packed batch proof should be produced");
-        validate_akita_opening_proof_payload_shape(&artifact.commitments, &proof)
+        validate_akita_packed_target_opening_proof_payload_shape(&artifact.commitments, &proof)
             .expect("fresh packed batch proof shape should pass preflight");
 
         let mut wrong_stage8_statement = stage8_statement.clone();
         let Stage8BatchStatement::Clear(wrong_statement) = &mut wrong_stage8_statement else {
             unreachable!("test statement is clear");
         };
-        wrong_statement.statement.claims[0].commitment.layout_digest = [9; 32];
+        wrong_statement.statement.claims[0].commitment =
+            commitment_with_layout_digest(&wrong_statement.statement.claims[0].commitment, [9; 32]);
         let mut wrong_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
         let error = prove_akita_stage8_clear_openings(
             &prover_setup,
@@ -617,9 +656,19 @@ mod tests {
         ));
 
         let mut wrong_commitment_proof = proof.clone();
-        wrong_commitment_proof.native.commitment.layout_digest = [9; 32];
+        wrong_commitment_proof = packing_proof_with_native(
+            &wrong_commitment_proof,
+            proof_with_parts(
+                wrong_commitment_proof.native(),
+                commitment_with_layout_digest(
+                    wrong_commitment_proof.native().commitment(),
+                    [9; 32],
+                ),
+                wrong_commitment_proof.native().proof_bytes().to_vec(),
+            ),
+        );
         assert!(matches!(
-            validate_akita_opening_proof_payload_shape(
+            validate_akita_packed_target_opening_proof_payload_shape(
                 &artifact.commitments,
                 &wrong_commitment_proof,
             ),
@@ -628,15 +677,21 @@ mod tests {
         ));
 
         let mut missing_native_proof = proof.clone();
-        missing_native_proof.native.proof.clear();
+        missing_native_proof = packing_proof_with_native(
+            &missing_native_proof,
+            proof_with_parts(
+                missing_native_proof.native(),
+                missing_native_proof.native().commitment().clone(),
+                Vec::new(),
+            ),
+        );
         assert!(matches!(
-            validate_akita_opening_proof_payload_shape(&artifact.commitments, &missing_native_proof),
+            validate_akita_packed_target_opening_proof_payload_shape(&artifact.commitments, &missing_native_proof),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("native proof bytes")
         ));
 
-        let mut missing_reduction = proof.clone();
-        missing_reduction.reduction = None;
+        let missing_reduction = AkitaPackingBatchProof::direct(proof.native().clone());
         assert!(matches!(
             validate_akita_packing_opening_proof_payload_shape(
                 &artifact.commitments,
@@ -647,15 +702,15 @@ mod tests {
                 if reason.contains("packed reduction")
         ));
 
-        let mut missing_reduction_eval = proof.clone();
-        missing_reduction_eval
-            .reduction
-            .as_mut()
+        let mut reduction = proof
+            .reduction()
             .expect("packed proof should contain a reduction")
-            .opening_eval
-            .clear();
+            .clone();
+        reduction.opening_eval.clear();
+        let missing_reduction_eval =
+            AkitaPackingBatchProof::packed(reduction, proof.native().clone());
         assert!(matches!(
-            validate_akita_opening_proof_payload_shape(
+            validate_akita_packed_target_opening_proof_payload_shape(
                 &artifact.commitments,
                 &missing_reduction_eval,
             ),
@@ -663,12 +718,13 @@ mod tests {
                 if reason.contains("lattice packing reduction opening eval")
         ));
 
-        let mut noncanonical_reduction_eval = proof.clone();
-        noncanonical_reduction_eval
-            .reduction
-            .as_mut()
+        let mut reduction = proof
+            .reduction()
             .expect("packed proof should contain a reduction")
-            .opening_eval = AKITA_FIELD_MODULUS.to_le_bytes().to_vec();
+            .clone();
+        reduction.opening_eval = AKITA_FIELD_MODULUS.to_le_bytes().to_vec();
+        let noncanonical_reduction_eval =
+            AkitaPackingBatchProof::packed(reduction, proof.native().clone());
         assert!(matches!(
             validate_akita_packing_opening_proof_payload_shape(
                 &artifact.commitments,
@@ -769,7 +825,7 @@ mod tests {
         };
         assert_eq!(
             precommitted_statement.layout_digest,
-            precommitted_commitment.layout_digest
+            precommitted_commitment.layout_digest()
         );
         let stage8_statement = Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
             logical_manifest: Stage8LogicalManifest {
@@ -808,8 +864,11 @@ mod tests {
         )
         .expect("fresh precommitted proof payload should pass preflight");
 
-        let mut packed_target_precommitted_proof = proofs.precommitted[0].clone();
-        packed_target_precommitted_proof.native.commitment = packed_commitment.clone();
+        let packed_target_precommitted_proof = AkitaPackingBatchProof::direct(proof_with_parts(
+            proofs.precommitted[0].native(),
+            packed_commitment.clone(),
+            proofs.precommitted[0].native().proof_bytes().to_vec(),
+        ));
         assert!(matches!(
             validate_akita_precommitted_opening_proof_payload_shapes(
                 &artifact.commitments,
@@ -819,18 +878,20 @@ mod tests {
                 if reason.contains("precommitted commitment")
         ));
 
-        let mut packed_reduction_precommitted_proof = proofs.precommitted[0].clone();
-        packed_reduction_precommitted_proof.reduction = Some(PackingReductionProof {
-            rounds: Vec::new(),
-            opening_eval: vec![0; AkitaField::NUM_BYTES],
-        });
+        let packed_reduction_precommitted_proof = AkitaPackingBatchProof::packed(
+            PackingReductionProof {
+                rounds: Vec::new(),
+                opening_eval: vec![0; AkitaField::NUM_BYTES],
+            },
+            proofs.precommitted[0].native().clone(),
+        );
         assert!(matches!(
             validate_akita_precommitted_opening_proof_payload_shapes(
                 &artifact.commitments,
                 std::slice::from_ref(&packed_reduction_precommitted_proof),
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
-                if reason.contains("packed reduction")
+                if reason.contains("direct native proof")
         ));
 
         let mut packed_target_statement = stage8_statement.clone();
@@ -878,17 +939,17 @@ mod tests {
         let _ = <AkitaPackingScheme as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &mut verifier_transcript,
-            &packed_statement,
-            &proofs.packed,
-        )
-        .expect("packed proof should verify");
-        let _ = <AkitaPackingScheme as BatchOpeningScheme>::verify_batch(
-            &verifier_setup,
-            &mut verifier_transcript,
             &precommitted_statement,
             &proofs.precommitted[0],
         )
         .expect("precommitted proof should verify");
+        let _ = <AkitaPackingScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &packed_statement,
+            &proofs.packed,
+        )
+        .expect("packed proof should verify");
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
         let mut missing_input_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");

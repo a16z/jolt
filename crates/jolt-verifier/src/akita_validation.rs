@@ -10,7 +10,7 @@ use crate::{
 };
 use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AKITA_FIELD_MODULUS};
 use jolt_field::FixedByteSize;
-use jolt_openings::PackingWitnessLayout;
+use jolt_openings::{PackingBatchProof, PackingWitnessLayout};
 
 pub(crate) fn validate_akita_artifacts_for_proof(
     setup: &AkitaPackingVerifierSetup,
@@ -103,20 +103,20 @@ pub(crate) fn validate_akita_proof_payload_shape(
                 got: proof_commitments.family(),
             })?;
     validate_akita_verifier_setup_shape(setup, payload.layout_digest, payload.d_pack)?;
-    if payload.packed_witness.layout_digest != payload.layout_digest {
+    if payload.packed_witness.layout_digest() != payload.layout_digest {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "lattice packing witness commitment layout digest does not match proof payload"
                 .to_string(),
         });
     }
-    if payload.packed_witness.num_vars != payload.d_pack {
+    if payload.packed_witness.num_vars() != payload.d_pack {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
                 "lattice packing witness commitment dimension does not match proof payload D_pack"
                     .to_string(),
         });
     }
-    if payload.packed_witness.poly_count != 1 {
+    if payload.packed_witness.poly_count() != 1 {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "lattice packing witness commitment must contain exactly one polynomial"
                 .to_string(),
@@ -126,7 +126,7 @@ pub(crate) fn validate_akita_proof_payload_shape(
     Ok(())
 }
 
-pub(crate) fn validate_akita_opening_proof_payload_shape(
+pub(crate) fn validate_akita_packed_target_opening_proof_payload_shape(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
     opening_proof: &AkitaPackingBatchProof,
 ) -> Result<(), VerifierError> {
@@ -137,29 +137,30 @@ pub(crate) fn validate_akita_opening_proof_payload_shape(
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
             })?;
-    if opening_proof.native.commitment != payload.packed_witness {
+    let native = opening_proof.native();
+    if native.commitment() != &payload.packed_witness {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "lattice packed opening proof commitment does not match packed witness payload"
                 .to_string(),
         });
     }
-    validate_akita_commitment_bytes(&opening_proof.native.commitment)?;
-    if opening_proof.native.statement_bridge.is_empty() {
+    validate_akita_commitment_bytes(native.commitment())?;
+    if native.statement_bridge().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing statement bridge bytes".to_string(),
         });
     }
-    if opening_proof.native.proof_shape.is_empty() {
+    if native.proof_shape().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing native proof shape bytes".to_string(),
         });
     }
-    if opening_proof.native.proof.is_empty() {
+    if native.proof_bytes().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing native proof bytes".to_string(),
         });
     }
-    if let Some(reduction) = &opening_proof.reduction {
+    if let Some(reduction) = opening_proof.reduction() {
         validate_akita_field_bytes(
             "lattice packing reduction opening eval",
             &reduction.opening_eval,
@@ -178,8 +179,8 @@ pub(crate) fn validate_akita_packing_opening_proof_payload_shape(
     opening_proof: &AkitaPackingBatchProof,
     field: &'static str,
 ) -> Result<(), VerifierError> {
-    validate_akita_opening_proof_payload_shape(proof_commitments, opening_proof)?;
-    if opening_proof.reduction.is_none() {
+    validate_akita_packed_target_opening_proof_payload_shape(proof_commitments, opening_proof)?;
+    if !matches!(opening_proof, PackingBatchProof::Packed { .. }) {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: format!("{field} must include a packed reduction"),
         });
@@ -208,37 +209,45 @@ fn validate_akita_precommitted_opening_proof_payload_shape(
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
             })?;
-    if opening_proof.native.commitment == payload.packed_witness {
+    let PackingBatchProof::Direct { native } = opening_proof else {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "lattice precommitted opening proof must be a direct native proof".to_string(),
+        });
+    };
+    if native.commitment() == &payload.packed_witness {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
                 "lattice precommitted opening proof must target a separate precommitted commitment"
                     .to_string(),
         });
     }
-    if opening_proof.reduction.is_some() {
+    if native.commitment().num_vars() != payload.d_pack {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "lattice precommitted opening proof must not include a packed reduction"
-                .to_string(),
+            reason: format!(
+                "lattice precommitted opening commitment dimension {} does not match Akita setup dimension {}",
+                native.commitment().num_vars(),
+                payload.d_pack
+            ),
         });
     }
-    validate_akita_native_opening_proof_payload_shape(&opening_proof.native)
+    validate_akita_native_opening_proof_payload_shape(native)
 }
 
 fn validate_akita_native_opening_proof_payload_shape(
     opening_proof: &AkitaBatchProof,
 ) -> Result<(), VerifierError> {
-    validate_akita_commitment_bytes(&opening_proof.commitment)?;
-    if opening_proof.statement_bridge.is_empty() {
+    validate_akita_commitment_bytes(opening_proof.commitment())?;
+    if opening_proof.statement_bridge().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing statement bridge bytes".to_string(),
         });
     }
-    if opening_proof.proof_shape.is_empty() {
+    if opening_proof.proof_shape().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing native proof shape bytes".to_string(),
         });
     }
-    if opening_proof.proof.is_empty() {
+    if opening_proof.proof_bytes().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita opening proof is missing native proof bytes".to_string(),
         });
@@ -247,7 +256,7 @@ fn validate_akita_native_opening_proof_payload_shape(
 }
 
 fn validate_akita_commitment_bytes(commitment: &AkitaCommitment) -> Result<(), VerifierError> {
-    if commitment.native.is_empty() {
+    if commitment.native_bytes().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita commitment is missing native commitment bytes".to_string(),
         });
@@ -375,27 +384,27 @@ fn validate_akita_verifier_setup_shape(
     expected_digest: [u8; 32],
     expected_dimension: usize,
 ) -> Result<(), VerifierError> {
-    if setup.pcs.default_layout_digest != expected_digest {
+    if setup.pcs.default_layout_digest() != expected_digest {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
                 "lattice packing verifier setup layout digest does not match packed witness layout"
                     .to_string(),
         });
     }
-    if setup.pcs.max_num_vars != expected_dimension {
+    if setup.pcs.max_num_vars() != expected_dimension {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "lattice packing verifier setup max_num_vars does not match packed witness dimension"
                 .to_string(),
         });
     }
-    if setup.pcs.max_num_polys_per_commitment_group == 0 {
+    if setup.pcs.max_num_polys_per_commitment_group() == 0 {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
                 "lattice packing verifier setup must support at least one polynomial per commitment group"
                     .to_string(),
         });
     }
-    if setup.pcs.native.is_empty() {
+    if setup.pcs.native_bytes().is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita verifier setup is missing native setup bytes".to_string(),
         });
@@ -426,6 +435,49 @@ mod tests {
 
     fn physical(family: JoltPackingFamilyId) -> PackingFamilyId {
         family.into()
+    }
+
+    fn verifier_setup_with_parts(
+        setup: &AkitaPackingVerifierSetup,
+        max_num_polys_per_commitment_group: usize,
+        native: Vec<u8>,
+    ) -> AkitaPackingVerifierSetup {
+        let pcs = serde_json::from_value(serde_json::json!({
+            "max_num_vars": setup.pcs.max_num_vars(),
+            "max_num_polys_per_commitment_group": max_num_polys_per_commitment_group,
+            "default_layout_digest": setup.pcs.default_layout_digest(),
+            "native": native,
+        }))
+        .expect("tampered verifier setup should deserialize");
+        AkitaPackingVerifierSetup {
+            pcs,
+            layout: setup.layout.clone(),
+        }
+    }
+
+    fn commitment_with_parts(
+        layout_digest: [u8; 32],
+        num_vars: usize,
+        poly_count: usize,
+        native: Vec<u8>,
+    ) -> AkitaCommitment {
+        serde_json::from_value(serde_json::json!({
+            "layout_digest": layout_digest,
+            "num_vars": num_vars,
+            "poly_count": poly_count,
+            "native": native,
+        }))
+        .expect("tampered commitment should deserialize")
+    }
+
+    fn native_opening_proof_with_commitment(commitment: AkitaCommitment) -> AkitaBatchProof {
+        serde_json::from_value(serde_json::json!({
+            "commitment": commitment,
+            "statement_bridge": [1],
+            "proof_shape": [2],
+            "proof": [3],
+        }))
+        .expect("tampered native proof should deserialize")
     }
 
     fn tiny_layout() -> PackingWitnessLayout {
@@ -536,8 +588,11 @@ mod tests {
             Err(VerifierError::InvalidProtocolConfig { .. })
         ));
 
-        let mut missing_native = verifier_setup;
-        missing_native.pcs.native.clear();
+        let missing_native = verifier_setup_with_parts(
+            &verifier_setup,
+            verifier_setup.pcs.max_num_polys_per_commitment_group(),
+            Vec::new(),
+        );
         assert!(matches!(
             validate_akita_verifier_setup_config(&missing_native, &config),
             Err(VerifierError::InvalidProtocolConfig { reason })
@@ -565,8 +620,11 @@ mod tests {
             Err(VerifierError::InvalidProtocolConfig { .. })
         ));
 
-        let mut zero_group_setup = verifier_setup;
-        zero_group_setup.pcs.max_num_polys_per_commitment_group = 0;
+        let zero_group_setup = verifier_setup_with_parts(
+            &verifier_setup,
+            0,
+            verifier_setup.pcs.native_bytes().to_vec(),
+        );
         assert!(matches!(
             validate_akita_verifier_setup_layout(&zero_group_setup, &layout),
             Err(VerifierError::InvalidProtocolConfig { .. })
@@ -582,7 +640,15 @@ mod tests {
         let payload = lattice_payload(&artifacts);
 
         let mut wrong_commitment_digest = payload.clone();
-        wrong_commitment_digest.packed_witness.layout_digest = [9; 32];
+        wrong_commitment_digest.packed_witness = commitment_with_parts(
+            [9; 32],
+            wrong_commitment_digest.packed_witness.num_vars(),
+            wrong_commitment_digest.packed_witness.poly_count(),
+            wrong_commitment_digest
+                .packed_witness
+                .native_bytes()
+                .to_vec(),
+        );
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
@@ -593,7 +659,15 @@ mod tests {
         ));
 
         let mut wrong_commitment_dimension = payload.clone();
-        wrong_commitment_dimension.packed_witness.num_vars = layout.dimension + 1;
+        wrong_commitment_dimension.packed_witness = commitment_with_parts(
+            wrong_commitment_dimension.packed_witness.layout_digest(),
+            layout.dimension + 1,
+            wrong_commitment_dimension.packed_witness.poly_count(),
+            wrong_commitment_dimension
+                .packed_witness
+                .native_bytes()
+                .to_vec(),
+        );
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
@@ -604,7 +678,12 @@ mod tests {
         ));
 
         let mut wrong_poly_count = payload.clone();
-        wrong_poly_count.packed_witness.poly_count = 2;
+        wrong_poly_count.packed_witness = commitment_with_parts(
+            wrong_poly_count.packed_witness.layout_digest(),
+            wrong_poly_count.packed_witness.num_vars(),
+            2,
+            wrong_poly_count.packed_witness.native_bytes().to_vec(),
+        );
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
@@ -615,7 +694,12 @@ mod tests {
         ));
 
         let mut missing_native_commitment = payload;
-        missing_native_commitment.packed_witness.native.clear();
+        missing_native_commitment.packed_witness = commitment_with_parts(
+            missing_native_commitment.packed_witness.layout_digest(),
+            missing_native_commitment.packed_witness.num_vars(),
+            missing_native_commitment.packed_witness.poly_count(),
+            Vec::new(),
+        );
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
@@ -650,7 +734,14 @@ mod tests {
         ));
 
         let mut other_commitment = packed_witness.clone();
-        other_commitment.layout_digest[0] ^= 1;
+        let mut other_digest = other_commitment.layout_digest();
+        other_digest[0] ^= 1;
+        other_commitment = commitment_with_parts(
+            other_digest,
+            other_commitment.num_vars(),
+            other_commitment.poly_count(),
+            other_commitment.native_bytes().to_vec(),
+        );
         assert!(matches!(
             validate_akita_advice_commitment_aliases(
                 &artifacts.commitments,
@@ -685,13 +776,43 @@ mod tests {
         ));
 
         let mut separate_commitment = packed_witness.clone();
-        separate_commitment.layout_digest[0] ^= 1;
+        let mut separate_digest = separate_commitment.layout_digest();
+        separate_digest[0] ^= 1;
+        separate_commitment = commitment_with_parts(
+            separate_digest,
+            separate_commitment.num_vars(),
+            separate_commitment.poly_count(),
+            separate_commitment.native_bytes().to_vec(),
+        );
         validate_akita_precommitted_commitment_is_separate(
             packed_witness,
             &separate_commitment,
             "program image",
         )
         .expect("separate precommitted commitment should pass");
+    }
+
+    #[test]
+    fn akita_precommitted_opening_proof_requires_setup_dimension() {
+        let (_, artifacts) = empty_artifacts(tiny_layout());
+        let payload = lattice_payload(&artifacts);
+        let precommitted = commitment_with_parts(
+            [31; 32],
+            payload.d_pack + 1,
+            1,
+            payload.packed_witness.native_bytes().to_vec(),
+        );
+        let proof =
+            AkitaPackingBatchProof::direct(native_opening_proof_with_commitment(precommitted));
+
+        assert!(matches!(
+            validate_akita_precommitted_opening_proof_payload_shapes(
+                &artifacts.commitments,
+                std::slice::from_ref(&proof),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("does not match Akita setup dimension")
+        ));
     }
 
     #[test]

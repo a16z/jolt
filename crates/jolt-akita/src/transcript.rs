@@ -4,7 +4,10 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 
 use crate::{
     native::field_bytes,
-    types::{append_field_slice, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaVerifierSetup},
+    types::{
+        append_field_slice, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaVerifierSetup,
+        AKITA_D,
+    },
 };
 
 /// Bind native Akita setup metadata before any statement-specific challenge.
@@ -17,7 +20,7 @@ where
 {
     transcript.append(&Label(b"akita_setup_key"));
     transcript.append_bytes(b"akita/fp128/d64full");
-    transcript.append(&U64Word(crate::AKITA_D as u64));
+    transcript.append(&U64Word(AKITA_D as u64));
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
     transcript.append_bytes(&setup.default_layout_digest);

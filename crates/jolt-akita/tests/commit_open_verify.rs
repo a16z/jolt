@@ -114,7 +114,7 @@ fn akita_direct_commit_group_accepts_statement_layout_and_rejects_dimension_mism
     let (prover_setup, _) = setup();
     let statement_layout = AkitaScheme::commit_group(&prover_setup, layout(8), &[polynomial(1)])
         .expect("direct commitments carry their statement layout digest");
-    assert_eq!(statement_layout.0.layout_digest, layout(8));
+    assert_eq!(statement_layout.0.layout_digest(), layout(8));
 
     let (wrong_dimension_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7)));
     let wrong_dimension =
@@ -140,7 +140,7 @@ fn akita_direct_opening_uses_commitment_layout_digest() {
             std::slice::from_ref(&poly),
         )
         .expect("direct commitment should commit with its own layout digest");
-        assert_eq!(commitment.layout_digest, commitment_layout);
+        assert_eq!(commitment.layout_digest(), commitment_layout);
         let statement = BatchOpeningStatement {
             logical_point: point.clone(),
             pcs_point: point.clone(),

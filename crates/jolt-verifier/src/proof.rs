@@ -148,6 +148,38 @@ where
         trace_polynomial_order: TracePolynomialOrder,
     ) -> Self {
         let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
+        Self::new_with_protocol(
+            protocol,
+            commitments,
+            stages,
+            joint_opening_proof,
+            untrusted_advice_commitment,
+            claims,
+            trace_length,
+            ram_k,
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Constructor mirrors the proof payload while keeping internal verifier claims private."
+    )]
+    pub fn new_with_protocol(
+        protocol: JoltProtocolConfig,
+        commitments: CommitmentPayload<PCS::Output>,
+        stages: JoltStageProofs<PCS::Field, VC>,
+        joint_opening_proof: PCS::Proof,
+        untrusted_advice_commitment: Option<PCS::Output>,
+        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        trace_length: usize,
+        ram_k: usize,
+        rw_config: JoltReadWriteConfig,
+        one_hot_config: JoltOneHotConfig,
+        trace_polynomial_order: TracePolynomialOrder,
+    ) -> Self {
         Self {
             protocol,
             commitments,

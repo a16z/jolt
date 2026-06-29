@@ -12,7 +12,6 @@ mod zk;
 
 pub use scheme::AkitaScheme;
 pub use types::{
-    AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHidingCommitment,
-    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaSparsePolynomial,
-    AkitaVerifierSetup, AKITA_D, AKITA_FIELD_MODULUS,
+    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaProverHint,
+    AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_FIELD_MODULUS,
 };

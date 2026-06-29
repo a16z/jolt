@@ -203,8 +203,8 @@ fn commits_packed_witness_and_returns_verifier_payload() {
         .expect("artifact should carry lattice payload");
     assert_eq!(payload.layout_digest, layout.digest);
     assert_eq!(payload.d_pack, layout.dimension);
-    assert_eq!(payload.packed_witness.layout_digest, layout.digest);
-    assert_eq!(payload.packed_witness.num_vars, layout.dimension);
+    assert_eq!(payload.packed_witness.layout_digest(), layout.digest);
+    assert_eq!(payload.packed_witness.num_vars(), layout.dimension);
     assert_eq!(
         artifact.protocol.lattice.packed_witness.layout_digest,
         Some(layout.digest)

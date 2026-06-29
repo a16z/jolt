@@ -322,7 +322,7 @@ mod tests {
             vec![hint],
         )
         .expect("generic packed proof should prove");
-        assert!(proof.reduction.is_some());
+        assert!(matches!(proof, PackingBatchProof::Packed { .. }));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"generic-packing");
         let result = <PackedTestPcs as BatchOpeningScheme>::verify_batch(

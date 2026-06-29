@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use akita_config::CommitmentConfig;
 use akita_field::PseudoMersenneField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{AkitaPolyOps, CpuPreparedSetup, DensePoly, SparseRingPoly};
+use akita_prover::{CpuPreparedSetup, DensePoly, SparseRingPoly};
 use akita_types::{
     AkitaBatchedProof as NativeBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as NativeCommitmentHint, AkitaVerifierSetup as NativeVerifierSetup,
@@ -14,29 +14,30 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use serde::{Deserialize, Serialize};
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
-pub const AKITA_D: usize = AkitaConfig::D;
+pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
+pub(crate) const AKITA_D: usize = AkitaConfig::D;
+pub(crate) type NativeExtField = <AkitaConfig as CommitmentConfig>::ExtField;
 pub const AKITA_FIELD_MODULUS: u128 =
     u128::MAX - (<AkitaField as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
 pub(crate) type NativeScheme = AkitaCommitmentScheme<AKITA_D, AkitaConfig>;
 pub(crate) type NativeCommitment = NativeRingCommitment<AkitaField, AKITA_D>;
 pub(crate) type NativeHint = NativeCommitmentHint<AkitaField, AKITA_D>;
-pub(crate) type NativeProof = NativeBatchProof<AkitaField, AkitaField>;
+pub(crate) type NativeProof = NativeBatchProof<AkitaField, NativeExtField>;
 pub(crate) type NativeProofShape = AkitaBatchedProofShape;
 pub(crate) type NativeVerifier = NativeVerifierSetup<AkitaField>;
 pub(crate) type NativeDensePoly = DensePoly<AkitaField, AKITA_D>;
 pub(crate) type NativeSparsePoly = SparseRingPoly<AkitaField, AKITA_D>;
 pub(crate) type NativePreparedSetup = CpuPreparedSetup<AkitaField, AKITA_D>;
 
-pub type AkitaLayoutDigest = [u8; 32];
+pub(crate) type AkitaLayoutDigest = [u8; 32];
 
-pub struct AkitaSparsePolynomial {
+pub(crate) struct AkitaSparsePolynomial {
     pub(crate) native: NativeSparsePoly,
 }
 
 impl AkitaSparsePolynomial {
-    pub fn from_jolt_unit_indices(
+    pub(crate) fn from_jolt_unit_indices(
         num_vars: usize,
         indices: impl IntoIterator<Item = usize>,
     ) -> Result<Self, OpeningsError> {
@@ -78,7 +79,7 @@ impl AkitaSparsePolynomial {
             })
     }
 
-    pub fn num_vars(&self) -> usize {
+    pub(crate) fn num_vars(&self) -> usize {
         self.native.num_vars()
     }
 }
@@ -97,9 +98,9 @@ fn invalid_sparse_polynomial(reason: impl Into<String>) -> OpeningsError {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaSetupParams {
-    pub max_num_vars: usize,
-    pub max_num_polys_per_commitment_group: usize,
-    pub default_layout_digest: AkitaLayoutDigest,
+    pub(crate) max_num_vars: usize,
+    pub(crate) max_num_polys_per_commitment_group: usize,
+    pub(crate) default_layout_digest: AkitaLayoutDigest,
 }
 
 impl AkitaSetupParams {
@@ -114,34 +115,96 @@ impl AkitaSetupParams {
             default_layout_digest,
         }
     }
+
+    pub fn max_num_vars(&self) -> usize {
+        self.max_num_vars
+    }
+
+    pub fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group
+    }
+
+    pub fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct AkitaProverSetup {
-    pub max_num_vars: usize,
-    pub max_num_polys_per_commitment_group: usize,
-    pub default_layout_digest: AkitaLayoutDigest,
+    pub(crate) max_num_vars: usize,
+    pub(crate) max_num_polys_per_commitment_group: usize,
+    pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) native: akita_prover::AkitaProverSetup<AkitaField, AKITA_D>,
     pub(crate) prepared: NativePreparedSetup,
     pub(crate) verifier: AkitaVerifierSetup,
 }
 
+impl AkitaProverSetup {
+    pub fn max_num_vars(&self) -> usize {
+        self.max_num_vars
+    }
+
+    pub fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group
+    }
+
+    pub fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
-    pub max_num_vars: usize,
-    pub max_num_polys_per_commitment_group: usize,
-    pub default_layout_digest: AkitaLayoutDigest,
-    pub native: Vec<u8>,
+    pub(crate) max_num_vars: usize,
+    pub(crate) max_num_polys_per_commitment_group: usize,
+    pub(crate) default_layout_digest: AkitaLayoutDigest,
+    pub(crate) native: Vec<u8>,
+}
+
+impl AkitaVerifierSetup {
+    pub fn max_num_vars(&self) -> usize {
+        self.max_num_vars
+    }
+
+    pub fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group
+    }
+
+    pub fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest
+    }
+
+    pub fn native_bytes(&self) -> &[u8] {
+        &self.native
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaCommitment {
-    pub layout_digest: AkitaLayoutDigest,
-    pub num_vars: usize,
-    pub poly_count: usize,
-    pub native: Vec<u8>,
+    pub(crate) layout_digest: AkitaLayoutDigest,
+    pub(crate) num_vars: usize,
+    pub(crate) poly_count: usize,
+    pub(crate) native: Vec<u8>,
+}
+
+impl AkitaCommitment {
+    pub fn layout_digest(&self) -> [u8; 32] {
+        self.layout_digest
+    }
+
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    pub fn poly_count(&self) -> usize {
+        self.poly_count
+    }
+
+    pub fn native_bytes(&self) -> &[u8] {
+        &self.native
+    }
 }
 
 impl AppendToTranscript for AkitaCommitment {
@@ -167,16 +230,40 @@ impl CommitmentLayoutDigest for AkitaCommitment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
-    pub commitment: AkitaCommitment,
-    pub statement_bridge: Vec<u8>,
-    pub proof_shape: Vec<u8>,
-    pub proof: Vec<u8>,
+    pub(crate) commitment: AkitaCommitment,
+    pub(crate) statement_bridge: Vec<u8>,
+    pub(crate) proof_shape: Vec<u8>,
+    pub(crate) proof: Vec<u8>,
+}
+
+impl AkitaBatchProof {
+    pub fn commitment(&self) -> &AkitaCommitment {
+        &self.commitment
+    }
+
+    pub fn statement_bridge(&self) -> &[u8] {
+        &self.statement_bridge
+    }
+
+    pub fn proof_shape(&self) -> &[u8] {
+        &self.proof_shape
+    }
+
+    pub fn proof_bytes(&self) -> &[u8] {
+        &self.proof
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaHidingCommitment {
-    pub eval: Vec<u8>,
+    pub(crate) eval: Vec<u8>,
+}
+
+impl AkitaHidingCommitment {
+    pub(crate) fn new(eval: Vec<u8>) -> Self {
+        Self { eval }
+    }
 }
 
 impl AppendToTranscript for AkitaHidingCommitment {
@@ -192,7 +279,7 @@ impl AppendToTranscript for AkitaHidingCommitment {
 
 #[derive(Clone, Debug, Default)]
 pub struct AkitaProverHint {
-    pub commitment: AkitaCommitment,
+    pub(crate) commitment: AkitaCommitment,
     pub(crate) native: Option<NativeHint>,
 }
 

@@ -31,13 +31,7 @@ impl ZkOpeningScheme for AkitaScheme {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let proof = Self::open(poly, point, eval, setup, Some(hint), transcript);
-        (
-            proof,
-            AkitaHidingCommitment {
-                eval: field_bytes(eval),
-            },
-            (),
-        )
+        (proof, AkitaHidingCommitment::new(field_bytes(eval)), ())
     }
 
     fn verify_zk(

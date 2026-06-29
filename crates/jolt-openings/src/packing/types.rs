@@ -69,10 +69,38 @@ pub struct PackingReductionProof {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackingBatchProof<NativeProof> {
-    pub reduction: Option<PackingReductionProof>,
-    pub native: NativeProof,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PackingBatchProof<NativeProof> {
+    Direct {
+        native: NativeProof,
+    },
+    Packed {
+        reduction: PackingReductionProof,
+        native: NativeProof,
+    },
+}
+
+impl<NativeProof> PackingBatchProof<NativeProof> {
+    pub fn direct(native: NativeProof) -> Self {
+        Self::Direct { native }
+    }
+
+    pub fn packed(reduction: PackingReductionProof, native: NativeProof) -> Self {
+        Self::Packed { reduction, native }
+    }
+
+    pub fn native(&self) -> &NativeProof {
+        match self {
+            Self::Direct { native } | Self::Packed { native, .. } => native,
+        }
+    }
+
+    pub fn reduction(&self) -> Option<&PackingReductionProof> {
+        match self {
+            Self::Direct { .. } => None,
+            Self::Packed { reduction, .. } => Some(reduction),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

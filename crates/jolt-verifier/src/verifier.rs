@@ -2685,19 +2685,34 @@ mod tests {
         layout_digest: [u8; 32],
         d_pack: usize,
     ) -> TestProof {
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.protocol = *config;
-        proof.trace_length = 4;
-        proof.ram_K = 4;
-        proof.one_hot_config = JoltOneHotConfig {
-            log_k_chunk: 8,
-            lookups_ra_virtual_log_k_chunk: 8,
-        };
-        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
-            TestCommitment,
-            layout_digest,
-            d_pack,
-        ));
+        let base = proof_with_zk(false, clear_claims());
+        #[cfg_attr(
+            not(feature = "akita"),
+            expect(
+                unused_mut,
+                reason = "proof is mutated only when Akita validity is attached"
+            )
+        )]
+        let mut proof = JoltProof::new_with_protocol(
+            *config,
+            CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
+                TestCommitment,
+                layout_digest,
+                d_pack,
+            )),
+            base.stages,
+            (),
+            base.untrusted_advice_commitment,
+            base.claims,
+            4,
+            4,
+            base.rw_config,
+            JoltOneHotConfig {
+                log_k_chunk: 8,
+                lookups_ra_virtual_log_k_chunk: 8,
+            },
+            base.trace_polynomial_order,
+        );
         #[cfg(feature = "akita")]
         attach_lattice_validity_surface(&mut proof, config);
         proof

@@ -77,10 +77,7 @@ where
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        PackingBatchProof {
-            reduction: None,
-            native: PCS::open(poly, point, eval, &setup.pcs, hint, transcript),
-        }
+        PackingBatchProof::direct(PCS::open(poly, point, eval, &setup.pcs, hint, transcript))
     }
 
     fn verify(
@@ -91,17 +88,10 @@ where
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
-        if proof.reduction.is_some() {
+        let PackingBatchProof::Direct { native } = proof else {
             return Err(OpeningsError::VerificationFailed);
-        }
-        PCS::verify(
-            commitment,
-            point,
-            eval,
-            &proof.native,
-            &setup.pcs,
-            transcript,
-        )
+        };
+        PCS::verify(commitment, point, eval, native, &setup.pcs, transcript)
     }
 
     fn bind_opening_inputs(
@@ -131,10 +121,7 @@ where
     {
         if !has_packing_view(statement) {
             let native = PCS::prove_batch(&setup.pcs, transcript, statement, polynomials, hints)?;
-            return Ok(PackingBatchProof {
-                reduction: None,
-                native,
-            });
+            return Ok(PackingBatchProof::direct(native));
         }
 
         let layout = &setup.layout;
@@ -159,10 +146,7 @@ where
             Some(hint),
             transcript,
         );
-        Ok(PackingBatchProof {
-            reduction: Some(reduction.proof),
-            native,
-        })
+        Ok(PackingBatchProof::packed(reduction.proof, native))
     }
 
     fn verify_batch<T, OpeningId, RelationId>(
@@ -175,16 +159,19 @@ where
         T: Transcript<Challenge = Self::Field>,
     {
         if !has_packing_view(statement) {
-            if proof.reduction.is_some() {
+            let PackingBatchProof::Direct { native } = proof else {
                 return Err(OpeningsError::VerificationFailed);
-            }
-            return PCS::verify_batch(&setup.pcs, transcript, statement, &proof.native);
+            };
+            return PCS::verify_batch(&setup.pcs, transcript, statement, native);
         }
 
-        let reduction_proof = proof
-            .reduction
-            .as_ref()
-            .ok_or(OpeningsError::VerificationFailed)?;
+        let PackingBatchProof::Packed {
+            reduction: reduction_proof,
+            native,
+        } = proof
+        else {
+            return Err(OpeningsError::VerificationFailed);
+        };
         let layout = &setup.layout;
         let commitment = validate_packing_statement(layout, statement)?;
         validate_packed_commitment_digest(layout, &commitment)?;
@@ -193,7 +180,7 @@ where
             &reduction.result.joint_commitment,
             &reduction.opening_point,
             reduction.opening_eval,
-            &proof.native,
+            native,
             &setup.pcs,
             transcript,
         )?;
@@ -225,14 +212,7 @@ where
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let (native, hiding, blind) = PCS::open_zk(poly, point, eval, &setup.pcs, hint, transcript);
-        (
-            PackingBatchProof {
-                reduction: None,
-                native,
-            },
-            hiding,
-            blind,
-        )
+        (PackingBatchProof::direct(native), hiding, blind)
     }
 
     fn verify_zk(
@@ -242,10 +222,10 @@ where
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
-        if proof.reduction.is_some() {
+        let PackingBatchProof::Direct { native } = proof else {
             return Err(OpeningsError::VerificationFailed);
-        }
-        PCS::verify_zk(commitment, point, &proof.native, &setup.pcs, transcript)
+        };
+        PCS::verify_zk(commitment, point, native, &setup.pcs, transcript)
     }
 
     fn bind_zk_opening_inputs(
@@ -281,14 +261,7 @@ where
         }
         let (native, hiding, blind) =
             PCS::prove_batch_zk(&setup.pcs, transcript, statement, evals, polynomials, hints)?;
-        Ok((
-            PackingBatchProof {
-                reduction: None,
-                native,
-            },
-            hiding,
-            blind,
-        ))
+        Ok((PackingBatchProof::direct(native), hiding, blind))
     }
 
     fn verify_batch_zk<T, OpeningId, RelationId>(
@@ -305,10 +278,10 @@ where
                 "packing batch openings do not support ZK mode yet",
             ));
         }
-        if proof.reduction.is_some() {
+        let PackingBatchProof::Direct { native } = proof else {
             return Err(OpeningsError::VerificationFailed);
-        }
-        PCS::verify_batch_zk(&setup.pcs, transcript, statement, &proof.native)
+        };
+        PCS::verify_batch_zk(&setup.pcs, transcript, statement, native)
     }
 }
 

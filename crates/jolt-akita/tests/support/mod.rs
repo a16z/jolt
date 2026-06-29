@@ -41,7 +41,7 @@ pub fn direct_statement(
     BatchOpeningStatement {
         logical_point: point.to_vec(),
         pcs_point: point.to_vec(),
-        layout_digest: commitment.layout_digest,
+        layout_digest: commitment.layout_digest(),
         claims: vec![
             BatchOpeningClaim {
                 id: OpeningId::A,

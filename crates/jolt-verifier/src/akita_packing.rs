@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 
 use jolt_akita::{
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint, AkitaProverSetup, AkitaScheme,
-    AkitaSparsePolynomial, AKITA_D,
 };
 use jolt_openings::{
     has_packing_view, packing_witness_source_polynomial, prove_sparse_packing_reduction,
@@ -24,12 +23,13 @@ pub(crate) fn commit_packing_source<S>(
 where
     S: PackingWitnessSource<AkitaField>,
 {
-    validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
-    if let Some(polynomial) = packed_source_sparse_polynomial(source)? {
-        return AkitaScheme::commit_sparse_polynomial(
+    validate_packing_source_dimension(setup.pcs.max_num_vars(), source.layout())?;
+    if let Some(unit_indices) = packed_source_unit_indices(source)? {
+        return AkitaScheme::commit_unit_sparse_indices(
             &setup.pcs,
             source.layout().digest,
-            &polynomial,
+            source.layout().dimension,
+            unit_indices,
         );
     }
     let polynomial = packing_witness_source_polynomial(source)?;
@@ -47,20 +47,18 @@ where
     T: Transcript<Challenge = AkitaField>,
     S: PackingWitnessSource<AkitaField>,
 {
-    validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
-    if let Some(sparse_polynomial) = packed_source_sparse_polynomial(source)? {
+    validate_packing_source_dimension(setup.pcs.max_num_vars(), source.layout())?;
+    if let Some(unit_indices) = packed_source_unit_indices(source)? {
         if !has_packing_view(statement) {
-            let native = AkitaScheme::prove_sparse_batch(
+            let native = AkitaScheme::prove_unit_sparse_batch(
                 &setup.pcs,
                 transcript,
                 statement,
-                &sparse_polynomial,
+                source.layout().dimension,
+                unit_indices,
                 hint,
             )?;
-            return Ok(PackingBatchProof {
-                reduction: None,
-                native,
-            });
+            return Ok(PackingBatchProof::direct(native));
         }
 
         let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
@@ -72,17 +70,15 @@ where
             &reduction.opening_point,
             reduction.opening_eval,
         );
-        let native = AkitaScheme::prove_sparse_batch(
+        let native = AkitaScheme::prove_unit_sparse_batch(
             &setup.pcs,
             transcript,
             &native_statement,
-            &sparse_polynomial,
+            source.layout().dimension,
+            unit_indices,
             hint,
         )?;
-        return Ok(PackingBatchProof {
-            reduction: Some(reduction.proof),
-            native,
-        });
+        return Ok(PackingBatchProof::packed(reduction.proof, native));
     }
 
     let polynomial = packing_witness_source_polynomial(source)?;
@@ -136,14 +132,11 @@ where
     Ok(shape)
 }
 
-fn validate_packed_adapter_statement<'a, Setup, OpeningId, RelationId>(
-    setup: &Setup,
+fn validate_packed_adapter_statement<'a, OpeningId, RelationId>(
+    setup: &AkitaProverSetup,
     layout: &'a PackingWitnessLayout,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-) -> Result<PackingBatchShape<'a>, OpeningsError>
-where
-    Setup: AkitaPackingSetupShape,
-{
+) -> Result<PackingBatchShape<'a>, OpeningsError> {
     let commitment = validate_packing_statement(layout, statement)?;
     validate_packed_setup_shape(
         setup.max_num_vars(),
@@ -154,67 +147,52 @@ where
     Ok(PackingBatchShape { layout, commitment })
 }
 
-trait AkitaPackingSetupShape {
-    fn max_num_vars(&self) -> usize;
-    fn default_layout_digest(&self) -> [u8; 32];
-}
-
-impl AkitaPackingSetupShape for AkitaProverSetup {
-    fn max_num_vars(&self) -> usize {
-        self.max_num_vars
-    }
-
-    fn default_layout_digest(&self) -> [u8; 32] {
-        self.default_layout_digest
-    }
-}
-
 fn validate_packed_setup_shape(
     max_num_vars: usize,
     default_layout_digest: [u8; 32],
     layout: &PackingWitnessLayout,
     commitment: &AkitaCommitment,
 ) -> Result<(), OpeningsError> {
-    if commitment.num_vars > max_num_vars {
+    if commitment.num_vars() > max_num_vars {
         return Err(OpeningsError::PolynomialTooLarge {
-            poly_size: commitment.num_vars,
+            poly_size: commitment.num_vars(),
             setup_max: max_num_vars,
         });
     }
-    if commitment.num_vars != max_num_vars {
+    if commitment.num_vars() != max_num_vars {
         return Err(invalid_batch(format!(
             "Akita packing commitment dimension {} does not match exact setup dimension {}",
-            commitment.num_vars, max_num_vars
+            commitment.num_vars(),
+            max_num_vars
         )));
     }
-    if commitment.layout_digest != default_layout_digest {
+    if commitment.layout_digest() != default_layout_digest {
         return Err(invalid_batch(
             "Akita packing commitment layout digest does not match setup",
         ));
     }
-    if commitment.layout_digest != layout.digest {
+    if commitment.layout_digest() != layout.digest {
         return Err(invalid_batch(
             "Akita packing commitment layout digest does not match setup layout",
         ));
     }
-    if commitment.num_vars != layout.dimension {
+    if commitment.num_vars() != layout.dimension {
         return Err(invalid_batch(format!(
             "Akita packing commitment dimension {} does not match layout dimension {}",
-            commitment.num_vars, layout.dimension
+            commitment.num_vars(),
+            layout.dimension
         )));
     }
-    if commitment.poly_count != 1 {
+    if commitment.poly_count() != 1 {
         return Err(invalid_batch(format!(
             "Akita packing witness commitment must contain one polynomial, got {}",
-            commitment.poly_count
+            commitment.poly_count()
         )));
     }
     Ok(())
 }
 
-fn packed_source_sparse_polynomial<S>(
-    source: &S,
-) -> Result<Option<AkitaSparsePolynomial>, OpeningsError>
+fn packed_source_unit_indices<S>(source: &S) -> Result<Option<Vec<usize>>, OpeningsError>
 where
     S: PackingWitnessSource<AkitaField>,
 {
@@ -230,10 +208,10 @@ where
             layout.dimension
         )));
     }
-    let domain_size = 1usize << layout.dimension;
-    if domain_size < AKITA_D {
+    if !AkitaScheme::supports_unit_sparse_dimension(layout.dimension) {
         return Ok(None);
     }
+    let domain_size = 1usize << layout.dimension;
     if layout.cells > domain_size {
         return Err(invalid_batch(format!(
             "Akita packing witness has {} cells but dimension {} supports {domain_size}",
@@ -271,7 +249,7 @@ where
     });
     result?;
 
-    AkitaSparsePolynomial::from_jolt_unit_indices(layout.dimension, ranks).map(Some)
+    Ok(Some(ranks))
 }
 
 fn singleton_statement(
@@ -282,7 +260,7 @@ fn singleton_statement(
     BatchOpeningStatement {
         logical_point: point.to_vec(),
         pcs_point: point.to_vec(),
-        layout_digest: commitment.layout_digest,
+        layout_digest: commitment.layout_digest(),
         claims: vec![jolt_openings::BatchOpeningClaim {
             id: (),
             relation: (),
