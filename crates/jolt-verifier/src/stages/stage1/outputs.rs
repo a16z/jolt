@@ -16,7 +16,7 @@ use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage1OutputClaims<F: Field> {
     pub uniskip_output_claim: F,
     pub outer: SpartanOuterClaims<F>,
@@ -107,7 +107,7 @@ pub fn spartan_outer_claims_from_r1cs_inputs<F: Field>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct SpartanOuterClaims<F: Field> {
     pub left_instruction_input: F,
     pub right_instruction_input: F,
@@ -181,7 +181,7 @@ impl<F: Field> SpartanOuterClaims<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct SpartanOuterFlagClaims<F: Field> {
     pub add_operands: F,
     pub subtract_operands: F,

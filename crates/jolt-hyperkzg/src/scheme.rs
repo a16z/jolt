@@ -17,6 +17,7 @@ use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::HyperKZGError;
 use crate::kzg::{self, kzg_open_batch, kzg_verify_batch};
@@ -248,8 +249,9 @@ impl<P: PairingGroup> Commitment for HyperKZGScheme<P> {
 
 impl<P: PairingGroup> CommitmentScheme for HyperKZGScheme<P>
 where
-    P::ScalarField: AppendToTranscript,
-    P::G1: AppendToTranscript,
+    P::ScalarField: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G1: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G2: Serialize + DeserializeOwned,
 {
     type Field = P::ScalarField;
     type Proof = HyperKZGProof<P>;
@@ -318,8 +320,9 @@ where
 
 impl<P: PairingGroup> AdditivelyHomomorphic for HyperKZGScheme<P>
 where
-    P::ScalarField: AppendToTranscript,
-    P::G1: AppendToTranscript,
+    P::ScalarField: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G1: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G2: Serialize + DeserializeOwned,
 {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
