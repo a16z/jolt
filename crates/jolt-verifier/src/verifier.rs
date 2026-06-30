@@ -1114,39 +1114,43 @@ mod tests {
                 },
             },
             stage6: stage6::outputs::Stage6OutputClaims {
-                address_phase: stage6::outputs::Stage6AddressPhaseClaims {
-                    bytecode_read_raf: zero,
-                    booleanity: zero,
-                    bytecode_val_stages: None,
-                },
-                bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
-                    bytecode_ra: Vec::new(),
-                },
-                booleanity: stage6::outputs::BooleanityOutputClaims {
-                    instruction_ra: Vec::new(),
-                    bytecode_ra: Vec::new(),
-                    ram_ra: Vec::new(),
-                },
-                ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
-                    ram_hamming_weight: zero,
-                },
-                ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
-                    ram_ra: Vec::new(),
-                },
-                instruction_ra_virtualization:
-                    stage6::outputs::InstructionRaVirtualizationOutputClaims {
-                        committed_instruction_ra: Vec::new(),
+                address_phase: stage6::outputs::Stage6AddressPhaseOutputClaims {
+                    bytecode_read_raf: stage6::outputs::BytecodeReadRafAddressPhaseOutputClaims {
+                        intermediate: zero,
+                        val_stages: Vec::new(),
                     },
-                inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
-                    ram_inc: zero,
-                    rd_inc: zero,
+                    booleanity: stage6::outputs::BooleanityAddressPhaseOutputClaims {
+                        intermediate: zero,
+                    },
                 },
-                advice_cycle_phase: stage6::outputs::Stage6AdviceCyclePhaseClaims {
-                    trusted: None,
-                    untrusted: None,
+                cycle_phase: stage6::outputs::Stage6CyclePhaseOutputClaims {
+                    bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
+                        bytecode_ra: Vec::new(),
+                    },
+                    booleanity: stage6::outputs::BooleanityOutputClaims {
+                        instruction_ra: Vec::new(),
+                        bytecode_ra: Vec::new(),
+                        ram_ra: Vec::new(),
+                    },
+                    ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
+                        ram_hamming_weight: zero,
+                    },
+                    ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
+                        ram_ra: Vec::new(),
+                    },
+                    instruction_ra_virtualization:
+                        stage6::outputs::InstructionRaVirtualizationOutputClaims {
+                            committed_instruction_ra: Vec::new(),
+                        },
+                    inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
+                        ram_inc: zero,
+                        rd_inc: zero,
+                    },
+                    trusted_advice: None,
+                    untrusted_advice: None,
+                    bytecode_reduction: None,
+                    program_image_reduction: None,
                 },
-                bytecode_claim_reduction: None,
-                program_image_claim_reduction: None,
             },
             stage7: stage7::outputs::Stage7OutputClaims {
                 hamming_weight_claim_reduction:

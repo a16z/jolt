@@ -1,103 +1,97 @@
 //! Typed inputs consumed and outputs produced by stage 6 verification.
 
-use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use serde::{Deserialize, Serialize};
 
+use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 // The per-relation produced-claim structs live in their relation modules
 // (cell-generic, `#[derive(OutputClaims)]`); re-export them so consumers and the
-// `Stage6OutputClaims` aggregate keep resolving them through `stage6::outputs`.
-pub use super::booleanity::BooleanityOutputClaims;
-pub use super::bytecode_read_raf::BytecodeReadRafOutputClaims;
+// generated stage-6 aggregates keep resolving them through `stage6::outputs`.
+pub use super::booleanity::{BooleanityAddressPhaseOutputClaims, BooleanityOutputClaims};
+pub use super::bytecode_read_raf::{
+    BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafOutputClaims,
+};
+pub use super::committed_reduction_cycle_phase::{
+    AdviceCyclePhaseOutputClaims, BytecodeReductionCyclePhaseOutputClaims,
+    ProgramImageReductionCyclePhaseOutputClaims,
+};
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
 pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
+use super::booleanity::{Booleanity, BooleanityAddressPhase};
+use super::bytecode_read_raf::{BytecodeReadRafAddressPhase, BytecodeReadRafCommitted};
+use super::committed_reduction_cycle_phase::{
+    AdviceCyclePhase, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
+};
+use super::inc_claim_reduction::IncClaimReduction;
+use super::instruction_ra_virtualization::InstructionRaVirtualization;
+use super::ram_hamming_booleanity::RamHammingBooleanity;
+use super::ram_ra_virtualization::RamRaVirtualization;
+
+/// Source-of-truth for stage 6a's two-instance address-phase sumcheck batch
+/// (bytecode read-RAF, booleanity). `#[derive(SumcheckBatch)]` generates the
+/// `Stage6AddressPhaseInputClaims<F, C>`, `Stage6AddressPhaseOutputClaims<F, C>`,
+/// and `Stage6AddressPhaseChallenges<F>` aggregates — one field per instance, in
+/// this declaration order. No alias dedup in the address phase, so the generated
+/// `opening_values` / `append_to_transcript` (member order: bytecode read-RAF's
+/// `intermediate` then `val_stages`, then booleanity's `intermediate`) is the
+/// canonical Fiat-Shamir order.
+#[derive(SumcheckBatch)]
+pub struct Stage6AddressPhaseSumchecks<F: Field> {
+    pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
+    pub booleanity: BooleanityAddressPhase<F>,
+}
+
+/// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
+/// Fiat-Shamir batch order. `#[derive(SumcheckBatch)]` generates the
+/// `Stage6CyclePhaseInputClaims<F, C>`, `Stage6CyclePhaseOutputClaims<F, C>`, and
+/// `Stage6CyclePhaseChallenges<F>` aggregates — one field per instance, in this
+/// declaration order.
+///
+/// `bytecode_read_raf` lists [`BytecodeReadRafCommitted`] purely as a projection
+/// anchor: both cycle variants (full / committed) share the same
+/// `BytecodeReadRafInputClaims` / `BytecodeReadRafOutputClaims`, and the runtime
+/// dispatch enum (`BytecodeReadRafCycle`, in `batch.rs`) carries the lifetime the
+/// macro cannot accept. The threaded gamma resolves through that enum at runtime.
+///
+/// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
+/// `opening_values` / `append_to_transcript`: booleanity's `bytecode_ra` openings
+/// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
+/// order is curated by [`append_opening_claims`](super::verify::append_opening_claims)
+/// which threads the dedup points.
+#[derive(SumcheckBatch)]
+#[sumcheck_batch(custom_opening_values)]
+pub struct Stage6CyclePhaseSumchecks<F: Field> {
+    pub bytecode_read_raf: BytecodeReadRafCommitted<F>,
+    pub booleanity: Booleanity<F>,
+    pub ram_hamming_booleanity: RamHammingBooleanity<F>,
+    pub ram_ra_virtualization: RamRaVirtualization<F>,
+    pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
+    pub inc_claim_reduction: IncClaimReduction<F>,
+    pub trusted_advice: Option<AdviceCyclePhase<F>>,
+    pub untrusted_advice: Option<AdviceCyclePhase<F>>,
+    pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
+    pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
+}
+
 /// The stage 6 produced opening claims, generic over the cell (`F` on the wire,
-/// `Vec<F>` for derived points, `OpeningClaim<F>` (point + value) on the clear
-/// path). The per-relation members are each `#[derive(OutputClaims)]` structs;
-/// the address-phase and committed-reduction members are hand-written but follow
-/// the same cell convention.
+/// `Vec<F>` for derived points). Combines the stage-6a address-phase aggregate and
+/// the stage-6b cycle-phase aggregate so the single serialized stage-6 proof field
+/// stays byte-identical: address-phase openings absorbed in 6a, cycle-phase
+/// openings absorbed in 6b.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"
 ))]
-pub struct Stage6OutputClaims<C> {
-    pub address_phase: Stage6AddressPhaseClaims<C>,
-    pub bytecode_read_raf: BytecodeReadRafOutputClaims<C>,
-    pub booleanity: BooleanityOutputClaims<C>,
-    pub ram_hamming_booleanity: RamHammingBooleanityOutputClaims<C>,
-    pub ram_ra_virtualization: RamRaVirtualizationOutputClaims<C>,
-    pub instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<C>,
-    pub inc_claim_reduction: IncClaimReductionOutputClaims<C>,
-    pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<C>,
-    /// Committed program mode only.
-    pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<C>>,
-    /// Committed program mode only.
-    pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<C>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct Stage6AddressPhaseClaims<C> {
-    pub bytecode_read_raf: C,
-    pub booleanity: C,
-    /// `BytecodeValStage(s)` openings staged at the address-phase point;
-    /// present only in committed program mode.
-    pub bytecode_val_stages: Option<[C; NUM_BYTECODE_VAL_STAGES]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct Stage6AdviceCyclePhaseClaims<C> {
-    pub trusted: Option<AdviceCyclePhaseOutputClaim<C>>,
-    pub untrusted: Option<AdviceCyclePhaseOutputClaim<C>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct AdviceCyclePhaseOutputClaim<C> {
-    pub opening_claim: C,
-}
-
-/// Openings cached when the committed-bytecode claim reduction's cycle phase
-/// completes: the intermediate claim when address-phase rounds remain, or the
-/// per-chunk `BytecodeChunk(i)` claims when the reduction finishes in the
-/// cycle phase.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub enum BytecodeCyclePhaseOutputClaims<C> {
-    Intermediate(C),
-    Chunks(Vec<C>),
-}
-
-/// Opening cached when the program-image claim reduction's cycle phase
-/// completes (the intermediate or final `ProgramImageInit` claim).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct ProgramImageCyclePhaseOutputClaim<C> {
-    pub opening_claim: C,
+pub struct Stage6OutputClaims<F: Field, C> {
+    pub address_phase: Stage6AddressPhaseOutputClaims<F, C>,
+    pub cycle_phase: Stage6CyclePhaseOutputClaims<F, C>,
 }
 
 /// Opening-point accessors over the point-only (`Vec<F>`) cell form of the stage-6
@@ -106,50 +100,61 @@ pub struct ProgramImageCyclePhaseOutputClaim<C> {
 /// used to carry. The per-cycle-phase reduction's `cycle_phase_variables` are
 /// recovered as `reverse(opening_point)` (see `cycle_phase_opening_point` in
 /// `jolt-claims` `claim_reductions::precommitted`).
-impl<F: Field> Stage6OutputClaims<Vec<F>> {
+impl<F: Field> Stage6OutputClaims<F, Vec<F>> {
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
     pub fn booleanity_opening_point(&self) -> Option<&[F]> {
-        self.booleanity
+        self.cycle_phase
+            .booleanity
             .instruction_ra
             .first()
-            .or_else(|| self.booleanity.bytecode_ra.first())
-            .or_else(|| self.booleanity.ram_ra.first())
+            .or_else(|| self.cycle_phase.booleanity.bytecode_ra.first())
+            .or_else(|| self.cycle_phase.booleanity.ram_ra.first())
             .map(Vec::as_slice)
     }
 
     /// The increment claim-reduction opening point (the reversed cycle point shared
     /// by the `RamInc`/`RdInc` reduced openings).
     pub fn inc_opening_point(&self) -> &[F] {
-        &self.inc_claim_reduction.ram_inc
+        &self.cycle_phase.inc_claim_reduction.ram_inc
     }
 
     /// The advice cycle-phase opening point for `kind`, present only when that
     /// advice reduction ran a cycle phase.
-    pub fn advice_cycle_phase_opening_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
-        let claim = match kind {
-            JoltAdviceKind::Trusted => self.advice_cycle_phase.trusted.as_ref(),
-            JoltAdviceKind::Untrusted => self.advice_cycle_phase.untrusted.as_ref(),
+    pub fn advice_cycle_phase_opening_point(
+        &self,
+        kind: jolt_claims::protocols::jolt::JoltAdviceKind,
+    ) -> Option<&[F]> {
+        use jolt_claims::protocols::jolt::JoltAdviceKind;
+        let member = match kind {
+            JoltAdviceKind::Trusted => self.cycle_phase.trusted_advice.as_ref()?,
+            JoltAdviceKind::Untrusted => self.cycle_phase.untrusted_advice.as_ref()?,
+        };
+        let opening = match kind {
+            JoltAdviceKind::Trusted => member.trusted.as_ref(),
+            JoltAdviceKind::Untrusted => member.untrusted.as_ref(),
         }?;
-        Some(claim.opening_claim.as_slice())
+        Some(opening.as_slice())
     }
 
     /// The program-image claim-reduction cycle-phase opening point, present only in
     /// committed-program mode when the reduction ran a cycle phase.
     pub fn program_image_opening_point(&self) -> Option<&[F]> {
-        self.program_image_claim_reduction
+        self.cycle_phase
+            .program_image_reduction
             .as_ref()
-            .map(|claim| claim.opening_claim.as_slice())
+            .map(|claim| claim.program_image.as_slice())
     }
 
     /// The bytecode claim-reduction cycle-phase opening point, present only in
     /// committed-program mode. Every produced chunk (or the intermediate) shares
     /// the single cycle opening point, so the first cell is canonical.
     pub fn bytecode_reduction_opening_point(&self) -> Option<&[F]> {
-        match self.bytecode_claim_reduction.as_ref()? {
-            BytecodeCyclePhaseOutputClaims::Intermediate(point) => Some(point.as_slice()),
-            BytecodeCyclePhaseOutputClaims::Chunks(points) => points.first().map(Vec::as_slice),
+        let reduction = self.cycle_phase.bytecode_reduction.as_ref()?;
+        match &reduction.intermediate {
+            Some(point) => Some(point.as_slice()),
+            None => reduction.chunks.first().map(Vec::as_slice),
         }
     }
 
@@ -157,7 +162,10 @@ impl<F: Field> Stage6OutputClaims<Vec<F>> {
     /// cycle challenges, recovered as `reverse(opening_point)` (the cycle opening
     /// point is the reverse of the variable challenges). Stage 7's address phase
     /// reconstructs its opening point from these.
-    pub fn advice_cycle_phase_variables(&self, kind: JoltAdviceKind) -> Option<Vec<F>> {
+    pub fn advice_cycle_phase_variables(
+        &self,
+        kind: jolt_claims::protocols::jolt::JoltAdviceKind,
+    ) -> Option<Vec<F>> {
         Some(reversed(self.advice_cycle_phase_opening_point(kind)?))
     }
 
@@ -205,11 +213,11 @@ pub struct Stage6Challenges<F: Field> {
 pub struct Stage6ClearOutput<F: Field> {
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
-    pub output_claims: Stage6OutputClaims<F>,
+    pub output_claims: Stage6OutputClaims<F, F>,
     /// The produced opening *points* (point-only cell), paired field-for-field with
     /// `output_claims`. Stages 7 and 8 read each relation's opening point off these
-    /// cells (via the `Stage6OutputClaims<Vec<F>>` accessors).
-    pub output_points: Stage6OutputClaims<Vec<F>>,
+    /// cells (via the `Stage6OutputClaims<F, Vec<F>>` accessors).
+    pub output_points: Stage6OutputClaims<F, Vec<F>>,
     /// Committed-program mode only: the bytecode claim-reduction's per-chunk
     /// weights (`r_bc`, chunk weights, gamma-folded lane weights). These are
     /// public derived data (not openings), so stage 7's bytecode address phase
@@ -227,11 +235,19 @@ pub struct Stage6ZkOutput<F: Field, C> {
     /// The produced opening *points* (point-only cell), the ZK counterpart of the
     /// clear path's `Stage6ClearOutput::output_points`. Stages 7/8 and BlindFold
     /// read each relation's opening point off these cells through the same
-    /// `Stage6OutputClaims<Vec<F>>` accessors. (BlindFold recomputes the bytecode
+    /// `Stage6OutputClaims<F, Vec<F>>` accessors. (BlindFold recomputes the bytecode
     /// reduction weights locally, so the ZK output carries no weights aux.)
-    pub output_points: Stage6OutputClaims<Vec<F>>,
+    pub output_points: Stage6OutputClaims<F, Vec<F>>,
 }
 
+// The clear variant carries the located opening claims read on the hot path; the
+// ZK variant carries committed consistency plus the point-only `output_points`.
+// Boxing the common clear variant to shrink the rarer ZK one would add indirection
+// to every clear-path access.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage6Output<F: Field, C> {
     Clear(Stage6ClearOutput<F>),

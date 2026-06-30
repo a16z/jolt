@@ -1100,19 +1100,14 @@ fn stage6_advice_output_openings(base: &VerifierFixtureCase) -> Vec<(&'static st
         openings.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Trusted, layout.dimensions())
                 .into_iter()
-                .map(|id| ("stage6.claims.advice_cycle_phase.trusted.opening_claim", id)),
+                .map(|id| ("stage6.claims.trusted_advice.trusted", id)),
         );
     }
     if let Some(layout) = untrusted_layout {
         openings.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Untrusted, layout.dimensions())
                 .into_iter()
-                .map(|id| {
-                    (
-                        "stage6.claims.advice_cycle_phase.untrusted.opening_claim",
-                        id,
-                    )
-                }),
+                .map(|id| ("stage6.claims.untrusted_advice.untrusted", id)),
         );
     }
 

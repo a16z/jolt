@@ -46,12 +46,11 @@ use super::{
         ProgramImageReductionCyclePhaseOutputClaims,
     },
     outputs::{
-        AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeCyclePhaseOutputClaims,
-        BytecodeReadRafOutputClaims, BytecodeReductionWeights, IncClaimReductionOutputClaims,
-        InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
+        BooleanityOutputClaims, BytecodeReadRafOutputClaims, BytecodeReductionWeights,
+        IncClaimReductionOutputClaims, InstructionRaVirtualizationOutputClaims,
         RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
-        Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6Challenges,
-        Stage6ClearOutput, Stage6Output, Stage6OutputClaims, Stage6ZkOutput,
+        Stage6AddressPhaseOutputClaims, Stage6Challenges, Stage6ClearOutput,
+        Stage6CyclePhaseOutputClaims, Stage6Output, Stage6OutputClaims, Stage6ZkOutput,
     },
 };
 use crate::{
@@ -552,54 +551,74 @@ where
         let booleanity_layout = booleanity_dimensions.layout;
         let booleanity_points = |count: usize| vec![booleanity_opening_point.clone(); count];
         let output_points = Stage6OutputClaims {
-            address_phase: Stage6AddressPhaseClaims {
-                bytecode_read_raf: stage6a.bytecode_r_address.clone(),
-                booleanity: stage6a.booleanity_r_address.clone(),
-                bytecode_val_stages: committed_program
-                    .then(|| core::array::from_fn(|_| stage6a.bytecode_r_address.clone())),
-            },
-            bytecode_read_raf: BytecodeReadRafOutputClaims {
-                bytecode_ra: bytecode_ra_opening_points,
-            },
-            booleanity: BooleanityOutputClaims {
-                instruction_ra: booleanity_points(booleanity_layout.instruction()),
-                bytecode_ra: booleanity_points(booleanity_layout.bytecode()),
-                ram_ra: booleanity_points(booleanity_layout.ram()),
-            },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: ram_hamming_opening_point,
-            },
-            ram_ra_virtualization: RamRaVirtualizationOutputClaims {
-                ram_ra: ram_ra_opening_points,
-            },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
-                committed_instruction_ra: instruction_ra_opening_points,
-            },
-            inc_claim_reduction: IncClaimReductionOutputClaims {
-                ram_inc: inc_opening_point.clone(),
-                rd_inc: inc_opening_point,
-            },
-            advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
-                trusted: trusted_advice
-                    .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim }),
-                untrusted: untrusted_advice
-                    .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim }),
-            },
-            bytecode_claim_reduction: match (bytecode_reduction_layout, bytecode_cycle_phase) {
-                (Some(layout), Some(opening_point)) => {
-                    Some(if layout.dimensions().has_address_phase() {
-                        BytecodeCyclePhaseOutputClaims::Intermediate(opening_point)
+            address_phase: Stage6AddressPhaseOutputClaims {
+                bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
+                    intermediate: stage6a.bytecode_r_address.clone(),
+                    val_stages: if committed_program {
+                        vec![
+                            stage6a.bytecode_r_address.clone();
+                            bytecode_reduction::NUM_BYTECODE_VAL_STAGES
+                        ]
                     } else {
-                        BytecodeCyclePhaseOutputClaims::Chunks(vec![
-                            opening_point;
-                            layout.chunk_count()
-                        ])
-                    })
-                }
-                _ => None,
+                        Vec::new()
+                    },
+                },
+                booleanity: BooleanityAddressPhaseOutputClaims {
+                    intermediate: stage6a.booleanity_r_address.clone(),
+                },
             },
-            program_image_claim_reduction: program_image_cycle_phase
-                .map(|opening_claim| ProgramImageCyclePhaseOutputClaim { opening_claim }),
+            cycle_phase: Stage6CyclePhaseOutputClaims {
+                bytecode_read_raf: BytecodeReadRafOutputClaims {
+                    bytecode_ra: bytecode_ra_opening_points,
+                },
+                booleanity: BooleanityOutputClaims {
+                    instruction_ra: booleanity_points(booleanity_layout.instruction()),
+                    bytecode_ra: booleanity_points(booleanity_layout.bytecode()),
+                    ram_ra: booleanity_points(booleanity_layout.ram()),
+                },
+                ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                    ram_hamming_weight: ram_hamming_opening_point,
+                },
+                ram_ra_virtualization: RamRaVirtualizationOutputClaims {
+                    ram_ra: ram_ra_opening_points,
+                },
+                instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                    committed_instruction_ra: instruction_ra_opening_points,
+                },
+                inc_claim_reduction: IncClaimReductionOutputClaims {
+                    ram_inc: inc_opening_point.clone(),
+                    rd_inc: inc_opening_point,
+                },
+                trusted_advice: trusted_advice.map(|opening_point| AdviceCyclePhaseOutputClaims {
+                    trusted: Some(opening_point),
+                    untrusted: None,
+                }),
+                untrusted_advice: untrusted_advice.map(|opening_point| {
+                    AdviceCyclePhaseOutputClaims {
+                        trusted: None,
+                        untrusted: Some(opening_point),
+                    }
+                }),
+                bytecode_reduction: match (bytecode_reduction_layout, bytecode_cycle_phase) {
+                    (Some(layout), Some(opening_point)) => {
+                        Some(if layout.dimensions().has_address_phase() {
+                            BytecodeReductionCyclePhaseOutputClaims {
+                                intermediate: Some(opening_point),
+                                chunks: Vec::new(),
+                            }
+                        } else {
+                            BytecodeReductionCyclePhaseOutputClaims {
+                                intermediate: None,
+                                chunks: vec![opening_point; layout.chunk_count()],
+                            }
+                        })
+                    }
+                    _ => None,
+                },
+                program_image_reduction: program_image_cycle_phase.map(|program_image| {
+                    ProgramImageReductionCyclePhaseOutputClaims { program_image }
+                }),
+            },
         };
 
         return Ok(Stage6Output::Zk(Stage6ZkOutput {
@@ -618,12 +637,12 @@ where
     let stage4 = stage4.clear()?;
     let stage5 = stage5.clear()?;
     let claims = &proof.clear_claims()?.stage6;
-    if committed_program != claims.address_phase.bytecode_val_stages.is_some() {
+    let has_val_stages = !claims.address_phase.bytecode_read_raf.val_stages.is_empty();
+    if committed_program != has_val_stages {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::BytecodeReadRaf,
             reason: format!(
-                "bytecode Val-stage claims presence ({}) does not match committed program mode ({committed_program})",
-                claims.address_phase.bytecode_val_stages.is_some()
+                "bytecode Val-stage claims presence ({has_val_stages}) does not match committed program mode ({committed_program})"
             ),
         });
     }
@@ -656,22 +675,24 @@ where
     };
     let booleanity_address_relation = BooleanityAddressPhase::new(booleanity_dimensions);
 
-    if trusted_advice_claims.is_none() && claims.advice_cycle_phase.trusted.is_some() {
+    if trusted_advice_claims.is_none() && claims.cycle_phase.trusted_advice.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
             id: advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted),
         });
     }
-    if untrusted_advice_claims.is_none() && claims.advice_cycle_phase.untrusted.is_some() {
+    if untrusted_advice_claims.is_none() && claims.cycle_phase.untrusted_advice.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
             id: advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
         });
     }
-    if bytecode_reduction_claims.is_none() && claims.bytecode_claim_reduction.is_some() {
+    if bytecode_reduction_claims.is_none() && claims.cycle_phase.bytecode_reduction.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
             id: bytecode_reduction::cycle_phase_intermediate_opening(),
         });
     }
-    if program_image_reduction_claims.is_none() && claims.program_image_claim_reduction.is_some() {
+    if program_image_reduction_claims.is_none()
+        && claims.cycle_phase.program_image_reduction.is_some()
+    {
         return Err(VerifierError::UnexpectedOpeningClaim {
             id: program_image::cycle_phase_program_image_opening(),
         });
@@ -768,12 +789,9 @@ where
             entry_bytecode_index,
             bytecode_r_address: bytecode_r_address.clone(),
             booleanity_r_address: booleanity_r_address.clone(),
-            address_bytecode_read_raf: claims.address_phase.bytecode_read_raf,
-            address_booleanity: claims.address_phase.booleanity,
-            address_val_stages: claims
-                .address_phase
-                .bytecode_val_stages
-                .map_or_else(Vec::new, |stages| stages.to_vec()),
+            address_bytecode_read_raf: claims.address_phase.bytecode_read_raf.intermediate,
+            address_booleanity: claims.address_phase.booleanity.intermediate,
+            address_val_stages: claims.address_phase.bytecode_read_raf.val_stages.clone(),
             bytecode_gamma,
             instruction_ra_gamma,
             inc_gamma,
@@ -837,13 +855,15 @@ where
     let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
-    if claims.bytecode_read_raf.bytecode_ra.len() != bytecode_output_openings.bytecode_ra.len() {
+    if claims.cycle_phase.bytecode_read_raf.bytecode_ra.len()
+        != bytecode_output_openings.bytecode_ra.len()
+    {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::BytecodeReadRaf,
             reason: format!(
                 "bytecode RA claim count mismatch: expected {}, got {}",
                 bytecode_output_openings.bytecode_ra.len(),
-                claims.bytecode_read_raf.bytecode_ra.len()
+                claims.cycle_phase.bytecode_read_raf.bytecode_ra.len()
             ),
         });
     }
@@ -851,7 +871,7 @@ where
     let bytecode_points = relations
         .bytecode_read_raf
         .derive_opening_points(bytecode_point, &relations.bytecode_read_raf_inputs)?;
-    let bytecode_outputs = zip_openings(&claims.bytecode_read_raf, &bytecode_points);
+    let bytecode_outputs = zip_openings(&claims.cycle_phase.bytecode_read_raf, &bytecode_points);
     // Relations that draw no challenges resolve against this empty set; the others
     // use the per-relation challenge structs the bundle built from the drawn gammas.
     let no_challenges = NoChallenges::default();
@@ -882,7 +902,7 @@ where
     let booleanity_points = relations
         .booleanity
         .derive_opening_points(booleanity_point, &relations.booleanity_inputs)?;
-    let booleanity_outputs = zip_openings(&claims.booleanity, &booleanity_points);
+    let booleanity_outputs = zip_openings(&claims.cycle_phase.booleanity, &booleanity_points);
     let booleanity_output = relations.booleanity.expected_output(
         &relations.booleanity_inputs,
         &booleanity_outputs,
@@ -898,7 +918,10 @@ where
     let ram_hamming_points = relations
         .ram_hamming
         .derive_opening_points(ram_hamming_point, &relations.ram_hamming_inputs)?;
-    let ram_hamming_outputs = zip_openings(&claims.ram_hamming_booleanity, &ram_hamming_points);
+    let ram_hamming_outputs = zip_openings(
+        &claims.cycle_phase.ram_hamming_booleanity,
+        &ram_hamming_points,
+    );
     let ram_hamming_output = relations.ram_hamming.expected_output(
         &relations.ram_hamming_inputs,
         &ram_hamming_outputs,
@@ -914,7 +937,7 @@ where
     let ram_ra_points = relations
         .ram_ra
         .derive_opening_points(ram_ra_point, &relations.ram_ra_inputs)?;
-    let ram_ra_outputs = zip_openings(&claims.ram_ra_virtualization, &ram_ra_points);
+    let ram_ra_outputs = zip_openings(&claims.cycle_phase.ram_ra_virtualization, &ram_ra_points);
     let ram_ra_output = relations.ram_ra.expected_output(
         &relations.ram_ra_inputs,
         &ram_ra_outputs,
@@ -931,7 +954,7 @@ where
         .instruction_ra
         .derive_opening_points(instruction_ra_point, &relations.instruction_ra_inputs)?;
     let instruction_ra_outputs = zip_openings(
-        &claims.instruction_ra_virtualization,
+        &claims.cycle_phase.instruction_ra_virtualization,
         &instruction_ra_points,
     );
     let instruction_ra_output = relations.instruction_ra.expected_output(
@@ -949,7 +972,7 @@ where
     let inc_points = relations
         .inc
         .derive_opening_points(inc_point, &relations.inc_inputs)?;
-    let inc_outputs = zip_openings(&claims.inc_claim_reduction, &inc_points);
+    let inc_outputs = zip_openings(&claims.cycle_phase.inc_claim_reduction, &inc_points);
     let inc_output = relations.inc.expected_output(
         &relations.inc_inputs,
         &inc_outputs,
@@ -959,7 +982,7 @@ where
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
         trusted_advice_claims.as_ref(),
-        claims.advice_cycle_phase.trusted.as_ref(),
+        claims.cycle_phase.trusted_advice.as_ref(),
     ) {
         Some(verify_advice_cycle_phase(
             &batch,
@@ -975,7 +998,7 @@ where
     let untrusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         untrusted_advice_layout,
         untrusted_advice_claims.as_ref(),
-        claims.advice_cycle_phase.untrusted.as_ref(),
+        claims.cycle_phase.untrusted_advice.as_ref(),
     ) {
         Some(verify_advice_cycle_phase(
             &batch,
@@ -1009,46 +1032,45 @@ where
             });
         }
     }
-    let bytecode_cycle_phase =
-        if let (Some(layout), Some(claim)) = (
-            bytecode_reduction_layout,
-            bytecode_reduction_claims.as_ref(),
-        ) {
-            let output_claims = claims.bytecode_claim_reduction.as_ref().ok_or(
-                VerifierError::MissingOpeningClaim {
-                    id: bytecode_reduction::cycle_phase_output_openings(
-                        layout.dimensions(),
-                        layout.chunk_count(),
-                    )[0],
-                },
-            )?;
-            let eta = eta.ok_or(VerifierError::MissingStageClaimChallenge {
+    let bytecode_cycle_phase = if let (Some(layout), Some(claim)) = (
+        bytecode_reduction_layout,
+        bytecode_reduction_claims.as_ref(),
+    ) {
+        let output_claims = claims.cycle_phase.bytecode_reduction.as_ref().ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::cycle_phase_output_openings(
+                    layout.dimensions(),
+                    layout.chunk_count(),
+                )[0],
+            },
+        )?;
+        let eta = eta.ok_or(VerifierError::MissingStageClaimChallenge {
+            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+        })?;
+        // Same inputs as the bundle's `cycle_bytecode_reduction_weights`
+        // (both gated on `bytecode_reduction_layout` + `eta`), so reuse it
+        // rather than recomputing the fold.
+        let weights = cycle_bytecode_reduction_weights.clone().ok_or(
+            VerifierError::MissingStageClaimChallenge {
                 id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-            })?;
-            // Same inputs as the bundle's `cycle_bytecode_reduction_weights`
-            // (both gated on `bytecode_reduction_layout` + `eta`), so reuse it
-            // rather than recomputing the fold.
-            let weights = cycle_bytecode_reduction_weights.clone().ok_or(
-                VerifierError::MissingStageClaimChallenge {
-                    id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-                },
-            )?;
-            Some(verify_bytecode_cycle_phase(
-                &batch,
-                claim.rounds(),
-                layout,
-                output_claims,
-                weights,
-                eta,
-            )?)
-        } else {
-            None
-        };
+            },
+        )?;
+        Some(verify_bytecode_cycle_phase(
+            &batch,
+            claim.rounds(),
+            layout,
+            output_claims,
+            weights,
+            eta,
+        )?)
+    } else {
+        None
+    };
     let program_image_cycle_phase = if let (Some(layout), Some(claim)) = (
         program_image_reduction_layout,
         program_image_reduction_claims.as_ref(),
     ) {
-        let output_claim = claims.program_image_claim_reduction.as_ref().ok_or(
+        let output_claim = claims.cycle_phase.program_image_reduction.as_ref().ok_or(
             VerifierError::MissingOpeningClaim {
                 id: program_image::cycle_phase_output_openings(layout.dimensions())[0],
             },
@@ -1137,49 +1159,66 @@ where
     );
 
     let output_points = Stage6OutputClaims {
-        address_phase: Stage6AddressPhaseClaims {
-            bytecode_read_raf: bytecode_r_address.clone(),
-            booleanity: booleanity_r_address.clone(),
-            bytecode_val_stages: claims
-                .address_phase
-                .bytecode_val_stages
-                .as_ref()
-                .map(|_| core::array::from_fn(|_| bytecode_r_address.clone())),
+        address_phase: Stage6AddressPhaseOutputClaims {
+            bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
+                intermediate: bytecode_r_address.clone(),
+                val_stages: vec![
+                    bytecode_r_address.clone();
+                    claims.address_phase.bytecode_read_raf.val_stages.len()
+                ],
+            },
+            booleanity: BooleanityAddressPhaseOutputClaims {
+                intermediate: booleanity_r_address.clone(),
+            },
         },
-        bytecode_read_raf: bytecode_points,
-        booleanity: booleanity_points,
-        ram_hamming_booleanity: ram_hamming_points,
-        ram_ra_virtualization: ram_ra_points,
-        instruction_ra_virtualization: instruction_ra_points,
-        inc_claim_reduction: inc_points,
-        advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
-            trusted: trusted_advice
+        cycle_phase: Stage6CyclePhaseOutputClaims {
+            bytecode_read_raf: bytecode_points,
+            booleanity: booleanity_points,
+            ram_hamming_booleanity: ram_hamming_points,
+            ram_ra_virtualization: ram_ra_points,
+            instruction_ra_virtualization: instruction_ra_points,
+            inc_claim_reduction: inc_points,
+            trusted_advice: trusted_advice
                 .as_ref()
-                .map(|verified| AdviceCyclePhaseOutputClaim {
-                    opening_claim: verified.opening_point.clone(),
+                .map(|verified| AdviceCyclePhaseOutputClaims {
+                    trusted: Some(verified.opening_point.clone()),
+                    untrusted: None,
                 }),
-            untrusted: untrusted_advice
-                .as_ref()
-                .map(|verified| AdviceCyclePhaseOutputClaim {
-                    opening_claim: verified.opening_point.clone(),
-                }),
-        },
-        bytecode_claim_reduction: bytecode_cycle_phase.as_ref().map(|verified| {
-            match claims.bytecode_claim_reduction.as_ref() {
-                Some(BytecodeCyclePhaseOutputClaims::Chunks(chunks)) => {
-                    BytecodeCyclePhaseOutputClaims::Chunks(vec![
-                        verified.opening_point.clone();
-                        chunks.len()
-                    ])
+            untrusted_advice: untrusted_advice.as_ref().map(|verified| {
+                AdviceCyclePhaseOutputClaims {
+                    trusted: None,
+                    untrusted: Some(verified.opening_point.clone()),
                 }
-                _ => BytecodeCyclePhaseOutputClaims::Intermediate(verified.opening_point.clone()),
-            }
-        }),
-        program_image_claim_reduction: program_image_cycle_phase.as_ref().map(|verified| {
-            ProgramImageCyclePhaseOutputClaim {
-                opening_claim: verified.opening_point.clone(),
-            }
-        }),
+            }),
+            bytecode_reduction: bytecode_cycle_phase.as_ref().map(|verified| {
+                let is_chunks = claims
+                    .cycle_phase
+                    .bytecode_reduction
+                    .as_ref()
+                    .is_some_and(|reduction| reduction.intermediate.is_none());
+                if is_chunks {
+                    let chunk_count = claims
+                        .cycle_phase
+                        .bytecode_reduction
+                        .as_ref()
+                        .map_or(0, |reduction| reduction.chunks.len());
+                    BytecodeReductionCyclePhaseOutputClaims {
+                        intermediate: None,
+                        chunks: vec![verified.opening_point.clone(); chunk_count],
+                    }
+                } else {
+                    BytecodeReductionCyclePhaseOutputClaims {
+                        intermediate: Some(verified.opening_point.clone()),
+                        chunks: Vec::new(),
+                    }
+                }
+            }),
+            program_image_reduction: program_image_cycle_phase.as_ref().map(|verified| {
+                ProgramImageReductionCyclePhaseOutputClaims {
+                    program_image: verified.opening_point.clone(),
+                }
+            }),
+        },
     };
 
     Ok(Stage6Output::Clear(Stage6ClearOutput {
@@ -1597,7 +1636,7 @@ where
 pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    claims: &Stage6OutputClaims<PCS::Field>,
+    claims: &Stage6OutputClaims<PCS::Field, PCS::Field>,
     bytecode_relation: &BytecodeReadRafAddressPhase<PCS::Field>,
     bytecode_inputs: &BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<PCS::Field>>,
     bytecode_challenges: &BytecodeReadRafAddressPhaseChallenges<PCS::Field>,
@@ -1664,20 +1703,10 @@ where
     // check the expected outputs through the relation objects.
     let bytecode_points =
         bytecode_relation.derive_opening_points(&bytecode_address_point, bytecode_inputs)?;
-    let bytecode_values = BytecodeReadRafAddressPhaseOutputClaims {
-        intermediate: claims.address_phase.bytecode_read_raf,
-        val_stages: claims
-            .address_phase
-            .bytecode_val_stages
-            .map_or_else(Vec::new, |stages| stages.to_vec()),
-    };
-    let bytecode_outputs = zip_openings(&bytecode_values, &bytecode_points);
+    let bytecode_outputs = zip_openings(&claims.address_phase.bytecode_read_raf, &bytecode_points);
     let booleanity_points =
         booleanity_relation.derive_opening_points(&booleanity_address_point, &booleanity_inputs)?;
-    let booleanity_values = BooleanityAddressPhaseOutputClaims {
-        intermediate: claims.address_phase.booleanity,
-    };
-    let booleanity_outputs = zip_openings(&booleanity_values, &booleanity_points);
+    let booleanity_outputs = zip_openings(&claims.address_phase.booleanity, &booleanity_points);
 
     let address_expected_outputs = [
         bytecode_relation.expected_output(
@@ -1723,18 +1752,16 @@ where
 
 pub(super) fn append_address_phase_opening_claims<F, T>(
     transcript: &mut T,
-    claims: &Stage6OutputClaims<F>,
+    claims: &Stage6OutputClaims<F, F>,
 ) where
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.bytecode_read_raf);
-    if let Some(stage_claims) = &claims.address_phase.bytecode_val_stages {
-        for opening_claim in stage_claims {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
-    }
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.booleanity);
+    // The address-phase order (bytecode `intermediate`, each `val_stages`, then
+    // booleanity `intermediate`) is single-sourced from the generated
+    // `Stage6AddressPhaseOutputClaims::append_to_transcript` (member declaration
+    // order = canonical Fiat-Shamir order; no alias dedup in the address phase).
+    claims.address_phase.append_to_transcript(transcript);
 }
 pub(super) fn aliased_booleanity_bytecode_openings<F: Field>(
     bytecode_ra_opening_points: &[Vec<F>],
@@ -1761,9 +1788,16 @@ pub(super) fn verify_advice_cycle_phase<F: Field>(
     rounds: usize,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
-    opening_claim: &AdviceCyclePhaseOutputClaim<F>,
+    opening_claim: &AdviceCyclePhaseOutputClaims<F>,
     stage4: &Stage4ClearOutput<F>,
 ) -> Result<CyclePhaseVerified<F>, VerifierError> {
+    let opening_value = match kind {
+        JoltAdviceKind::Trusted => opening_claim.trusted,
+        JoltAdviceKind::Untrusted => opening_claim.untrusted,
+    }
+    .ok_or(VerifierError::MissingOpeningClaim {
+        id: advice::cycle_phase_advice_opening(kind),
+    })?;
     let advice_point = batch.try_instance_point_at(0, rounds).map_err(|error| {
         VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::AdviceClaimReductionCyclePhase,
@@ -1797,8 +1831,8 @@ pub(super) fn verify_advice_cycle_phase<F: Field>(
     };
     let derived = relation.derive_opening_points(advice_point, &inputs)?;
     let values = AdviceCyclePhaseOutputClaims {
-        trusted: (kind == JoltAdviceKind::Trusted).then_some(opening_claim.opening_claim),
-        untrusted: (kind == JoltAdviceKind::Untrusted).then_some(opening_claim.opening_claim),
+        trusted: (kind == JoltAdviceKind::Trusted).then_some(opening_value),
+        untrusted: (kind == JoltAdviceKind::Untrusted).then_some(opening_value),
     };
     let outputs = zip_openings(&values, &derived);
     let expected_output_claim =
@@ -1880,7 +1914,7 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
     batch: &jolt_sumcheck::BatchedEvaluationClaim<F>,
     rounds: usize,
     layout: &BytecodeClaimReductionLayout,
-    output_claims: &BytecodeCyclePhaseOutputClaims<F>,
+    output_claims: &BytecodeReductionCyclePhaseOutputClaims<F>,
     weights: BytecodeReductionWeights<F>,
     eta: F,
 ) -> Result<CyclePhaseVerified<F>, VerifierError> {
@@ -1898,30 +1932,27 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
         }
     })?;
     let has_address_phase = layout.dimensions().has_address_phase();
-    let values = match (output_claims, has_address_phase) {
-        (BytecodeCyclePhaseOutputClaims::Intermediate(value), true) => {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: Some(*value),
-                chunks: Vec::new(),
-            }
-        }
-        (BytecodeCyclePhaseOutputClaims::Chunks(chunks), false)
-            if chunks.len() == layout.chunk_count() =>
-        {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: None,
-                chunks: chunks.clone(),
-            }
-        }
-        _ => {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage,
-                reason: format!(
-                    "bytecode reduction cycle output shape mismatch (address phase: {has_address_phase})"
-                ),
-            })
-        }
+    // The wire shape must match the reduction mode: an `intermediate` (no chunks)
+    // when an address phase follows, else exactly `chunk_count` chunks (no
+    // intermediate).
+    let shape_ok = match (
+        &output_claims.intermediate,
+        output_claims.chunks.is_empty(),
+        has_address_phase,
+    ) {
+        (Some(_), true, true) => true,
+        (None, false, false) => output_claims.chunks.len() == layout.chunk_count(),
+        _ => false,
     };
+    if !shape_ok {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: format!(
+                "bytecode reduction cycle output shape mismatch (address phase: {has_address_phase})"
+            ),
+        });
+    }
+    let values = output_claims.clone();
     let relation = BytecodeReductionCyclePhase::new(layout, weights.clone());
     let challenges = BytecodeReductionCyclePhaseChallenges { eta };
     let inputs = bytecode_reduction_cycle_phase_inputs_from_values(Vec::new());
@@ -1962,7 +1993,7 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
     batch: &jolt_sumcheck::BatchedEvaluationClaim<F>,
     rounds: usize,
     layout: &ProgramImageClaimReductionLayout,
-    output_claim: &ProgramImageCyclePhaseOutputClaim<F>,
+    output_claim: &ProgramImageReductionCyclePhaseOutputClaims<F>,
     r_addr_rw: &[F],
     input_claim: F,
 ) -> Result<CyclePhaseVerified<F>, VerifierError> {
@@ -1989,7 +2020,7 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
     let derived = relation.derive_opening_points(point, &inputs)?;
     let outputs = zip_openings(
         &ProgramImageReductionCyclePhaseOutputClaims {
-            program_image: output_claim.opening_claim,
+            program_image: output_claim.program_image,
         },
         &derived,
     );
@@ -2004,7 +2035,7 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
 
 pub(super) fn append_opening_claims<F, T>(
     transcript: &mut T,
-    claims: &Stage6OutputClaims<F>,
+    claims: &Stage6OutputClaims<F, F>,
     bytecode_read_raf_points: &[Vec<F>],
     booleanity_point: &[F],
 ) where
@@ -2015,11 +2046,12 @@ pub(super) fn append_opening_claims<F, T>(
     // the per-field Fiat-Shamir order from the `OutputClaims` derive. `booleanity`
     // stays explicit because its `bytecode_ra` openings are conditionally deduped
     // against the bytecode-read-RAF points.
-    claims.bytecode_read_raf.append_openings(transcript);
-    for opening_claim in &claims.booleanity.instruction_ra {
+    let cycle = &claims.cycle_phase;
+    cycle.bytecode_read_raf.append_openings(transcript);
+    for opening_claim in &cycle.booleanity.instruction_ra {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
-    for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
+    for (index, opening_claim) in cycle.booleanity.bytecode_ra.iter().enumerate() {
         if bytecode_read_raf_points
             .get(index)
             .is_some_and(|point| point.as_slice() == booleanity_point)
@@ -2028,35 +2060,35 @@ pub(super) fn append_opening_claims<F, T>(
         }
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
-    for opening_claim in &claims.booleanity.ram_ra {
+    for opening_claim in &cycle.booleanity.ram_ra {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
-    claims.ram_hamming_booleanity.append_openings(transcript);
-    claims.ram_ra_virtualization.append_openings(transcript);
-    claims
+    cycle.ram_hamming_booleanity.append_openings(transcript);
+    cycle.ram_ra_virtualization.append_openings(transcript);
+    cycle
         .instruction_ra_virtualization
         .append_openings(transcript);
-    claims.inc_claim_reduction.append_openings(transcript);
-    if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
-    }
-    if let Some(opening_claim) = &claims.advice_cycle_phase.untrusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
-    }
-    if let Some(output_claims) = &claims.bytecode_claim_reduction {
-        match output_claims {
-            BytecodeCyclePhaseOutputClaims::Intermediate(opening_claim) => {
-                transcript.append_labeled(b"opening_claim", opening_claim);
-            }
-            BytecodeCyclePhaseOutputClaims::Chunks(chunks) => {
-                for opening_claim in chunks {
-                    transcript.append_labeled(b"opening_claim", opening_claim);
-                }
-            }
+    cycle.inc_claim_reduction.append_openings(transcript);
+    if let Some(advice) = &cycle.trusted_advice {
+        if let Some(opening_claim) = &advice.trusted {
+            transcript.append_labeled(b"opening_claim", opening_claim);
         }
     }
-    if let Some(output_claim) = &claims.program_image_claim_reduction {
-        transcript.append_labeled(b"opening_claim", &output_claim.opening_claim);
+    if let Some(advice) = &cycle.untrusted_advice {
+        if let Some(opening_claim) = &advice.untrusted {
+            transcript.append_labeled(b"opening_claim", opening_claim);
+        }
+    }
+    if let Some(reduction) = &cycle.bytecode_reduction {
+        if let Some(opening_claim) = &reduction.intermediate {
+            transcript.append_labeled(b"opening_claim", opening_claim);
+        }
+        for opening_claim in &reduction.chunks {
+            transcript.append_labeled(b"opening_claim", opening_claim);
+        }
+    }
+    if let Some(reduction) = &cycle.program_image_reduction {
+        transcript.append_labeled(b"opening_claim", &reduction.program_image);
     }
 }
 
@@ -2090,6 +2122,47 @@ mod tests {
         }
     }
 
+    fn sample_claims() -> Stage6OutputClaims<Fr, Fr> {
+        Stage6OutputClaims {
+            address_phase: Stage6AddressPhaseOutputClaims {
+                bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
+                    intermediate: fr(901),
+                    val_stages: Vec::new(),
+                },
+                booleanity: BooleanityAddressPhaseOutputClaims {
+                    intermediate: fr(902),
+                },
+            },
+            cycle_phase: Stage6CyclePhaseOutputClaims {
+                bytecode_read_raf: BytecodeReadRafOutputClaims {
+                    bytecode_ra: vec![fr(1), fr(2)],
+                },
+                booleanity: BooleanityOutputClaims {
+                    instruction_ra: vec![fr(3)],
+                    bytecode_ra: vec![fr(4)],
+                    ram_ra: vec![fr(5)],
+                },
+                ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                    ram_hamming_weight: fr(6),
+                },
+                ram_ra_virtualization: RamRaVirtualizationOutputClaims {
+                    ram_ra: vec![fr(7)],
+                },
+                instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                    committed_instruction_ra: vec![fr(8)],
+                },
+                inc_claim_reduction: IncClaimReductionOutputClaims {
+                    ram_inc: fr(9),
+                    rd_inc: fr(10),
+                },
+                trusted_advice: None,
+                untrusted_advice: None,
+                bytecode_reduction: None,
+                program_image_reduction: None,
+            },
+        }
+    }
+
     /// Locks the stage-6 cycle-phase Fiat-Shamir append order against silent drift.
     /// The full relations are single-sourced via their `OutputClaims` derive;
     /// `booleanity` (conditional `bytecode_ra` dedup) and the optional reductions
@@ -2098,46 +2171,33 @@ mod tests {
     /// carry distinct/absent sentinels to prove they are not appended here.
     #[test]
     fn append_opening_claims_follows_canonical_order() {
-        let claims: Stage6OutputClaims<Fr> = Stage6OutputClaims {
-            address_phase: Stage6AddressPhaseClaims {
-                bytecode_read_raf: fr(901),
-                booleanity: fr(902),
-                bytecode_val_stages: None,
-            },
-            bytecode_read_raf: BytecodeReadRafOutputClaims {
-                bytecode_ra: vec![fr(1), fr(2)],
-            },
-            booleanity: BooleanityOutputClaims {
-                instruction_ra: vec![fr(3)],
-                bytecode_ra: vec![fr(4)],
-                ram_ra: vec![fr(5)],
-            },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: fr(6),
-            },
-            ram_ra_virtualization: RamRaVirtualizationOutputClaims {
-                ram_ra: vec![fr(7)],
-            },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
-                committed_instruction_ra: vec![fr(8)],
-            },
-            inc_claim_reduction: IncClaimReductionOutputClaims {
-                ram_inc: fr(9),
-                rd_inc: fr(10),
-            },
-            advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
-                trusted: None,
-                untrusted: None,
-            },
-            bytecode_claim_reduction: None,
-            program_image_claim_reduction: None,
-        };
+        let claims = sample_claims();
 
         let mut got = RecordingTranscript::default();
         append_opening_claims(&mut got, &claims, &[], &[]);
 
         let mut want = RecordingTranscript::default();
         for value in (1..=10).map(fr) {
+            want.append_labeled(b"opening_claim", &value);
+        }
+
+        assert_eq!(got.chunks, want.chunks);
+    }
+
+    /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
+    /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
+    /// booleanity `intermediate`. Single-sourced from the generated
+    /// `Stage6AddressPhaseOutputClaims::append_to_transcript`.
+    #[test]
+    fn append_address_phase_opening_claims_follows_canonical_order() {
+        let mut claims = sample_claims();
+        claims.address_phase.bytecode_read_raf.val_stages = vec![fr(903), fr(904)];
+
+        let mut got = RecordingTranscript::default();
+        append_address_phase_opening_claims(&mut got, &claims);
+
+        let mut want = RecordingTranscript::default();
+        for value in [fr(901), fr(903), fr(904), fr(902)] {
             want.append_labeled(b"opening_claim", &value);
         }
 
