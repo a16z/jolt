@@ -1,4 +1,4 @@
-//! Field-typed Fiat–Shamir vocabulary for the *verifier-only* modular crates
+//! Field-typed Fiat–Shamir vocabulary for the modular crates
 //! (jolt-crypto / jolt-openings / jolt-sumcheck / jolt-hyperkzg / jolt-dory /
 //! jolt-blindfold / jolt-verifier).
 //!
@@ -13,7 +13,7 @@
 //! This is the field-agnostic sibling of jolt-core's internal
 //! [`transcript_msgs`](../../jolt-core/src/transcript_msgs.rs) vocabulary: it
 //! is generic over `jolt_field::Field` (the modular crates' field newtype)
-//! rather than jolt-core's `JoltField`, and it does NOT drive a NARG. It emits
+//! rather than jolt-core's `JoltField`. It emits
 //! the identical sponge messages jolt-core does
 //! (`public_message(&BytesMsg(serialize_compressed(value)))`; a 16-byte
 //! challenge squeeze), so a future jolt-core cross-verifier agrees by
@@ -315,6 +315,44 @@ pub trait FsNargRead<F: Field>: FsTranscript<F> {
 
     /// Read the next raw NARG frame body.
     fn read_bytes(&mut self) -> VerificationResult<Vec<u8>>;
+}
+
+/// Prover-side NARG frame writes for prover-only payloads.
+///
+/// This is the writer companion to [`FsNargRead`]: each call emits one
+/// self-delimiting Spongefish prover-message frame and advances the transcript
+/// state exactly as the verifier-side read will.
+pub trait FsNargWrite<F: Field>: FsTranscript<F> {
+    /// Write every canonical value in one NARG frame.
+    fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]);
+
+    /// Write field elements in one NARG frame.
+    fn write_field_slice(&mut self, values: &[F]) {
+        let mut buf = vec![0u8; values.len() * F::NUM_BYTES];
+        for (chunk, value) in buf.chunks_exact_mut(F::NUM_BYTES).zip(values) {
+            value.to_bytes_le(chunk);
+        }
+        self.write_bytes(&buf);
+    }
+
+    /// Write one raw NARG frame body.
+    fn write_bytes(&mut self, bytes: &[u8]);
+}
+
+impl<F, H, R> FsNargWrite<F> for ProverState<H, R>
+where
+    F: Field,
+    H: DuplexSpongeInterface<U = u8>,
+    R: RngCore + CryptoRng,
+    Self: FsTranscript<F>,
+{
+    fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
+        self.prover_message(&BytesMsg(serialize_slice(values)));
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.prover_message(&BorrowedBytesMsg(bytes));
+    }
 }
 
 impl<F, H> FsNargRead<F> for VerifierState<'_, H>

@@ -20,7 +20,8 @@ mod verifier;
 
 pub use codec::BytesMsg;
 pub use messages::{
-    deserialize_slice, serialize_slice, FsAbsorb, FsChallenge, FsNargRead, FsTranscript,
+    deserialize_slice, serialize_slice, FsAbsorb, FsChallenge, FsNargRead, FsNargWrite,
+    FsTranscript,
 };
 pub use setup::{prover_transcript, verifier_transcript};
 
