@@ -26,7 +26,8 @@ use super::{
         InstructionClaimReductionOutputClaims,
     },
     outputs::{
-        Stage2BatchOutputClaims, Stage2Challenges, Stage2ClearOutput, Stage2Output, Stage2ZkOutput,
+        Stage2BatchChallenges, Stage2BatchInputClaims, Stage2BatchOutputClaims,
+        Stage2BatchSumchecks, Stage2ClearOutput, Stage2Output, Stage2ZkOutput,
         VerifiedProductUniSkip,
     },
     product_remainder::{
@@ -50,7 +51,7 @@ use crate::{
         relations::{
             check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
         },
-        stage1::Stage1Output,
+        stage1::{Stage1ClearOutput, Stage1Output},
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -71,19 +72,24 @@ enum Stage2ProductUniSkip<F: Field, C> {
 }
 
 struct Stage2ZkBatch<F: Field, C> {
-    ram_read_write_gamma: F,
-    instruction_gamma: F,
+    batch_challenges: Stage2BatchChallenges<F>,
     output_address_challenges: Vec<F>,
     consistency: jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: committed::CommittedOutputClaimOutput<C>,
-    output_points: Stage2BatchOutputClaims<Vec<F>>,
+    output_points: Stage2BatchOutputClaims<F, Vec<F>>,
 }
 
 // The clear variant carries the opening claims (point + value); the ZK variant
-// carries committed consistency plus the point-only `output_points`.
+// carries committed consistency plus the point-only `output_points`. Boxing the
+// common clear variant to shrink the rarer ZK one would add indirection to every
+// clear-path access.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
+)]
 enum Stage2Batch<F: Field, C> {
     Clear {
-        output_claims: Stage2BatchOutputClaims<OpeningClaim<F>>,
+        output_claims: Stage2BatchOutputClaims<F, OpeningClaim<F>>,
     },
     Zk(Stage2ZkBatch<F, C>),
 }
@@ -112,9 +118,9 @@ fn selected_product_uniskip_domain() -> jolt_claims::protocols::jolt::JoltSumche
 /// points disagree — a defensive fallback that mirrors the legacy reconstruction).
 /// Shared by the verifier and the prover so the opening-claim form is built once.
 pub fn stage2_batch_output_claims_with_points<F: Field>(
-    claims: &Stage2BatchOutputClaims<F>,
-    points: &Stage2BatchOutputClaims<Vec<F>>,
-) -> Stage2BatchOutputClaims<OpeningClaim<F>> {
+    claims: &Stage2BatchOutputClaims<F, F>,
+    points: &Stage2BatchOutputClaims<F, Vec<F>>,
+) -> Stage2BatchOutputClaims<F, OpeningClaim<F>> {
     // The reduced instruction openings share one point; the three aliased openings,
     // absent on the wire, reuse the product-remainder values (or zero when the
     // product/instruction points disagree). This cross-relation fill cannot go
@@ -157,6 +163,27 @@ pub fn stage2_batch_output_claims_with_points<F: Field>(
         instruction_claim_reduction,
         ram_raf_evaluation: zip_openings(&claims.ram_raf_evaluation, &points.ram_raf_evaluation),
         ram_output_check: zip_openings(&claims.ram_output_check, &points.ram_output_check),
+    }
+}
+
+/// Assemble the stage-2 batch consumed openings from the upstream clear outputs
+/// into the generated `Stage2BatchInputClaims` aggregate. This is the single place
+/// the batch's Outputs→Inputs dataflow is expressed: each per-relation
+/// `*_from_upstream` helper wires which upstream opening feeds which downstream
+/// input. The product-remainder input is the product uni-skip's output claim (a
+/// separate stage-2 sub-sumcheck), not an upstream stage's opening.
+fn stage2_batch_inputs_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+    product_uniskip_output_claim: F,
+) -> Stage2BatchInputClaims<F, OpeningClaim<F>> {
+    Stage2BatchInputClaims {
+        ram_read_write: ram_read_write_inputs_from_upstream(stage1),
+        product_remainder: product_remainder_inputs_from_uniskip_output(
+            product_uniskip_output_claim,
+        ),
+        instruction_claim_reduction: instruction_claim_reduction_inputs_from_upstream(stage1),
+        ram_raf_evaluation: ram_raf_evaluation_inputs_from_upstream(stage1),
+        ram_output_check: ram_output_check_inputs_from_upstream(),
     }
 }
 
@@ -224,16 +251,11 @@ where
             }))
         }
         (Stage2ProductUniSkip::Zk(product_uniskip), Stage2Batch::Zk(batch)) => {
-            let challenges = Stage2Challenges {
+            Ok(Stage2Output::Zk(Stage2ZkOutput {
+                challenges: batch.batch_challenges,
                 product_uniskip_challenge: product_uniskip.product_uniskip_challenge,
                 product_tau_high: product_uniskip.tau_high,
-                ram_read_write_gamma: batch.ram_read_write_gamma,
-                instruction_gamma: batch.instruction_gamma,
                 output_address_challenges: batch.output_address_challenges,
-            };
-
-            Ok(Stage2Output::Zk(Stage2ZkOutput {
-                challenges,
                 product_uniskip_consistency: product_uniskip.consistency,
                 product_uniskip_output_claims: product_uniskip.output_claims,
                 batch_consistency: batch.consistency,
@@ -443,17 +465,25 @@ where
     };
     // The RAM read-write and instruction-reduction batching gammas (each a single
     // `challenge_scalar`, matching their default `draw_challenges`), drawn in inline
-    // order. The other three batch relations draw no challenges. The scalars also feed
-    // the ZK arm's `Stage2Challenges`, so they are kept as locals. The non-challenge
-    // `output_address_challenges` point draw stays in place, after both gammas.
+    // order into explicit locals — fixing the Fiat-Shamir draw order independent of
+    // struct-field evaluation — then assembled into the generated batch-challenge
+    // aggregate. The other three batch relations draw no challenges (`NoChallenges`).
+    // The aggregate is carried on the ZK arm's `Stage2ZkOutput.challenges`. The
+    // non-challenge `output_address_challenges` point draw stays in place, after both
+    // gammas.
     let ram_read_write_challenges = RamReadWriteChallenges {
         gamma: transcript.challenge_scalar(),
     };
     let instruction_challenges = InstructionClaimReductionChallenges {
         gamma: transcript.challenge_scalar(),
     };
-    let ram_read_write_gamma = ram_read_write_challenges.gamma;
-    let instruction_gamma = instruction_challenges.gamma;
+    let batch_challenges = Stage2BatchChallenges {
+        ram_read_write: ram_read_write_challenges,
+        product_remainder: NoChallenges::default(),
+        instruction_claim_reduction: instruction_challenges,
+        ram_raf_evaluation: NoChallenges::default(),
+        ram_output_check: NoChallenges::default(),
+    };
     let output_address_challenges = (0..log_k)
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
@@ -509,42 +539,38 @@ where
                     reason: error.to_string(),
                 }
             })?;
-            let ram_read_write = RamReadWriteChecking::new(
-                read_write_dimensions,
-                log_k,
-                product_uniskip.tau_low.clone(),
-            );
-            let product_remainder = ProductRemainder::new(
-                product_dimensions,
-                product_uniskip_challenge,
-                product_uniskip.tau_high,
-                product_uniskip.tau_low.clone(),
-            );
-            let instruction_reduction =
-                InstructionClaimReduction::new(trace_dimensions, product_uniskip.tau_low.clone());
-            let ram_raf = RamRafEvaluation::new(
-                read_write_dimensions,
-                raf_dimensions,
-                log_k,
-                lowest_address,
-                product_uniskip.tau_low.clone(),
-            );
-            let ram_output = RamOutputCheck::new(
-                read_write_dimensions,
-                output_address_challenges.clone(),
-                public_memory,
-            );
+            let sumchecks = Stage2BatchSumchecks {
+                ram_read_write: RamReadWriteChecking::new(
+                    read_write_dimensions,
+                    log_k,
+                    product_uniskip.tau_low.clone(),
+                ),
+                product_remainder: ProductRemainder::new(
+                    product_dimensions,
+                    product_uniskip_challenge,
+                    product_uniskip.tau_high,
+                    product_uniskip.tau_low.clone(),
+                ),
+                instruction_claim_reduction: InstructionClaimReduction::new(
+                    trace_dimensions,
+                    product_uniskip.tau_low.clone(),
+                ),
+                ram_raf_evaluation: RamRafEvaluation::new(
+                    read_write_dimensions,
+                    raf_dimensions,
+                    log_k,
+                    lowest_address,
+                    product_uniskip.tau_low.clone(),
+                ),
+                ram_output_check: RamOutputCheck::new(
+                    read_write_dimensions,
+                    output_address_challenges.clone(),
+                    public_memory,
+                ),
+            };
 
-            let ram_read_write_inputs = ram_read_write_inputs_from_upstream(stage1);
-            let product_remainder_inputs =
-                product_remainder_inputs_from_uniskip_output(claims.product_uniskip_output_claim);
-            let instruction_reduction_inputs =
-                instruction_claim_reduction_inputs_from_upstream(stage1);
-            let ram_raf_inputs = ram_raf_evaluation_inputs_from_upstream(stage1);
-            let ram_output_inputs = ram_output_check_inputs_from_upstream();
-            // The three batch relations that draw no challenges (product remainder,
-            // RAM RAF evaluation, RAM output check) resolve against this empty set.
-            let no_challenges = NoChallenges::default();
+            let inputs =
+                stage2_batch_inputs_from_upstream(stage1, claims.product_uniskip_output_claim);
 
             // The claim order here must match the output-claim reconstruction below
             // and the transcript appends at the end of the stage.
@@ -552,29 +578,41 @@ where
                 SumcheckClaim::new(
                     ram_read_write_claims.rounds,
                     ram_read_write_claims.degree,
-                    ram_read_write
-                        .input_claim(&ram_read_write_inputs, &ram_read_write_challenges)?,
+                    sumchecks
+                        .ram_read_write
+                        .input_claim(&inputs.ram_read_write, &batch_challenges.ram_read_write)?,
                 ),
                 SumcheckClaim::new(
                     product_remainder_claims.rounds,
                     product_remainder_claims.degree,
-                    product_remainder.input_claim(&product_remainder_inputs, &no_challenges)?,
+                    sumchecks.product_remainder.input_claim(
+                        &inputs.product_remainder,
+                        &batch_challenges.product_remainder,
+                    )?,
                 ),
                 SumcheckClaim::new(
                     instruction_claim_reduction_claims.rounds,
                     instruction_claim_reduction_claims.degree,
-                    instruction_reduction
-                        .input_claim(&instruction_reduction_inputs, &instruction_challenges)?,
+                    sumchecks.instruction_claim_reduction.input_claim(
+                        &inputs.instruction_claim_reduction,
+                        &batch_challenges.instruction_claim_reduction,
+                    )?,
                 ),
                 SumcheckClaim::new(
                     ram_raf_evaluation_claims.rounds,
                     ram_raf_evaluation_claims.degree,
-                    ram_raf.input_claim(&ram_raf_inputs, &no_challenges)?,
+                    sumchecks.ram_raf_evaluation.input_claim(
+                        &inputs.ram_raf_evaluation,
+                        &batch_challenges.ram_raf_evaluation,
+                    )?,
                 ),
                 SumcheckClaim::new(
                     ram_output_check_claims.rounds,
                     ram_output_check_claims.degree,
-                    ram_output.input_claim(&ram_output_inputs, &no_challenges)?,
+                    sumchecks.ram_output_check.input_claim(
+                        &inputs.ram_output_check,
+                        &batch_challenges.ram_output_check,
+                    )?,
                 ),
             ];
             let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
@@ -629,16 +667,24 @@ where
             // Each relation maps its sumcheck point to its produced opening points;
             // pair them with the committed values into the opening claims.
             let points = Stage2BatchOutputClaims {
-                ram_read_write: ram_read_write
-                    .derive_opening_points(ram_read_write_point, &ram_read_write_inputs)?,
-                product_remainder: product_remainder
-                    .derive_opening_points(product_point, &product_remainder_inputs)?,
-                instruction_claim_reduction: instruction_reduction
-                    .derive_opening_points(instruction_point, &instruction_reduction_inputs)?,
-                ram_raf_evaluation: ram_raf
-                    .derive_opening_points(ram_raf_evaluation_point, &ram_raf_inputs)?,
-                ram_output_check: ram_output
-                    .derive_opening_points(ram_output_check_point, &ram_output_inputs)?,
+                ram_read_write: sumchecks
+                    .ram_read_write
+                    .derive_opening_points(ram_read_write_point, &inputs.ram_read_write)?,
+                product_remainder: sumchecks
+                    .product_remainder
+                    .derive_opening_points(product_point, &inputs.product_remainder)?,
+                instruction_claim_reduction: sumchecks
+                    .instruction_claim_reduction
+                    .derive_opening_points(
+                        instruction_point,
+                        &inputs.instruction_claim_reduction,
+                    )?,
+                ram_raf_evaluation: sumchecks
+                    .ram_raf_evaluation
+                    .derive_opening_points(ram_raf_evaluation_point, &inputs.ram_raf_evaluation)?,
+                ram_output_check: sumchecks
+                    .ram_output_check
+                    .derive_opening_points(ram_output_check_point, &inputs.ram_output_check)?,
             };
             let output_claims =
                 stage2_batch_output_claims_with_points(&claims.batch_outputs, &points);
@@ -646,30 +692,30 @@ where
 
             let expected_final_claim = stage2_expected_final_claim(
                 &batch.batching_coefficients,
-                ram_read_write.expected_output(
-                    &ram_read_write_inputs,
+                sumchecks.ram_read_write.expected_output(
+                    &inputs.ram_read_write,
                     &output_claims.ram_read_write,
-                    &ram_read_write_challenges,
+                    &batch_challenges.ram_read_write,
                 )?,
-                product_remainder.expected_output(
-                    &product_remainder_inputs,
+                sumchecks.product_remainder.expected_output(
+                    &inputs.product_remainder,
                     &output_claims.product_remainder,
-                    &no_challenges,
+                    &batch_challenges.product_remainder,
                 )?,
-                instruction_reduction.expected_output(
-                    &instruction_reduction_inputs,
+                sumchecks.instruction_claim_reduction.expected_output(
+                    &inputs.instruction_claim_reduction,
                     &output_claims.instruction_claim_reduction,
-                    &instruction_challenges,
+                    &batch_challenges.instruction_claim_reduction,
                 )?,
-                ram_raf.expected_output(
-                    &ram_raf_inputs,
+                sumchecks.ram_raf_evaluation.expected_output(
+                    &inputs.ram_raf_evaluation,
                     &output_claims.ram_raf_evaluation,
-                    &no_challenges,
+                    &batch_challenges.ram_raf_evaluation,
                 )?,
-                ram_output.expected_output(
-                    &ram_output_inputs,
+                sumchecks.ram_output_check.expected_output(
+                    &inputs.ram_output_check,
                     &output_claims.ram_output_check,
-                    &no_challenges,
+                    &batch_challenges.ram_output_check,
                 )?,
             )?;
             if batch.reduction.value != expected_final_claim {
@@ -772,72 +818,83 @@ where
                     reason: error.to_string(),
                 }
             })?;
-            let ram_read_write = RamReadWriteChecking::new(
-                read_write_dimensions,
-                log_k,
-                product_uniskip.tau_low.clone(),
-            );
-            let product_remainder = ProductRemainder::new(
-                product_dimensions,
-                product_uniskip.product_uniskip_challenge,
-                product_uniskip.tau_high,
-                product_uniskip.tau_low.clone(),
-            );
-            let instruction_reduction =
-                InstructionClaimReduction::new(trace_dimensions, product_uniskip.tau_low.clone());
-            let ram_raf = RamRafEvaluation::new(
-                read_write_dimensions,
-                raf_dimensions,
-                log_k,
-                lowest_address,
-                product_uniskip.tau_low.clone(),
-            );
-            let ram_output = RamOutputCheck::new(
-                read_write_dimensions,
-                output_address_challenges.clone(),
-                public_memory,
-            );
+            let sumchecks = Stage2BatchSumchecks {
+                ram_read_write: RamReadWriteChecking::new(
+                    read_write_dimensions,
+                    log_k,
+                    product_uniskip.tau_low.clone(),
+                ),
+                product_remainder: ProductRemainder::new(
+                    product_dimensions,
+                    product_uniskip.product_uniskip_challenge,
+                    product_uniskip.tau_high,
+                    product_uniskip.tau_low.clone(),
+                ),
+                instruction_claim_reduction: InstructionClaimReduction::new(
+                    trace_dimensions,
+                    product_uniskip.tau_low.clone(),
+                ),
+                ram_raf_evaluation: RamRafEvaluation::new(
+                    read_write_dimensions,
+                    raf_dimensions,
+                    log_k,
+                    lowest_address,
+                    product_uniskip.tau_low.clone(),
+                ),
+                ram_output_check: RamOutputCheck::new(
+                    read_write_dimensions,
+                    output_address_challenges.clone(),
+                    public_memory,
+                ),
+            };
 
+            // The relations' `derive_opening_points` ignore their inputs, so the ZK
+            // arm passes empty point-cell inputs assembled into the same generated
+            // aggregate the clear arm builds.
             let empty = Vec::<PCS::Field>::new;
+            let inputs = Stage2BatchInputClaims::<PCS::Field, Vec<PCS::Field>> {
+                ram_read_write: RamReadWriteInputClaims {
+                    ram_read_value: empty(),
+                    ram_write_value: empty(),
+                },
+                product_remainder: ProductRemainderInputClaims {
+                    product_uniskip: empty(),
+                },
+                instruction_claim_reduction: InstructionClaimReductionInputClaims {
+                    lookup_output: empty(),
+                    left_lookup_operand: empty(),
+                    right_lookup_operand: empty(),
+                    left_instruction_input: empty(),
+                    right_instruction_input: empty(),
+                },
+                ram_raf_evaluation: RamRafEvaluationInputClaims {
+                    ram_address: empty(),
+                },
+                ram_output_check: RamOutputCheckInputClaims::<Vec<PCS::Field>>::default(),
+            };
             let output_points = Stage2BatchOutputClaims {
-                ram_read_write: ram_read_write.derive_opening_points(
-                    &ram_read_write_point,
-                    &RamReadWriteInputClaims {
-                        ram_read_value: empty(),
-                        ram_write_value: empty(),
-                    },
-                )?,
-                product_remainder: product_remainder.derive_opening_points(
-                    &product_point,
-                    &ProductRemainderInputClaims {
-                        product_uniskip: empty(),
-                    },
-                )?,
-                instruction_claim_reduction: instruction_reduction.derive_opening_points(
-                    &instruction_point,
-                    &InstructionClaimReductionInputClaims {
-                        lookup_output: empty(),
-                        left_lookup_operand: empty(),
-                        right_lookup_operand: empty(),
-                        left_instruction_input: empty(),
-                        right_instruction_input: empty(),
-                    },
-                )?,
-                ram_raf_evaluation: ram_raf.derive_opening_points(
-                    &ram_raf_evaluation_point,
-                    &RamRafEvaluationInputClaims {
-                        ram_address: empty(),
-                    },
-                )?,
-                ram_output_check: ram_output.derive_opening_points(
-                    &ram_output_check_point,
-                    &RamOutputCheckInputClaims::<Vec<PCS::Field>>::default(),
-                )?,
+                ram_read_write: sumchecks
+                    .ram_read_write
+                    .derive_opening_points(&ram_read_write_point, &inputs.ram_read_write)?,
+                product_remainder: sumchecks
+                    .product_remainder
+                    .derive_opening_points(&product_point, &inputs.product_remainder)?,
+                instruction_claim_reduction: sumchecks
+                    .instruction_claim_reduction
+                    .derive_opening_points(
+                        &instruction_point,
+                        &inputs.instruction_claim_reduction,
+                    )?,
+                ram_raf_evaluation: sumchecks
+                    .ram_raf_evaluation
+                    .derive_opening_points(&ram_raf_evaluation_point, &inputs.ram_raf_evaluation)?,
+                ram_output_check: sumchecks
+                    .ram_output_check
+                    .derive_opening_points(&ram_output_check_point, &inputs.ram_output_check)?,
             };
 
             Ok(Stage2Batch::Zk(Stage2ZkBatch {
-                ram_read_write_gamma,
-                instruction_gamma,
+                batch_challenges,
                 output_address_challenges,
                 consistency,
                 output_claims,

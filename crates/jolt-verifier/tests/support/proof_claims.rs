@@ -1049,7 +1049,7 @@ fn stage1_outer_variable(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage2_batch_outputs<F: Field>(
-    claims: &Stage2BatchOutputClaims<F>,
+    claims: &Stage2BatchOutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [ram_val, ram_ra, ram_inc] = [ram::ram_val(), ram::ram_ra(), ram::ram_inc()];
@@ -1114,7 +1114,7 @@ fn claim_from_stage2_batch_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage2_batch_outputs<F: Field>(
-    claims: &mut Stage2BatchOutputClaims<F>,
+    claims: &mut Stage2BatchOutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [ram_val, ram_ra, ram_inc] = [ram::ram_val(), ram::ram_ra(), ram::ram_inc()];
@@ -1183,7 +1183,7 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn set_optional_stage2_batch_output<F: Field>(
-    claims: &mut Stage2BatchOutputClaims<F>,
+    claims: &mut Stage2BatchOutputClaims<F, F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {

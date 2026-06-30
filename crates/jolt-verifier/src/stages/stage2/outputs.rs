@@ -7,41 +7,57 @@ use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsis
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims};
+use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
-pub use super::instruction_claim_reduction::InstructionClaimReductionOutputClaims;
-pub use super::product_remainder::ProductRemainderOutputClaims;
-pub use super::ram_output_check::RamOutputCheckOutputClaims;
-pub use super::ram_raf_evaluation::RamRafEvaluationOutputClaims;
-pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
+pub use super::instruction_claim_reduction::{
+    InstructionClaimReduction, InstructionClaimReductionOutputClaims,
+};
+pub use super::product_remainder::{ProductRemainder, ProductRemainderOutputClaims};
+pub use super::ram_output_check::{RamOutputCheck, RamOutputCheckOutputClaims};
+pub use super::ram_raf_evaluation::{RamRafEvaluation, RamRafEvaluationOutputClaims};
+pub use super::ram_read_write_checking::{RamReadWriteChecking, RamReadWriteOutputClaims};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage2OutputClaims<F: Field> {
     pub product_uniskip_output_claim: F,
-    pub batch_outputs: Stage2BatchOutputClaims<F>,
+    pub batch_outputs: Stage2BatchOutputClaims<F, F>,
 }
 
-/// The produced stage 2 batch openings, one per-relation `OutputClaims` struct.
-/// Generic over the cell: `F` is the serialized wire form (value only), and
-/// `OpeningClaim<F>` is the clear opening-claim form (point + value) propagated to
-/// later stages — mirroring stage 3/4's `StageNOutputClaims<OpeningClaim<F>>`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct Stage2BatchOutputClaims<C> {
-    pub ram_read_write: RamReadWriteOutputClaims<C>,
-    pub product_remainder: ProductRemainderOutputClaims<C>,
-    pub instruction_claim_reduction: InstructionClaimReductionOutputClaims<C>,
-    pub ram_raf_evaluation: RamRafEvaluationOutputClaims<C>,
-    pub ram_output_check: RamOutputCheckOutputClaims<C>,
+/// Source-of-truth for stage 2's five-instance sumcheck batch, in Fiat-Shamir
+/// batch order (RAM read-write, product remainder, instruction claim-reduction,
+/// RAM RAF evaluation, RAM output check). `#[derive(SumcheckBatch)]` generates the
+/// `Stage2BatchInputClaims<F, C>`, `Stage2BatchOutputClaims<F, C>`, and
+/// `Stage2BatchChallenges<F>` aggregates — one field per instance, in this
+/// declaration order. The product uni-skip is a separate sub-sumcheck, not part of
+/// this batch.
+///
+/// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
+/// `opening_values` / `append_to_transcript`: the instruction claim-reduction has
+/// three cross-relation aliased openings (`lookup_output` /
+/// `left`/`right_instruction_input`) that alias the product-remainder openings and
+/// must NOT be re-absorbed, so the canonical order is curated by hand below (and
+/// enforced by `validate`).
+#[derive(SumcheckBatch)]
+#[sumcheck_batch(custom_opening_values)]
+pub struct Stage2BatchSumchecks<F: Field> {
+    pub ram_read_write: RamReadWriteChecking<F>,
+    pub product_remainder: ProductRemainder<F>,
+    pub instruction_claim_reduction: InstructionClaimReduction<F>,
+    pub ram_raf_evaluation: RamRafEvaluation<F>,
+    pub ram_output_check: RamOutputCheck<F>,
 }
 
-impl<F: Field> Stage2BatchOutputClaims<F> {
+// The wire form pins the generated cell param `C` to the field `F` (value-only
+// openings), so the impl's second type argument is `F`. Both arguments naming `F`
+// is intentional; the lint's reordering hint does not apply.
+#[expect(
+    clippy::mismatching_type_param_order,
+    reason = "the cell param C is pinned to F for the value-only wire form; the second `F` is the cell, not a reordered field param"
+)]
+impl<F: Field> Stage2BatchOutputClaims<F, F> {
     /// The stage 2 batch produced opening claims in canonical (Fiat-Shamir) order:
     /// the RAM read-write openings, the eight product-remainder openings, the two
     /// reduced instruction lookup operands (the other reduced openings alias the
@@ -82,7 +98,7 @@ impl<F: Field> Stage2BatchOutputClaims<F> {
 /// can't express this — `F` would be unconstrained by the self type.
 macro_rules! stage2_batch_point_accessors {
     ($cell:ident) => {
-        impl<F: Field> Stage2BatchOutputClaims<$cell<F>> {
+        impl<F: Field> Stage2BatchOutputClaims<F, $cell<F>> {
             /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
             pub fn ram_read_write_point(&self) -> &[F] {
                 self.ram_read_write.val.point()
@@ -115,7 +131,7 @@ macro_rules! stage2_batch_point_accessors {
 stage2_batch_point_accessors!(OpeningClaim);
 stage2_batch_point_accessors!(Vec);
 
-impl<F: Field> Stage2BatchOutputClaims<OpeningClaim<F>> {
+impl<F: Field> Stage2BatchOutputClaims<F, OpeningClaim<F>> {
     /// Enforce the cross-relation aliases between the product-remainder openings and
     /// the reduced instruction-claim openings: when a reduced opening is present it
     /// must share the product-remainder opening's point and value. Downstream
@@ -190,25 +206,6 @@ impl<F: Field> Stage2BatchOutputClaims<OpeningClaim<F>> {
     }
 }
 
-/// The Fiat-Shamir values the verifier draws during stage 2: the product uni-skip
-/// reduction challenge, the freshly-drawn `product_tau_high` scalar, the RAM
-/// read-write and instruction-reduction batching gammas, and the RAM output-check
-/// address reference point (folded in like stage 6's booleanity reference points).
-/// Carried on [`Stage2ZkOutput`] so BlindFold sources them from
-/// `challenges.<field>` (matching the `input.stageN.challenges.<field>` idiom used
-/// by the sibling stages). `product_tau_low` is opening-derived — it is stage 1's
-/// remainder sumcheck point low half — so it is not stored here: the clear path
-/// reads it off the produced `product_uniskip.tau_low`, and BlindFold recomputes it
-/// from `stage1.remainder_consistency`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2Challenges<F: Field> {
-    pub product_uniskip_challenge: F,
-    pub product_tau_high: F,
-    pub ram_read_write_gamma: F,
-    pub instruction_gamma: F,
-    pub output_address_challenges: Vec<F>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ClearOutput<F: Field> {
     /// The produced batch openings paired with their points (point + value) via the
@@ -216,13 +213,28 @@ pub struct Stage2ClearOutput<F: Field> {
     /// sumcheck point; later stages read them through the
     /// `*_point()` accessors and read values through `.value`, instead of joining a
     /// separately-tracked `VerifiedStage2Batch` with the wire values.
-    pub output_claims: Stage2BatchOutputClaims<OpeningClaim<F>>,
+    pub output_claims: Stage2BatchOutputClaims<F, OpeningClaim<F>>,
     pub product_uniskip: VerifiedProductUniSkip<F>,
 }
 
+/// Stage 2's ZK output, carrying the Fiat-Shamir values BlindFold sources via
+/// `input.stage2.<field>`. The two batch gammas are the generated
+/// [`Stage2BatchChallenges`] member structs (`challenges.ram_read_write.gamma`,
+/// `challenges.instruction_claim_reduction.gamma`; the other three batch relations
+/// draw nothing — `NoChallenges`). The remaining three are non-batch draws — the
+/// product uni-skip reduction challenge and its freshly-drawn `product_tau_high`
+/// scalar (a separate sub-sumcheck), and the RAM output-check address reference
+/// point (folded in like stage 6's booleanity reference points) — so they are not
+/// part of the per-instance aggregate. `product_tau_low` is opening-derived (stage
+/// 1's remainder sumcheck point low half), so it is not stored: the clear path
+/// reads it off the produced `product_uniskip.tau_low`, and BlindFold recomputes it
+/// from `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ZkOutput<F: Field, C> {
-    pub challenges: Stage2Challenges<F>,
+    pub challenges: Stage2BatchChallenges<F>,
+    pub product_uniskip_challenge: F,
+    pub product_tau_high: F,
+    pub output_address_challenges: Vec<F>,
     pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
@@ -230,9 +242,17 @@ pub struct Stage2ZkOutput<F: Field, C> {
     /// The produced batch opening points (point-only cell), the ZK counterpart of
     /// the clear path's `output_claims`. Later stages read them through the same
     /// `*_point()` accessors via [`GetPoint`](crate::stages::relations::GetPoint).
-    pub output_points: Stage2BatchOutputClaims<Vec<F>>,
+    pub output_points: Stage2BatchOutputClaims<F, Vec<F>>,
 }
 
+// The clear variant carries the located opening claims (point + value) that later
+// stages read on the hot path; the ZK variant carries committed consistency plus
+// the point-only `output_points`. Boxing the common clear variant to shrink the
+// rarer ZK one would add indirection to every clear-path access.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage2Output<F: Field, C> {
     Clear(Stage2ClearOutput<F>),
@@ -279,7 +299,7 @@ mod tests {
     /// to prove they are skipped.
     #[test]
     fn opening_values_follow_canonical_order() {
-        let claims = Stage2BatchOutputClaims {
+        let claims = Stage2BatchOutputClaims::<Fr, Fr> {
             ram_read_write: RamReadWriteOutputClaims {
                 val: fr(1),
                 ra: fr(2),
@@ -323,8 +343,8 @@ mod tests {
     /// product-remainder ones (equal points + values): `lookup_output`,
     /// `left`/`right_instruction_input`. `validate` accepts it; the tests below
     /// perturb one alias (or the shared point) each to assert rejection.
-    fn consistent() -> Stage2BatchOutputClaims<OpeningClaim<Fr>> {
-        Stage2BatchOutputClaims {
+    fn consistent() -> Stage2BatchOutputClaims<Fr, OpeningClaim<Fr>> {
+        Stage2BatchOutputClaims::<Fr, OpeningClaim<Fr>> {
             ram_read_write: RamReadWriteOutputClaims {
                 val: oc(1),
                 ra: oc(2),
