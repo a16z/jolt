@@ -37,7 +37,7 @@ pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
 /// hand-written 25-opening resolver. The `op_flags` / `lookup_table_flags`
 /// families are indexed openings (`OpFlags(CIRCUIT_FLAGS[i])` /
 /// `LookupTableFlag(i)`).
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     #[opening(UnexpandedPC, from = SpartanOuter)]
     pub outer_unexpanded_pc: C,
@@ -92,7 +92,7 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
 /// Fiat-Shamir challenges drawn by the address phase of the bytecode read-RAF
 /// sumcheck: the batching `gamma` plus the five per-stage gammas (the same set
 /// the full monolith folds).
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,

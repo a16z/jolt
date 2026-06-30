@@ -26,7 +26,7 @@ pub struct ProgramImageReductionCyclePhaseOutputClaims<C> {
 }
 
 /// The consumed RAM value-check program-image contribution.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct ProgramImageReductionCyclePhaseInputClaims<C> {
     #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
     pub contribution: C,

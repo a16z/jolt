@@ -27,14 +27,14 @@ pub struct InstructionRaVirtualizationOutputClaims<C> {
 
 /// The per-virtual reduced `InstructionRa` openings from the stage-5 instruction
 /// read-RAF.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct InstructionRaVirtualizationInputClaims<C> {
     #[opening(InstructionRa, from = InstructionReadRaf)]
     pub instruction_ra: Vec<C>,
 }
 
 /// Fiat-Shamir challenge drawn by the instruction RA-virtualization sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionRaVirtualizationChallenges<F> {
     #[challenge(InstructionRaVirtualizationChallenge::Gamma)]
     pub gamma: F,

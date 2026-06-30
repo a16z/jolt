@@ -30,7 +30,7 @@ pub struct IncClaimReductionOutputClaims<C> {
 
 /// The four reduced `Inc` openings consumed from the read-write / value
 /// relations of RAM and registers.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct IncClaimReductionInputClaims<C> {
     #[opening(committed = RamInc, from = RamReadWriteChecking)]
     pub ram_inc_read_write: C,
@@ -43,7 +43,7 @@ pub struct IncClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the increment claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct IncClaimReductionChallenges<F> {
     #[challenge(IncClaimReductionChallenge::Gamma)]
     pub gamma: F,

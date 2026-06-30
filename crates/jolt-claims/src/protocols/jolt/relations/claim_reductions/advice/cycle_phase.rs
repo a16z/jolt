@@ -30,7 +30,7 @@ pub struct AdviceCyclePhaseOutputClaims<C> {
 }
 
 /// The consumed RAM value-check advice opening, keyed by kind.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct AdviceCyclePhaseInputClaims<C> {
     #[opening(trusted_advice, from = RamValCheck)]
     pub trusted: Option<C>,
