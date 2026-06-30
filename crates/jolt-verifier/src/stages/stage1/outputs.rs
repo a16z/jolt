@@ -2,16 +2,14 @@
 
 use std::collections::{btree_map::Entry, BTreeMap};
 
-use jolt_claims::protocols::jolt::{
-    geometry::spartan::{outer_opening, SpartanOuterDimensions},
-    JoltRelationId, JoltVirtualPolynomial,
-};
+use jolt_claims::protocols::jolt::{JoltRelationId, JoltVirtualPolynomial};
 use jolt_field::Field;
-use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
 
+use super::outer_remainder::{OuterRemainder, OuterRemainderOutputClaims};
+use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
@@ -19,33 +17,56 @@ use crate::VerifierError;
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage1OutputClaims<F: Field> {
     pub uniskip_output_claim: F,
-    pub outer: SpartanOuterClaims<F>,
+    pub outer: Stage1BatchOutputClaims<F, F>,
 }
 
-pub fn stage1_claims_from_r1cs_inputs<F: Field>(
-    uniskip_output_claim: F,
+/// Source-of-truth for stage 1's singleton sumcheck batch: the Spartan outer
+/// *remainder* sumcheck (the companion uni-skip first round is a separate
+/// sub-sumcheck, not a batch member — see [`OuterUniskip`](super::OuterUniskip)).
+/// `#[derive(SumcheckBatch)]` generates the `Stage1BatchInputClaims<F, C>`,
+/// `Stage1BatchOutputClaims<F, C>`, and `Stage1BatchChallenges<F>` aggregates — one
+/// field per instance, in this declaration order. With a single instance and no
+/// cross-relation aliasing there is no `custom_opening_values` opt-out: the
+/// generated `opening_values` / `append_to_transcript` delegates to
+/// `OuterRemainderOutputClaims` in `dimensions.variables()` order (the canonical 35
+/// R1CS-input order), byte-identical to the previous explicit append loop.
+#[derive(SumcheckBatch)]
+pub struct Stage1BatchSumchecks<F: Field> {
+    pub outer_remainder: OuterRemainder<F>,
+}
+
+/// The shared per-relation opening-point accessor, generated for each concrete cell
+/// (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form) so both
+/// expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>` can't
+/// express this — `F` would be unconstrained by the self type.
+macro_rules! stage1_batch_point_accessors {
+    ($cell:ident) => {
+        impl<F: Field> Stage1BatchOutputClaims<F, $cell<F>> {
+            /// The Spartan outer remainder *opening* point (shared by all 35
+            /// openings): the bound remainder sumcheck point reversed, as
+            /// `derive_opening_points` produces. The raw (un-reversed) reduction
+            /// point that downstream stages slice is exposed by
+            /// [`Stage1Output::remainder_point`].
+            pub fn remainder_opening_point(&self) -> &[F] {
+                self.outer_remainder.left_instruction_input.point()
+            }
+        }
+    };
+}
+
+stage1_batch_point_accessors!(OpeningClaim);
+stage1_batch_point_accessors!(Vec);
+
+/// Assemble the stage-1 produced openings (the verifier-only wire form,
+/// `OuterRemainderOutputClaims<F>`) from a prover-supplied `(variable, value)`
+/// iterator, preserving the canonical `SPARTAN_OUTER_R1CS_INPUTS` field order. The
+/// BTreeMap dedup/missing/extra checks guard the prover-supplied data (it has no
+/// generated equivalent): every R1CS input must appear exactly once.
+pub fn outer_remainder_outputs_from_r1cs_inputs<F: Field>(
     claims: impl IntoIterator<Item = (JoltVirtualPolynomial, F)>,
-) -> Result<Stage1OutputClaims<F>, VerifierError> {
-    Ok(Stage1OutputClaims {
-        uniskip_output_claim,
-        outer: spartan_outer_claims_from_r1cs_inputs(claims)?,
-    })
-}
-
-impl<F: Field> Stage1OutputClaims<F> {
-    pub fn spartan_outer_claims(
-        &self,
-        dimensions: &SpartanOuterDimensions,
-    ) -> Result<Vec<F>, VerifierError> {
-        self.outer.r1cs_input_claims(dimensions)
-    }
-}
-
-pub fn spartan_outer_claims_from_r1cs_inputs<F: Field>(
-    claims: impl IntoIterator<Item = (JoltVirtualPolynomial, F)>,
-) -> Result<SpartanOuterClaims<F>, VerifierError> {
+) -> Result<OuterRemainderOutputClaims<F>, VerifierError> {
     let mut values = collect_r1cs_inputs(claims)?;
-    let outer = SpartanOuterClaims {
+    let outer = OuterRemainderOutputClaims {
         left_instruction_input: take_r1cs_input(
             &mut values,
             JoltVirtualPolynomial::LeftInstructionInput,
@@ -82,158 +103,23 @@ pub fn spartan_outer_claims_from_r1cs_inputs<F: Field>(
         )?,
         lookup_output: take_r1cs_input(&mut values, JoltVirtualPolynomial::LookupOutput)?,
         should_jump: take_r1cs_input(&mut values, JoltVirtualPolynomial::ShouldJump)?,
-        flags: SpartanOuterFlagClaims {
-            add_operands: take_flag(&mut values, CircuitFlags::AddOperands)?,
-            subtract_operands: take_flag(&mut values, CircuitFlags::SubtractOperands)?,
-            multiply_operands: take_flag(&mut values, CircuitFlags::MultiplyOperands)?,
-            load: take_flag(&mut values, CircuitFlags::Load)?,
-            store: take_flag(&mut values, CircuitFlags::Store)?,
-            jump: take_flag(&mut values, CircuitFlags::Jump)?,
-            write_lookup_output_to_rd: take_flag(&mut values, CircuitFlags::WriteLookupOutputToRD)?,
-            virtual_instruction: take_flag(&mut values, CircuitFlags::VirtualInstruction)?,
-            assert: take_flag(&mut values, CircuitFlags::Assert)?,
-            do_not_update_unexpanded_pc: take_flag(
-                &mut values,
-                CircuitFlags::DoNotUpdateUnexpandedPC,
-            )?,
-            advice: take_flag(&mut values, CircuitFlags::Advice)?,
-            is_compressed: take_flag(&mut values, CircuitFlags::IsCompressed)?,
-            is_first_in_sequence: take_flag(&mut values, CircuitFlags::IsFirstInSequence)?,
-            is_last_in_sequence: take_flag(&mut values, CircuitFlags::IsLastInSequence)?,
-        },
+        add_operands: take_flag(&mut values, CircuitFlags::AddOperands)?,
+        subtract_operands: take_flag(&mut values, CircuitFlags::SubtractOperands)?,
+        multiply_operands: take_flag(&mut values, CircuitFlags::MultiplyOperands)?,
+        load: take_flag(&mut values, CircuitFlags::Load)?,
+        store: take_flag(&mut values, CircuitFlags::Store)?,
+        jump: take_flag(&mut values, CircuitFlags::Jump)?,
+        write_lookup_output_to_rd: take_flag(&mut values, CircuitFlags::WriteLookupOutputToRD)?,
+        virtual_instruction: take_flag(&mut values, CircuitFlags::VirtualInstruction)?,
+        assert: take_flag(&mut values, CircuitFlags::Assert)?,
+        do_not_update_unexpanded_pc: take_flag(&mut values, CircuitFlags::DoNotUpdateUnexpandedPC)?,
+        advice: take_flag(&mut values, CircuitFlags::Advice)?,
+        is_compressed: take_flag(&mut values, CircuitFlags::IsCompressed)?,
+        is_first_in_sequence: take_flag(&mut values, CircuitFlags::IsFirstInSequence)?,
+        is_last_in_sequence: take_flag(&mut values, CircuitFlags::IsLastInSequence)?,
     };
     reject_extra_r1cs_inputs(&values)?;
     Ok(outer)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct SpartanOuterClaims<F: Field> {
-    pub left_instruction_input: F,
-    pub right_instruction_input: F,
-    pub product: F,
-    pub should_branch: F,
-    pub pc: F,
-    pub unexpanded_pc: F,
-    pub imm: F,
-    pub ram_address: F,
-    pub rs1_value: F,
-    pub rs2_value: F,
-    pub rd_write_value: F,
-    pub ram_read_value: F,
-    pub ram_write_value: F,
-    pub left_lookup_operand: F,
-    pub right_lookup_operand: F,
-    pub next_unexpanded_pc: F,
-    pub next_pc: F,
-    pub next_is_virtual: F,
-    pub next_is_first_in_sequence: F,
-    pub lookup_output: F,
-    pub should_jump: F,
-    pub flags: SpartanOuterFlagClaims<F>,
-}
-
-impl<F: Field> SpartanOuterClaims<F> {
-    pub(crate) fn r1cs_input_claims(
-        &self,
-        dimensions: &SpartanOuterDimensions,
-    ) -> Result<Vec<F>, VerifierError> {
-        dimensions
-            .variables()
-            .iter()
-            .copied()
-            .map(|variable| {
-                self.claim(variable)
-                    .ok_or_else(|| VerifierError::MissingOpeningClaim {
-                        id: outer_opening(variable),
-                    })
-            })
-            .collect()
-    }
-
-    pub(crate) fn claim(&self, variable: JoltVirtualPolynomial) -> Option<F> {
-        match variable {
-            JoltVirtualPolynomial::LeftInstructionInput => Some(self.left_instruction_input),
-            JoltVirtualPolynomial::RightInstructionInput => Some(self.right_instruction_input),
-            JoltVirtualPolynomial::Product => Some(self.product),
-            JoltVirtualPolynomial::ShouldBranch => Some(self.should_branch),
-            JoltVirtualPolynomial::PC => Some(self.pc),
-            JoltVirtualPolynomial::UnexpandedPC => Some(self.unexpanded_pc),
-            JoltVirtualPolynomial::Imm => Some(self.imm),
-            JoltVirtualPolynomial::RamAddress => Some(self.ram_address),
-            JoltVirtualPolynomial::Rs1Value => Some(self.rs1_value),
-            JoltVirtualPolynomial::Rs2Value => Some(self.rs2_value),
-            JoltVirtualPolynomial::RdWriteValue => Some(self.rd_write_value),
-            JoltVirtualPolynomial::RamReadValue => Some(self.ram_read_value),
-            JoltVirtualPolynomial::RamWriteValue => Some(self.ram_write_value),
-            JoltVirtualPolynomial::LeftLookupOperand => Some(self.left_lookup_operand),
-            JoltVirtualPolynomial::RightLookupOperand => Some(self.right_lookup_operand),
-            JoltVirtualPolynomial::NextUnexpandedPC => Some(self.next_unexpanded_pc),
-            JoltVirtualPolynomial::NextPC => Some(self.next_pc),
-            JoltVirtualPolynomial::NextIsVirtual => Some(self.next_is_virtual),
-            JoltVirtualPolynomial::NextIsFirstInSequence => Some(self.next_is_first_in_sequence),
-            JoltVirtualPolynomial::LookupOutput => Some(self.lookup_output),
-            JoltVirtualPolynomial::ShouldJump => Some(self.should_jump),
-            JoltVirtualPolynomial::OpFlags(flag) => self.flags.claim(flag),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct SpartanOuterFlagClaims<F: Field> {
-    pub add_operands: F,
-    pub subtract_operands: F,
-    pub multiply_operands: F,
-    pub load: F,
-    pub store: F,
-    pub jump: F,
-    pub write_lookup_output_to_rd: F,
-    pub virtual_instruction: F,
-    pub assert: F,
-    pub do_not_update_unexpanded_pc: F,
-    pub advice: F,
-    pub is_compressed: F,
-    pub is_first_in_sequence: F,
-    pub is_last_in_sequence: F,
-}
-
-impl<F: Field> SpartanOuterFlagClaims<F> {
-    fn claim(&self, flag: CircuitFlags) -> Option<F> {
-        match flag {
-            CircuitFlags::AddOperands => Some(self.add_operands),
-            CircuitFlags::SubtractOperands => Some(self.subtract_operands),
-            CircuitFlags::MultiplyOperands => Some(self.multiply_operands),
-            CircuitFlags::Load => Some(self.load),
-            CircuitFlags::Store => Some(self.store),
-            CircuitFlags::Jump => Some(self.jump),
-            CircuitFlags::WriteLookupOutputToRD => Some(self.write_lookup_output_to_rd),
-            CircuitFlags::VirtualInstruction => Some(self.virtual_instruction),
-            CircuitFlags::Assert => Some(self.assert),
-            CircuitFlags::DoNotUpdateUnexpandedPC => Some(self.do_not_update_unexpanded_pc),
-            CircuitFlags::Advice => Some(self.advice),
-            CircuitFlags::IsCompressed => Some(self.is_compressed),
-            CircuitFlags::IsFirstInSequence => Some(self.is_first_in_sequence),
-            CircuitFlags::IsLastInSequence => Some(self.is_last_in_sequence),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage1SpartanOuterOpening {
-    Jolt(JoltVirtualPolynomial),
-}
-
-pub fn spartan_outer_opening_order(
-    dimensions: &SpartanOuterDimensions,
-) -> Vec<Stage1SpartanOuterOpening> {
-    dimensions
-        .variables()
-        .iter()
-        .copied()
-        .map(Stage1SpartanOuterOpening::Jolt)
-        .collect::<Vec<_>>()
 }
 
 fn collect_r1cs_inputs<F: Field>(
@@ -295,7 +181,7 @@ fn stage1_public_input_failed(reason: String) -> VerifierError {
 /// so BlindFold can source `tau`/`uniskip` from `challenges.<field>` (matching
 /// the `input.stageN.challenges.<field>` idiom used by the sibling stages). The
 /// remainder sumcheck point is opening-derived, so it lives on the produced
-/// reduction (clear: `remainder.sumcheck_point`; ZK: `remainder_consistency`)
+/// reduction (clear: `output_claims.remainder_point()`; ZK: `remainder_consistency`)
 /// rather than here; the singleton remainder batching coefficient is likewise
 /// read from `remainder_consistency` on the ZK path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -306,9 +192,15 @@ pub struct Stage1Challenges<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1ClearOutput<F: Field> {
-    pub uniskip: VerifiedSpartanOuterSumcheck<F>,
-    pub remainder: VerifiedSpartanOuterSumcheck<F>,
-    pub outer: SpartanOuterClaims<F>,
+    /// The produced remainder openings paired with their shared point (point +
+    /// value) via the `OpeningClaim` cell. The opening point is derived from the
+    /// remainder's sumcheck point; later stages read values through
+    /// `.outer_remainder.<field>.value` and the shared point through
+    /// [`remainder_point`](Stage1BatchOutputClaims::remainder_point).
+    pub output_claims: Stage1BatchOutputClaims<F, OpeningClaim<F>>,
+    /// The Spartan outer uni-skip's reduced opening (consumed as the remainder's
+    /// input claim; absorbed into the transcript before the remainder RLC squeeze).
+    pub uniskip_output_claim: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -320,6 +212,14 @@ pub struct Stage1ZkOutput<F: Field, C> {
     pub remainder_output_claims: CommittedOutputClaimOutput<C>,
 }
 
+// The clear variant carries the located opening claims (point + value) read on the
+// hot path by later stages; the ZK variant carries committed consistency. Boxing
+// the common clear variant to shrink the rarer ZK one would add indirection to
+// every clear-path access.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage1Output<F: Field, C> {
     Clear(Stage1ClearOutput<F>),
@@ -327,15 +227,23 @@ pub enum Stage1Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage1Output<F, C> {
-    /// The raw Spartan outer remainder sumcheck point, available regardless of
-    /// proving mode. The remainder is a singleton batch, so the clear-path bound
-    /// point (`remainder.sumcheck_point`) and the ZK committed round challenges
-    /// (`remainder_consistency.challenges()`) are the same vector. Downstream
-    /// consumers (stage 2's `tau_low`, BlindFold's stage-1 cycle bindings) slice
-    /// and reverse this point themselves.
+    /// The raw (un-reversed) Spartan outer remainder sumcheck reduction point,
+    /// available regardless of proving mode. The remainder is a singleton batch, so
+    /// the clear-path bound point and the ZK committed round challenges are the same
+    /// vector. Downstream consumers (stage 2's `tau_low`, BlindFold's stage-1 cycle
+    /// bindings) slice and reverse this point themselves, so it must NOT be the
+    /// already-reversed opening point: the clear path stores the openings at the
+    /// reversed point (`derive_opening_points`), so we reverse it back here to
+    /// recover the raw reduction point the ZK `challenges()` returns directly.
     pub fn remainder_point(&self) -> Vec<F> {
         match self {
-            Self::Clear(output) => output.remainder.sumcheck_point.as_slice().to_vec(),
+            Self::Clear(output) => output
+                .output_claims
+                .remainder_opening_point()
+                .iter()
+                .rev()
+                .copied()
+                .collect(),
             Self::Zk(output) => output.remainder_consistency.challenges(),
         }
     }
@@ -352,71 +260,5 @@ impl<F: Field, C> Stage1Output<F, C> {
             Self::Zk(output) => Ok(output),
             Self::Clear(_) => Err(VerifierError::ExpectedCommittedProof { field: "stage1" }),
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedSpartanOuterSumcheck<F: Field> {
-    pub input_claim: F,
-    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
-    pub sumcheck_final_claim: F,
-    pub expected_output_claim: F,
-}
-
-pub fn stage1_clear_output<F: Field>(
-    uniskip_challenge: F,
-    uniskip_output_claim: F,
-    remainder_batching_coefficient: F,
-    remainder_challenges: Vec<F>,
-    remainder_output_claim: F,
-    expected_remainder_output_claim: F,
-    r1cs_input_claims: impl IntoIterator<Item = (JoltVirtualPolynomial, F)>,
-) -> Result<Stage1ClearOutput<F>, VerifierError> {
-    let uniskip = stage1_uniskip_output(uniskip_challenge, uniskip_output_claim);
-    let remainder = stage1_remainder_output(
-        uniskip_output_claim,
-        remainder_batching_coefficient,
-        remainder_challenges,
-        remainder_output_claim,
-        expected_remainder_output_claim,
-    );
-    Ok(Stage1ClearOutput {
-        uniskip,
-        remainder,
-        outer: spartan_outer_claims_from_r1cs_inputs(r1cs_input_claims)?,
-    })
-}
-
-fn stage1_uniskip_output<F: Field>(
-    uniskip_challenge: F,
-    uniskip_output_claim: F,
-) -> VerifiedSpartanOuterSumcheck<F> {
-    VerifiedSpartanOuterSumcheck {
-        input_claim: F::from_u64(0),
-        sumcheck_point: Point::high_to_low(vec![uniskip_challenge]),
-        sumcheck_final_claim: uniskip_output_claim,
-        expected_output_claim: uniskip_output_claim,
-    }
-}
-
-fn stage1_remainder_output<F: Field>(
-    uniskip_output_claim: F,
-    remainder_batching_coefficient: F,
-    remainder_challenges: Vec<F>,
-    remainder_output_claim: F,
-    expected_remainder_output_claim: F,
-) -> VerifiedSpartanOuterSumcheck<F> {
-    VerifiedSpartanOuterSumcheck {
-        input_claim: uniskip_output_claim * remainder_batching_coefficient,
-        sumcheck_point: Point::high_to_low(remainder_challenges),
-        sumcheck_final_claim: remainder_output_claim,
-        expected_output_claim: expected_remainder_output_claim,
-    }
-}
-
-pub fn stage1_challenges<F: Field>(tau: Vec<F>, uniskip_challenge: F) -> Stage1Challenges<F> {
-    Stage1Challenges {
-        tau,
-        uniskip_challenge,
     }
 }

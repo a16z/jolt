@@ -31,9 +31,10 @@ pub fn ram_read_write_inputs_from_upstream<F: Field>(
         point: Vec::new(),
         value,
     };
+    let outer = &stage1.output_claims.outer_remainder;
     RamReadWriteInputClaims {
-        ram_read_value: value(stage1.outer.ram_read_value),
-        ram_write_value: value(stage1.outer.ram_write_value),
+        ram_read_value: value(outer.ram_read_value.value),
+        ram_write_value: value(outer.ram_write_value.value),
     }
 }
 

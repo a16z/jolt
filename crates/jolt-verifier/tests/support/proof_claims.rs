@@ -23,7 +23,10 @@ use jolt_riscv::CircuitFlags;
 use jolt_verifier::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
     stages::{
-        stage1::outputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1OutputClaims},
+        stage1::{
+            outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
+            OuterRemainderOutputClaims,
+        },
         stage2::outputs::{
             InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
             RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
@@ -83,33 +86,33 @@ pub(crate) fn clear_claims_from_native<F: Field>(
 
 fn spartan_outer_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<SpartanOuterClaims<F>, VerifierError> {
+) -> Result<Stage1BatchOutputClaims<F, F>, VerifierError> {
     let outer_claim = |variable| claims.require(outer_opening(variable));
     let flag_claim = |flag| outer_claim(JoltVirtualPolynomial::OpFlags(flag));
 
-    Ok(SpartanOuterClaims {
-        left_instruction_input: outer_claim(JoltVirtualPolynomial::LeftInstructionInput)?,
-        right_instruction_input: outer_claim(JoltVirtualPolynomial::RightInstructionInput)?,
-        product: outer_claim(JoltVirtualPolynomial::Product)?,
-        should_branch: outer_claim(JoltVirtualPolynomial::ShouldBranch)?,
-        pc: outer_claim(JoltVirtualPolynomial::PC)?,
-        unexpanded_pc: outer_claim(JoltVirtualPolynomial::UnexpandedPC)?,
-        imm: outer_claim(JoltVirtualPolynomial::Imm)?,
-        ram_address: outer_claim(JoltVirtualPolynomial::RamAddress)?,
-        rs1_value: outer_claim(JoltVirtualPolynomial::Rs1Value)?,
-        rs2_value: outer_claim(JoltVirtualPolynomial::Rs2Value)?,
-        rd_write_value: outer_claim(JoltVirtualPolynomial::RdWriteValue)?,
-        ram_read_value: outer_claim(JoltVirtualPolynomial::RamReadValue)?,
-        ram_write_value: outer_claim(JoltVirtualPolynomial::RamWriteValue)?,
-        left_lookup_operand: outer_claim(JoltVirtualPolynomial::LeftLookupOperand)?,
-        right_lookup_operand: outer_claim(JoltVirtualPolynomial::RightLookupOperand)?,
-        next_unexpanded_pc: outer_claim(JoltVirtualPolynomial::NextUnexpandedPC)?,
-        next_pc: outer_claim(JoltVirtualPolynomial::NextPC)?,
-        next_is_virtual: outer_claim(JoltVirtualPolynomial::NextIsVirtual)?,
-        next_is_first_in_sequence: outer_claim(JoltVirtualPolynomial::NextIsFirstInSequence)?,
-        lookup_output: outer_claim(JoltVirtualPolynomial::LookupOutput)?,
-        should_jump: outer_claim(JoltVirtualPolynomial::ShouldJump)?,
-        flags: SpartanOuterFlagClaims {
+    Ok(Stage1BatchOutputClaims {
+        outer_remainder: OuterRemainderOutputClaims {
+            left_instruction_input: outer_claim(JoltVirtualPolynomial::LeftInstructionInput)?,
+            right_instruction_input: outer_claim(JoltVirtualPolynomial::RightInstructionInput)?,
+            product: outer_claim(JoltVirtualPolynomial::Product)?,
+            should_branch: outer_claim(JoltVirtualPolynomial::ShouldBranch)?,
+            pc: outer_claim(JoltVirtualPolynomial::PC)?,
+            unexpanded_pc: outer_claim(JoltVirtualPolynomial::UnexpandedPC)?,
+            imm: outer_claim(JoltVirtualPolynomial::Imm)?,
+            ram_address: outer_claim(JoltVirtualPolynomial::RamAddress)?,
+            rs1_value: outer_claim(JoltVirtualPolynomial::Rs1Value)?,
+            rs2_value: outer_claim(JoltVirtualPolynomial::Rs2Value)?,
+            rd_write_value: outer_claim(JoltVirtualPolynomial::RdWriteValue)?,
+            ram_read_value: outer_claim(JoltVirtualPolynomial::RamReadValue)?,
+            ram_write_value: outer_claim(JoltVirtualPolynomial::RamWriteValue)?,
+            left_lookup_operand: outer_claim(JoltVirtualPolynomial::LeftLookupOperand)?,
+            right_lookup_operand: outer_claim(JoltVirtualPolynomial::RightLookupOperand)?,
+            next_unexpanded_pc: outer_claim(JoltVirtualPolynomial::NextUnexpandedPC)?,
+            next_pc: outer_claim(JoltVirtualPolynomial::NextPC)?,
+            next_is_virtual: outer_claim(JoltVirtualPolynomial::NextIsVirtual)?,
+            next_is_first_in_sequence: outer_claim(JoltVirtualPolynomial::NextIsFirstInSequence)?,
+            lookup_output: outer_claim(JoltVirtualPolynomial::LookupOutput)?,
+            should_jump: outer_claim(JoltVirtualPolynomial::ShouldJump)?,
             add_operands: flag_claim(CircuitFlags::AddOperands)?,
             subtract_operands: flag_claim(CircuitFlags::SubtractOperands)?,
             multiply_operands: flag_claim(CircuitFlags::MultiplyOperands)?,
@@ -746,32 +749,32 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
     }
 }
 
-fn empty_spartan_outer_claims<F: Field>() -> SpartanOuterClaims<F> {
+fn empty_spartan_outer_claims<F: Field>() -> Stage1BatchOutputClaims<F, F> {
     let zero = F::zero();
 
-    SpartanOuterClaims {
-        left_instruction_input: zero,
-        right_instruction_input: zero,
-        product: zero,
-        should_branch: zero,
-        pc: zero,
-        unexpanded_pc: zero,
-        imm: zero,
-        ram_address: zero,
-        rs1_value: zero,
-        rs2_value: zero,
-        rd_write_value: zero,
-        ram_read_value: zero,
-        ram_write_value: zero,
-        left_lookup_operand: zero,
-        right_lookup_operand: zero,
-        next_unexpanded_pc: zero,
-        next_pc: zero,
-        next_is_virtual: zero,
-        next_is_first_in_sequence: zero,
-        lookup_output: zero,
-        should_jump: zero,
-        flags: SpartanOuterFlagClaims {
+    Stage1BatchOutputClaims {
+        outer_remainder: OuterRemainderOutputClaims {
+            left_instruction_input: zero,
+            right_instruction_input: zero,
+            product: zero,
+            should_branch: zero,
+            pc: zero,
+            unexpanded_pc: zero,
+            imm: zero,
+            ram_address: zero,
+            rs1_value: zero,
+            rs2_value: zero,
+            rd_write_value: zero,
+            ram_read_value: zero,
+            ram_write_value: zero,
+            left_lookup_operand: zero,
+            right_lookup_operand: zero,
+            next_unexpanded_pc: zero,
+            next_pc: zero,
+            next_is_virtual: zero,
+            next_is_first_in_sequence: zero,
+            lookup_output: zero,
+            should_jump: zero,
             add_operands: zero,
             subtract_operands: zero,
             multiply_operands: zero,
@@ -909,9 +912,10 @@ fn claim_from_clear<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_spartan_outer<F: Field>(
-    claims: &SpartanOuterClaims<F>,
+    claims: &Stage1BatchOutputClaims<F, F>,
     variable: JoltVirtualPolynomial,
 ) -> Option<F> {
+    let claims = &claims.outer_remainder;
     match variable {
         JoltVirtualPolynomial::LeftInstructionInput => Some(claims.left_instruction_input),
         JoltVirtualPolynomial::RightInstructionInput => Some(claims.right_instruction_input),
@@ -934,31 +938,23 @@ fn claim_from_spartan_outer<F: Field>(
         JoltVirtualPolynomial::NextIsFirstInSequence => Some(claims.next_is_first_in_sequence),
         JoltVirtualPolynomial::LookupOutput => Some(claims.lookup_output),
         JoltVirtualPolynomial::ShouldJump => Some(claims.should_jump),
-        JoltVirtualPolynomial::OpFlags(flag) => claim_from_spartan_outer_flag(&claims.flags, flag),
+        JoltVirtualPolynomial::OpFlags(flag) => match flag {
+            CircuitFlags::AddOperands => Some(claims.add_operands),
+            CircuitFlags::SubtractOperands => Some(claims.subtract_operands),
+            CircuitFlags::MultiplyOperands => Some(claims.multiply_operands),
+            CircuitFlags::Load => Some(claims.load),
+            CircuitFlags::Store => Some(claims.store),
+            CircuitFlags::Jump => Some(claims.jump),
+            CircuitFlags::WriteLookupOutputToRD => Some(claims.write_lookup_output_to_rd),
+            CircuitFlags::VirtualInstruction => Some(claims.virtual_instruction),
+            CircuitFlags::Assert => Some(claims.assert),
+            CircuitFlags::DoNotUpdateUnexpandedPC => Some(claims.do_not_update_unexpanded_pc),
+            CircuitFlags::Advice => Some(claims.advice),
+            CircuitFlags::IsCompressed => Some(claims.is_compressed),
+            CircuitFlags::IsFirstInSequence => Some(claims.is_first_in_sequence),
+            CircuitFlags::IsLastInSequence => Some(claims.is_last_in_sequence),
+        },
         _ => None,
-    }
-}
-
-#[cfg(any(feature = "prover-fixtures", test))]
-fn claim_from_spartan_outer_flag<F: Field>(
-    claims: &SpartanOuterFlagClaims<F>,
-    flag: CircuitFlags,
-) -> Option<F> {
-    match flag {
-        CircuitFlags::AddOperands => Some(claims.add_operands),
-        CircuitFlags::SubtractOperands => Some(claims.subtract_operands),
-        CircuitFlags::MultiplyOperands => Some(claims.multiply_operands),
-        CircuitFlags::Load => Some(claims.load),
-        CircuitFlags::Store => Some(claims.store),
-        CircuitFlags::Jump => Some(claims.jump),
-        CircuitFlags::WriteLookupOutputToRD => Some(claims.write_lookup_output_to_rd),
-        CircuitFlags::VirtualInstruction => Some(claims.virtual_instruction),
-        CircuitFlags::Assert => Some(claims.assert),
-        CircuitFlags::DoNotUpdateUnexpandedPC => Some(claims.do_not_update_unexpanded_pc),
-        CircuitFlags::Advice => Some(claims.advice),
-        CircuitFlags::IsCompressed => Some(claims.is_compressed),
-        CircuitFlags::IsFirstInSequence => Some(claims.is_first_in_sequence),
-        CircuitFlags::IsLastInSequence => Some(claims.is_last_in_sequence),
     }
 }
 
@@ -988,9 +984,10 @@ fn claim_mut_from_clear<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_spartan_outer<F: Field>(
-    claims: &mut SpartanOuterClaims<F>,
+    claims: &mut Stage1BatchOutputClaims<F, F>,
     variable: JoltVirtualPolynomial,
 ) -> Option<&mut F> {
+    let claims = &mut claims.outer_remainder;
     match variable {
         JoltVirtualPolynomial::LeftInstructionInput => Some(&mut claims.left_instruction_input),
         JoltVirtualPolynomial::RightInstructionInput => Some(&mut claims.right_instruction_input),
@@ -1013,33 +1010,23 @@ fn claim_mut_from_spartan_outer<F: Field>(
         JoltVirtualPolynomial::NextIsFirstInSequence => Some(&mut claims.next_is_first_in_sequence),
         JoltVirtualPolynomial::LookupOutput => Some(&mut claims.lookup_output),
         JoltVirtualPolynomial::ShouldJump => Some(&mut claims.should_jump),
-        JoltVirtualPolynomial::OpFlags(flag) => {
-            claim_mut_from_spartan_outer_flag(&mut claims.flags, flag)
-        }
+        JoltVirtualPolynomial::OpFlags(flag) => match flag {
+            CircuitFlags::AddOperands => Some(&mut claims.add_operands),
+            CircuitFlags::SubtractOperands => Some(&mut claims.subtract_operands),
+            CircuitFlags::MultiplyOperands => Some(&mut claims.multiply_operands),
+            CircuitFlags::Load => Some(&mut claims.load),
+            CircuitFlags::Store => Some(&mut claims.store),
+            CircuitFlags::Jump => Some(&mut claims.jump),
+            CircuitFlags::WriteLookupOutputToRD => Some(&mut claims.write_lookup_output_to_rd),
+            CircuitFlags::VirtualInstruction => Some(&mut claims.virtual_instruction),
+            CircuitFlags::Assert => Some(&mut claims.assert),
+            CircuitFlags::DoNotUpdateUnexpandedPC => Some(&mut claims.do_not_update_unexpanded_pc),
+            CircuitFlags::Advice => Some(&mut claims.advice),
+            CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
+            CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
+            CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
+        },
         _ => None,
-    }
-}
-
-#[cfg(any(feature = "prover-fixtures", test))]
-fn claim_mut_from_spartan_outer_flag<F: Field>(
-    claims: &mut SpartanOuterFlagClaims<F>,
-    flag: CircuitFlags,
-) -> Option<&mut F> {
-    match flag {
-        CircuitFlags::AddOperands => Some(&mut claims.add_operands),
-        CircuitFlags::SubtractOperands => Some(&mut claims.subtract_operands),
-        CircuitFlags::MultiplyOperands => Some(&mut claims.multiply_operands),
-        CircuitFlags::Load => Some(&mut claims.load),
-        CircuitFlags::Store => Some(&mut claims.store),
-        CircuitFlags::Jump => Some(&mut claims.jump),
-        CircuitFlags::WriteLookupOutputToRD => Some(&mut claims.write_lookup_output_to_rd),
-        CircuitFlags::VirtualInstruction => Some(&mut claims.virtual_instruction),
-        CircuitFlags::Assert => Some(&mut claims.assert),
-        CircuitFlags::DoNotUpdateUnexpandedPC => Some(&mut claims.do_not_update_unexpanded_pc),
-        CircuitFlags::Advice => Some(&mut claims.advice),
-        CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
-        CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
-        CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
     }
 }
 

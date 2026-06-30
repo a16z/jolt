@@ -1170,32 +1170,32 @@ mod tests {
         })
     }
 
-    fn empty_spartan_outer_claims() -> stage1::outputs::SpartanOuterClaims<Fr> {
+    fn empty_spartan_outer_claims() -> stage1::outputs::Stage1BatchOutputClaims<Fr, Fr> {
         let zero = Fr::zero();
 
-        stage1::outputs::SpartanOuterClaims {
-            left_instruction_input: zero,
-            right_instruction_input: zero,
-            product: zero,
-            should_branch: zero,
-            pc: zero,
-            unexpanded_pc: zero,
-            imm: zero,
-            ram_address: zero,
-            rs1_value: zero,
-            rs2_value: zero,
-            rd_write_value: zero,
-            ram_read_value: zero,
-            ram_write_value: zero,
-            left_lookup_operand: zero,
-            right_lookup_operand: zero,
-            next_unexpanded_pc: zero,
-            next_pc: zero,
-            next_is_virtual: zero,
-            next_is_first_in_sequence: zero,
-            lookup_output: zero,
-            should_jump: zero,
-            flags: stage1::outputs::SpartanOuterFlagClaims {
+        stage1::outputs::Stage1BatchOutputClaims {
+            outer_remainder: stage1::OuterRemainderOutputClaims {
+                left_instruction_input: zero,
+                right_instruction_input: zero,
+                product: zero,
+                should_branch: zero,
+                pc: zero,
+                unexpanded_pc: zero,
+                imm: zero,
+                ram_address: zero,
+                rs1_value: zero,
+                rs2_value: zero,
+                rd_write_value: zero,
+                ram_read_value: zero,
+                ram_write_value: zero,
+                left_lookup_operand: zero,
+                right_lookup_operand: zero,
+                next_unexpanded_pc: zero,
+                next_pc: zero,
+                next_is_virtual: zero,
+                next_is_first_in_sequence: zero,
+                lookup_output: zero,
+                should_jump: zero,
                 add_operands: zero,
                 subtract_operands: zero,
                 multiply_operands: zero,

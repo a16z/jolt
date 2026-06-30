@@ -34,10 +34,11 @@ pub fn registers_claim_reduction_inputs_from_upstream<F: Field>(
         point: Vec::new(),
         value,
     };
+    let outer = &stage1.output_claims.outer_remainder;
     RegistersClaimReductionInputClaims {
-        rd_write_value: value(stage1.outer.rd_write_value),
-        rs1_value: value(stage1.outer.rs1_value),
-        rs2_value: value(stage1.outer.rs2_value),
+        rd_write_value: value(outer.rd_write_value.value),
+        rs1_value: value(outer.rs1_value.value),
+        rs2_value: value(outer.rs2_value.value),
     }
 }
 

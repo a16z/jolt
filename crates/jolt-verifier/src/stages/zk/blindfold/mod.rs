@@ -88,7 +88,7 @@ use jolt_claims::{
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
         JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId,
-        JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
+        JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial, PrecommittedReductionLayout,
         ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
         RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
         RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
@@ -126,7 +126,6 @@ use super::{
     outputs::{BlindFoldOutput, CommittedOutputClaimOutput},
 };
 use crate::stages::{
-    stage1::outputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
     stage6::{outputs::BytecodeReductionWeights, verify},
     stage8::outputs::Stage8OpeningId,
 };

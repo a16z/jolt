@@ -809,7 +809,7 @@ where
             ],
             booleanity_reference_address: booleanity_reference_address.clone(),
             booleanity_reference_cycle: booleanity_reference_cycle.clone(),
-            stage1_cycle_binding: stage1_cycle_binding.to_vec(),
+            stage1_cycle_binding,
             ram_reduced_address: ram_reduced.address.to_vec(),
             ram_reduced_cycle: ram_reduced.cycle.to_vec(),
             instruction_r_address: instruction_read_raf.address.to_vec(),
@@ -1241,17 +1241,26 @@ where
 
 pub fn stage6_stage1_cycle_binding<F: Field>(
     stage1: &Stage1ClearOutput<F>,
-) -> Result<&[F], VerifierError> {
-    let (_, cycle) = stage1
-        .remainder
-        .sumcheck_point
-        .as_slice()
-        .split_first()
-        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: "Stage 1 remainder point is empty".to_string(),
-        })?;
-    Ok(cycle)
+) -> Result<Vec<F>, VerifierError> {
+    // The raw (un-reversed) remainder reduction point, recovered by reversing the
+    // stored opening point; its tail (`[1..]`) is the cycle binding. This matches
+    // the ZK/BlindFold path, which slices `remainder_consistency.challenges()[1..]`
+    // off the same raw point (see blindfold/mod.rs).
+    let raw_point = stage1
+        .output_claims
+        .remainder_opening_point()
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    let (_, cycle) =
+        raw_point
+            .split_first()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "Stage 1 remainder point is empty".to_string(),
+            })?;
+    Ok(cycle.to_vec())
 }
 
 #[derive(Clone, Copy, Debug)]

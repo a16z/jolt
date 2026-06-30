@@ -35,7 +35,7 @@ pub fn ram_raf_evaluation_inputs_from_upstream<F: Field>(
     RamRafEvaluationInputClaims {
         ram_address: OpeningClaim {
             point: Vec::new(),
-            value: stage1.outer.ram_address,
+            value: stage1.output_claims.outer_remainder.ram_address.value,
         },
     }
 }

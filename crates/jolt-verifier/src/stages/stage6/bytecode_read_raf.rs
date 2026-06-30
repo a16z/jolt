@@ -33,8 +33,9 @@ use jolt_claims::protocols::jolt::{
         },
         claim_reductions::bytecode::bytecode_val_stage_opening,
         dimensions::committed_address_chunks,
+        spartan::outer_opening,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltRelationId,
     JoltVirtualPolynomial,
 };
 use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
@@ -44,7 +45,7 @@ use jolt_riscv::{JoltInstructionRow, CIRCUIT_FLAGS};
 use super::verify::{
     stage6_bytecode_read_raf_expected_output, Stage6BytecodeReadRafExpectedOutputInputs,
 };
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, GetValue, OpeningClaim};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, GetValue, OpeningClaim, OutputClaims};
 use crate::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
     stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
@@ -71,19 +72,15 @@ pub fn bytecode_read_raf_address_phase_inputs_from_upstream<F: Field>(
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
 ) -> Result<BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
+    let outer = &stage1.output_claims.outer_remainder;
     let outer_op_flags = CIRCUIT_FLAGS
         .iter()
         .map(|flag| {
-            stage1
-                .outer
-                .claim(JoltVirtualPolynomial::OpFlags(*flag))
+            let id = outer_opening(JoltVirtualPolynomial::OpFlags(*flag));
+            outer
+                .resolve_output(&id)
                 .map(input_opening)
-                .ok_or(VerifierError::MissingOpeningClaim {
-                    id: JoltOpeningId::virtual_polynomial(
-                        JoltVirtualPolynomial::OpFlags(*flag),
-                        JoltRelationId::SpartanOuter,
-                    ),
-                })
+                .ok_or(VerifierError::MissingOpeningClaim { id })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let product = &stage2.output_claims.product_remainder;
@@ -97,10 +94,10 @@ pub fn bytecode_read_raf_address_phase_inputs_from_upstream<F: Field>(
         .map(|claim| input_opening(claim.value))
         .collect();
     Ok(BytecodeReadRafAddressPhaseInputClaims {
-        outer_unexpanded_pc: input_opening(stage1.outer.unexpanded_pc),
-        outer_imm: input_opening(stage1.outer.imm),
+        outer_unexpanded_pc: input_opening(outer.unexpanded_pc.value),
+        outer_imm: input_opening(outer.imm.value),
         outer_op_flags,
-        outer_pc: input_opening(stage1.outer.pc),
+        outer_pc: input_opening(outer.pc.value),
         product_jump: input_opening(product.jump_flag.value),
         product_branch: input_opening(product.branch_flag.value),
         product_write_lookup_output_to_rd: input_opening(product.write_lookup_output_to_rd.value),
