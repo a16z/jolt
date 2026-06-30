@@ -1091,11 +1091,6 @@ mod tests {
                 },
             },
             stage4: stage4::outputs::Stage4OutputClaims {
-                advice: stage4::RamValCheckAdviceClaims {
-                    untrusted: None,
-                    trusted: None,
-                },
-                program_image_contribution: None,
                 registers_read_write: stage4::RegistersReadWriteOutputClaims {
                     registers_val: zero,
                     rs1_ra: zero,
@@ -1104,6 +1099,9 @@ mod tests {
                     rd_inc: zero,
                 },
                 ram_val_check: stage4::RamValCheckOutputClaims {
+                    untrusted_advice: None,
+                    trusted_advice: None,
+                    program_image: None,
                     ram_ra: zero,
                     ram_inc: zero,
                 },

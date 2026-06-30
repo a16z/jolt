@@ -15,7 +15,7 @@
 //! the input claim; their staged points are carried for completeness.
 
 pub use jolt_claims::protocols::jolt::relations::ram::{
-    RamValCheckAdviceClaims, RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
+    RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::{
@@ -172,7 +172,14 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
             )));
         }
         let opening_point = [r_address, cycle.as_slice()].concat();
+        // The advice / program-image opening *points* are not derived from the
+        // batch sumcheck point (they sit at the staged RAM address sub-point); they
+        // are filled in by the stage-4 verifier when it assembles the located
+        // output claims, so the point-only cell leaves them absent here.
         Ok(RamValCheckOutputClaims {
+            untrusted_advice: None,
+            trusted_advice: None,
+            program_image: None,
             ram_ra: opening_point.clone(),
             ram_inc: opening_point,
         })
@@ -302,7 +309,7 @@ pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
 pub(crate) fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
-    claims: &Stage4OutputClaims<PCS::Field>,
+    claims: &Stage4OutputClaims<PCS::Field, PCS::Field>,
     r_address: &[PCS::Field],
     public_eval: PCS::Field,
 ) -> Result<RamValCheckInitialEvaluation<PCS::Field>, VerifierError>
@@ -310,9 +317,10 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    let ram = &claims.ram_val_check;
     let program_image_contribution = collect_program_image_contribution(
         checked.precommitted.program_image.is_some(),
-        claims.program_image_contribution,
+        ram.program_image,
         r_address,
     )?;
     let mut advice_contributions = Vec::new();
@@ -320,7 +328,7 @@ where
     collect_advice_contribution(
         JoltAdviceKind::Untrusted,
         untrusted_present,
-        claims.advice.untrusted,
+        ram.untrusted_advice,
         checked,
         r_address,
         &mut advice_contributions,
@@ -328,7 +336,7 @@ where
     collect_advice_contribution(
         JoltAdviceKind::Trusted,
         checked.trusted_advice_commitment_present,
-        claims.advice.trusted,
+        ram.trusted_advice,
         checked,
         r_address,
         &mut advice_contributions,

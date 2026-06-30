@@ -39,7 +39,7 @@ pub struct RegistersReadWriteOutputClaims<C> {
 /// Consumed register openings reduced by the read-write checking sumcheck, wired
 /// from the upstream registers claim-reduction relation (stage 3). Generic over
 /// the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct RegistersReadWriteInputClaims<C> {
     #[opening(RdWriteValue, from = RegistersClaimReduction)]
     pub rd_write_value: C,
@@ -50,7 +50,7 @@ pub struct RegistersReadWriteInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the registers read/write-checking sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct RegistersReadWriteChallenges<F> {
     #[challenge(RegistersReadWriteChallenge::Gamma)]
     pub gamma: F,

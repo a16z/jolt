@@ -33,10 +33,7 @@ use jolt_verifier::{
             InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
             SpartanShiftOutputClaims, Stage3OutputClaims,
         },
-        stage4::{
-            RamValCheckAdviceClaims, RamValCheckOutputClaims, RegistersReadWriteOutputClaims,
-            Stage4OutputClaims,
-        },
+        stage4::{RamValCheckOutputClaims, RegistersReadWriteOutputClaims, Stage4OutputClaims},
         stage5::{
             InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
             RegistersValEvaluationOutputClaims, Stage5OutputClaims,
@@ -215,13 +212,8 @@ fn stage3_claims_from_native<F: Field>(
 
 fn stage4_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage4OutputClaims<F>, VerifierError> {
+) -> Result<Stage4OutputClaims<F, F>, VerifierError> {
     Ok(Stage4OutputClaims {
-        advice: RamValCheckAdviceClaims {
-            untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
-            trusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
-        },
-        program_image_contribution: claims.get(program_image::ram_val_check_contribution_opening()),
         registers_read_write: RegistersReadWriteOutputClaims {
             registers_val: claims.require(registers::registers_val_read_write())?,
             rs1_ra: claims.require(registers::rs1_ra_read_write())?,
@@ -230,6 +222,9 @@ fn stage4_claims_from_native<F: Field>(
             rd_inc: claims.require(registers::rd_inc_read_write())?,
         },
         ram_val_check: RamValCheckOutputClaims {
+            untrusted_advice: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
+            trusted_advice: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
+            program_image: claims.get(program_image::ram_val_check_contribution_opening()),
             ram_ra: claims.require(ram::ram_ra_val_check())?,
             ram_inc: claims.require(ram::ram_inc_val_check())?,
         },
@@ -650,11 +645,6 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             },
         },
         stage4: Stage4OutputClaims {
-            advice: RamValCheckAdviceClaims {
-                untrusted: None,
-                trusted: None,
-            },
-            program_image_contribution: None,
             registers_read_write: RegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
@@ -663,6 +653,9 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_inc: zero,
             },
             ram_val_check: RamValCheckOutputClaims {
+                untrusted_advice: None,
+                trusted_advice: None,
+                program_image: None,
                 ram_ra: zero,
                 ram_inc: zero,
             },
@@ -1219,17 +1212,17 @@ fn set_optional_stage2_batch_output<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn set_optional_stage4_output<F: Field>(
-    claims: &mut Stage4OutputClaims<F>,
+    claims: &mut Stage4OutputClaims<F, F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
     match id {
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
-            claims.advice.untrusted = Some(opening_claim);
+            claims.ram_val_check.untrusted_advice = Some(opening_claim);
             true
         }
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
-            claims.advice.trusted = Some(opening_claim);
+            claims.ram_val_check.trusted_advice = Some(opening_claim);
             true
         }
         _ => false,
@@ -1374,7 +1367,7 @@ fn claim_mut_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage4_outputs<F: Field>(
-    claims: &Stage4OutputClaims<F>,
+    claims: &Stage4OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] = [
@@ -1388,9 +1381,11 @@ fn claim_from_stage4_outputs<F: Field>(
 
     match id {
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
-            claims.advice.untrusted
+            claims.ram_val_check.untrusted_advice
         }
-        id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => claims.advice.trusted,
+        id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
+            claims.ram_val_check.trusted_advice
+        }
         id if id == registers_val => Some(claims.registers_read_write.registers_val),
         id if id == rs1_ra => Some(claims.registers_read_write.rs1_ra),
         id if id == rs2_ra => Some(claims.registers_read_write.rs2_ra),
@@ -1404,7 +1399,7 @@ fn claim_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage4_outputs<F: Field>(
-    claims: &mut Stage4OutputClaims<F>,
+    claims: &mut Stage4OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] = [
@@ -1418,10 +1413,10 @@ fn claim_mut_from_stage4_outputs<F: Field>(
 
     match id {
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
-            claims.advice.untrusted.as_mut()
+            claims.ram_val_check.untrusted_advice.as_mut()
         }
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
-            claims.advice.trusted.as_mut()
+            claims.ram_val_check.trusted_advice.as_mut()
         }
         id if id == registers_val => Some(&mut claims.registers_read_write.registers_val),
         id if id == rs1_ra => Some(&mut claims.registers_read_write.rs1_ra),
