@@ -6,7 +6,8 @@
 mod support;
 
 use jolt_akita::{
-    AkitaBatchProof, AkitaBlackBoxBatchStatement, AkitaBlackBoxBatching, AkitaField, AkitaScheme,
+    AkitaBackendFlavor, AkitaBatchProof, AkitaBlackBoxBatchStatement, AkitaBlackBoxBatching,
+    AkitaField, AkitaScheme,
 };
 use jolt_field::Field;
 use jolt_openings::{
@@ -68,6 +69,10 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
         let (one_hot_commitment, one_hot_hint) = AkitaScheme::commit(&one_hot, &prover_setup);
         let (dense_commitment, _) = AkitaScheme::commit(&dense, &prover_setup);
         assert_eq!(
+            one_hot_commitment.backend_flavor(),
+            AkitaBackendFlavor::Full
+        );
+        assert_eq!(
             one_hot_commitment, dense_commitment,
             "public one-hot commitment must match the equivalent dense polynomial"
         );
@@ -98,6 +103,63 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
             &mut verifier_transcript,
         )
         .expect("sparse unit proof should verify");
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
+fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
+    run_on_large_stack(|| {
+        let num_vars = 10;
+        let (prover_setup, verifier_setup) = setup_for(num_vars, 1, layout(9));
+        let k = 256;
+        let indices = vec![Some(2), None, Some(129), Some(255)];
+        let one_hot = OneHotPolynomial::new(k, indices.clone());
+        let mut dense = vec![f(0); 1 << num_vars];
+        for (row, col) in indices.iter().enumerate() {
+            if let Some(col) = col {
+                dense[row * k + *col as usize] = f(1);
+            }
+        }
+        let dense = Polynomial::new(dense);
+        let (one_hot_commitment, one_hot_hint) = AkitaScheme::commit(&one_hot, &prover_setup);
+        let (dense_commitment, _) = AkitaScheme::commit(&dense, &prover_setup);
+        assert_eq!(
+            one_hot_commitment.backend_flavor(),
+            AkitaBackendFlavor::OneHot
+        );
+        assert_eq!(dense_commitment.backend_flavor(), AkitaBackendFlavor::Full);
+        assert_ne!(
+            one_hot_commitment, dense_commitment,
+            "native Akita one-hot uses a separate backend setup from full dense commitments"
+        );
+
+        let point = (0..num_vars)
+            .map(|index| f(index as u64 + 3))
+            .collect::<Vec<_>>();
+        let eval = one_hot.evaluate(&point);
+        assert_eq!(eval, dense.evaluate(&point));
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-native-one-hot");
+        let proof = AkitaScheme::open(
+            &one_hot,
+            &point,
+            eval,
+            &prover_setup,
+            Some(one_hot_hint),
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-native-one-hot");
+        AkitaScheme::verify(
+            &one_hot_commitment,
+            &point,
+            eval,
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+        )
+        .expect("native Akita one-hot proof should verify");
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
     });
 }

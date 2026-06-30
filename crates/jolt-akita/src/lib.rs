@@ -8,8 +8,8 @@ mod black_box_batching;
 mod scheme;
 
 pub use adapters::{
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaProverHint,
-    AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_FIELD_MODULUS,
+    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
+    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_FIELD_MODULUS,
 };
 pub use black_box_batching::{
     AkitaBlackBoxBatchStatement, AkitaBlackBoxBatchWitness, AkitaBlackBoxBatching,

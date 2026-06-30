@@ -109,6 +109,7 @@ dependencies = [
  "akita-field",
  "akita-serialization",
  "rand_core 0.6.4",
+ "rayon",
  "tracing",
 ]
 
@@ -131,6 +132,7 @@ dependencies = [
  "akita-challenges",
  "akita-field",
  "akita-planner",
+ "akita-schedules",
  "akita-transcript",
  "akita-types",
  "tracing",
@@ -144,6 +146,7 @@ dependencies = [
  "akita-serialization",
  "num-traits",
  "rand_core 0.6.4",
+ "rayon",
  "thiserror 2.0.18",
 ]
 
@@ -163,6 +166,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
+ "rayon",
  "tracing",
 ]
 
@@ -192,8 +196,17 @@ dependencies = [
  "akita-types",
  "ctr",
  "rand_core 0.6.4",
+ "rayon",
  "sha3 0.10.8",
  "tracing",
+]
+
+[[package]]
+name = "akita-schedules"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+dependencies = [
+ "akita-planner",
 ]
 
 [[package]]
@@ -255,6 +268,7 @@ dependencies = [
  "blake2 0.10.6",
  "num-traits",
  "rand_core 0.6.4",
+ "rayon",
  "sha3 0.10.8",
  "tracing",
 ]
@@ -3109,13 +3123,17 @@ dependencies = [
  "akita-prover",
  "akita-transcript",
  "akita-types",
+ "criterion",
  "jolt-crypto",
+ "jolt-dory",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-transcript",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

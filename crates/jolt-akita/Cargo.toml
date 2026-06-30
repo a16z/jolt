@@ -9,10 +9,10 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [dependencies]
-akita-config.workspace = true
-akita-field.workspace = true
-akita-pcs.workspace = true
-akita-prover.workspace = true
+akita-config = { workspace = true, features = ["schedules-default"] }
+akita-field = { workspace = true, features = ["parallel"] }
+akita-pcs = { workspace = true, features = ["parallel", "schedules-default"] }
+akita-prover = { workspace = true, features = ["parallel", "schedules-default"] }
 akita-transcript.workspace = true
 akita-types.workspace = true
 jolt-crypto.workspace = true
@@ -21,6 +21,14 @@ jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
+jolt-dory = { workspace = true }
+jolt-profiling = { path = "../jolt-profiling" }
 serde_json = { workspace = true, features = ["std"] }
+
+[[bench]]
+name = "akita_paths"
+harness = false
