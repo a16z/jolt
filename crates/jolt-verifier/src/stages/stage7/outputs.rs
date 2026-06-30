@@ -3,64 +3,36 @@
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
-use jolt_transcript::Transcript;
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{OpeningClaim, OutputClaims};
+use crate::stages::relations::{OpeningClaim, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::advice_address_phase::AdviceAddressPhaseOutputClaims;
+use super::advice_address_phase::AdviceAddressPhase;
 use super::committed_reduction_address_phase::{
-    BytecodeReductionAddressPhaseOutputClaims, ProgramImageReductionAddressPhaseOutputClaims,
+    BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
-use super::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
+use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 
-/// The stage 7 produced opening claims, declared in canonical (Fiat-Shamir)
-/// order: the hamming-weight reduced RA openings (instruction, bytecode, RAM),
-/// the trusted/untrusted advice address-phase openings, the committed bytecode
-/// chunk openings, then the program-image opening — each present only when its
-/// phase ran. [`opening_values`](Self::opening_values) and
-/// [`append_to_transcript`](Self::append_to_transcript) single-source the append
-/// order from the per-relation declaration orders. Generic over the cell (`F` on
-/// the wire).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct Stage7OutputClaims<C> {
-    pub hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims<C>,
-    pub advice_address_phase: AdviceAddressPhaseOutputClaims<C>,
+/// Source-of-truth for stage 7's sumcheck batch: the instances in Fiat-Shamir
+/// batch order (hamming-weight reduction, advice address phase, then the
+/// committed-program-only bytecode and program-image address phases — each
+/// present only when its phase runs). `#[derive(SumcheckBatch)]` generates the
+/// `Stage7InputClaims<F, C>`, `Stage7OutputClaims<F, C>`, and `Stage7Challenges<F>`
+/// aggregates — one field per instance, in this declaration order — plus the
+/// `Stage7OutputClaims` Fiat-Shamir opening plumbing (`opening_values` /
+/// `append_to_transcript`). The field order is load-bearing: it fixes the canonical
+/// opening order absorbed into the transcript, which must match the prover's
+/// commitment order. The two `Option` members contribute only when their phase ran.
+#[derive(SumcheckBatch)]
+pub struct Stage7Sumchecks<F: Field> {
+    pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
+    pub advice_address_phase: AdviceAddressPhase<F>,
     /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
     /// address phase; present only when that phase runs.
-    pub bytecode_address_phase: Option<BytecodeReductionAddressPhaseOutputClaims<C>>,
+    pub bytecode_address_phase: Option<BytecodeReductionAddressPhase<F>>,
     /// Final `ProgramImageInit` claim from the program-image reduction's address
     /// phase; present only when that phase runs.
-    pub program_image_address_phase: Option<ProgramImageReductionAddressPhaseOutputClaims<C>>,
-}
-
-impl<F: Field> Stage7OutputClaims<F> {
-    /// The produced opening claims in canonical (Fiat-Shamir) order, single-sourced
-    /// from the per-relation declaration orders.
-    pub fn opening_values(&self) -> Vec<F> {
-        let mut values = self.hamming_weight_claim_reduction.opening_values();
-        values.extend(self.advice_address_phase.opening_values());
-        if let Some(claims) = &self.bytecode_address_phase {
-            values.extend(claims.opening_values());
-        }
-        if let Some(claims) = &self.program_image_address_phase {
-            values.extend(claims.opening_values());
-        }
-        values
-    }
-
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label, matching the prover's commitment order.
-    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
-    }
+    pub program_image_address_phase: Option<ProgramImageReductionAddressPhase<F>>,
 }
 
 /// Final opening of a precommitted polynomial, resolved from whichever stage
@@ -75,20 +47,11 @@ pub struct PrecommittedFinalOpening<F: Field> {
     pub opening_claim: Option<F>,
 }
 
-/// The Fiat-Shamir challenge the verifier draws during stage 7: the hamming-weight
-/// claim reduction's batching gamma. Drawn path-agnostically before the ZK/clear
-/// branch; carried in [`Stage7ZkOutput`] for BlindFold (the clear path threads the
-/// per-relation challenges struct directly into the hamming relation's claims).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7Challenges<F: Field> {
-    pub hamming_gamma: F,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ClearOutput<F: Field> {
     /// The produced stage-7 openings paired with their points (point + value) via
     /// the `OpeningClaim` cell.
-    pub output_claims: Stage7OutputClaims<OpeningClaim<F>>,
+    pub output_claims: Stage7OutputClaims<F, OpeningClaim<F>>,
     /// The hamming-weight reduction's opening point — the own point of the one-hot
     /// `Ra` polynomials, shared by all reduced RA openings. Stored contiguously so
     /// stage 8 can borrow it directly (the per-family RA opening cells can be empty
@@ -104,8 +67,9 @@ pub struct Stage7ClearOutput<F: Field> {
 /// point and the precommitted final openings (point-only, claims committed).
 ///
 /// The path-agnostically drawn stage-7 challenges are carried so BlindFold can
-/// source the hamming-weight batching gamma from `challenges.hamming_gamma`,
-/// matching the `input.stageN.challenges.<field>` idiom used by stages 3–5.
+/// source the hamming-weight batching gamma from
+/// `challenges.hamming_weight_claim_reduction.gamma`, matching the
+/// `input.stageN.challenges.<relation>.<field>` idiom used by stages 3–5.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ZkOutput<F: Field, C> {
     pub challenges: Stage7Challenges<F>,
@@ -134,5 +98,65 @@ impl<F: Field, C> Stage7Output<F, C> {
             Self::Zk(output) => Ok(output),
             Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage7" }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_claims::protocols::jolt::relations::claim_reductions::advice::AdviceAddressPhaseOutputClaims;
+    use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionAddressPhaseOutputClaims;
+    use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionOutputClaims;
+    use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::ProgramImageReductionAddressPhaseOutputClaims;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    /// Locks the stage-7 Fiat-Shamir append order against silent drift: the
+    /// hamming-weight reduced openings, then the advice address-phase openings,
+    /// then (when present) the committed-bytecode and program-image address-phase
+    /// openings, each member single-sourcing its own per-field order from its
+    /// `OutputClaims` derive. A wrong batch order here silently breaks soundness,
+    /// so it is pinned with distinct sentinels; the absent `Option` members drop
+    /// out of the stream entirely.
+    #[test]
+    fn opening_values_follow_canonical_order() {
+        let hamming = HammingWeightClaimReductionOutputClaims {
+            instruction_ra: vec![fr(1), fr(2)],
+            bytecode_ra: vec![fr(3)],
+            ram_ra: vec![fr(4)],
+        };
+        let advice = AdviceAddressPhaseOutputClaims {
+            trusted: Some(fr(5)),
+            untrusted: Some(fr(6)),
+        };
+
+        let without_committed = Stage7OutputClaims::<Fr, Fr> {
+            hamming_weight_claim_reduction: hamming.clone(),
+            advice_address_phase: advice.clone(),
+            bytecode_address_phase: None,
+            program_image_address_phase: None,
+        };
+        assert_eq!(
+            without_committed.opening_values(),
+            (1..=6).map(fr).collect::<Vec<_>>()
+        );
+
+        let with_committed = Stage7OutputClaims::<Fr, Fr> {
+            hamming_weight_claim_reduction: hamming,
+            advice_address_phase: advice,
+            bytecode_address_phase: Some(BytecodeReductionAddressPhaseOutputClaims {
+                chunks: vec![fr(7), fr(8)],
+            }),
+            program_image_address_phase: Some(ProgramImageReductionAddressPhaseOutputClaims {
+                program_image: fr(9),
+            }),
+        };
+        assert_eq!(
+            with_committed.opening_values(),
+            (1..=9).map(fr).collect::<Vec<_>>()
+        );
     }
 }

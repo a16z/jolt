@@ -461,7 +461,7 @@ fn final_bytecode_chunk_claims_from_native<F: Field>(claims: &NativeOpeningClaim
 
 fn stage7_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage7OutputClaims<F>, VerifierError> {
+) -> Result<Stage7OutputClaims<F, F>, VerifierError> {
     let mut instruction_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -1709,7 +1709,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage7_outputs<F: Field>(
-    claims: &Stage7OutputClaims<F>,
+    claims: &Stage7OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening) in claims
@@ -1771,7 +1771,7 @@ fn claim_from_stage7_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage7_outputs<F: Field>(
-    claims: &mut Stage7OutputClaims<F>,
+    claims: &mut Stage7OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening) in claims

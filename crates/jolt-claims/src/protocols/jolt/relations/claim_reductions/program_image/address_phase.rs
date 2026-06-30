@@ -26,7 +26,7 @@ pub struct ProgramImageReductionAddressPhaseOutputClaims<C> {
 }
 
 /// Consumed intermediate opening from the stage-6b program-image cycle phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct ProgramImageReductionAddressPhaseInputClaims<C> {
     #[opening(committed = ProgramImageInit, from = ProgramImageClaimReductionCyclePhase)]
     pub cycle_phase: C,

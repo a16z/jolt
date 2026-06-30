@@ -27,7 +27,7 @@ pub struct BytecodeReductionAddressPhaseOutputClaims<C> {
 }
 
 /// Consumed intermediate opening from the stage-6b bytecode cycle phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReductionAddressPhaseInputClaims<C> {
     #[opening(BytecodeClaimReductionIntermediate, from = BytecodeClaimReductionCyclePhase)]
     pub cycle_phase_intermediate: C,

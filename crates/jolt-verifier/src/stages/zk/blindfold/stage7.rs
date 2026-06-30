@@ -41,7 +41,7 @@ where
         VerifierPublicId::Challenge(JoltChallengeId::from(
             HammingWeightClaimReductionChallenge::Gamma,
         )),
-        input.stage7.challenges.hamming_gamma,
+        input.stage7.challenges.hamming_weight_claim_reduction.gamma,
     )?;
     let hamming_point = input
         .stage7
