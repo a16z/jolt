@@ -71,7 +71,7 @@ pub fn verify<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;

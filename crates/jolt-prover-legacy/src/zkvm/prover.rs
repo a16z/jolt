@@ -67,7 +67,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::UniSkipFirstRoundProofVariant,
     },
-    transcript_msgs::{FsAbsorb, FsChallenge, ProverFs},
+    transcript_msgs::{FsAbsorb, FsChallenge, FsNargWrite, ProverFs},
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         bytecode::{

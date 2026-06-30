@@ -3,7 +3,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpeni
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
-use jolt_transcript::FsNargWrite;
+use jolt_transcript::{FsNargWrite, FsTranscript};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
@@ -163,7 +163,7 @@ where
     F: Field,
     VC: VectorCommitment<Field = F>,
     VC::Output: HomomorphicCommitment<F> + CanonicalSerialize,
-    T: FsNargWrite<F>,
+    T: FsNargWrite + FsTranscript<F>,
     R: RngCore,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
@@ -190,7 +190,7 @@ where
     F: Field,
     VC: VectorCommitment<Field = F>,
     VC::Output: HomomorphicCommitment<F> + CanonicalSerialize,
-    T: FsNargWrite<F>,
+    T: FsNargWrite + FsTranscript<F>,
     R: RngCore,
     C: BlindFoldRowCommitter<F, VC>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
@@ -704,7 +704,7 @@ fn prove_outer_sumcheck<F, T>(
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
     F: Field,
-    T: FsNargWrite<F>,
+    T: FsNargWrite + FsTranscript<F>,
 {
     let num_vars = log2_power_of_two("outer folded R1CS sumcheck", error_values.len())?;
     ensure_len("outer challenge vector", num_vars, tau.len())?;
@@ -802,7 +802,7 @@ fn prove_inner_sumcheck<F, T>(
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
     F: Field,
-    T: FsNargWrite<F>,
+    T: FsNargWrite + FsTranscript<F>,
 {
     let witness_values = flatten(witness_rows);
     let num_vars = log2_power_of_two("inner folded R1CS sumcheck", witness_values.len())?;
@@ -987,7 +987,7 @@ fn write_committed_instance<F, Com, T>(
 ) where
     F: Field,
     Com: Clone + CanonicalSerialize,
-    T: FsNargWrite<F>,
+    T: FsNargWrite + FsTranscript<F>,
 {
     transcript.absorb_field(&committed.u);
     let round_commitments = protocol
@@ -1019,7 +1019,7 @@ fn write_random_instance<F, Com, T>(
 ) where
     F: Field,
     Com: CanonicalSerialize,
-    T: FsNargWrite<F>,
+    T: FsNargWrite + FsTranscript<F>,
 {
     transcript.write_field_slice(&[random_u]);
     transcript.write_slice(random_round_commitments);
@@ -1032,7 +1032,7 @@ fn write_random_instance<F, Com, T>(
 fn write_vector_opening<F, T>(transcript: &mut T, opening: &VectorCommitmentOpening<F>)
 where
     F: Field,
-    T: FsNargWrite<F>,
+    T: FsNargWrite + FsTranscript<F>,
 {
     transcript.write_field_slice(&opening.combined_vector);
     transcript.write_field_slice(&[opening.combined_blinding]);

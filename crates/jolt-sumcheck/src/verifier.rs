@@ -140,7 +140,7 @@ impl SumcheckVerifier {
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
         D: SumcheckDomain<F>,
     {
         let mut running_sum = claim.claimed_sum;
@@ -222,7 +222,7 @@ impl SumcheckVerifier {
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         let BooleanHypercube = domain;
 
@@ -350,7 +350,7 @@ impl<C> CommittedSumcheckProof<C> {
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
         F: Field,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
         C: Clone + CanonicalSerialize + CanonicalDeserialize,
     {
         let mut rounds = Vec::with_capacity(statement.num_vars);

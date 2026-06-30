@@ -13,7 +13,7 @@ use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, CommittedSumcheckProof, SumcheckClaim,
     SumcheckStatement, SumcheckVerifier,
 };
-use jolt_transcript::FsNargRead;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::outputs::{
     spartan_outer_opening_order, Stage1ClearOutput, Stage1Output, Stage1PublicOutput,
@@ -29,7 +29,7 @@ pub fn verify<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let stage = JoltRelationId::SpartanOuter;

@@ -11,8 +11,7 @@ use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_transcript::{
-    deserialize_slice, verifier_transcript, BytesMsg, DuplexSpongeInterface, FsTranscript,
-    VerifierState,
+    verifier_transcript, DuplexSpongeInterface, FsNargRead, FsTranscript, VerifierState,
 };
 
 use crate::{
@@ -575,14 +574,19 @@ where
     PCS: CommitmentScheme,
     PCS::Output: CanonicalDeserialize,
     H: DuplexSpongeInterface<U = u8>,
+    for<'a> VerifierState<'a, H>: FsNargRead,
 {
-    let commitments = read_narg_values(transcript)?;
+    let commitments: Vec<PCS::Output> = transcript
+        .read_slice()
+        .map_err(|_| VerifierError::MalformedNarg)?;
     let (instruction_ra_count, ram_ra_count) =
         proof_commitment_counts(proof.one_hot_config, proof.ram_K)?;
     let commitments =
         commitments_from_proof_payload_order(commitments, instruction_ra_count, ram_ra_count)?;
 
-    let mut untrusted_advice = read_narg_values(transcript)?;
+    let mut untrusted_advice: Vec<PCS::Output> = transcript
+        .read_slice()
+        .map_err(|_| VerifierError::MalformedNarg)?;
     let untrusted_advice_commitment = match untrusted_advice.len() {
         0 => None,
         1 => untrusted_advice.pop(),
@@ -593,17 +597,6 @@ where
         commitments,
         untrusted_advice_commitment,
     })
-}
-
-fn read_narg_values<T, H>(transcript: &mut VerifierState<'_, H>) -> Result<Vec<T>, VerifierError>
-where
-    T: CanonicalDeserialize,
-    H: DuplexSpongeInterface<U = u8>,
-{
-    let bytes = transcript
-        .prover_message::<BytesMsg>()
-        .map_err(|_| VerifierError::MalformedNarg)?;
-    deserialize_slice(&bytes.0).map_err(|_| VerifierError::MalformedNarg)
 }
 
 pub fn validate_proof_consistency<PCS>(

@@ -19,7 +19,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
     SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::FsNargRead;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::advice_address_phase::{
     AdviceAddressPhase, AdviceAddressPhaseInputClaims, AdviceAddressPhaseOutputClaims,
@@ -63,7 +63,7 @@ pub fn verify<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(

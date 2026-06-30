@@ -12,7 +12,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::FsNargRead;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     instruction_input::{InstructionInput, InstructionInputInputClaims},
@@ -85,7 +85,7 @@ pub fn verify<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;

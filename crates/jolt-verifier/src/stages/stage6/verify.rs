@@ -91,7 +91,7 @@ pub fn verify<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = formula_dimensions.trace.log_t();
@@ -1800,7 +1800,7 @@ pub(super) fn verify_zk<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let address_statements = vec![
@@ -1877,7 +1877,7 @@ pub(super) fn verify_clear<PCS, T>(
 ) -> Result<Stage6AClearOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
 {
     let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
     let bytecode_read_raf_input = bytecode_relation.input_claim(bytecode_inputs)?;

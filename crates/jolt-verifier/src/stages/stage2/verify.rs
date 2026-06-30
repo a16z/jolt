@@ -20,7 +20,7 @@ use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, CommittedSumcheckProof, SumcheckClaim,
     SumcheckStatement, SumcheckVerifier,
 };
-use jolt_transcript::FsNargRead;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     instruction_claim_reduction::{
@@ -182,7 +182,7 @@ pub fn verify<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     match (checked.zk, stage1) {
@@ -252,7 +252,7 @@ fn verify_product_uniskip<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let stage = JoltRelationId::SpartanProductVirtualization;
@@ -381,7 +381,7 @@ fn verify_regular_batch<PCS, VC, T>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FsNargRead<PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
     VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;

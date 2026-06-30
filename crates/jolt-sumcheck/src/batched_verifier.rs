@@ -299,7 +299,7 @@ impl BatchedSumcheckVerifier {
     ) -> Result<BatchedEvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         Self::verify_compressed_from_narg(claims, transcript)
     }
@@ -347,7 +347,7 @@ impl BatchedSumcheckVerifier {
     where
         F: Field,
         C: Clone + CanonicalSerialize + CanonicalDeserialize,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         Self::verify_committed_consistency_for_narg(statements, transcript)
     }
@@ -380,7 +380,7 @@ impl BatchedSumcheckVerifier {
     ) -> Result<BatchedEvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         let statement = Self::batch_claim_statement(claims)?;
         let max_num_vars = statement.num_vars;
@@ -425,7 +425,7 @@ impl BatchedSumcheckVerifier {
     where
         F: Field,
         C: Clone + CanonicalSerialize + CanonicalDeserialize,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         let statement = Self::batch_statement(statements)?;
         let batching_coefficients = Self::batching_coefficients(statements.len(), transcript);

@@ -4,7 +4,7 @@ use jolt_field::{Field, FieldCore, RingAccumulator, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::FsNargRead;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use crate::{
     BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError, WitnessCoordinate,
@@ -26,7 +26,7 @@ where
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
         Com: CanonicalDeserialize,
     {
         let folded = self.folded_instance_from_narg(transcript)?;
@@ -94,7 +94,7 @@ where
         transcript: &mut T,
     ) -> Result<RelaxedInstance<F, Com>, VerificationError<F>>
     where
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
         Com: CanonicalDeserialize,
     {
         let committed = read_committed_instance_from_narg(self, transcript)?;
@@ -144,7 +144,7 @@ where
     ) -> Result<OuterCheck<F>, VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         let error_row_count = self.dimensions.error.row_count;
         if error_row_count == 0 || !error_row_count.is_power_of_two() {
@@ -400,7 +400,7 @@ where
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        T: FsNargRead<F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         let ra = transcript.challenge();
         let rb = transcript.challenge();
@@ -485,7 +485,7 @@ fn read_committed_instance_from_narg<F, Com, T>(
 where
     F: Field,
     Com: Clone + HomomorphicCommitment<F> + CanonicalSerialize + CanonicalDeserialize,
-    T: FsNargRead<F>,
+    T: FsNargRead + FsTranscript<F>,
 {
     transcript.absorb_field(&F::one());
     let round_commitments = protocol
@@ -514,7 +514,7 @@ fn read_narg_slice<F, T, Value>(
 ) -> Result<Vec<Value>, VerificationError<F>>
 where
     F: Field,
-    T: FsNargRead<F>,
+    T: FsNargRead + FsTranscript<F>,
     Value: CanonicalDeserialize,
 {
     transcript
@@ -528,7 +528,7 @@ fn read_field_vec<F, T>(
 ) -> Result<Vec<F>, VerificationError<F>>
 where
     F: Field,
-    T: FsNargRead<F>,
+    T: FsNargRead + FsTranscript<F>,
 {
     transcript
         .read_field_slice()
@@ -538,7 +538,7 @@ where
 fn read_field_one<F, T>(transcript: &mut T, name: &'static str) -> Result<F, VerificationError<F>>
 where
     F: Field,
-    T: FsNargRead<F>,
+    T: FsNargRead + FsTranscript<F>,
 {
     let values = read_field_vec(transcript, name)?;
     match <[F; 1]>::try_from(values.as_slice()) {
@@ -554,7 +554,7 @@ fn read_final_openings<F, T>(
 ) -> Result<Vec<VectorCommitmentOpening<F>>, VerificationError<F>>
 where
     F: Field,
-    T: FsNargRead<F>,
+    T: FsNargRead + FsTranscript<F>,
 {
     (0..count)
         .map(|_| read_vector_opening(transcript, row_len, "folded eval witness opening"))
@@ -568,7 +568,7 @@ fn read_vector_opening<F, T>(
 ) -> Result<VectorCommitmentOpening<F>, VerificationError<F>>
 where
     F: Field,
-    T: FsNargRead<F>,
+    T: FsNargRead + FsTranscript<F>,
 {
     let combined_vector = read_field_vec(transcript, name)?;
     if combined_vector.len() != expected_len {

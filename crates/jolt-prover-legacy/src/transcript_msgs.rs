@@ -37,17 +37,13 @@
 //! [`public_message`]: spongefish::ProverState::public_message
 //! [`prover_message`]: spongefish::ProverState::prover_message
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt_transcript::{
-    deserialize_slice, serialize_slice, BytesMsg, DuplexSpongeInterface, OptimizedChallenge,
-    ProverState, VerificationResult, VerifierState,
-};
+use jolt_transcript::{DuplexSpongeInterface, OptimizedChallenge, ProverState, VerifierState};
 
 /// Absorbing shared values is the field-agnostic [`jolt_transcript::FsAbsorb`] surface
 /// (`absorb` = spongefish `public_message`); jolt-core re-exports it so the whole
 /// transcript vocabulary lives behind `crate::transcript_msgs`, and there is a *single*
 /// absorb implementation shared with the modular crates (no hand-kept second copy).
-pub use jolt_transcript::FsAbsorb;
+pub use jolt_transcript::{FsAbsorb, FsNargRead, FsNargWrite};
 use rand::{CryptoRng, RngCore};
 
 use crate::field::JoltField;
@@ -236,13 +232,8 @@ impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::Poseido
     }
 }
 
-/// Prover-side message vocabulary over the spongefish NARG.
-pub trait ProverFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
-    /// Write a sequence of prover-only values as one self-delimiting frame
-    /// (read back with [`VerifierFs::read_slice`]). No length prefix is shipped; the
-    /// frame is bounded by the NARG, so the per-round element count may vary.
-    fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]);
-}
+/// Prover-side message vocabulary over the spongefish transcript.
+pub trait ProverFs<F: JoltField>: FsChallenge<F> + FsAbsorb + FsNargWrite {}
 
 impl<F, H, R> ProverFs<F> for ProverState<H, R>
 where
@@ -251,18 +242,10 @@ where
     R: RngCore + CryptoRng,
     Self: FsChallenge<F>,
 {
-    fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
-        self.prover_message(&BytesMsg(serialize_slice(values)));
-    }
 }
 
-/// Verifier-side message vocabulary over the spongefish NARG.
-pub trait VerifierFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
-    /// Read every value in the next frame written by [`ProverFs::write_slice`]; the
-    /// count is the frame's (self-delimiting, so a varying per-round length is fine).
-    /// Bounded allocation — see [`read_all`].
-    fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>>;
-}
+/// Verifier-side message vocabulary over the spongefish transcript.
+pub trait VerifierFs<F: JoltField>: FsChallenge<F> + FsAbsorb + FsNargRead {}
 
 impl<F, H> VerifierFs<F> for VerifierState<'_, H>
 where
@@ -270,10 +253,6 @@ where
     H: DuplexSpongeInterface<U = u8>,
     Self: FsChallenge<F>,
 {
-    fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
-        let bytes = self.prover_message::<BytesMsg>()?;
-        deserialize_slice(&bytes.0)
-    }
 }
 
 #[cfg(test)]
@@ -295,11 +274,11 @@ mod tests {
 
         let instance = [7u8; 32];
         let mut p = prover_transcript(SESSION, instance, Bl::default());
-        ProverFs::<Fr>::write_slice(&mut p, &scalars);
+        FsNargWrite::write_slice(&mut p, &scalars);
         let narg = p.narg_string().to_vec();
 
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
-        let read: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
+        let read: Vec<Fr> = FsNargRead::read_slice(&mut v).unwrap();
         assert_eq!(read, scalars);
         v.check_eof().unwrap();
     }
@@ -320,7 +299,7 @@ mod tests {
         public.absorb_slice(&scalars);
 
         let mut prover = prover_transcript(SESSION, instance, Bl::default());
-        ProverFs::<Fr>::write_slice(&mut prover, &scalars);
+        FsNargWrite::write_slice(&mut prover, &scalars);
         assert!(!prover.narg_string().is_empty());
 
         let public_next = FsChallenge::<Fr>::challenge_field(&mut public);
@@ -333,7 +312,7 @@ mod tests {
         public.absorb(&single);
 
         let mut prover = prover_transcript(SESSION, instance, Bl::default());
-        ProverFs::<Fr>::write_slice(&mut prover, std::slice::from_ref(&single));
+        FsNargWrite::write_slice(&mut prover, std::slice::from_ref(&single));
 
         let public_next = FsChallenge::<Fr>::challenge_field(&mut public);
         let prover_next = FsChallenge::<Fr>::challenge_field(&mut prover);
@@ -366,7 +345,7 @@ mod tests {
         let p_batching = FsChallenge::<Fr>::challenge_vec(&mut p, n_instances);
         let mut p_round_challenges = Vec::with_capacity(n_rounds);
         for poly in &round_polys {
-            ProverFs::<Fr>::write_slice(&mut p, poly);
+            FsNargWrite::write_slice(&mut p, poly);
             p_round_challenges.push(FsChallenge::<Fr>::challenge_optimized(&mut p));
         }
         // Flushed opening claims are SHARED (both sides hold them) → `absorb`, matching
@@ -384,7 +363,7 @@ mod tests {
         let mut v_round_challenges = Vec::with_capacity(n_rounds);
         for expected in &round_polys {
             // round-poly counts vary, so read the self-delimiting frame (like real sumcheck)
-            let read: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
+            let read: Vec<Fr> = FsNargRead::read_slice(&mut v).unwrap();
             assert_eq!(
                 &read, expected,
                 "round poly reconstructed incorrectly from NARG"
@@ -409,12 +388,12 @@ mod tests {
     fn trailing_garbage_is_rejected_by_check_eof() {
         let instance = [1u8; 32];
         let mut p = prover_transcript(SESSION, instance, Bl::default());
-        ProverFs::<Fr>::write_slice(&mut p, &[Fr::from(42u64)]);
+        FsNargWrite::write_slice(&mut p, &[Fr::from(42u64)]);
         let mut narg = p.narg_string().to_vec();
         narg.push(0xFF);
 
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
-        let _: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
+        let _: Vec<Fr> = FsNargRead::read_slice(&mut v).unwrap();
         assert!(v.check_eof().is_err());
     }
 
@@ -428,13 +407,13 @@ mod tests {
         let instance = [0x0D; 32];
 
         let mut p = prover_transcript(SESSION, instance, Bl::default());
-        ProverFs::<Fr>::write_slice(&mut p, &frame_a);
-        ProverFs::<Fr>::write_slice(&mut p, &frame_b);
+        FsNargWrite::write_slice(&mut p, &frame_a);
+        FsNargWrite::write_slice(&mut p, &frame_b);
         let narg = p.narg_string().to_vec();
 
         // Verifier reads only the first frame, leaving frame_b unconsumed.
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
-        let read_a: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
+        let read_a: Vec<Fr> = FsNargRead::read_slice(&mut v).unwrap();
         assert_eq!(read_a, frame_a);
         assert!(
             v.check_eof().is_err(),

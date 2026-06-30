@@ -279,7 +279,7 @@ impl<F: Field, T: FsAbsorb + FsChallenge<F>> FsTranscript<F> for T {}
 /// This is the asymmetric companion to [`FsAbsorb`]: the prover wrote a
 /// length-prefixed [`BytesMsg`] with `prover_message`, and the verifier reads
 /// and absorbs that exact frame before deriving the next challenge.
-pub trait FsNargRead<F: Field>: FsTranscript<F> {
+pub trait FsNargRead {
     /// Read every canonical value in the next NARG frame.
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>>;
 
@@ -296,7 +296,7 @@ pub trait FsNargRead<F: Field>: FsTranscript<F> {
     /// Field frames are written by the prover with the same byte layout as
     /// [`FsAbsorb::absorb_field_slice`]: contiguous 32-byte little-endian
     /// canonical field encodings.
-    fn read_field_slice(&mut self) -> VerificationResult<Vec<F>> {
+    fn read_field_slice<F: Field>(&mut self) -> VerificationResult<Vec<F>> {
         let body = self.read_bytes()?;
         if body.len() % F::NUM_BYTES != 0 {
             return Err(VerificationError);
@@ -322,12 +322,12 @@ pub trait FsNargRead<F: Field>: FsTranscript<F> {
 /// This is the writer companion to [`FsNargRead`]: each call emits one
 /// self-delimiting Spongefish prover-message frame and advances the transcript
 /// state exactly as the verifier-side read will.
-pub trait FsNargWrite<F: Field>: FsTranscript<F> {
+pub trait FsNargWrite {
     /// Write every canonical value in one NARG frame.
     fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]);
 
     /// Write field elements in one NARG frame.
-    fn write_field_slice(&mut self, values: &[F]) {
+    fn write_field_slice<F: Field>(&mut self, values: &[F]) {
         let mut buf = vec![0u8; values.len() * F::NUM_BYTES];
         for (chunk, value) in buf.chunks_exact_mut(F::NUM_BYTES).zip(values) {
             value.to_bytes_le(chunk);
@@ -339,12 +339,10 @@ pub trait FsNargWrite<F: Field>: FsTranscript<F> {
     fn write_bytes(&mut self, bytes: &[u8]);
 }
 
-impl<F, H, R> FsNargWrite<F> for ProverState<H, R>
+impl<H, R> FsNargWrite for ProverState<H, R>
 where
-    F: Field,
     H: DuplexSpongeInterface<U = u8>,
     R: RngCore + CryptoRng,
-    Self: FsTranscript<F>,
 {
     fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
         self.prover_message(&BytesMsg(serialize_slice(values)));
@@ -355,11 +353,9 @@ where
     }
 }
 
-impl<F, H> FsNargRead<F> for VerifierState<'_, H>
+impl<H> FsNargRead for VerifierState<'_, H>
 where
-    F: Field,
     H: DuplexSpongeInterface<U = u8>,
-    Self: FsTranscript<F>,
 {
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
         deserialize_slice(&self.read_bytes()?)
@@ -437,6 +433,6 @@ mod tests {
         narg.extend_from_slice(&[0xff; 32]);
 
         let mut verifier = verifier_transcript(SESSION, [0x33; 32], Bl::default(), &narg);
-        assert!(FsNargRead::<Fr>::read_field_slice(&mut verifier).is_err());
+        assert!(FsNargRead::read_field_slice::<Fr>(&mut verifier).is_err());
     }
 }

@@ -87,10 +87,10 @@ where
         JoltRelationId::InstructionReadRaf,
     )?;
 
-    let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
-    let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
-    let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
-    let stage4 = stage4::verify(
+    let stage1 = stage1::verify::<PCS, VC, _>(&checked, proof, &mut transcript)?;
+    let stage2 = stage2::verify::<PCS, VC, _>(&checked, proof, &mut transcript, &stage1)?;
+    let stage3 = stage3::verify::<PCS, VC, _>(&checked, proof, &mut transcript, &stage1, &stage2)?;
+    let stage4 = stage4::verify::<PCS, VC, _>(
         &checked,
         preprocessing,
         proof,
@@ -98,7 +98,7 @@ where
         &stage2,
         &stage3,
     )?;
-    let stage5 = stage5::verify(
+    let stage5 = stage5::verify::<PCS, VC, _>(
         &checked,
         proof,
         &formula_dimensions,
@@ -106,7 +106,7 @@ where
         &stage2,
         &stage4,
     )?;
-    let stage6 = stage6::verify(
+    let stage6 = stage6::verify::<PCS, VC, _>(
         &checked,
         preprocessing,
         proof,
@@ -118,7 +118,7 @@ where
         &stage4,
         &stage5,
     )?;
-    let stage7 = stage7::verify(
+    let stage7 = stage7::verify::<PCS, VC, _>(
         &checked,
         proof,
         &formula_dimensions,
@@ -126,7 +126,7 @@ where
         &stage4,
         &stage6,
     )?;
-    let stage8 = stage8::verify(
+    let stage8 = stage8::verify::<PCS::Field, PCS, VC, _>(
         &checked,
         preprocessing,
         proof,
