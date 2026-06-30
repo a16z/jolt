@@ -235,16 +235,16 @@ where
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
 
+    use crate::stages::test_support::RecordingTranscript;
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_riscv::{CircuitFlags, CIRCUIT_FLAGS};
-    use jolt_transcript::FsChallenge;
+    use jolt_transcript::FsAbsorb;
     use jolt_verifier_derive::{InputClaims, OutputClaims};
 
     fn fr(value: u64) -> Fr {
@@ -257,47 +257,6 @@ mod tests {
 
     fn committed(polynomial: JoltCommittedPolynomial, relation: JoltRelationId) -> JoltOpeningId {
         JoltOpeningId::committed(polynomial, relation)
-    }
-
-    /// A minimal transcript double that records each absorbed byte chunk, so
-    /// that append order can be compared without depending on the sponge.
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl FsAbsorb for RecordingTranscript {
-        fn absorb<T: ark_serialize::CanonicalSerialize>(&mut self, value: &T) {
-            let mut bytes = Vec::new();
-            value
-                .serialize_compressed(&mut bytes)
-                .expect("canonical serialization into Vec succeeds");
-            self.chunks.push(bytes);
-        }
-
-        fn absorb_slice<T: ark_serialize::CanonicalSerialize>(&mut self, values: &[T]) {
-            let mut bytes = Vec::new();
-            for value in values {
-                value
-                    .serialize_compressed(&mut bytes)
-                    .expect("canonical serialization into Vec succeeds");
-            }
-            self.chunks.push(bytes);
-        }
-
-        fn absorb_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-    }
-
-    impl FsChallenge<Fr> for RecordingTranscript {
-        fn challenge(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
-
-        fn challenge_scalar(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
     }
 
     /// The chunk stream produced by appending `opening_values()` one-by-one is

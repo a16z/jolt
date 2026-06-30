@@ -2321,54 +2321,14 @@ pub(super) fn append_opening_claims<F, T>(
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
-    use ark_serialize::CanonicalSerialize;
+    use crate::stages::test_support::RecordingTranscript;
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_transcript::{FsAbsorb, FsChallenge};
+    use jolt_transcript::FsAbsorb;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
-    }
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl FsAbsorb for RecordingTranscript {
-        fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
-            let mut bytes = Vec::new();
-            value
-                .serialize_compressed(&mut bytes)
-                .expect("canonical serialization into Vec succeeds");
-            self.chunks.push(bytes);
-        }
-
-        fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
-            let mut bytes = Vec::new();
-            for value in values {
-                value
-                    .serialize_compressed(&mut bytes)
-                    .expect("canonical serialization into Vec succeeds");
-            }
-            self.chunks.push(bytes);
-        }
-
-        fn absorb_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-    }
-
-    impl FsChallenge<Fr> for RecordingTranscript {
-        fn challenge(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
-
-        fn challenge_scalar(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
     }
 
     /// Locks the stage-6 cycle-phase Fiat-Shamir append order against silent drift.

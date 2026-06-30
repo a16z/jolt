@@ -41,8 +41,7 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, OpeningClaim, OutputClaims,
-            SumcheckInstance,
+            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
         },
         stage1::Stage1Output,
         zk::committed,
@@ -600,58 +599,7 @@ where
                 });
             }
 
-            transcript.absorb_field(&claims.batch_outputs.ram_read_write.val);
-            transcript.absorb_field(&claims.batch_outputs.ram_read_write.ra);
-            transcript.absorb_field(&claims.batch_outputs.ram_read_write.inc);
-            transcript.absorb_field(
-                &claims
-                    .batch_outputs
-                    .product_remainder
-                    .left_instruction_input,
-            );
-            transcript.absorb_field(
-                &claims
-                    .batch_outputs
-                    .product_remainder
-                    .right_instruction_input,
-            );
-            transcript.absorb_field(&claims.batch_outputs.product_remainder.jump_flag);
-            transcript.absorb_field(
-                &claims
-                    .batch_outputs
-                    .product_remainder
-                    .write_lookup_output_to_rd,
-            );
-            transcript.absorb_field(&claims.batch_outputs.product_remainder.lookup_output);
-            transcript.absorb_field(&claims.batch_outputs.product_remainder.branch_flag);
-            transcript.absorb_field(&claims.batch_outputs.product_remainder.next_is_noop);
-            transcript.absorb_field(&claims.batch_outputs.product_remainder.virtual_instruction);
-            #[cfg(feature = "field-inline")]
-            {
-                transcript.absorb_field(&claims.batch_outputs.field_inline.product.field_rs1_value);
-                transcript.absorb_field(&claims.batch_outputs.field_inline.product.field_rs2_value);
-                transcript.absorb_field(&claims.batch_outputs.field_inline.product.field_rd_value);
-            }
-            transcript.absorb_field(
-                &claims
-                    .batch_outputs
-                    .instruction_claim_reduction
-                    .left_lookup_operand,
-            );
-            transcript.absorb_field(
-                &claims
-                    .batch_outputs
-                    .instruction_claim_reduction
-                    .right_lookup_operand,
-            );
-            claims
-                .batch_outputs
-                .ram_raf_evaluation
-                .append_openings(transcript);
-            claims
-                .batch_outputs
-                .ram_output_check
-                .append_openings(transcript);
+            claims.batch_outputs.append_to_transcript(transcript);
 
             let public = Stage2PublicOutput {
                 product_uniskip_challenge,

@@ -12,7 +12,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::{FsNargRead, FsTranscript};
+use jolt_transcript::FsNargRead;
 
 use super::{
     instruction_input::{InstructionInput, InstructionInputInputClaims},
@@ -244,7 +244,7 @@ where
     // enforce the cross-relation opening aliases the downstream stages relied on.
     claims.validate()?;
 
-    append_stage3_opening_claims(transcript, claims);
+    claims.append_to_transcript(transcript);
 
     Ok(Stage3Output::Clear(Stage3ClearOutput {
         challenges,
@@ -252,76 +252,14 @@ where
     }))
 }
 
-fn append_stage3_opening_claims<F, T>(transcript: &mut T, claims: &Stage3OutputClaims<F>)
-where
-    F: Field,
-    T: FsTranscript<F>,
-{
-    transcript.absorb_field(&claims.shift.unexpanded_pc);
-    transcript.absorb_field(&claims.shift.pc);
-    transcript.absorb_field(&claims.shift.is_virtual);
-    transcript.absorb_field(&claims.shift.is_first_in_sequence);
-    transcript.absorb_field(&claims.shift.is_noop);
-    transcript.absorb_field(&claims.instruction_input.left_operand_is_rs1);
-    transcript.absorb_field(&claims.instruction_input.rs1_value);
-    transcript.absorb_field(&claims.instruction_input.left_operand_is_pc);
-    transcript.absorb_field(&claims.instruction_input.right_operand_is_rs2);
-    transcript.absorb_field(&claims.instruction_input.rs2_value);
-    transcript.absorb_field(&claims.instruction_input.right_operand_is_imm);
-    transcript.absorb_field(&claims.instruction_input.imm);
-    transcript.absorb_field(&claims.registers_claim_reduction.rd_write_value);
-}
-
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    reason = "test recording transcript serializes into an in-memory Vec, which is infallible"
-)]
 mod tests {
-    use super::*;
-
     use crate::stages::stage3::instruction_input::InstructionInputOutputClaims;
     use crate::stages::stage3::outputs::Stage3OutputClaims;
     use crate::stages::stage3::registers_claim_reduction::RegistersClaimReductionOutputClaims;
     use crate::stages::stage3::spartan_shift::SpartanShiftOutputClaims;
-    use ark_serialize::CanonicalSerialize;
+    use crate::stages::test_support::RecordingTranscript;
     use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
-    use jolt_transcript::{FsAbsorb, FsChallenge};
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl FsAbsorb for RecordingTranscript {
-        fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
-            let mut buf = Vec::with_capacity(value.compressed_size());
-            value.serialize_compressed(&mut buf).unwrap();
-            self.chunks.push(buf);
-        }
-
-        fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
-            let mut buf = Vec::new();
-            for v in values {
-                v.serialize_compressed(&mut buf).unwrap();
-            }
-            self.chunks.push(buf);
-        }
-
-        fn absorb_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-    }
-
-    impl FsChallenge<Fr> for RecordingTranscript {
-        fn challenge(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
-
-        fn challenge_scalar(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
-    }
 
     #[test]
     fn opening_claim_appends_follow_core_alias_order() {
@@ -351,7 +289,7 @@ mod tests {
         };
         let mut transcript = RecordingTranscript::default();
 
-        append_stage3_opening_claims(&mut transcript, &claims);
+        claims.append_to_transcript(&mut transcript);
 
         // Canonical order: the five shift openings, then the instruction-input
         // openings minus its aliased `unexpanded_pc`, then only `rd_write_value`

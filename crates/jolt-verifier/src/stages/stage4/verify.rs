@@ -423,83 +423,26 @@ where
     F: Field,
     T: FsTranscript<F>,
 {
-    if untrusted_advice_commitment_present {
+    if untrusted_advice_commitment_present && claims.advice.untrusted.is_none() {
         let id = ram::val_check_advice_opening(JoltAdviceKind::Untrusted);
-        let opening_claim = claims
-            .advice
-            .untrusted
-            .ok_or(VerifierError::MissingOpeningClaim { id })?;
-        transcript.absorb_field(&opening_claim);
+        return Err(VerifierError::MissingOpeningClaim { id });
     }
-    if trusted_advice_commitment_present {
+    if trusted_advice_commitment_present && claims.advice.trusted.is_none() {
         let id = ram::val_check_advice_opening(JoltAdviceKind::Trusted);
-        let opening_claim = claims
-            .advice
-            .trusted
-            .ok_or(VerifierError::MissingOpeningClaim { id })?;
-        transcript.absorb_field(&opening_claim);
+        return Err(VerifierError::MissingOpeningClaim { id });
     }
-    if let Some(program_image_contribution) = claims.program_image_contribution {
-        transcript.absorb_field(&program_image_contribution);
-    }
-    transcript.absorb_field(&claims.registers_read_write.registers_val);
-    transcript.absorb_field(&claims.registers_read_write.rs1_ra);
-    transcript.absorb_field(&claims.registers_read_write.rs2_ra);
-    transcript.absorb_field(&claims.registers_read_write.rd_wa);
-    transcript.absorb_field(&claims.registers_read_write.rd_inc);
-    transcript.absorb_field(&claims.ram_val_check.ram_ra);
-    transcript.absorb_field(&claims.ram_val_check.ram_inc);
+    claims.append_to_transcript(transcript);
     Ok(())
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    reason = "test recording transcript serializes into an in-memory Vec, which is infallible"
-)]
 mod tests {
     use super::*;
 
     use crate::stages::stage4::ram_val_check::{RamValCheckAdviceClaims, RamValCheckOutputClaims};
     use crate::stages::stage4::registers_read_write_checking::RegistersReadWriteOutputClaims;
-    use ark_serialize::CanonicalSerialize;
+    use crate::stages::test_support::RecordingTranscript;
     use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
-    use jolt_transcript::{FsAbsorb, FsChallenge};
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl FsAbsorb for RecordingTranscript {
-        fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
-            let mut buf = Vec::with_capacity(value.compressed_size());
-            value.serialize_compressed(&mut buf).unwrap();
-            self.chunks.push(buf);
-        }
-
-        fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
-            let mut buf = Vec::new();
-            for v in values {
-                v.serialize_compressed(&mut buf).unwrap();
-            }
-            self.chunks.push(buf);
-        }
-
-        fn absorb_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-    }
-
-    impl FsChallenge<Fr> for RecordingTranscript {
-        fn challenge(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
-
-        fn challenge_scalar(&mut self) -> Fr {
-            Fr::from_u64(0)
-        }
-    }
 
     #[test]
     fn opening_claim_appends_follow_declaration_order_without_advice() {
