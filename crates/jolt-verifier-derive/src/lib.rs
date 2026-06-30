@@ -35,19 +35,32 @@
 //! `opening_values` / `append_to_transcript`, delegating to each member in
 //! declaration order) — and grows as the migration requires. See
 //! `specs/sumcheck-batch-derive.md`.
+//!
+//! The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
+//! suppresses *only* that generated `opening_values` / `append_to_transcript`
+//! inherent impl, leaving the three aggregate structs (and their derives /
+//! serde) untouched. An alias-curated stage (one whose canonical opening order
+//! skips cross-relation aliased openings) uses it to supply its own consistent
+//! `opening_values` / `append_to_transcript` (and `validate`) as an inherent impl.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, GenericArgument, GenericParam, Ident,
-    PathArguments, Type,
+    parse_macro_input, Attribute, Data, DeriveInput, Fields, GenericArgument, GenericParam, Ident,
+    Meta, PathArguments, Token, Type,
 };
 
 /// Generate a stage's aggregate claim types (`StageNInputClaims` /
 /// `StageNOutputClaims` / `StageNChallenges`) from a struct of `ConcreteSumcheck`
 /// instances. See the crate-level docs.
-#[proc_macro_derive(SumcheckBatch)]
+///
+/// The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
+/// opts a stage out of the generated `OutputClaims` `opening_values` /
+/// `append_to_transcript` inherent impl, so an alias-curated stage can supply its
+/// own (e.g. one that skips cross-relation aliased openings). The three aggregate
+/// structs and their derives are emitted unchanged.
+#[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand(input)
@@ -82,6 +95,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let input_name = format_ident!("{base}InputClaims");
     let output_name = format_ident!("{base}OutputClaims");
     let challenges_name = format_ident!("{base}Challenges");
+
+    let options = StageOptions::parse(&input.attrs)?;
 
     validate_generics(&input.generics)?;
     let f = field_type_param(&input.generics)?;
@@ -146,6 +161,39 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     });
 
+    // The generated `OutputClaims` opening plumbing. Gated out when the stage opts
+    // in to `#[sumcheck_batch(custom_opening_values)]`, in which case the stage
+    // supplies its own alias-curated `opening_values` / `append_to_transcript` (and
+    // any `validate`) as an inherent impl on the generated struct.
+    let opening_impl = if options.custom_opening_values {
+        quote!()
+    } else {
+        quote! {
+            impl<#f: ::jolt_field::Field> #output_name<#f, #f> {
+                /// Produced opening scalars in canonical (field-declaration) order,
+                /// delegating to each instance's `OutputClaims` in order.
+                pub fn opening_values(&self) -> ::std::vec::Vec<#f> {
+                    use ::jolt_claims::OutputClaims as _;
+                    ::core::iter::empty::<#f>()
+                        #(#opening_chain)*
+                        .collect()
+                }
+
+                /// Append every produced opening to the transcript in canonical order,
+                /// each under the `b"opening_claim"` label, matching the prover's
+                /// commitment order.
+                pub fn append_to_transcript<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
+                    &self,
+                    transcript: &mut __T,
+                ) {
+                    for value in self.opening_values() {
+                        transcript.append_labeled(b"opening_claim", &value);
+                    }
+                }
+            }
+        }
+    };
+
     // Derive sets start minimal: only what every per-relation member supports
     // today. The `Output` members derive the full standard set (incl. serde, as
     // the serialized wire form), so the `Output` aggregate does too. The `Input`
@@ -172,29 +220,53 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #(#challenge_fields,)*
         }
 
-        impl<#f: ::jolt_field::Field> #output_name<#f, #f> {
-            /// Produced opening scalars in canonical (field-declaration) order,
-            /// delegating to each instance's `OutputClaims` in order.
-            pub fn opening_values(&self) -> ::std::vec::Vec<#f> {
-                use ::jolt_claims::OutputClaims as _;
-                ::core::iter::empty::<#f>()
-                    #(#opening_chain)*
-                    .collect()
-            }
+        #opening_impl
+    })
+}
 
-            /// Append every produced opening to the transcript in canonical order,
-            /// each under the `b"opening_claim"` label, matching the prover's
-            /// commitment order.
-            pub fn append_to_transcript<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
-                &self,
-                transcript: &mut __T,
-            ) {
-                for value in self.opening_values() {
-                    transcript.append_labeled(b"opening_claim", &value);
+/// Struct-level `#[sumcheck_batch(...)]` configuration. Parsed from the source
+/// struct's attributes; recognizes only the flags below and errors clearly on
+/// anything else.
+#[derive(Default)]
+struct StageOptions {
+    /// `#[sumcheck_batch(custom_opening_values)]`: skip emitting the generated
+    /// `OutputClaims` `opening_values` / `append_to_transcript` inherent impl so the
+    /// stage can curate its own (e.g. skipping cross-relation aliased openings).
+    custom_opening_values: bool,
+}
+
+impl StageOptions {
+    fn parse(attrs: &[Attribute]) -> syn::Result<Self> {
+        let mut options = StageOptions::default();
+        for attr in attrs {
+            if !attr.path().is_ident("sumcheck_batch") {
+                continue;
+            }
+            // `#[sumcheck_batch(flag, flag, ...)]` — a comma-separated list of
+            // bare-word flags (`Meta::Path`). Reject any non-flag form or unknown
+            // flag with a span-pointed error.
+            let flags = attr.parse_args_with(
+                syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated,
+            )?;
+            for flag in flags {
+                let Meta::Path(path) = &flag else {
+                    return Err(syn::Error::new_spanned(
+                        &flag,
+                        "expected a bare `sumcheck_batch` flag (e.g. `custom_opening_values`)",
+                    ));
+                };
+                if path.is_ident("custom_opening_values") {
+                    options.custom_opening_values = true;
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        path,
+                        "unknown `sumcheck_batch` flag (supported: `custom_opening_values`)",
+                    ));
                 }
             }
         }
-    })
+        Ok(options)
+    }
 }
 
 /// The macro supports exactly one generic type parameter (the field `F`): no

@@ -947,4 +947,53 @@ mod sumcheck_batch_derive_tests {
         };
         assert_eq!(absent.opening_values(), vec![fr(1), fr(2), fr(3)]);
     }
+
+    // The opt-out fixture: `#[sumcheck_batch(custom_opening_values)]` must still
+    // generate the three aggregate structs but emit NO `opening_values` /
+    // `append_to_transcript`. The inherent `opening_values` below would collide
+    // with a generated one (the compiler rejects two inherent methods of the same
+    // name), so this module compiling at all proves the opt-out suppressed it.
+    #[derive(SumcheckBatch)]
+    #[sumcheck_batch(custom_opening_values)]
+    struct FixtureCustomSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: RegistersValEvaluation<F>,
+    }
+
+    impl FixtureCustomOutputClaims<Fr, Fr> {
+        /// A curated order distinct from the generated declaration order, to prove
+        /// this is the one in effect (the generated impl would chain instruction
+        /// then registers; this reverses them).
+        fn opening_values(&self) -> Vec<Fr> {
+            use crate::stages::relations::OutputClaims as _;
+            self.registers_val_evaluation
+                .opening_values()
+                .into_iter()
+                .chain(self.instruction_read_raf.opening_values())
+                .collect()
+        }
+    }
+
+    #[test]
+    fn custom_opening_values_suppresses_generated_impl() {
+        let fr = Fr::from_u64;
+        let claims = FixtureCustomOutputClaims::<Fr, Fr> {
+            instruction_read_raf: InstructionReadRafOutputClaims {
+                lookup_table_flags: vec![fr(1)],
+                instruction_ra: vec![fr(2)],
+                instruction_raf_flag: fr(3),
+            },
+            registers_val_evaluation: RegistersValEvaluationOutputClaims {
+                rd_inc: fr(4),
+                rd_wa: fr(5),
+            },
+        };
+
+        // The hand-written curated order (registers first), proving no generated
+        // `opening_values` (which would be instruction-first) shadows or collides.
+        assert_eq!(
+            claims.opening_values(),
+            vec![fr(4), fr(5), fr(1), fr(2), fr(3)]
+        );
+    }
 }

@@ -176,7 +176,7 @@ fn stage2_claims_from_native<F: Field>(
 
 fn stage3_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage3OutputClaims<F>, VerifierError> {
+) -> Result<Stage3OutputClaims<F, F>, VerifierError> {
     let shift = SpartanShiftOutputClaims {
         unexpanded_pc: claims.require(spartan::unexpanded_pc_shift())?,
         pc: claims.require(spartan::pc_shift())?,
@@ -1270,7 +1270,7 @@ fn set_optional_stage6_output<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage3_outputs<F: Field>(
-    claims: &Stage3OutputClaims<F>,
+    claims: &Stage3OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] = [
@@ -1319,7 +1319,7 @@ fn claim_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage3_outputs<F: Field>(
-    claims: &mut Stage3OutputClaims<F>,
+    claims: &mut Stage3OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] = [

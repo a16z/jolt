@@ -173,7 +173,7 @@ fn stage2_claims_from_openings<F: Field>(
 
 fn stage3_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage3OutputClaims<F>, VerifierError> {
+) -> Result<Stage3OutputClaims<F, F>, VerifierError> {
     let shift = SpartanShiftOutputClaims {
         unexpanded_pc: claims.require(spartan::unexpanded_pc_shift())?,
         pc: claims.require(spartan::pc_shift())?,
