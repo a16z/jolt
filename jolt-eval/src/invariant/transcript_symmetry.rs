@@ -114,14 +114,18 @@ where
     (prover.narg_string().to_vec(), challenges)
 }
 
-fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
+fn replay<H>(
+    input: &Input,
+    instance: [u8; 32],
+    narg: &[u8],
+    prover_challenges: &[JFr],
+    build_sponge: &impl Fn() -> H,
+) -> Result<(), CheckError>
 where
     H: spongefish::DuplexSpongeInterface<U = u8>,
-    ProverState<H, StdRng>: OptimizedChallenge,
     for<'a> VerifierState<'a, H>: OptimizedChallenge,
 {
-    let (narg, prover_challenges) = prover_run(input, input.instance, &build_sponge);
-    let mut verifier = verifier_transcript(SESSION, input.instance, build_sponge(), &narg);
+    let mut verifier = verifier_transcript(SESSION, instance, build_sponge(), narg);
     let mut challenge_idx = 0usize;
 
     for (op_idx, op) in input.ops.iter().enumerate() {
@@ -132,7 +136,7 @@ where
                 let got: BytesMsg = verifier
                     .prover_message()
                     .map_err(|e| violation("prover_message<BytesMsg>", op_idx, e))?;
-                if got.as_slice() != expected.as_slice() {
+                if got.0.as_slice() != expected.as_slice() {
                     return Err(mismatch("ProverBytes round-trip", op_idx));
                 }
             }
@@ -162,7 +166,41 @@ where
 
     verifier
         .check_eof()
-        .map_err(|e| violation("check_eof", input.ops.len(), e))?;
+        .map_err(|e| violation("check_eof", input.ops.len(), e))
+}
+
+fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
+where
+    H: spongefish::DuplexSpongeInterface<U = u8>,
+    ProverState<H, StdRng>: OptimizedChallenge,
+    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+{
+    let (narg, prover_challenges) = prover_run(input, input.instance, &build_sponge);
+
+    replay(
+        input,
+        input.instance,
+        &narg,
+        &prover_challenges,
+        &build_sponge,
+    )?;
+
+    let mut tampered = narg.clone();
+    tampered.push(0xFF);
+    if replay(
+        input,
+        input.instance,
+        &tampered,
+        &prover_challenges,
+        &build_sponge,
+    )
+    .is_ok()
+    {
+        return Err(CheckError::Violation(InvariantViolation::with_details(
+            "trailing-garbage NARG accepted".to_string(),
+            "check_eof returned Ok on narg || 0xFF".to_string(),
+        )));
+    }
 
     // Domain separation: the same ops under a *different* instance digest must
     // derive *different* challenges — otherwise the instance isn't bound into
@@ -200,6 +238,18 @@ fn mismatch(what: &str, op_idx: usize) -> CheckError {
 
 fn seed_corpus_shared() -> Vec<Input> {
     let scalar = JFr::from_le_bytes_mod_order(&[0xABu8; 32]);
+    let mut staged = vec![Op::PublicBytes(b"statement".to_vec())];
+    for stage in 0u64..8 {
+        staged.push(Op::PublicScalar(JFr::from(stage + 1)));
+        staged.push(Op::ProverBytes(vec![stage as u8; (stage % 5 + 1) as usize]));
+        for _ in 0..(stage % 3 + 1) {
+            staged.push(Op::OptimizedChallenge);
+        }
+        staged.push(Op::ProverScalar(JFr::from(stage.wrapping_mul(0x9E37_79B9))));
+        staged.push(Op::Challenge);
+        staged.push(Op::PublicScalar(JFr::from(stage ^ 0xA5)));
+    }
+
     let mut mixed_1k = Vec::with_capacity(1000);
     for i in 0..1000u64 {
         mixed_1k.push(match i % 6 {
@@ -221,6 +271,12 @@ fn seed_corpus_shared() -> Vec<Input> {
         vec![Op::ProverScalar(scalar)],
         vec![Op::OptimizedChallenge],
         vec![
+            Op::ProverBytes(vec![0xAA; 48]),
+            Op::ProverBytes(vec![]),
+            Op::ProverBytes(vec![0xBB; 3]),
+            Op::OptimizedChallenge,
+        ],
+        vec![
             Op::PublicBytes(b"setup".to_vec()),
             Op::ProverScalar(scalar),
             Op::Challenge,
@@ -232,6 +288,7 @@ fn seed_corpus_shared() -> Vec<Input> {
             Op::OptimizedChallenge,
             Op::PublicBytes(vec![]),
         ],
+        staged,
         mixed_1k,
     ];
 
