@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::{FromPrimitiveInt, RandomSampling};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
-use jolt_poly::Polynomial;
+use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
@@ -273,7 +273,7 @@ where
         HyperKZGVerifierSetup::from(prover_setup)
     }
 
-    fn commit<S: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+    fn commit<S: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &S,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
@@ -287,15 +287,19 @@ where
         (HyperKZGCommitment { point }, ())
     }
 
-    fn open(
-        poly: &Self::Polynomial,
+    fn open<S: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &S,
         point: &[Self::Field],
         _eval: Self::Field,
         setup: &Self::ProverSetup,
         _hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        Self::open(setup, poly.evaluations(), point, transcript)
+        let mut evaluations = Vec::with_capacity(1usize << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| {
+            evaluations.extend_from_slice(row);
+        });
+        Self::open(setup, &evaluations, point, transcript)
             .expect("HyperKZG open should not fail with valid inputs")
     }
 

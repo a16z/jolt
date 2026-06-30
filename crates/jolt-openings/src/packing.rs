@@ -15,16 +15,13 @@
 //! high-to-low.
 
 use std::{
-    collections::{
-        btree_map::{Entry, Iter},
-        BTreeMap, BTreeSet,
-    },
+    collections::{btree_map::Iter, BTreeMap, BTreeSet},
     fmt::Debug,
     ops::Index,
 };
 
 use jolt_field::Field;
-use jolt_poly::{boolean_bits_msb, eq_index_msb, MultilinearPoly, Polynomial};
+use jolt_poly::{boolean_bits_msb, eq_index_msb, MultilinearPoly};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
@@ -318,80 +315,23 @@ where
     }
 }
 
-/// Materialized packed witness polynomial and its canonical packing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PackedWitness<Id, F> {
-    pub packing: PrefixPacking<Id>,
-    pub polynomial: Polynomial<F>,
+/// Borrowed prover-side source for opening a prefix-packed witness.
+///
+/// The PCS sees any [`MultilinearPoly`] source for `W`, plus the opening hint
+/// produced while committing to that same source. Dense reference polynomials,
+/// sparse representations, and lazy packed sources can all use the same
+/// opening path without materializing the full packed evaluation table.
+pub struct PackedWitness<'a, F: Field, H> {
+    pub polynomial: &'a (dyn MultilinearPoly<F> + 'a),
+    pub hint: H,
 }
 
-/// Builder that copies logical multilinear evaluations into one packed witness.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PackedWitnessBuilder<Id, F> {
-    polynomials: BTreeMap<Id, Polynomial<F>>,
-}
-
-impl<Id, F> PackedWitnessBuilder<Id, F>
+impl<'a, F, H> PackedWitness<'a, F, H>
 where
-    Id: Clone + Ord,
     F: Field,
 {
-    pub fn new() -> Self {
-        Self {
-            polynomials: BTreeMap::new(),
-        }
-    }
-
-    /// Adds one logical polynomial under `id`.
-    ///
-    /// The evaluations are copied immediately so the builder can accept any
-    /// `MultilinearPoly<F>` implementation.
-    pub fn add<P>(&mut self, id: Id, polynomial: &P) -> Result<(), OpeningsError>
-    where
-        P: MultilinearPoly<F> + ?Sized,
-    {
-        let Entry::Vacant(entry) = self.polynomials.entry(id) else {
-            return Err(OpeningsError::InvalidSetup(
-                "duplicate packed polynomial id".to_owned(),
-            ));
-        };
-        let num_vars = polynomial.num_vars();
-        let expected_len = DomainSize::try_from(num_vars)?.cells();
-        let mut evaluations = Vec::with_capacity(expected_len);
-        polynomial.for_each_row(num_vars, &mut |_, row| evaluations.extend_from_slice(row));
-        if evaluations.len() != expected_len {
-            return Err(OpeningsError::InvalidSetup(format!(
-                "packed polynomial has {} evaluations but {} variables require {expected_len}",
-                evaluations.len(),
-                num_vars
-            )));
-        }
-        let _inserted = entry.insert(Polynomial::new(evaluations));
-        Ok(())
-    }
-
-    /// Materializes `W`, zero-filling any cells outside assigned slots.
-    pub fn build(self) -> Result<PackedWitness<Id, F>, OpeningsError> {
-        let polynomials = self
-            .polynomials
-            .iter()
-            .map(|(id, polynomial)| (id.clone(), polynomial.num_vars()));
-        let packing = PrefixPacking::new(polynomials)?;
-        let packed_len = DomainSize::try_from(packing.packed_num_vars)?.cells();
-        let mut packed_evaluations = vec![F::zero(); packed_len];
-
-        for (id, polynomial) in self.polynomials {
-            let slot = &packing[&id];
-            let offset = slot.prefix_index() << slot.num_vars;
-            for (local_index, evaluation) in polynomial.evaluations().iter().copied().enumerate() {
-                packed_evaluations[offset + local_index] = evaluation;
-            }
-        }
-
-        Ok(PackedWitness {
-            packing,
-            polynomial: Polynomial::new(packed_evaluations),
-        })
+    pub fn new(polynomial: &'a (dyn MultilinearPoly<F> + 'a), hint: H) -> Self {
+        Self { polynomial, hint }
     }
 }
 

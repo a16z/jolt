@@ -5,13 +5,18 @@ use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, PackedBatch,
-    PackedWitness, PackedWitnessBuilder, PrefixPackedClaim, PrefixPackedProverSetup,
-    PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
+    PackedWitness, PrefixPackedClaim, PrefixPackedProverSetup, PrefixPackedStatement,
+    PrefixPackedVerifierSetup, PrefixPacking,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+
+#[path = "support/packed.rs"]
+mod packed_support;
+
+use packed_support::{materialize_packed, MaterializedPackedWitness};
 
 type KzgPCS = HyperKZGScheme<Bn254>;
 type PackedKzgBatch = PackedBatch<KzgPCS, PackedId>;
@@ -55,14 +60,10 @@ fn packed_polynomials() -> Vec<(PackedId, Polynomial<Fr>)> {
     ]
 }
 
-fn build_packed(polynomials: &[(PackedId, Polynomial<Fr>)]) -> PackedWitness<PackedId, Fr> {
-    let mut builder = PackedWitnessBuilder::new();
-    for (id, polynomial) in polynomials {
-        builder
-            .add(*id, polynomial)
-            .expect("packed polynomial should add");
-    }
-    builder.build().expect("packed witness should build")
+fn build_packed(
+    polynomials: &[(PackedId, Polynomial<Fr>)],
+) -> MaterializedPackedWitness<PackedId, Fr> {
+    materialize_packed(polynomials).expect("packed witness should build")
 }
 
 fn packed_claims(
@@ -104,7 +105,7 @@ fn packed_setup(
 }
 
 fn prove_packed(
-    packed: PackedWitness<PackedId, Fr>,
+    packed: &MaterializedPackedWitness<PackedId, Fr>,
     setup: &PrefixPackedProverSetup<KzgPCS, PackedId>,
     statement: PackedStatement,
     hint: <KzgPCS as CommitmentScheme>::OpeningHint,
@@ -114,7 +115,7 @@ fn prove_packed(
     <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         setup,
         statement,
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     )
     .expect("HyperKZG prefix-packed batch proof should be produced")
@@ -138,7 +139,7 @@ fn hyperkzg_prefix_packed_batch_roundtrip_complex_mixed_arities() {
     let proof = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut prover_transcript,
     )
     .expect("HyperKZG prefix-packed batch proof should be produced");
@@ -170,7 +171,7 @@ fn hyperkzg_prefix_packed_batch_rejects_missing_logical_slot() {
     let result = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -197,7 +198,7 @@ fn hyperkzg_prefix_packed_batch_rejects_wrong_logical_arity() {
     let result = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -218,7 +219,7 @@ fn hyperkzg_prefix_packed_batch_rejects_unknown_id() {
     let result = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -234,7 +235,7 @@ fn hyperkzg_prefix_packed_batch_rejects_tampered_value() {
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
-        packed,
+        &packed,
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims.clone()),
         hint,
@@ -268,7 +269,7 @@ fn hyperkzg_prefix_packed_batch_rejects_wrong_packed_commitment() {
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
-        packed,
+        &packed,
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims.clone()),
         hint,

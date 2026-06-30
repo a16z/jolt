@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
-use jolt_poly::Polynomial;
+use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -64,7 +64,7 @@ where
 
     fn verifier_setup(_prover_setup: &()) {}
 
-    fn commit<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+    fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         _setup: &Self::ProverSetup,
     ) -> (Self::Output, ()) {
@@ -75,17 +75,19 @@ where
         (MockCommitment { evaluations }, ())
     }
 
-    fn open(
-        poly: &Self::Polynomial,
+    fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
         _point: &[Self::Field],
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Option<()>,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        MockProof {
-            evaluations: poly.evaluations().to_vec(),
-        }
+        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| {
+            evaluations.extend_from_slice(row);
+        });
+        MockProof { evaluations }
     }
 
     fn verify(
@@ -164,28 +166,26 @@ where
     type HidingCommitment = MockHidingCommitment<F>;
     type Blind = ();
 
-    fn commit_zk<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+    fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
         Self::commit(poly, setup)
     }
 
-    fn open_zk(
-        poly: &Self::Polynomial,
+    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
         _point: &[Self::Field],
         eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        (
-            MockProof {
-                evaluations: poly.evaluations().to_vec(),
-            },
-            MockHidingCommitment { eval },
-            (),
-        )
+        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| {
+            evaluations.extend_from_slice(row);
+        });
+        (MockProof { evaluations }, MockHidingCommitment { eval }, ())
     }
 
     fn verify_zk(

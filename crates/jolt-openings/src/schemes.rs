@@ -10,13 +10,15 @@ use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::{Field, FromPrimitiveInt};
-use jolt_poly::{MultilinearPoly, Point, HIGH_TO_LOW};
+use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::claims::{EvaluationClaim, VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
-use crate::packing::{PrefixPackedProverSetup, PrefixPackedStatement, PrefixPackedVerifierSetup};
+use crate::packing::{
+    PackedWitness, PrefixPackedProverSetup, PrefixPackedStatement, PrefixPackedVerifierSetup,
+};
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
 pub trait CommitmentScheme: Commitment {
@@ -25,7 +27,7 @@ pub trait CommitmentScheme: Commitment {
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 
-    type Polynomial: MultilinearPoly<Self::Field> + From<Vec<Self::Field>>;
+    type Polynomial: MultilinearPoly<Self::Field>;
 
     /// Auxiliary data from commit reused during opening (e.g. Dory row commitments).
     type OpeningHint: Clone + Send + Sync + Default;
@@ -41,28 +43,14 @@ pub trait CommitmentScheme: Commitment {
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint);
 
-    fn open(
-        poly: &Self::Polynomial,
-        point: &[Self::Field],
-        eval: Self::Field,
-        setup: &Self::ProverSetup,
-        hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof;
-
-    fn open_poly<P: MultilinearPoly<Self::Field>>(
+    fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
-        let mut evals = Vec::with_capacity(1usize << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| evals.extend_from_slice(row));
-        let dense = Self::Polynomial::from(evals);
-        Self::open(&dense, point, eval, setup, hint, transcript)
-    }
+    ) -> Self::Proof;
 
     fn verify(
         commitment: &Self::Output,
@@ -126,28 +114,14 @@ pub trait ZkOpeningScheme: CommitmentScheme {
 
     /// Open a ZK/hiding commitment using the opening hint returned by
     /// [`commit_zk`](Self::commit_zk).
-    fn open_zk(
-        poly: &Self::Polynomial,
-        point: &[Self::Field],
-        eval: Self::Field,
-        setup: &Self::ProverSetup,
-        hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
-
-    fn open_zk_poly<P: MultilinearPoly<Self::Field>>(
+    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        let mut evals = Vec::with_capacity(1usize << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| evals.extend_from_slice(row));
-        let dense = Self::Polynomial::from(evals);
-        Self::open_zk(&dense, point, eval, setup, hint, transcript)
-    }
+    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
 
     /// Verify a ZK opening proof and return the hiding commitment to the
     /// evaluation that the proof binds internally.
@@ -243,16 +217,19 @@ pub trait BatchOpeningScheme {
     type ProverSetup;
     type VerifierSetup;
     type Statement;
-    type BatchingWitness;
+    type BatchingWitness<'a>
+    where
+        Self: 'a;
     type Proof;
 
-    fn prove_batch<T>(
+    fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         statement: Self::Statement,
-        witness: Self::BatchingWitness,
+        witness: Self::BatchingWitness<'a>,
         transcript: &mut T,
     ) -> Result<Self::Proof, OpeningsError>
     where
+        Self: 'a,
         T: Transcript<Challenge = Self::Field>;
 
     fn verify_batch<T>(
@@ -270,20 +247,23 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
     type Commitment;
     type HidingCommitment;
     type Blind;
-    type ZkBatchingWitness;
+    type ZkBatchingWitness<'a>
+    where
+        Self: 'a;
 
     #[expect(
         clippy::type_complexity,
         reason = "ZK batch openings return the native proof, hiding commitment, and blind"
     )]
-    fn prove_batch_zk<T>(
+    fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
         commitments: Vec<Self::Commitment>,
-        witness: Self::ZkBatchingWitness,
+        witness: Self::ZkBatchingWitness<'a>,
         transcript: &mut T,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
     where
+        Self: 'a,
         T: Transcript<Challenge = Self::Field>;
 
     fn verify_batch_zk<T>(
@@ -315,6 +295,12 @@ impl<PCS, Id> PackedBatch<PCS, Id> {
     }
 }
 
+pub type HomomorphicBatchWitness<'a, F, H> = Vec<(&'a (dyn MultilinearPoly<F> + 'a), H)>;
+
+pub type HomomorphicZkBatchWitness<'a, F, H> = Vec<(&'a (dyn MultilinearPoly<F> + 'a), H, F)>;
+
+type HomomorphicRlcSource<'a, F> = RlcSource<F, &'a (dyn MultilinearPoly<F> + 'a)>;
+
 impl<PCS> BatchOpeningScheme for HomomorphicBatch<PCS>
 where
     PCS: AdditivelyHomomorphic,
@@ -324,16 +310,20 @@ where
     type ProverSetup = PCS::ProverSetup;
     type VerifierSetup = PCS::VerifierSetup;
     type Statement = Vec<VerifierOpeningClaim<PCS::Field, PCS::Output>>;
-    type BatchingWitness = Vec<(PCS::Polynomial, PCS::OpeningHint)>;
+    type BatchingWitness<'a>
+        = HomomorphicBatchWitness<'a, PCS::Field, PCS::OpeningHint>
+    where
+        Self: 'a;
     type Proof = PCS::Proof;
 
-    fn prove_batch<T>(
+    fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         claims: Self::Statement,
-        witness: Self::BatchingWitness,
+        witness: Self::BatchingWitness<'a>,
         transcript: &mut T,
     ) -> Result<Self::Proof, OpeningsError>
     where
+        Self: 'a,
         T: Transcript<Challenge = Self::Field>,
     {
         let statement = HomomorphicBatchStatement::new(&claims)?;
@@ -395,43 +385,27 @@ where
     PCS: AdditivelyHomomorphic,
     PCS::Output: HomomorphicCommitment<PCS::Field>,
 {
-    fn combine_witnesses(
-        witness: Vec<(PCS::Polynomial, PCS::OpeningHint)>,
+    fn combine_witnesses<'a>(
+        witness: HomomorphicBatchWitness<'a, PCS::Field, PCS::OpeningHint>,
         scalars: &[PCS::Field],
         point_len: usize,
-    ) -> Result<(PCS::Polynomial, PCS::OpeningHint), OpeningsError> {
-        let mut joint_evals = Vec::new();
+    ) -> Result<(HomomorphicRlcSource<'a, PCS::Field>, PCS::OpeningHint), OpeningsError> {
+        let mut sources = Vec::with_capacity(witness.len());
         let mut hints = Vec::with_capacity(witness.len());
 
-        for ((polynomial, hint), scalar) in witness.into_iter().zip(scalars) {
+        for (polynomial, hint) in witness {
             if polynomial.num_vars() != point_len {
                 return Err(OpeningsError::InvalidBatch(format!(
                     "polynomial has {} variables but opening point has {point_len}",
                     polynomial.num_vars()
                 )));
             }
-
-            let mut evaluations = Vec::with_capacity(1usize << polynomial.num_vars());
-            polynomial.for_each_row(polynomial.num_vars(), &mut |_, row| {
-                evaluations.extend_from_slice(row);
-            });
-            if joint_evals.is_empty() {
-                joint_evals = vec![PCS::Field::from_u64(0); evaluations.len()];
-            } else if joint_evals.len() != evaluations.len() {
-                return Err(OpeningsError::InvalidBatch(format!(
-                    "polynomial evaluation length {} does not match first length {}",
-                    evaluations.len(),
-                    joint_evals.len()
-                )));
-            }
-            for (joint_eval, evaluation) in joint_evals.iter_mut().zip(evaluations) {
-                *joint_eval += *scalar * evaluation;
-            }
+            sources.push(polynomial);
             hints.push(hint);
         }
 
         Ok((
-            PCS::Polynomial::from(joint_evals),
+            RlcSource::new(sources, scalars.to_vec()),
             PCS::combine_hints(hints, scalars),
         ))
     }
@@ -499,25 +473,28 @@ where
     type ProverSetup = PrefixPackedProverSetup<PCS, Id>;
     type VerifierSetup = PrefixPackedVerifierSetup<PCS, Id>;
     type Statement = PrefixPackedStatement<PCS::Field, Id, PCS::Output>;
-    type BatchingWitness = (PCS::Polynomial, PCS::OpeningHint);
+    type BatchingWitness<'a>
+        = PackedWitness<'a, PCS::Field, PCS::OpeningHint>
+    where
+        Self: 'a;
     type Proof = PCS::Proof;
 
-    fn prove_batch<T>(
+    fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         statement: Self::Statement,
-        witness: Self::BatchingWitness,
+        witness: Self::BatchingWitness<'a>,
         transcript: &mut T,
     ) -> Result<Self::Proof, OpeningsError>
     where
+        Self: 'a,
         T: Transcript<Challenge = Self::Field>,
     {
         let packing = &setup.packing;
-        let (polynomial, hint) = witness;
         let statement = packing.prepare_statement(&statement)?;
-        if polynomial.num_vars() != packing.packed_num_vars {
+        if witness.polynomial.num_vars() != packing.packed_num_vars {
             return Err(OpeningsError::InvalidBatch(format!(
                 "packing polynomial has {} variables but prefix packing has {}",
-                polynomial.num_vars(),
+                witness.polynomial.num_vars(),
                 packing.packed_num_vars
             )));
         }
@@ -525,11 +502,11 @@ where
         let opening_point = statement.opening_point(transcript)?;
         let opening_eval = statement.reduced_eval(&opening_point);
         let native = PCS::open(
-            &polynomial,
+            witness.polynomial,
             &opening_point,
             opening_eval,
             &setup.pcs,
-            Some(hint),
+            Some(witness.hint),
             transcript,
         );
         EvaluationClaim::new(opening_point, opening_eval).append_to_transcript(transcript);
@@ -571,16 +548,20 @@ where
     type Commitment = PCS::Output;
     type HidingCommitment = PCS::HidingCommitment;
     type Blind = PCS::Blind;
-    type ZkBatchingWitness = Vec<(PCS::Polynomial, PCS::OpeningHint, PCS::Field)>;
+    type ZkBatchingWitness<'a>
+        = HomomorphicZkBatchWitness<'a, PCS::Field, PCS::OpeningHint>
+    where
+        Self: 'a;
 
-    fn prove_batch_zk<T>(
+    fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
         commitments: Vec<Self::Commitment>,
-        witness: Self::ZkBatchingWitness,
+        witness: Self::ZkBatchingWitness<'a>,
         transcript: &mut T,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
     where
+        Self: 'a,
         T: Transcript<Challenge = Self::Field>,
     {
         if commitments.is_empty() {
@@ -598,7 +579,7 @@ where
         let scalars = transcript.challenge_scalar_powers(commitments.len());
 
         let mut joint_eval = PCS::Field::from_u64(0);
-        let mut joint_evals = Vec::new();
+        let mut sources = Vec::with_capacity(witness.len());
         let mut hints = Vec::with_capacity(witness.len());
         for ((polynomial, hint, eval), scalar) in witness.into_iter().zip(&scalars) {
             if polynomial.num_vars() != point.len() {
@@ -609,27 +590,11 @@ where
                 )));
             }
             joint_eval += *scalar * eval;
-
-            let mut evals = Vec::with_capacity(1usize << polynomial.num_vars());
-            polynomial.for_each_row(polynomial.num_vars(), &mut |_, row| {
-                evals.extend_from_slice(row);
-            });
-            if joint_evals.is_empty() {
-                joint_evals = vec![PCS::Field::from_u64(0); evals.len()];
-            } else if joint_evals.len() != evals.len() {
-                return Err(OpeningsError::InvalidBatch(format!(
-                    "polynomial evaluation length {} does not match first length {}",
-                    evals.len(),
-                    joint_evals.len()
-                )));
-            }
-            for (acc, eval) in joint_evals.iter_mut().zip(evals) {
-                *acc += *scalar * eval;
-            }
+            sources.push(polynomial);
             hints.push(hint);
         }
 
-        let joint_polynomial = PCS::Polynomial::from(joint_evals);
+        let joint_polynomial = RlcSource::new(sources, scalars.clone());
         let combined_hint = PCS::combine_hints(hints, &scalars);
         let (proof, hiding_commitment, blind) = PCS::open_zk(
             &joint_polynomial,

@@ -150,7 +150,7 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// MultilinearPoly impls for Polynomial<F>, [F], Vec<F>
+// MultilinearPoly impls for Polynomial<F>, [F], Vec<F>, and source pointers.
 // ---------------------------------------------------------------------------
 
 impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
@@ -245,6 +245,135 @@ impl<F: Field> MultilinearPoly<F> for Vec<F> {
 
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         self.as_slice().fold_rows(left, sigma)
+    }
+}
+
+impl<F, P> MultilinearPoly<F> for &P
+where
+    F: Field,
+    P: MultilinearPoly<F> + ?Sized,
+{
+    #[inline]
+    fn num_vars(&self) -> usize {
+        (**self).num_vars()
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        (**self).evaluate(point)
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        (**self).for_each_row(sigma, f);
+    }
+
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        (**self).fold_rows(left, sigma)
+    }
+
+    fn is_one_hot(&self) -> bool {
+        (**self).is_one_hot()
+    }
+
+    fn one_hot_k(&self) -> Option<usize> {
+        (**self).one_hot_k()
+    }
+
+    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
+        (**self).one_hot_indices()
+    }
+
+    fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
+        (**self).one_hot_index_order()
+    }
+
+    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
+        (**self).for_each_one(f);
+    }
+}
+
+impl<F, P> MultilinearPoly<F> for Box<P>
+where
+    F: Field,
+    P: MultilinearPoly<F> + ?Sized,
+{
+    #[inline]
+    fn num_vars(&self) -> usize {
+        (**self).num_vars()
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        (**self).evaluate(point)
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        (**self).for_each_row(sigma, f);
+    }
+
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        (**self).fold_rows(left, sigma)
+    }
+
+    fn is_one_hot(&self) -> bool {
+        (**self).is_one_hot()
+    }
+
+    fn one_hot_k(&self) -> Option<usize> {
+        (**self).one_hot_k()
+    }
+
+    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
+        (**self).one_hot_indices()
+    }
+
+    fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
+        (**self).one_hot_index_order()
+    }
+
+    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
+        (**self).for_each_one(f);
+    }
+}
+
+impl<F, P> MultilinearPoly<F> for std::sync::Arc<P>
+where
+    F: Field,
+    P: MultilinearPoly<F> + ?Sized,
+{
+    #[inline]
+    fn num_vars(&self) -> usize {
+        (**self).num_vars()
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        (**self).evaluate(point)
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        (**self).for_each_row(sigma, f);
+    }
+
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        (**self).fold_rows(left, sigma)
+    }
+
+    fn is_one_hot(&self) -> bool {
+        (**self).is_one_hot()
+    }
+
+    fn one_hot_k(&self) -> Option<usize> {
+        (**self).one_hot_k()
+    }
+
+    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
+        (**self).one_hot_indices()
+    }
+
+    fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
+        (**self).one_hot_index_order()
+    }
+
+    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
+        (**self).for_each_one(f);
     }
 }
 

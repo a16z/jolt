@@ -5,13 +5,18 @@ use jolt_dory::DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, PackedBatch,
-    PackedWitness, PackedWitnessBuilder, PrefixPackedClaim, PrefixPackedProverSetup,
-    PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
+    PackedWitness, PrefixPackedClaim, PrefixPackedProverSetup, PrefixPackedStatement,
+    PrefixPackedVerifierSetup, PrefixPacking,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+
+#[path = "support/packed.rs"]
+mod packed_support;
+
+use packed_support::{materialize_packed, MaterializedPackedWitness};
 
 type PackedDoryBatch = PackedBatch<DoryScheme, PackedId>;
 type DoryOutput = <DoryScheme as Commitment>::Output;
@@ -43,14 +48,10 @@ fn packed_polynomials() -> Vec<(PackedId, Polynomial<Fr>)> {
     ]
 }
 
-fn build_packed(polynomials: &[(PackedId, Polynomial<Fr>)]) -> PackedWitness<PackedId, Fr> {
-    let mut builder = PackedWitnessBuilder::new();
-    for (id, polynomial) in polynomials {
-        builder
-            .add(*id, polynomial)
-            .expect("packed polynomial should add");
-    }
-    builder.build().expect("packed witness should build")
+fn build_packed(
+    polynomials: &[(PackedId, Polynomial<Fr>)],
+) -> MaterializedPackedWitness<PackedId, Fr> {
+    materialize_packed(polynomials).expect("packed witness should build")
 }
 
 fn packed_claims(
@@ -93,7 +94,7 @@ fn packed_setup(
 }
 
 fn prove_packed(
-    packed: PackedWitness<PackedId, Fr>,
+    packed: &MaterializedPackedWitness<PackedId, Fr>,
     setup: &PrefixPackedProverSetup<DoryScheme, PackedId>,
     statement: PackedStatement,
     hint: DoryOpeningHint,
@@ -103,7 +104,7 @@ fn prove_packed(
     <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         setup,
         statement,
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     )
     .expect("Dory prefix-packed batch proof should be produced")
@@ -128,7 +129,7 @@ fn dory_prefix_packed_batch_roundtrip_complex_mixed_arities() {
     let proof = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut prover_transcript,
     )
     .expect("Dory prefix-packed batch proof should be produced");
@@ -154,7 +155,7 @@ fn dory_prefix_packed_batch_rejects_right_values_at_wrong_suffix_point() {
     let original_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let original_claims = packed_claims(&polynomials, &packed.packing, &original_point);
     let proof = prove_packed(
-        packed.clone(),
+        &packed,
         &prover_setup,
         PrefixPackedStatement::new(commitment.clone(), original_claims),
         hint,
@@ -185,7 +186,7 @@ fn dory_prefix_packed_batch_rejects_known_id_prefix_tamper() {
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
-        packed,
+        &packed,
         &prover_setup,
         PrefixPackedStatement::new(commitment.clone(), claims.clone()),
         hint,
@@ -227,7 +228,7 @@ fn dory_prefix_packed_batch_rejects_duplicate_known_id() {
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -247,7 +248,7 @@ fn dory_prefix_packed_batch_rejects_unknown_id() {
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -273,7 +274,7 @@ fn dory_prefix_packed_batch_rejects_suffix_incompatible_claims() {
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -288,7 +289,7 @@ fn dory_prefix_packed_batch_rejects_tampered_value() {
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
-        packed,
+        &packed,
         &prover_setup,
         PrefixPackedStatement::new(commitment.clone(), claims.clone()),
         hint,
@@ -321,7 +322,7 @@ fn dory_prefix_packed_batch_rejects_wrong_witness_dimension() {
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        (wrong_witness, hint),
+        PackedWitness::new(&wrong_witness, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));

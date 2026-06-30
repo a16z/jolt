@@ -3,17 +3,21 @@
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, PackedBatch,
-    PackedWitness, PackedWitnessBuilder, PrefixPackedClaim, PrefixPackedProverSetup,
-    PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
+    PackedWitness, PrefixPackedClaim, PrefixPackedProverSetup, PrefixPackedStatement,
+    PrefixPackedVerifierSetup, PrefixPacking,
 };
 use jolt_poly::{boolean_point_msb, eq_index_msb, Polynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-mod support;
+#[path = "support/mock.rs"]
+mod mock;
+#[path = "support/packed.rs"]
+mod packed_support;
 
-use support::mock::{MockCommitment, MockCommitmentScheme};
+use mock::{MockCommitment, MockCommitmentScheme};
+use packed_support::{materialize_packed, MaterializedPackedWitness};
 
 type MockPCS = MockCommitmentScheme<Fr>;
 type PackedMockPCS = PackedBatch<MockPCS, u64>;
@@ -39,12 +43,8 @@ fn packed_setup(
     )
 }
 
-fn build_packed(polynomials: &[(u64, Polynomial<Fr>)]) -> PackedWitness<u64, Fr> {
-    let mut builder = PackedWitnessBuilder::new();
-    for (id, polynomial) in polynomials {
-        builder.add(*id, polynomial).expect("polynomial should add");
-    }
-    builder.build().expect("packed polynomial should build")
+fn build_packed(polynomials: &[(u64, Polynomial<Fr>)]) -> MaterializedPackedWitness<u64, Fr> {
+    materialize_packed(polynomials).expect("packed polynomial should build")
 }
 
 fn same_arity_polynomials() -> [(u64, Polynomial<Fr>); 2] {
@@ -99,7 +99,7 @@ fn claims_for_packed_point(
 }
 
 fn prove_packed(
-    packed: &PackedWitness<u64, Fr>,
+    packed: &MaterializedPackedWitness<u64, Fr>,
     statement: TestStatement,
     hint: (),
     label: &'static [u8],
@@ -109,7 +109,7 @@ fn prove_packed(
     <PackedMockPCS as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement,
-        (packed.polynomial.clone(), hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     )
     .expect("packed proof should prove")
@@ -154,6 +154,14 @@ fn prefix_packing_rejects_empty_and_duplicate_polynomials() {
 }
 
 #[test]
+fn prefix_packing_builds_directly_from_specs_without_witness_materialization() {
+    let specs = [(30_u64, 1), (20, 2), (10, 2), (40, 0)];
+    let packing = PrefixPacking::new(specs).expect("direct specs should produce packing");
+    assert_eq!(packing.packed_num_vars, 4);
+    assert_eq!(packing[&10].prefix, vec![false, false]);
+}
+
+#[test]
 fn prefix_packing_helpers_validate_unknown_ids_and_point_dimensions() {
     let packing = PrefixPacking::new([(10_u64, 2), (20, 2)]).expect("packing should build");
 
@@ -189,7 +197,7 @@ fn prefix_packing_helpers_validate_unknown_ids_and_point_dimensions() {
 }
 
 #[test]
-fn packed_witness_builder_places_polynomials_under_boolean_prefixes_at_random_points() {
+fn materialized_packed_witness_places_polynomials_under_boolean_prefixes_at_random_points() {
     let mut rng = ChaCha20Rng::seed_from_u64(7010);
     let poly_a = Polynomial::<Fr>::random(3, &mut rng);
     let poly_b = Polynomial::<Fr>::random(2, &mut rng);
@@ -223,7 +231,7 @@ fn packed_witness_builder_places_polynomials_under_boolean_prefixes_at_random_po
 }
 
 #[test]
-fn packed_witness_builder_zero_fills_padding_cells() {
+fn materialized_packed_witness_zero_fills_padding_cells() {
     let poly_a = Polynomial::new(vec![fr(3), fr(5), fr(7), fr(11)]);
     let poly_b = Polynomial::new(vec![fr(13)]);
     let packed = build_packed(&[(0, poly_a), (1, poly_b)]);
@@ -236,16 +244,12 @@ fn packed_witness_builder_zero_fills_padding_cells() {
 }
 
 #[test]
-fn packed_witness_builder_rejects_duplicate_ids_and_empty_builds() {
+fn materialized_packed_witness_rejects_duplicate_ids_and_empty_builds() {
     let polynomial = Polynomial::new(vec![fr(1), fr(2)]);
-    let mut builder = PackedWitnessBuilder::new();
-    builder
-        .add(7_u64, &polynomial)
-        .expect("first add should work");
-    let duplicate = builder.add(7_u64, &polynomial);
+    let duplicate = materialize_packed(&[(7_u64, polynomial.clone()), (7, polynomial)]);
     assert!(matches!(duplicate, Err(OpeningsError::InvalidSetup(_))));
 
-    let empty = PackedWitnessBuilder::<u64, Fr>::new().build();
+    let empty = materialize_packed::<u64, Fr>(&[]);
     assert!(matches!(empty, Err(OpeningsError::InvalidSetup(_))));
 }
 
@@ -262,7 +266,7 @@ fn prefix_packed_batch_roundtrip_with_statement() {
     let proof = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut prover_transcript,
     )
     .expect("packed proof should prove");
@@ -323,12 +327,12 @@ fn prefix_packed_batch_rejects_missing_packed_slot() {
     let claims_arity_two = claims_for(&polynomials, &[0, 1], vec![fr(3), fr(5)]);
     let statement = PrefixPackedStatement::new(commitment, claims_arity_two);
 
-    let (prover_setup, _) = packed_setup(packed.packing);
+    let (prover_setup, _) = packed_setup(packed.packing.clone());
     let mut transcript = Blake2bTranscript::new(b"packing-mixed-arity-packing");
     let result = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement,
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -337,13 +341,13 @@ fn prefix_packed_batch_rejects_missing_packed_slot() {
 #[test]
 fn prefix_packed_batch_rejects_empty_claims() {
     let packed = build_packed(&same_arity_polynomials());
-    let (prover_setup, _) = packed_setup(packed.packing);
+    let (prover_setup, _) = packed_setup(packed.packing.clone());
 
     let mut transcript = Blake2bTranscript::new(b"packing-empty-claims");
     let result = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(MockCommitment::default(), Vec::new()),
-        (packed.polynomial, ()),
+        PackedWitness::new(&packed.polynomial, ()),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -394,13 +398,13 @@ fn prefix_packed_batch_rejects_suffix_incompatible_mixed_arity_claims() {
         ),
     ];
     let statement = PrefixPackedStatement::new(commitment, claims);
-    let (prover_setup, _) = packed_setup(packed.packing);
+    let (prover_setup, _) = packed_setup(packed.packing.clone());
 
     let mut transcript = Blake2bTranscript::new(b"packing-mixed-arities");
     let result = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement,
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -414,13 +418,13 @@ fn prefix_packed_batch_rejects_mismatched_logical_points() {
     let mut claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     claims[1].evaluation.point = vec![fr(8), fr(13)].into();
     let statement = PrefixPackedStatement::new(commitment, claims);
-    let (prover_setup, _) = packed_setup(packed.packing);
+    let (prover_setup, _) = packed_setup(packed.packing.clone());
 
     let mut transcript = Blake2bTranscript::new(b"packing-mismatched-points");
     let result = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement,
-        (packed.polynomial, hint),
+        PackedWitness::new(&packed.polynomial, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -511,7 +515,7 @@ fn prefix_packed_batch_rejects_wrong_witness_dimension() {
     let result = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement,
-        (wrong_witness, hint),
+        PackedWitness::new(&wrong_witness, hint),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));

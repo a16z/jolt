@@ -769,8 +769,8 @@ mod tests {
             (TestCommitment, ())
         }
 
-        fn open(
-            _poly: &Self::Polynomial,
+        fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
+            _poly: &P,
             _point: &[Self::Field],
             _eval: Self::Field,
             _setup: &Self::ProverSetup,

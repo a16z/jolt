@@ -7,7 +7,7 @@
 //! # Design
 //!
 //! - **Stateless.** No accumulators. A batch opening receives an explicit
-//!   statement plus the prover-side witness data needed to open it.
+//!   statement plus borrowed prover-side source data needed to open it.
 //! - **Batch openings are an extension trait.** [`BatchOpeningScheme`] lets a
 //!   protocol adapter own its batching strategy while preserving the ordinary
 //!   single-opening API for the underlying PCS.
@@ -45,12 +45,12 @@ mod schemes;
 pub use claims::{EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim};
 pub use error::OpeningsError;
 pub use packing::{
-    PackedPolynomial, PackedWitness, PackedWitnessBuilder, PrefixPackedClaim,
-    PrefixPackedProverSetup, PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
-    PrefixSlot,
+    PackedPolynomial, PackedWitness, PrefixPackedClaim, PrefixPackedProverSetup,
+    PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking, PrefixSlot,
 };
 
 pub use schemes::{
-    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, HomomorphicBatch, PackedBatch,
-    StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
+    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, HomomorphicBatch,
+    HomomorphicBatchWitness, HomomorphicZkBatchWitness, PackedBatch, StreamingCommitment,
+    ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
 };

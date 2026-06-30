@@ -622,7 +622,7 @@ mod tests {
             .collect::<Vec<_>>();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"one-hot-zk-open");
-        let (proof, _, _) = DoryScheme::open_zk_poly(
+        let (proof, _, _) = DoryScheme::open_zk(
             &poly,
             &point,
             eval,

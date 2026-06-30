@@ -4,20 +4,20 @@ use jolt_crypto::{Bn254, Commitment};
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch, OpeningsError,
-    VerifierOpeningClaim,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
+    HomomorphicBatchWitness, OpeningsError, VerifierOpeningClaim,
 };
-use jolt_poly::{Point, Polynomial, HIGH_TO_LOW};
+use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type KzgPCS = HyperKZGScheme<Bn254>;
-type HomBatch = HomomorphicBatch<KzgPCS>;
+type HomomorphicKzgBatch = HomomorphicBatch<KzgPCS>;
 type KzgOutput = <KzgPCS as Commitment>::Output;
 type KzgOpeningHint = <KzgPCS as CommitmentScheme>::OpeningHint;
 type ClearClaim = VerifierOpeningClaim<Fr, KzgOutput>;
-type ClearWitness = (Polynomial<Fr>, KzgOpeningHint);
+type ClearWitness<'a> = HomomorphicBatchWitness<'a, Fr, KzgOpeningHint>;
 
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
@@ -52,11 +52,11 @@ fn homomorphic_polynomials(
     (polynomials, point)
 }
 
-fn clear_claims(
-    polynomials: &[Polynomial<Fr>],
+fn clear_claims<'a>(
+    polynomials: &'a [Polynomial<Fr>],
     point: &Point<HIGH_TO_LOW, Fr>,
     setup: &<KzgPCS as CommitmentScheme>::ProverSetup,
-) -> (Vec<ClearClaim>, Vec<ClearWitness>) {
+) -> (Vec<ClearClaim>, ClearWitness<'a>) {
     let mut claims = Vec::with_capacity(polynomials.len());
     let mut witness = Vec::with_capacity(polynomials.len());
     for polynomial in polynomials {
@@ -65,7 +65,7 @@ fn clear_claims(
             commitment,
             evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(point)),
         });
-        witness.push((polynomial.clone(), hint));
+        witness.push((polynomial as &dyn MultilinearPoly<Fr>, hint));
     }
     (claims, witness)
 }
@@ -76,8 +76,8 @@ fn hyperkzg_homomorphic_batch_roundtrip_clear_many_polynomials() {
     let (prover_setup, verifier_setup) = kzg_setup(point.len());
     let (claims, witness) = clear_claims(&polynomials, &point, &prover_setup);
 
-    let mut prover_transcript = Blake2bTranscript::new(b"hyperkzg-hom-batch");
-    let proof = <HomBatch as BatchOpeningScheme>::prove_batch(
+    let mut prover_transcript = Blake2bTranscript::new(b"hyperkzg-batch");
+    let proof = <HomomorphicKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims.clone(),
         witness,
@@ -85,8 +85,8 @@ fn hyperkzg_homomorphic_batch_roundtrip_clear_many_polynomials() {
     )
     .expect("HyperKZG homomorphic batch proof should be produced");
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"hyperkzg-hom-batch");
-    <HomBatch as BatchOpeningScheme>::verify_batch(
+    let mut verifier_transcript = Blake2bTranscript::new(b"hyperkzg-batch");
+    <HomomorphicKzgBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         claims,
         &proof,
@@ -103,8 +103,8 @@ fn hyperkzg_homomorphic_batch_rejects_tampered_value() {
     let (prover_setup, verifier_setup) = kzg_setup(point.len());
     let (claims, witness) = clear_claims(&polynomials, &point, &prover_setup);
 
-    let mut prover_transcript = Blake2bTranscript::new(b"hyperkzg-hom-tamper");
-    let proof = <HomBatch as BatchOpeningScheme>::prove_batch(
+    let mut prover_transcript = Blake2bTranscript::new(b"hyperkzg-batch-tamper");
+    let proof = <HomomorphicKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims.clone(),
         witness,
@@ -115,8 +115,8 @@ fn hyperkzg_homomorphic_batch_rejects_tampered_value() {
     let mut tampered = claims;
     tampered[0].evaluation.value += fr(1);
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"hyperkzg-hom-tamper");
-    let result = <HomBatch as BatchOpeningScheme>::verify_batch(
+    let mut verifier_transcript = Blake2bTranscript::new(b"hyperkzg-batch-tamper");
+    let result = <HomomorphicKzgBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         tampered,
         &proof,
@@ -132,8 +132,8 @@ fn hyperkzg_homomorphic_batch_rejects_mismatched_point() {
     let (mut claims, witness) = clear_claims(&polynomials, &point, &prover_setup);
     claims[2].evaluation.point = Point::new(vec![fr(2), fr(3), fr(5)]);
 
-    let mut transcript = Blake2bTranscript::new(b"hyperkzg-hom-point-mismatch");
-    let result = <HomBatch as BatchOpeningScheme>::prove_batch(
+    let mut transcript = Blake2bTranscript::new(b"hyperkzg-batch-point-mismatch");
+    let result = <HomomorphicKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims,
         witness,
@@ -149,8 +149,8 @@ fn hyperkzg_homomorphic_batch_rejects_witness_count_mismatch() {
     let (claims, mut witness) = clear_claims(&polynomials, &point, &prover_setup);
     let _dropped = witness.pop();
 
-    let mut transcript = Blake2bTranscript::new(b"hyperkzg-hom-witness-count");
-    let result = <HomBatch as BatchOpeningScheme>::prove_batch(
+    let mut transcript = Blake2bTranscript::new(b"hyperkzg-batch-witness-count");
+    let result = <HomomorphicKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims,
         witness,
@@ -164,10 +164,11 @@ fn hyperkzg_homomorphic_batch_rejects_wrong_witness_dimension() {
     let (polynomials, point) = homomorphic_polynomials(3, 3, 0x72_00_03);
     let (prover_setup, _) = kzg_setup(point.len());
     let (claims, mut witness) = clear_claims(&polynomials, &point, &prover_setup);
-    witness[1].0 = Polynomial::new(vec![fr(1), fr(2), fr(3), fr(4)]);
+    let wrong_witness = Polynomial::new(vec![fr(1), fr(2), fr(3), fr(4)]);
+    witness[1].0 = &wrong_witness;
 
-    let mut transcript = Blake2bTranscript::new(b"hyperkzg-hom-witness-dim");
-    let result = <HomBatch as BatchOpeningScheme>::prove_batch(
+    let mut transcript = Blake2bTranscript::new(b"hyperkzg-batch-witness-dim");
+    let result = <HomomorphicKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims,
         witness,

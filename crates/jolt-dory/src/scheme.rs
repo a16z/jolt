@@ -163,8 +163,8 @@ impl CommitmentScheme for DoryScheme {
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
-    fn open(
-        poly: &Self::Polynomial,
+    fn open<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
@@ -300,8 +300,8 @@ impl ZkOpeningScheme for DoryScheme {
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
-    fn open_zk(
-        poly: &Self::Polynomial,
+    fn open_zk<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
@@ -459,17 +459,17 @@ impl DoryHint {
 
 /// Bridges [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits
 /// without materializing the full evaluation table.
-struct DorySourceAdapter<'a, S: MultilinearPoly<Fr>> {
+struct DorySourceAdapter<'a, S: MultilinearPoly<Fr> + ?Sized> {
     source: &'a S,
 }
 
-impl<'a, S: MultilinearPoly<Fr>> DorySourceAdapter<'a, S> {
+impl<'a, S: MultilinearPoly<Fr> + ?Sized> DorySourceAdapter<'a, S> {
     fn new(source: &'a S) -> Self {
         Self { source }
     }
 }
 
-impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> {
+impl<S: MultilinearPoly<Fr> + ?Sized> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> {
     fn num_vars(&self) -> usize {
         self.source.num_vars()
     }
@@ -506,7 +506,7 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
     }
 }
 
-impl<S: MultilinearPoly<Fr>> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
+impl<S: MultilinearPoly<Fr> + ?Sized> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
     fn vector_matrix_product(&self, left_vec: &[ArkFr], _nu: usize, sigma: usize) -> Vec<ArkFr> {
         let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
         let result = self.source.fold_rows(&native_left, sigma);
