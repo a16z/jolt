@@ -32,7 +32,7 @@ pub struct InstructionReadRafOutputClaims<C> {
 
 /// Consumed instruction-lookup openings (the reduced lookup output + left/right
 /// operands), wired from the upstream instruction claim-reduction.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct InstructionReadRafInputClaims<C> {
     #[opening(LookupOutput, from = InstructionClaimReduction)]
     pub lookup_output: C,
@@ -43,7 +43,7 @@ pub struct InstructionReadRafInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction read-RAF sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionReadRafChallenges<F> {
     #[challenge(InstructionReadRafChallenge::Gamma)]
     pub gamma: F,

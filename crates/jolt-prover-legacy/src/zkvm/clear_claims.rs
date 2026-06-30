@@ -235,7 +235,7 @@ fn stage4_claims_from_openings<F: Field>(
 
 fn stage5_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage5OutputClaims<F>, VerifierError> {
+) -> Result<Stage5OutputClaims<F, F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
         .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
         .collect::<Result<Vec<_>, _>>()?;

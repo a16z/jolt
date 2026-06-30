@@ -21,7 +21,7 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(InstructionReadRafChallenge::Gamma)),
-        input.stage5.challenges.instruction_gamma,
+        input.stage5.challenges.instruction_read_raf.gamma,
     )?;
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
@@ -52,8 +52,8 @@ where
         .evaluate(&instruction_opening.r_address);
     let identity_eval =
         IdentityPolynomial::new(2 * RISCV_XLEN).evaluate(&instruction_opening.r_address);
-    let instruction_gamma_squared =
-        input.stage5.challenges.instruction_gamma * input.stage5.challenges.instruction_gamma;
+    let instruction_gamma_squared = input.stage5.challenges.instruction_read_raf.gamma
+        * input.stage5.challenges.instruction_read_raf.gamma;
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
         values.public(
             JoltDerivedId::from(InstructionReadRafPublic::EqTableValue(table.index())),
@@ -64,20 +64,20 @@ where
     values.public(
         JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
         eq_reduction
-            * (input.stage5.challenges.instruction_gamma * left_operand_eval
+            * (input.stage5.challenges.instruction_read_raf.gamma * left_operand_eval
                 + instruction_gamma_squared * right_operand_eval),
     )?;
     values.public(
         JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
         eq_reduction
             * (instruction_gamma_squared * identity_eval
-                - input.stage5.challenges.instruction_gamma * left_operand_eval
+                - input.stage5.challenges.instruction_read_raf.gamma * left_operand_eval
                 - instruction_gamma_squared * right_operand_eval),
     )?;
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)),
-        input.stage5.challenges.ram_gamma,
+        input.stage5.challenges.ram_ra_claim_reduction.gamma,
     )?;
     let ram_point = input
         .stage5
