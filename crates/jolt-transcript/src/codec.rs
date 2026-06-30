@@ -12,6 +12,13 @@
 
 use spongefish::{Encoding, NargDeserialize, VerificationError, VerificationResult};
 
+pub(crate) fn encode_bytes_frame(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + bytes.len());
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+    out
+}
+
 /// Length-prefixed byte string. 8-byte LE length keeps `BytesMsg(a) ; BytesMsg(b)`
 /// distinguishable from `BytesMsg(a||b)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,10 +39,7 @@ impl From<Vec<u8>> for BytesMsg {
 
 impl Encoding<[u8]> for BytesMsg {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = Vec::with_capacity(8 + self.0.len());
-        out.extend_from_slice(&(self.0.len() as u64).to_le_bytes());
-        out.extend_from_slice(&self.0);
-        out
+        encode_bytes_frame(&self.0)
     }
 }
 

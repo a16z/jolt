@@ -21,7 +21,9 @@ mod setup;
 mod verifier;
 
 pub use codec::BytesMsg;
-pub use messages::{serialize_slice, FsAbsorb, FsChallenge, FsNargRead, FsTranscript};
+pub use messages::{
+    deserialize_slice, serialize_slice, FsAbsorb, FsChallenge, FsNargRead, FsTranscript,
+};
 pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
 
 #[cfg(feature = "transcript-poseidon")]

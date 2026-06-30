@@ -39,8 +39,8 @@
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_transcript::{
-    serialize_slice, BytesMsg, DuplexSpongeInterface, OptimizedChallenge, ProverState,
-    VerificationError, VerificationResult, VerifierState,
+    deserialize_slice, serialize_slice, BytesMsg, DuplexSpongeInterface, OptimizedChallenge,
+    ProverState, VerificationResult, VerifierState,
 };
 
 /// Absorbing shared values is the field-agnostic [`jolt_transcript::FsAbsorb`] surface
@@ -86,34 +86,10 @@ where
     transcript.absorb_bytes(&buf);
 }
 
-// ─── WIRE-FORMAT — FOLLOW-UP DECISION (read this before changing the codec) ─────────────
-//
-// Every NARG message below is transported as ONE anonymous length-prefixed byte blob
-// (`BytesMsg(CanonicalSerialize)`), regardless of the value's kind. This is the retained
-// full-NARG helper choice: DRY (a single codec path) and adequate while only one experimental
-// value kind crosses the NARG. History: typed per-kind wrappers
-// (`FieldMsg` / `FieldVecMsg` / `Blob`) once existed (DEV-12) and were deliberately collapsed
-// into this single `BytesMsg` path for less redundancy (DEV-16). Trade-off: the wire format is
-// now anonymous — type identity is recovered only by read-order + the deserialize target, not by
-// the bytes themselves.
-//
-// SWITCH to a typed per-kind codec surface — local newtypes that `impl Encoding`/`NargDeserialize`
-// (e.g. `FsField<F>` / `FsFieldVec<F>` / `FsBlob<T>`, exposing `write_field`/`read_fields`/…) — when
-// EITHER trigger lands:
-//   1. Full Option-B moves commitments + the dory opening proof + claims INTO the NARG (today they
-//      stay structured proof fields and are only `absorb`'d). With many value kinds in the NARG, an
-//      explicit, self-describing wire format prevents read-order / wrong-type mixups.
-//   2. The on-chain verifier (gnark / Solidity / Lean) must re-read the NARG inside a circuit /
-//      contract — a typed wire format is far easier to mirror there than N anonymous blobs.
-// At either point you are ALREADY restructuring what the NARG contains, so introduce the typed
-// types here and route `write`/`read` through them instead of `BytesMsg` — one change, made when
-// the explicit format is load-bearing rather than cosmetic.
-//
-// DO NOT do it before then. With a single value kind, typed vs. anonymous is a wash; doing it now
-// only reverses DEV-16 and forces a fresh `muldiv` re-verify, then gets redone at full-B = churn.
-// The host path is `muldiv`-verified as-is. Decision rule: typed codec IFF (full-Option-B || on-chain
-// reader); otherwise keep `BytesMsg`. See DEV-16 (the collapse) + DEV-25 (this decision).
-// ───────────────────────────────────────────────────────────────────────────────────────────────
+// NARG frames are anonymous and positional: each prover-only payload is one
+// length-prefixed `BytesMsg` whose concrete type is determined by the verifier's
+// read order. Keep the encoder/decoder shared with `jolt-transcript` so the
+// modular verifier and jolt-core bridge cannot drift.
 
 /// Squeezed field challenges, shared by both transcript roles.
 ///
@@ -294,25 +270,6 @@ impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::Poseido
     }
 }
 
-/// Decode every `T` in a single self-delimiting frame.
-///
-/// The frame body length (carried by [`BytesMsg`]'s prefix, which the sponge already
-/// bounds to the remaining NARG) determines the count — so a sequence is read back
-/// without shipping or trusting a separate length, and the per-round element count
-/// may vary. This is also why we never deserialize a `Vec<T>` directly:
-/// `CanonicalDeserialize` for `Vec` reads its OWN length prefix from the NARG and
-/// pre-allocates from it, so an adversarial proof could capacity-overflow panic / OOM.
-/// Here every allocation is bounded by the actual frame bytes, which are bounded by the
-/// actual proof.
-fn read_all<T: CanonicalDeserialize>(body: &[u8]) -> VerificationResult<Vec<T>> {
-    let mut cursor = body;
-    let mut out = Vec::new();
-    while !cursor.is_empty() {
-        out.push(T::deserialize_compressed(&mut cursor).map_err(|_| VerificationError)?);
-    }
-    Ok(out)
-}
-
 /// Prover-side message vocabulary over the spongefish NARG.
 pub trait ProverFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
     /// Write a sequence of prover-only values as one self-delimiting frame
@@ -349,7 +306,7 @@ where
 {
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
         let bytes = self.prover_message::<BytesMsg>()?;
-        read_all(&bytes.0)
+        deserialize_slice(&bytes.0)
     }
 }
 

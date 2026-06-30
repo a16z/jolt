@@ -30,7 +30,8 @@
 //!
 //! [`challenge`](FsChallenge::challenge) / [`challenge_vector`](FsChallenge::challenge_vector)
 //! use the **optimized** `MontU128` embedding ([`from_challenge_bytes`], the
-//! field element `v · 2¹²⁸`), matching jolt-core's `challenge_optimized`.
+//! field element `v_masked · 2¹²⁸` with the top 3 bits cleared), matching
+//! jolt-core's `challenge_optimized`.
 //! [`challenge_scalar`](FsChallenge::challenge_scalar) /
 //! [`challenge_scalar_powers`](FsChallenge::challenge_scalar_powers) use the
 //! **plain** embedding ([`from_u128`], the field element `v`), matching
@@ -57,12 +58,21 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_field::Field;
 use rand::{CryptoRng, RngCore};
 use spongefish::{
-    DuplexSpongeInterface, ProverState, VerificationError, VerificationResult, VerifierState,
+    DuplexSpongeInterface, Encoding, ProverState, VerificationError, VerificationResult,
+    VerifierState,
 };
 
-use crate::codec::BytesMsg;
+use crate::codec::{encode_bytes_frame, BytesMsg};
 #[cfg(any(feature = "transcript-blake2b", feature = "transcript-keccak"))]
 use crate::prover::OptimizedChallenge;
+
+struct BorrowedBytesMsg<'a>(&'a [u8]);
+
+impl Encoding<[u8]> for BorrowedBytesMsg<'_> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        encode_bytes_frame(self.0)
+    }
+}
 
 #[expect(clippy::expect_used)]
 fn serialize_one<T: CanonicalSerialize>(value: &T) -> Vec<u8> {
@@ -93,11 +103,16 @@ pub fn serialize_slice<T: CanonicalSerialize>(values: &[T]) -> Vec<u8> {
 /// The caller supplies only the body of a [`BytesMsg`], so allocation is bounded
 /// by the actual proof bytes instead of by an attacker-controlled `Vec<T>`
 /// length prefix.
-fn deserialize_slice<T: CanonicalDeserialize>(body: &[u8]) -> VerificationResult<Vec<T>> {
+pub fn deserialize_slice<T: CanonicalDeserialize>(body: &[u8]) -> VerificationResult<Vec<T>> {
     let mut cursor = body;
     let mut out = Vec::new();
     while !cursor.is_empty() {
-        out.push(T::deserialize_compressed(&mut cursor).map_err(|_| VerificationError)?);
+        let before = cursor.len();
+        let value = T::deserialize_compressed(&mut cursor).map_err(|_| VerificationError)?;
+        if cursor.len() == before {
+            return Err(VerificationError);
+        }
+        out.push(value);
     }
     Ok(out)
 }
@@ -125,15 +140,17 @@ pub trait FsAbsorb {
     /// equals `serialize_compressed` for BN254 `Fr`, so this matches
     /// [`absorb`](Self::absorb) for the same value.
     fn absorb_field<F: Field>(&mut self, value: &F) {
-        self.absorb_bytes(&value.to_bytes_le_vec());
+        let mut buf = [0u8; 32];
+        value.to_bytes_le(&mut buf);
+        self.absorb_bytes(&buf);
     }
 
     /// Absorb a slice of field elements as a *single* message (their
     /// little-endian bytes concatenated).
     fn absorb_field_slice<F: Field>(&mut self, values: &[F]) {
-        let mut buf = Vec::with_capacity(values.len() * F::NUM_BYTES);
-        for v in values {
-            buf.extend_from_slice(&v.to_bytes_le_vec());
+        let mut buf = vec![0u8; values.len() * F::NUM_BYTES];
+        for (chunk, value) in buf.chunks_exact_mut(F::NUM_BYTES).zip(values) {
+            value.to_bytes_le(chunk);
         }
         self.absorb_bytes(&buf);
     }
@@ -153,7 +170,7 @@ where
     }
 
     fn absorb_bytes(&mut self, bytes: &[u8]) {
-        self.public_message(&BytesMsg(bytes.to_vec()));
+        self.public_message(&BorrowedBytesMsg(bytes));
     }
 }
 
@@ -170,7 +187,7 @@ where
     }
 
     fn absorb_bytes(&mut self, bytes: &[u8]) {
-        self.public_message(&BytesMsg(bytes.to_vec()));
+        self.public_message(&BorrowedBytesMsg(bytes));
     }
 }
 
@@ -181,7 +198,7 @@ where
 ///
 /// See the module docs for the optimized-vs-plain embedding distinction.
 pub trait FsChallenge<F: Field> {
-    /// Squeeze an **optimized** (`MontU128`-embedded, `v · 2¹²⁸`) challenge.
+    /// Squeeze an **optimized** (`MontU128`-embedded, `v_masked · 2¹²⁸`) challenge.
     fn challenge(&mut self) -> F;
 
     /// Squeeze a **plain** (`from_u128`, `v`) scalar challenge.
@@ -296,7 +313,11 @@ pub trait FsNargRead<F: Field>: FsTranscript<F> {
         body.chunks_exact(F::NUM_BYTES)
             .map(|chunk| {
                 let bytes: [u8; 32] = chunk.try_into().map_err(|_| VerificationError)?;
-                Ok(F::from_bytes_array(&bytes))
+                let value = F::from_bytes_array(&bytes);
+                if value.to_bytes_array() != bytes {
+                    return Err(VerificationError);
+                }
+                Ok(value)
             })
             .collect()
     }
@@ -362,7 +383,7 @@ mod tests {
         assert_eq!(p_pow, v_pow, "challenge powers diverged");
     }
 
-    /// The optimized and plain embeddings differ (the DEV-41 distinction):
+    /// The optimized and plain embeddings differ:
     /// the same 128-bit squeeze must NOT produce the same field element.
     #[test]
     fn optimized_and_plain_embeddings_differ() {
@@ -376,7 +397,17 @@ mod tests {
         // Same transcript position, same 128-bit squeeze, different embedding.
         assert_ne!(
             optimized, plain,
-            "optimized (v·2^128) and plain (v) embeddings must differ"
+            "optimized (v_masked·2^128) and plain (v) embeddings must differ"
         );
+    }
+
+    #[test]
+    fn read_field_slice_rejects_non_canonical_field_bytes() {
+        let mut narg = Vec::new();
+        narg.extend_from_slice(&32u64.to_le_bytes());
+        narg.extend_from_slice(&[0xff; 32]);
+
+        let mut verifier = verifier_transcript(SESSION, [0x33; 32], Bl::default(), &narg);
+        assert!(FsNargRead::<Fr>::read_field_slice(&mut verifier).is_err());
     }
 }

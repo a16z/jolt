@@ -3,7 +3,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use jolt_field::Field;
 
 use crate::JoltGroup;
@@ -147,6 +147,33 @@ impl CanonicalSerialize for Bn254GT {
     #[inline]
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
         self.0.serialized_size(compress)
+    }
+}
+
+impl Valid for Bn254GT {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.0 == Fq12::ZERO {
+            return Err(SerializationError::InvalidData);
+        }
+        if self.0.pow(Fr::MODULUS) != Fq12::ONE {
+            return Err(SerializationError::InvalidData);
+        }
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for Bn254GT {
+    #[inline]
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = Self(Fq12::deserialize_with_mode(reader, compress, validate)?);
+        if matches!(validate, ark_serialize::Validate::Yes) {
+            value.check()?;
+        }
+        Ok(value)
     }
 }
 

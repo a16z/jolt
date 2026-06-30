@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use dory::backends::arkworks::{
     ArkDoryProof, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
 };
@@ -54,6 +54,24 @@ impl CanonicalSerialize for DoryCommitment {
     #[inline]
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
         self.0.serialized_size(compress)
+    }
+}
+
+impl Valid for DoryCommitment {
+    #[inline]
+    fn check(&self) -> Result<(), SerializationError> {
+        self.0.check()
+    }
+}
+
+impl CanonicalDeserialize for DoryCommitment {
+    #[inline]
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, SerializationError> {
+        Bn254GT::deserialize_with_mode(reader, compress, validate).map(Self)
     }
 }
 
