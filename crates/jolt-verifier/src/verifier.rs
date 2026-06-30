@@ -45,6 +45,7 @@ pub fn verify<F, PCS, VC, H>(
     proof: &JoltProof<PCS>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
+    transcript_session: &[u8],
 ) -> Result<(), VerifierError>
 where
     F: Field,
@@ -62,7 +63,8 @@ where
     validate_proof_config(ZkConfig::from_bool(zk), proof)?;
 
     let instance = proof_transcript_instance(preprocessing, public_io, proof);
-    let mut transcript = verifier_transcript(b"Jolt", instance, H::default(), &proof.narg);
+    let mut transcript =
+        verifier_transcript(transcript_session, instance, H::default(), &proof.narg);
     let narg_commitments = read_proof_commitments_from_narg(proof, &mut transcript)?;
     let checked = validate_inputs(
         preprocessing,
@@ -198,6 +200,7 @@ pub fn verify_until_stage1<'a, PCS, VC, H>(
     proof: &'a JoltProof<PCS>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
+    transcript_session: &[u8],
 ) -> Result<PreStage1VerifierState<VerifierState<'a, H>, PCS::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -211,7 +214,8 @@ where
     validate_proof_config(ZkConfig::from_bool(zk), proof)?;
 
     let instance = proof_transcript_instance(preprocessing, public_io, proof);
-    let mut transcript = verifier_transcript(b"Jolt", instance, H::default(), &proof.narg);
+    let mut transcript =
+        verifier_transcript(transcript_session, instance, H::default(), &proof.narg);
     let narg_commitments = read_proof_commitments_from_narg(proof, &mut transcript)?;
     let checked = validate_inputs(
         preprocessing,
@@ -964,7 +968,8 @@ mod tests {
                 &public_io,
                 &proof,
                 None,
-                false
+                false,
+                jolt_transcript::DEFAULT_JOLT_SESSION,
             ),
             Err(VerifierError::MalformedNarg)
         ));

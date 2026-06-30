@@ -25,6 +25,7 @@ pub use jolt_prover_legacy::zkvm::{
     Serializable,
 };
 pub use jolt_prover_legacy::AdviceTape;
+pub use jolt_transcript::DEFAULT_JOLT_SESSION;
 
 #[cfg(feature = "host")]
 pub type VerifierPCS = jolt_dory::DoryScheme;

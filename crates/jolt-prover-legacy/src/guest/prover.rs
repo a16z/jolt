@@ -55,6 +55,7 @@ pub fn prove<
     trusted_advice_hint: Option<<PCS as CommitmentScheme>::OpeningProofHint>,
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, C, PCS>,
+    transcript_session: &[u8],
 ) -> Result<
     (
         jolt_verifier::JoltProof<<PCS as ProofCommitmentScheme<F>>::VerifierPcs>,
@@ -81,7 +82,7 @@ where
         None,
     );
     let io_device = prover.program_io.clone();
-    let (proof, debug_info) = prover.prove()?;
+    let (proof, debug_info) = prover.prove(transcript_session)?;
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
     Ok((proof, io_device, debug_info))
 }

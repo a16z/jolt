@@ -19,8 +19,6 @@ use std::{
     sync::Arc,
 };
 
-const UNBOUND_TRANSCRIPT_INSTANCE: [u8; 32] = [u8::MAX; 32];
-
 #[cfg(not(feature = "zk"))]
 use crate::poly::commitment::dory::bind_opening_inputs;
 #[cfg(feature = "zk")]
@@ -209,7 +207,7 @@ pub struct JoltCpuProver<
     program_image_reduction_prover: Option<ProgramImageClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
-    pub transcript: ProverState<H, StdRng>,
+    transcript: Option<ProverState<H, StdRng>>,
     pub opening_accumulator: ProverOpeningAccumulator<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub initial_ram_state: Vec<u64>,
@@ -453,9 +451,6 @@ where
             )
             .next_power_of_two() as usize;
 
-        // Placeholder transcript: `prove()` rebuilds it with the real statement
-        // instance once the Dory layout is known.
-        let transcript = prover_transcript(b"Jolt", UNBOUND_TRANSCRIPT_INSTANCE, H::default());
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
 
         let spartan_key = UniformSpartanKey::new(trace.len());
@@ -496,7 +491,7 @@ where
             program_image_reduction_prover: None,
             unpadded_trace_len,
             padded_trace_len,
-            transcript,
+            transcript: None,
             opening_accumulator,
             spartan_key,
             initial_ram_state,
@@ -513,7 +508,20 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_parts(mut self) -> (JoltProofParts<F, PCS>, Option<ProverDebugInfo<F, PCS>>) {
+    #[expect(
+        clippy::expect_used,
+        reason = "prove initializes the transcript before any proof stage can read it"
+    )]
+    fn transcript(transcript: &mut Option<ProverState<H, StdRng>>) -> &mut ProverState<H, StdRng> {
+        transcript
+            .as_mut()
+            .expect("prover transcript must be initialized before proof stages")
+    }
+
+    fn prove_parts(
+        mut self,
+        transcript_session: &[u8],
+    ) -> (JoltProofParts<F, PCS>, Option<ProverDebugInfo<F, PCS>>) {
         let _pprof_prove = pprof_scope!("prove");
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -528,7 +536,11 @@ where
             trace_polynomial_order,
         };
         let instance = jolt_verifier::transcript_instance(&checked, transcript_config);
-        self.transcript = prover_transcript(b"Jolt", instance, H::default());
+        self.transcript = Some(prover_transcript(
+            transcript_session,
+            instance,
+            H::default(),
+        ));
 
         tracing::info!(
             "bytecode size: {}",
@@ -561,11 +573,11 @@ where
         if let Some(bytecode_commitments) = self.preprocessing.shared.program.bytecode_commitments()
         {
             for commitment in &bytecode_commitments.commitments {
-                self.transcript.absorb(commitment);
+                Self::transcript(&mut self.transcript).absorb(commitment);
             }
         }
         if let Some(program_commitments) = self.preprocessing.shared.program.program_commitments() {
-            self.transcript
+            Self::transcript(&mut self.transcript)
                 .absorb(&program_commitments.program_image_commitment);
         }
 
@@ -607,7 +619,9 @@ where
         // Full prover NARG exported by the proof bridge. The modular verifier
         // consumes prover-only round payloads from this stream at their
         // Fiat-Shamir positions.
-        let narg = self.transcript.narg_string().to_vec();
+        let narg = Self::transcript(&mut self.transcript)
+            .narg_string()
+            .to_vec();
 
         #[cfg(test)]
         let debug_info = Some(ProverDebugInfo {
@@ -649,6 +663,7 @@ where
     )]
     pub fn prove(
         self,
+        transcript_session: &[u8],
     ) -> Result<
         (
             jolt_verifier::JoltProof<
@@ -664,7 +679,7 @@ where
         PCS: crate::zkvm::proof::ProofCommitmentScheme<F>,
         <PCS::VerifierPcs as jolt_crypto::Commitment>::Output: CanonicalSerialize + Clone,
     {
-        let (proof, debug_info) = self.prove_parts();
+        let (proof, debug_info) = self.prove_parts(transcript_session);
         let proof = crate::zkvm::proof::proof_parts_into_verifier(proof)?;
         Ok((proof, debug_info))
     }
@@ -680,7 +695,7 @@ where
                 instances,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
                 &self.pedersen_generators,
                 &mut rng,
             )
@@ -690,7 +705,7 @@ where
             let (proof, r, claim) = BatchedSumcheck::prove(
                 instances,
                 &mut self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
             (SumcheckInstanceProof::Clear(proof), r, claim)
         }
@@ -707,7 +722,7 @@ where
                 instance,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
                 &self.pedersen_generators,
                 &mut rng,
             );
@@ -718,7 +733,7 @@ where
             let proof = prove_uniskip_round(
                 instance,
                 &mut self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
             UniSkipFirstRoundProofVariant::Standard(proof)
         }
@@ -836,7 +851,7 @@ where
 
         // Witness commitments are prover-only proof payload. Write them as one
         // NARG frame; the modular verifier reads the same frame before stage 1.
-        self.transcript.write_slice(&commitments);
+        Self::transcript(&mut self.transcript).write_slice(&commitments);
 
         (commitments, hint_map)
     }
@@ -845,7 +860,7 @@ where
         if self.program_io.untrusted_advice.is_empty() {
             // Always write the advice presence frame so the verifier consumes one
             // fixed NARG position whether advice is present or absent.
-            self.transcript.write_slice::<PCS::Commitment>(&[]);
+            Self::transcript(&mut self.transcript).write_slice::<PCS::Commitment>(&[]);
             return None;
         }
 
@@ -869,8 +884,7 @@ where
             DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript
-            .write_slice(std::slice::from_ref(&commitment));
+        Self::transcript(&mut self.transcript).write_slice(std::slice::from_ref(&commitment));
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -895,7 +909,7 @@ where
 
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
         self.advice.trusted_advice_polynomial = Some(poly);
-        self.transcript
+        Self::transcript(&mut self.transcript)
             .absorb(self.advice.trusted_advice_commitment.as_ref().unwrap());
     }
 
@@ -916,7 +930,8 @@ where
         print_current_memory_usage("Stage 1 baseline");
 
         tracing::info!("Stage 1 proving");
-        let uni_skip_params = OuterUniSkipParams::new(&self.spartan_key, &mut self.transcript);
+        let uni_skip_params =
+            OuterUniSkipParams::new(&self.spartan_key, Self::transcript(&mut self.transcript));
         let mut uni_skip = OuterUniSkipProver::initialize(
             uni_skip_params.clone(),
             &self.trace,
@@ -957,15 +972,17 @@ where
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 2 baseline");
 
-        let uni_skip_params =
-            ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript);
+        let uni_skip_params = ProductVirtualUniSkipParams::new(
+            &self.opening_accumulator,
+            Self::transcript(&mut self.transcript),
+        );
         let mut uni_skip =
             ProductVirtualUniSkipProver::initialize(uni_skip_params.clone(), &self.trace);
         let first_round_proof = self.prove_uniskip(&mut uni_skip);
 
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
             &self.one_hot_params,
             self.trace.len(),
             &self.rw_config,
@@ -979,7 +996,7 @@ where
             InstructionLookupsClaimReductionSumcheckParams::new(
                 self.trace.len(),
                 &self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
         let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
@@ -991,7 +1008,7 @@ where
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
             &self.program_io,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
             self.trace.len(),
             &self.rw_config,
         );
@@ -1069,14 +1086,16 @@ where
         let spartan_shift_params = ShiftSumcheckParams::new(
             self.trace.len().log_2(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
-        let spartan_instruction_input_params =
-            InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript);
+        let spartan_instruction_input_params = InstructionInputParams::new(
+            &self.opening_accumulator,
+            Self::transcript(&mut self.transcript),
+        );
         let spartan_registers_claim_reduction_params = RegistersClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         let spartan_shift = ShiftSumcheckProver::initialize(
@@ -1133,7 +1152,7 @@ where
         let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
             self.trace.len(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
             &self.rw_config,
         );
         prover_accumulate_advice(
@@ -1152,7 +1171,7 @@ where
             );
         }
         // Domain-separate the batching challenge.
-        let ram_val_check_gamma: F = self.transcript.challenge_field();
+        let ram_val_check_gamma: F = Self::transcript(&mut self.transcript).challenge_field();
         let ram_val_check_params = RamValCheckSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -1214,13 +1233,13 @@ where
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let ram_ra_reduction_params = RaReductionParams::new(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
@@ -1288,14 +1307,14 @@ where
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
             bytecode_read_raf_params,
@@ -1361,12 +1380,12 @@ where
         let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let inc_reduction_params = IncClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
@@ -1434,7 +1453,7 @@ where
                 bytecode_chunk_count,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
             let bytecode_chunk_coeffs = build_committed_bytecode_chunk_coeffs(
                 &self.preprocessing.materialized_program().bytecode.bytecode,
@@ -2003,7 +2022,12 @@ where
         let prover =
             BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
 
-        prover.prove(&real_instance, &real_witness, &z, &mut self.transcript)
+        prover.prove(
+            &real_instance,
+            &real_witness,
+            &z,
+            Self::transcript(&mut self.transcript),
+        )
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
@@ -2014,7 +2038,7 @@ where
         let hw_params = HammingWeightClaimReductionParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let hw_prover = HammingWeightClaimReductionProver::initialize(
             hw_params,
@@ -2286,9 +2310,10 @@ where
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
         for claim in &claims {
-            self.transcript.absorb(claim);
+            Self::transcript(&mut self.transcript).absorb(claim);
         }
-        let gamma_powers: Vec<F> = self.transcript.challenge_powers(claims.len());
+        let gamma_powers: Vec<F> =
+            Self::transcript(&mut self.transcript).challenge_powers(claims.len());
         #[cfg(feature = "zk")]
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
@@ -2354,13 +2379,17 @@ where
             &joint_poly,
             &opening_point.r,
             Some(hint),
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         #[cfg(feature = "zk")]
         {
             let y_com: C::G1 = PCS::eval_commitment(&proof).expect("ZK proof must have y_com");
-            bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
+            bind_opening_inputs_zk::<F, C, _>(
+                Self::transcript(&mut self.transcript),
+                &opening_point.r,
+                &y_com,
+            );
             self.blindfold_accumulator.set_opening_proof_data(
                 crate::subprotocols::blindfold::OpeningProofData {
                     opening_ids,
@@ -2372,7 +2401,11 @@ where
         }
         #[cfg(not(feature = "zk"))]
         {
-            bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
+            bind_opening_inputs::<F, _>(
+                Self::transcript(&mut self.transcript),
+                &opening_point.r,
+                &joint_claim,
+            );
         }
 
         proof
@@ -2737,6 +2770,7 @@ mod tests {
         proof: VerifierRV64IMACProof,
         public_io: common::jolt_device::JoltDevice,
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+        transcript_session: &[u8],
     ) -> Result<(), jolt_verifier::VerifierError> {
         let preprocessing = verifier_preprocessing_from_prover(preprocessing);
         let trusted_advice_commitment = trusted_advice_commitment
@@ -2753,6 +2787,7 @@ mod tests {
             &proof,
             trusted_advice_commitment.as_ref(),
             cfg!(feature = "zk"),
+            transcript_session,
         )
     }
 
@@ -2762,8 +2797,14 @@ mod tests {
         public_io: common::jolt_device::JoltDevice,
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
     ) {
-        canonical_verify_result(preprocessing, proof, public_io, trusted_advice_commitment)
-            .expect("canonical verifier rejected prover-native proof");
+        canonical_verify_result(
+            preprocessing,
+            proof,
+            public_io,
+            trusted_advice_commitment,
+            jolt_transcript::DEFAULT_JOLT_SESSION,
+        )
+        .expect("canonical verifier rejected prover-native proof");
     }
 
     #[cfg(feature = "zk")]
@@ -2840,7 +2881,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -2885,9 +2926,65 @@ mod tests {
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
+    }
+
+    #[test]
+    #[serial]
+    #[cfg(not(feature = "zk"))]
+    fn custom_transcript_session_e2e_dory() {
+        const SESSION: &[u8] = b"jolt-test/custom-session";
+
+        DoryGlobals::reset();
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&5u32).unwrap();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            8192,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, _debug_info) = prover
+            .prove(SESSION)
+            .expect("prover should produce verifier-native proof");
+
+        canonical_verify_result(
+            &prover_preprocessing,
+            jolt_proof.clone(),
+            io_device.clone(),
+            None,
+            SESSION,
+        )
+        .expect("custom transcript session should verify");
+
+        assert!(canonical_verify_result(
+            &prover_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            b"jolt-test/wrong-session",
+        )
+        .is_err());
     }
 
     #[test]
@@ -2923,7 +3020,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device.clone(), None);
         assert_eq!(
@@ -2972,7 +3069,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device.clone(), None);
         let expected_output = &[
@@ -3030,7 +3127,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,
@@ -3097,7 +3194,7 @@ mod tests {
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,
@@ -3149,7 +3246,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,
@@ -3211,7 +3308,7 @@ mod tests {
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         let debug_info = debug_info.expect("expected debug_info in tests");
 
@@ -3296,7 +3393,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3333,7 +3430,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3370,7 +3467,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3412,7 +3509,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3470,7 +3567,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3511,7 +3608,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3551,7 +3648,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native ZK proof");
 
         assert!(
@@ -3594,7 +3691,7 @@ mod tests {
         );
 
         let (proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
 
         verify_verifier_proof(&prover_preprocessing, proof, program_io, None);
@@ -3637,7 +3734,7 @@ mod tests {
             final_memory_state,
         );
         let (proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
 
         verify_verifier_proof(&prover_preprocessing, proof, program_io, None);
@@ -3676,7 +3773,7 @@ mod tests {
             final_memory_state,
         );
         let (proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
 
         let original_entry_index = original_program.entry_bytecode_index();
@@ -3699,8 +3796,14 @@ mod tests {
         );
         let tampered_prover_preprocessing = JoltProverPreprocessing::new(tampered_shared);
         assert!(
-            canonical_verify_result(&tampered_prover_preprocessing, proof, program_io, None)
-                .is_err(),
+            canonical_verify_result(
+                &tampered_prover_preprocessing,
+                proof,
+                program_io,
+                None,
+                jolt_transcript::DEFAULT_JOLT_SESSION,
+            )
+            .is_err(),
             "verifier accepted proof: prover used entry_bytecode_index {original_entry_index}, \
              verifier expected {tampered_entry_index} — entry constraint not enforced"
         );
@@ -3865,7 +3968,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, proof, io_device, None);
     }
@@ -3913,7 +4016,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,

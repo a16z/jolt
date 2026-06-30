@@ -74,6 +74,7 @@ where
         proof,
         trusted_advice_commitment,
         true,
+        jolt_transcript::DEFAULT_JOLT_SESSION,
     )?;
     let checked = state.checked;
     let narg_commitments = state.narg_commitments;

@@ -23,7 +23,7 @@ pub use messages::{
     deserialize_slice, serialize_slice, FsAbsorb, FsChallenge, FsNargRead, FsNargWrite,
     FsTranscript,
 };
-pub use setup::{prover_transcript, verifier_transcript};
+pub use setup::{prover_transcript, verifier_transcript, DEFAULT_JOLT_SESSION};
 
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;

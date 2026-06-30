@@ -158,6 +158,7 @@ impl VerifierFixtureCase {
             &self.proof,
             self.trusted_advice_commitment.as_ref(),
             false,
+            jolt_transcript::DEFAULT_JOLT_SESSION,
         )
     }
 }
@@ -179,6 +180,7 @@ impl ZkVerifierFixtureCase {
             &self.proof,
             None,
             true,
+            jolt_transcript::DEFAULT_JOLT_SESSION,
         )
     }
 }
@@ -528,6 +530,7 @@ fn assert_verifier_accepts(
         &proof,
         fixture.trusted_advice_commitment.as_ref(),
         cfg!(feature = "zk"),
+        jolt_transcript::DEFAULT_JOLT_SESSION,
     );
     assert!(
         result.is_ok(),
@@ -547,6 +550,7 @@ fn assert_verifier_rejects(
         &proof,
         fixture.trusted_advice_commitment.as_ref(),
         false,
+        jolt_transcript::DEFAULT_JOLT_SESSION,
     );
     assert!(
         result.is_err(),
@@ -666,7 +670,9 @@ fn generate_committed_muldiv() -> GeneratedVerifierFixture {
         None,
     );
     let public_io = prover.program_io.clone();
-    let (proof, _) = prover.prove().expect("prove verifier object fixture");
+    let (proof, _) = prover
+        .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
+        .expect("prove verifier object fixture");
     let preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
 
     GeneratedVerifierFixture {
@@ -720,7 +726,9 @@ fn generate_verifier_fixture(
         None,
     );
     let public_io = prover.program_io.clone();
-    let (proof, _) = prover.prove().expect("prove verifier object fixture");
+    let (proof, _) = prover
+        .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
+        .expect("prove verifier object fixture");
     let preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
 
     GeneratedVerifierFixture {

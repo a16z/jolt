@@ -28,6 +28,9 @@ use crate::codec::BytesMsg;
 /// Crate-wide spongefish protocol identifier (ASCII left, zero-padded to 64 bytes).
 const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/v1");
 
+/// Backward-compatible default Jolt transcript session.
+pub const DEFAULT_JOLT_SESSION: &[u8] = b"Jolt";
+
 const fn pad_id(src: &[u8]) -> [u8; 64] {
     assert!(src.len() <= 64, "protocol id exceeds 64 bytes");
     let mut buf = [0u8; 64];

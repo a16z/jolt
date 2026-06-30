@@ -298,6 +298,7 @@ impl MacroBuilder {
                         &proof,
                         #commitment_arg_in_verify,
                         jolt::_ZK_FEATURE_ENABLED,
+                        jolt::DEFAULT_JOLT_SESSION,
                     ).is_ok()
                 };
 
@@ -950,7 +951,7 @@ impl MacroBuilder {
                     advice_tape,
                 );
                 let io_device = prover.program_io.clone();
-                let (jolt_proof, _) = prover.prove()
+                let (jolt_proof, _) = prover.prove(jolt::DEFAULT_JOLT_SESSION)
                     .expect("prover should produce verifier-native proof");
 
                 #handle_return
@@ -1419,6 +1420,7 @@ impl MacroBuilder {
                     &proof,
                     None,
                     jolt::_ZK_FEATURE_ENABLED,
+                    jolt::DEFAULT_JOLT_SESSION,
                 ).is_ok()
             }
         }
