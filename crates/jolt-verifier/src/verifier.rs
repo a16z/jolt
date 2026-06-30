@@ -789,13 +789,6 @@ mod tests {
         ) -> Result<(), OpeningsError> {
             Ok(())
         }
-
-        fn bind_opening_inputs(
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
-            _point: &[Self::Field],
-            _eval: &Self::Field,
-        ) {
-        }
     }
 
     impl jolt_transcript::AppendToTranscript for TestCommitment {

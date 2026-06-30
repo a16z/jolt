@@ -18,7 +18,7 @@ use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, Pedersen
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::Transcript;
 use rayon::prelude::*;
 
 use crate::transcript::JoltToDoryTranscript;
@@ -240,19 +240,6 @@ impl CommitmentScheme for DoryScheme {
         )
         .map_err(|_| OpeningsError::VerificationFailed)
     }
-
-    fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        eval: &Self::Field,
-    ) {
-        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"dory_opening_eval"));
-        eval.append_to_transcript(transcript);
-    }
 }
 
 impl AdditivelyHomomorphic for DoryScheme {
@@ -380,19 +367,6 @@ impl ZkOpeningScheme for DoryScheme {
         .map_err(|_| OpeningsError::VerificationFailed)?;
 
         Ok(hiding_commitment)
-    }
-
-    fn bind_zk_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        hiding_commitment: &Self::HidingCommitment,
-    ) {
-        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"dory_eval_commitment"));
-        hiding_commitment.append_to_transcript(transcript);
     }
 }
 

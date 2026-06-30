@@ -61,8 +61,8 @@ pub struct Stage8FinalOpeningStructure<F: Field> {
     pub scaled_opening_values: Vec<F>,
     pub constraint_coefficients: Vec<F>,
     /// Unified big-endian opening point, low-to-high stored as `HIGH_TO_LOW`.
-    /// Identical to [`Self::pcs_opening_point`]; both carry the same point so the
-    /// prover's `bind_opening_inputs` matches the verifier exactly.
+    /// Identical to [`Self::pcs_opening_point`]; both carry the same point so
+    /// prover and verifier append the same opening claim to the transcript.
     pub opening_point: Point<HIGH_TO_LOW, F>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
     pub joint_claim: F,

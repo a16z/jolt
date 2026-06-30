@@ -14,7 +14,7 @@ use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetu
 use jolt_field::{FromPrimitiveInt, RandomSampling};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
 
@@ -309,22 +309,6 @@ where
     ) -> Result<(), OpeningsError> {
         Self::verify(setup, commitment, point, &eval, proof, transcript)
             .map_err(|_| OpeningsError::VerificationFailed)
-    }
-
-    fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        eval: &Self::Field,
-    ) {
-        transcript.append(&LabelWithCount(
-            b"hyperkzg_opening_point",
-            point.len() as u64,
-        ));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"hyperkzg_opening_eval"));
-        eval.append_to_transcript(transcript);
     }
 }
 
