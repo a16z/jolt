@@ -229,6 +229,10 @@ where
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
+#[expect(
+    clippy::type_complexity,
+    reason = "the two-generic clear-claims tuple is clearer inline than via a type alias"
+)]
 fn batch_entries<'a, F, PCS, VC, ZkProof>(
     preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
     proof: &'a JoltProof<PCS, VC, ZkProof>,
@@ -238,7 +242,10 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(&Stage6OutputClaims<F>, &Stage7OutputClaims<OpeningClaim<F>>)>,
+    clear_claims: Option<(
+        &Stage6OutputClaims<F>,
+        &Stage7OutputClaims<F, OpeningClaim<F>>,
+    )>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,

@@ -456,7 +456,7 @@ fn final_bytecode_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<
 
 fn stage7_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage7OutputClaims<F>, VerifierError> {
+) -> Result<Stage7OutputClaims<F, F>, VerifierError> {
     let mut instruction_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
