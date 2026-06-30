@@ -62,29 +62,29 @@ impl<F: Field> ClearRound<F> for UnivariatePoly<F> {
 /// Borrowed round-polynomial wrapper. Rounds are domain-separated positionally
 /// (and by the transcript's one-time `DomainSeparator`/instance), matching
 /// jolt-core — no per-round label is absorbed.
-pub struct LabeledRoundPoly<'a, F: Field> {
+pub struct RoundPoly<'a, F: Field> {
     poly: &'a UnivariatePoly<F>,
 }
 
-impl<'a, F: Field> LabeledRoundPoly<'a, F> {
+impl<'a, F: Field> RoundPoly<'a, F> {
     pub fn new(poly: &'a UnivariatePoly<F>) -> Self {
         Self { poly }
     }
 }
 
-impl<F: Field> RoundDegree for LabeledRoundPoly<'_, F> {
+impl<F: Field> RoundDegree for RoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundDegree>::degree(self.poly)
     }
 }
 
-impl<F: Field> RoundMessage<F> for LabeledRoundPoly<'_, F> {
+impl<F: Field> RoundMessage<F> for RoundPoly<'_, F> {
     fn append_to_transcript<T: FsTranscript<F>>(&self, transcript: &mut T) {
         transcript.absorb_field_slice(self.poly.coefficients());
     }
 }
 
-impl<F: Field> ClearRound<F> for LabeledRoundPoly<'_, F> {
+impl<F: Field> ClearRound<F> for RoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }
@@ -97,26 +97,26 @@ impl<F: Field> ClearRound<F> for LabeledRoundPoly<'_, F> {
     }
 }
 
-/// Compressed round polynomial with label. Wire format omits the linear
+/// Compressed positional round polynomial. Wire format omits the linear
 /// coefficient `c_1`; the verifier recovers it from the sum-check invariant
 /// `running_sum = s(0) + s(1) = 2·c_0 + c_1 + c_2 + … + c_d`.
-pub struct CompressedLabeledRoundPoly<'a, F: Field> {
+pub struct CompressedRoundPoly<'a, F: Field> {
     poly: &'a UnivariatePoly<F>,
 }
 
-impl<'a, F: Field> CompressedLabeledRoundPoly<'a, F> {
+impl<'a, F: Field> CompressedRoundPoly<'a, F> {
     pub fn new(poly: &'a UnivariatePoly<F>) -> Self {
         Self { poly }
     }
 }
 
-impl<F: Field> RoundDegree for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field> RoundDegree for CompressedRoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundDegree>::degree(self.poly)
     }
 }
 
-impl<F: Field> RoundMessage<F> for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field> RoundMessage<F> for CompressedRoundPoly<'_, F> {
     fn append_to_transcript<T: FsTranscript<F>>(&self, transcript: &mut T) {
         // Absorb the compressed coefficients (linear term c1 omitted) as ONE message,
         // matching the verifier's `absorb_field_slice(coeffs_except_linear_term)`.
@@ -128,7 +128,7 @@ impl<F: Field> RoundMessage<F> for CompressedLabeledRoundPoly<'_, F> {
     }
 }
 
-impl<F: Field> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field> ClearRound<F> for CompressedRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }

@@ -54,8 +54,8 @@
 //! - [`RoundMessage`] — transcript absorption (over a challenge field `F`).
 //! - [`ClearRound<F>`] — clear round polynomial evaluation and well-formedness.
 //! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw round-coefficient absorb.
-//! - [`LabeledRoundPoly`] — borrowed round-polynomial wrapper.
-//! - [`CompressedLabeledRoundPoly`] — borrowed wrapper using the compressed
+//! - [`RoundPoly`] — borrowed round-polynomial wrapper.
+//! - [`CompressedRoundPoly`] — borrowed wrapper using the compressed
 //!   wire format (omits the linear coefficient).
 //!
 //! # Dependency position
@@ -111,8 +111,6 @@ pub use r1cs::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
-pub use round_proof::{
-    ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundDegree, RoundMessage,
-};
+pub use round_proof::{ClearRound, CompressedRoundPoly, RoundDegree, RoundMessage, RoundPoly};
 pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;

@@ -19,7 +19,7 @@ use crate::committed::{
 };
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
-use crate::round_proof::{ClearRound, CompressedLabeledRoundPoly, RoundDegree, RoundMessage};
+use crate::round_proof::{ClearRound, CompressedRoundPoly, RoundDegree, RoundMessage};
 use crate::verifier::SumcheckVerifier;
 use crate::{
     append_sumcheck_claim, BatchedSumcheckVerifier, BooleanHypercube, CenteredIntegerDomain,
@@ -61,7 +61,7 @@ fn honest_prove<T: FsTranscript<F>>(
         let c1 = eval_1 - eval_0;
         let round_poly = UnivariatePoly::new(vec![c0, c1]);
 
-        // Absorb through the same path the unlabelled verifier uses.
+        // Absorb through the same path the positional verifier uses.
         <UnivariatePoly<F> as RoundMessage<F>>::append_to_transcript(&round_poly, transcript);
 
         let r: F = transcript.challenge();
@@ -79,7 +79,7 @@ fn honest_prove<T: FsTranscript<F>>(
     }
 }
 
-fn honest_prove_compressed_labeled<T: FsTranscript<F>>(
+fn honest_prove_compressed_positional<T: FsTranscript<F>>(
     evals: &[F],
     num_vars: usize,
     transcript: &mut T,
@@ -99,8 +99,8 @@ fn honest_prove_compressed_labeled<T: FsTranscript<F>>(
         }
 
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
-        let compressed = CompressedLabeledRoundPoly::new(&round_poly);
-        <CompressedLabeledRoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(
+        let compressed = CompressedRoundPoly::new(&round_poly);
+        <CompressedRoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(
             &compressed,
             transcript,
         );
@@ -441,7 +441,7 @@ fn clear_round_verifier_no_label() {
     t2.absorb_field_slice(poly.coefficients());
     let c2: F = FsChallenge::<F>::challenge(&mut t2);
 
-    assert_eq!(c1, c2, "unlabeled absorption must match manual absorption");
+    assert_eq!(c1, c2, "positional absorption must match manual absorption");
 }
 
 #[test]
@@ -449,13 +449,10 @@ fn clear_round_verifier_compressed_matches_manual_absorption() {
     // s(X) = 2 + 3*X + 5*X^2  ⇒  s(0) = 2, s(1) = 10, running_sum = 12.
     // Sanity: 2*c0 + c1 + c2 = 2*2 + 3 + 5 = 12.
     let poly = UnivariatePoly::new(vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)]);
-    let compressed = CompressedLabeledRoundPoly::new(&poly);
+    let compressed = CompressedRoundPoly::new(&poly);
 
     let mut t1 = prover_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default());
-    <CompressedLabeledRoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(
-        &compressed,
-        &mut t1,
-    );
+    <CompressedRoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(&compressed, &mut t1);
     let ch1: F = FsChallenge::<F>::challenge(&mut t1);
 
     // Manual absorb matching the compressed wire format: [c0, c2..cd] as one message.
@@ -478,7 +475,7 @@ fn clear_round_verifier_compressed_rejects_wrong_running_sum() {
     // (s(0) + s(1) == running_sum) still binds every coefficient.
     let poly = UnivariatePoly::new(vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)]);
     let wrong_running_sum = F::from_u64(999);
-    let compressed = CompressedLabeledRoundPoly::new(&poly);
+    let compressed = CompressedRoundPoly::new(&poly);
 
     let result = BooleanHypercube.check_round_sum(0, wrong_running_sum, &compressed);
     assert!(
@@ -495,7 +492,7 @@ fn clear_round_verifier_compressed_rejects_short_polynomial() {
     // Compressed encoding omits the linear term; a polynomial with fewer than
     // two coefficients has no linear term to recover and is malformed.
     let degree_zero = UnivariatePoly::new(vec![F::from_u64(7)]);
-    let compressed = CompressedLabeledRoundPoly::new(&degree_zero);
+    let compressed = CompressedRoundPoly::new(&degree_zero);
 
     let result = BooleanHypercube.check_round_sum(3, F::from_u64(14), &compressed);
     assert!(
@@ -516,7 +513,7 @@ fn owned_compressed_verify_matches_borrowed_compressed_rounds() {
     let mut prover_transcript =
         prover_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default());
     let (clear_proof, compressed_proof) =
-        honest_prove_compressed_labeled(&evals, num_vars, &mut prover_transcript);
+        honest_prove_compressed_positional(&evals, num_vars, &mut prover_transcript);
     let claim = SumcheckClaim {
         num_vars,
         degree: 1,
@@ -526,7 +523,7 @@ fn owned_compressed_verify_matches_borrowed_compressed_rounds() {
     let wrapped = clear_proof
         .round_polynomials
         .iter()
-        .map(CompressedLabeledRoundPoly::new)
+        .map(CompressedRoundPoly::new)
         .collect::<Vec<_>>();
     let mut borrowed_transcript =
         verifier_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default(), &[]);
@@ -913,7 +910,7 @@ fn batched_compressed_verify_uses_core_batching_statement() {
         .map(|(&a, &b)| batching_coefficients[0] * a + batching_coefficients[1] * b)
         .collect();
     let (_full_proof, compressed_proof) =
-        honest_prove_compressed_labeled(&combined, 3, &mut prover_transcript);
+        honest_prove_compressed_positional(&combined, 3, &mut prover_transcript);
 
     let mut verifier_transcript =
         verifier_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default(), &[]);
@@ -966,7 +963,7 @@ fn batched_sumcheck_proof_verify_dispatches_compressed_clear() {
     append_sumcheck_claim(&mut prover_transcript, &claim.claimed_sum);
     let _batching_coefficient: F = FsChallenge::<F>::challenge_scalar(&mut prover_transcript);
     let (_full_proof, compressed_proof) =
-        honest_prove_compressed_labeled(&evals, 2, &mut prover_transcript);
+        honest_prove_compressed_positional(&evals, 2, &mut prover_transcript);
     let proof = SumcheckProof::<F, F>::Clear(ClearProof::Compressed(compressed_proof));
 
     let mut verifier_transcript = verifier_transcript(

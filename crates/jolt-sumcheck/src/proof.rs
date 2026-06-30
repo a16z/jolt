@@ -5,7 +5,7 @@ use crate::{
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
     domain::{BooleanHypercube, SumcheckDomain},
     error::SumcheckError,
-    round_proof::LabeledRoundPoly,
+    round_proof::RoundPoly,
     verifier::SumcheckVerifier,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -97,7 +97,7 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
                 let rounds = proof
                     .round_polynomials
                     .iter()
-                    .map(|poly| LabeledRoundPoly::new(poly))
+                    .map(|poly| RoundPoly::new(poly))
                     .collect::<Vec<_>>();
                 SumcheckVerifier::verify(claim, &rounds, domain, transcript)
             }

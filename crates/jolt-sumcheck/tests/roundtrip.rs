@@ -10,7 +10,7 @@ use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::ClearSumcheckProof;
-use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
+use jolt_sumcheck::round_proof::{CompressedRoundPoly, RoundMessage, RoundPoly};
 use jolt_sumcheck::{BatchedSumcheckVerifier, BooleanHypercube, SumcheckVerifier};
 use jolt_transcript::{
     prover_transcript, verifier_transcript, Blake2b512, FsAbsorb, FsChallenge, FsTranscript,
@@ -76,7 +76,7 @@ fn prove_product<T: FsTranscript<F>>(
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        // Absorb through the same path the unlabelled verifier uses.
+        // Absorb through the same path the positional verifier uses.
         <UnivariatePoly<F> as RoundMessage<F>>::append_to_transcript(&round_poly, transcript);
 
         let r: F = transcript.challenge();
@@ -359,7 +359,7 @@ fn large_num_vars_roundtrip() {
 #[test]
 fn compressed_round_verifier_roundtrip() {
     // Full prover-verifier roundtrip where both the prover and the verifier
-    // absorb through `CompressedLabeledRoundPoly` — the wrapper is the
+    // absorb through `CompressedRoundPoly` — the wrapper is the
     // single source of truth for the compressed wire format.
     let num_vars = 3;
     let n = 1 << num_vars;
@@ -399,11 +399,8 @@ fn compressed_round_verifier_roundtrip() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        let compressed = CompressedLabeledRoundPoly::new(&round_poly);
-        <CompressedLabeledRoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(
-            &compressed,
-            &mut pt,
-        );
+        let compressed = CompressedRoundPoly::new(&round_poly);
+        <CompressedRoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(&compressed, &mut pt);
 
         let r: F = FsChallenge::<F>::challenge(&mut pt);
         round_polys.push(round_poly);
@@ -425,10 +422,10 @@ fn compressed_round_verifier_roundtrip() {
         claimed_sum,
     };
 
-    let wrapped: Vec<CompressedLabeledRoundPoly<'_, F>> = proof
+    let wrapped: Vec<CompressedRoundPoly<'_, F>> = proof
         .round_polynomials
         .iter()
-        .map(CompressedLabeledRoundPoly::new)
+        .map(CompressedRoundPoly::new)
         .collect();
 
     let mut vt = verifier_transcript(b"sumcheck-roundtrip", INSTANCE, Blake2b512::default(), &[]);
@@ -441,15 +438,15 @@ fn compressed_round_verifier_roundtrip() {
 }
 
 #[test]
-fn labeled_round_verifier_roundtrip() {
-    // Test the labeled round verifier path (used by jolt-verifier)
+fn positional_round_verifier_roundtrip() {
+    // Test the positional round verifier path (used by jolt-verifier)
     let num_vars = 3;
     let n = 1 << num_vars;
 
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
     let g: Vec<F> = (0..n).map(|i| F::from_u64((i + 5) as u64)).collect();
 
-    // Prove with labeled absorption
+    // Prove with positional absorption
     let mut pt = prover_transcript(b"sumcheck-roundtrip", INSTANCE, Blake2b512::default());
     let degree = 2;
     let mut bufs = vec![f.clone(), g.clone()];
@@ -482,8 +479,8 @@ fn labeled_round_verifier_roundtrip() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        let labeled = LabeledRoundPoly::new(&round_poly);
-        <LabeledRoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(&labeled, &mut pt);
+        let round = RoundPoly::new(&round_poly);
+        <RoundPoly<'_, F> as RoundMessage<F>>::append_to_transcript(&round, &mut pt);
 
         let r: F = FsChallenge::<F>::challenge(&mut pt);
         round_polys.push(round_poly);
@@ -506,17 +503,14 @@ fn labeled_round_verifier_roundtrip() {
         claimed_sum,
     };
 
-    let wrapped: Vec<LabeledRoundPoly<'_, F>> = proof
-        .round_polynomials
-        .iter()
-        .map(LabeledRoundPoly::new)
-        .collect();
+    let wrapped: Vec<RoundPoly<'_, F>> =
+        proof.round_polynomials.iter().map(RoundPoly::new).collect();
 
     let mut vt = verifier_transcript(b"sumcheck-roundtrip", INSTANCE, Blake2b512::default(), &[]);
     let result = SumcheckVerifier::verify(&claim, &wrapped, BooleanHypercube, &mut vt);
     assert!(
         result.is_ok(),
-        "labeled round verifier roundtrip failed: {:?}",
+        "positional round verifier roundtrip failed: {:?}",
         result.err()
     );
 }
