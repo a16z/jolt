@@ -210,7 +210,12 @@ where
         })?;
     let (mut output_ids, aliases) = stage6_cycle_output_openings_and_aliases(
         formula_dimensions,
-        &input.stage6.output_points.bytecode_read_raf.bytecode_ra,
+        &input
+            .stage6
+            .output_points
+            .cycle_phase
+            .bytecode_read_raf
+            .bytecode_ra,
         booleanity_opening_point,
     );
     output_ids.extend(map_jolt_opening_ids(

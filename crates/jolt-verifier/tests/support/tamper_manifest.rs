@@ -774,7 +774,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.address_phase.bytecode_read_raf",
-        "claims.stage6.address_phase.bytecode_read_raf",
+        "claims.stage6.address_phase.bytecode_read_raf.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -782,7 +782,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.address_phase.booleanity",
-        "claims.stage6.address_phase.booleanity",
+        "claims.stage6.address_phase.booleanity.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -790,7 +790,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.bytecode_read_raf.bytecode_ra",
-        "claims.stage6.bytecode_read_raf.bytecode_ra",
+        "claims.stage6.cycle_phase.bytecode_read_raf.bytecode_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -798,7 +798,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.booleanity.instruction_ra",
-        "claims.stage6.booleanity.instruction_ra",
+        "claims.stage6.cycle_phase.booleanity.instruction_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -806,7 +806,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.booleanity.bytecode_ra",
-        "claims.stage6.booleanity.bytecode_ra",
+        "claims.stage6.cycle_phase.booleanity.bytecode_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -814,7 +814,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.booleanity.ram_ra",
-        "claims.stage6.booleanity.ram_ra",
+        "claims.stage6.cycle_phase.booleanity.ram_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -822,7 +822,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
-        "claims.stage6.ram_hamming_booleanity.ram_hamming_weight",
+        "claims.stage6.cycle_phase.ram_hamming_booleanity.ram_hamming_weight",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -830,7 +830,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.ram_ra_virtualization.ram_ra",
-        "claims.stage6.ram_ra_virtualization.ram_ra",
+        "claims.stage6.cycle_phase.ram_ra_virtualization.ram_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -838,7 +838,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.instruction_ra_virtualization.committed_instruction_ra",
-        "claims.stage6.instruction_ra_virtualization.committed_instruction_ra",
+        "claims.stage6.cycle_phase.instruction_ra_virtualization.committed_instruction_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -846,7 +846,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.inc_claim_reduction.ram_inc",
-        "claims.stage6.inc_claim_reduction.ram_inc",
+        "claims.stage6.cycle_phase.inc_claim_reduction.ram_inc",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -854,47 +854,71 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.inc_claim_reduction.rd_inc",
-        "claims.stage6.inc_claim_reduction.rd_inc",
+        "claims.stage6.cycle_phase.inc_claim_reduction.rd_inc",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets the register increment reduction output claim",
     ),
     checked_standard(
-        "stage6.claims.advice_cycle_phase.trusted.opening_claim",
-        "claims.stage6.advice_cycle_phase.trusted.opening_claim",
+        "stage6.claims.trusted_advice.trusted",
+        "claims.stage6.cycle_phase.trusted_advice.trusted",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice cycle-phase output claim",
     ),
     checked_standard(
-        "stage6.claims.advice_cycle_phase.untrusted.opening_claim",
-        "claims.stage6.advice_cycle_phase.untrusted.opening_claim",
+        "stage6.claims.untrusted_advice.untrusted",
+        "claims.stage6.cycle_phase.untrusted_advice.untrusted",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice cycle-phase output claim",
     ),
     checked_standard(
+        "stage6.claims.trusted_advice.untrusted",
+        "claims.stage6.cycle_phase.trusted_advice.untrusted",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "trusted advice cycle-phase claim carries only the trusted kind; the untrusted field is structurally always absent",
+    ),
+    checked_standard(
+        "stage6.claims.untrusted_advice.trusted",
+        "claims.stage6.cycle_phase.untrusted_advice.trusted",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "untrusted advice cycle-phase claim carries only the untrusted kind; the trusted field is structurally always absent",
+    ),
+    checked_standard(
         "stage6.claims.address_phase.bytecode_val_stages",
-        "claims.stage6.address_phase.bytecode_val_stages",
+        "claims.stage6.address_phase.bytecode_read_raf.val_stages",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
         "committed fixture test offsets each staged bytecode Val-stage claim",
     ),
     checked_standard(
-        "stage6.claims.bytecode_claim_reduction",
-        "claims.stage6.bytecode_claim_reduction.Intermediate",
+        "stage6.claims.bytecode_reduction.intermediate",
+        "claims.stage6.cycle_phase.bytecode_reduction.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the bytecode reduction cycle-phase output claim",
+        "committed fixture test offsets the bytecode reduction cycle-phase intermediate output claim",
     ),
     checked_standard(
-        "stage6.claims.program_image_claim_reduction",
-        "claims.stage6.program_image_claim_reduction.opening_claim",
+        "stage6.claims.bytecode_reduction.chunks",
+        "claims.stage6.cycle_phase.bytecode_reduction.chunks",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets the bytecode reduction cycle-phase per-chunk output claims",
+    ),
+    checked_standard(
+        "stage6.claims.program_image_reduction.program_image",
+        "claims.stage6.cycle_phase.program_image_reduction.program_image",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
@@ -1377,49 +1401,58 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             },
         },
         stage6: stage6::outputs::Stage6OutputClaims {
-            address_phase: stage6::outputs::Stage6AddressPhaseClaims {
-                bytecode_read_raf: zero,
-                booleanity: zero,
-                bytecode_val_stages: Some([zero; 5]),
-            },
-            bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
-                bytecode_ra: vec![zero],
-            },
-            booleanity: stage6::outputs::BooleanityOutputClaims {
-                instruction_ra: vec![zero],
-                bytecode_ra: vec![zero],
-                ram_ra: vec![zero],
-            },
-            ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: zero,
-            },
-            ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
-                ram_ra: vec![zero],
-            },
-            instruction_ra_virtualization:
-                stage6::outputs::InstructionRaVirtualizationOutputClaims {
-                    committed_instruction_ra: vec![zero],
+            address_phase: stage6::outputs::Stage6AddressPhaseOutputClaims {
+                bytecode_read_raf: stage6::outputs::BytecodeReadRafAddressPhaseOutputClaims {
+                    intermediate: zero,
+                    val_stages: vec![zero; 5],
                 },
-            inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
-                ram_inc: zero,
-                rd_inc: zero,
-            },
-            advice_cycle_phase: stage6::outputs::Stage6AdviceCyclePhaseClaims {
-                trusted: Some(stage6::outputs::AdviceCyclePhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-                untrusted: Some(stage6::outputs::AdviceCyclePhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-            },
-            bytecode_claim_reduction: Some(
-                stage6::outputs::BytecodeCyclePhaseOutputClaims::Intermediate(zero),
-            ),
-            program_image_claim_reduction: Some(
-                stage6::outputs::ProgramImageCyclePhaseOutputClaim {
-                    opening_claim: zero,
+                booleanity: stage6::outputs::BooleanityAddressPhaseOutputClaims {
+                    intermediate: zero,
                 },
-            ),
+            },
+            cycle_phase: stage6::outputs::Stage6CyclePhaseOutputClaims {
+                bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
+                    bytecode_ra: vec![zero],
+                },
+                booleanity: stage6::outputs::BooleanityOutputClaims {
+                    instruction_ra: vec![zero],
+                    bytecode_ra: vec![zero],
+                    ram_ra: vec![zero],
+                },
+                ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
+                    ram_hamming_weight: zero,
+                },
+                ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
+                    ram_ra: vec![zero],
+                },
+                instruction_ra_virtualization:
+                    stage6::outputs::InstructionRaVirtualizationOutputClaims {
+                        committed_instruction_ra: vec![zero],
+                    },
+                inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
+                    ram_inc: zero,
+                    rd_inc: zero,
+                },
+                trusted_advice: Some(stage6::outputs::AdviceCyclePhaseOutputClaims {
+                    trusted: Some(zero),
+                    untrusted: None,
+                }),
+                untrusted_advice: Some(stage6::outputs::AdviceCyclePhaseOutputClaims {
+                    trusted: None,
+                    untrusted: Some(zero),
+                }),
+                bytecode_reduction: Some(
+                    stage6::outputs::BytecodeReductionCyclePhaseOutputClaims {
+                        intermediate: Some(zero),
+                        chunks: Vec::new(),
+                    },
+                ),
+                program_image_reduction: Some(
+                    stage6::outputs::ProgramImageReductionCyclePhaseOutputClaims {
+                        program_image: zero,
+                    },
+                ),
+            },
         },
         stage7: stage7::outputs::Stage7OutputClaims {
             hamming_weight_claim_reduction:

@@ -306,11 +306,11 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
 ) -> Result<(F, F), VerifierError> {
     match polynomial {
         JoltCommittedPolynomial::RamInc => Ok((
-            stage6.output_claims.inc_claim_reduction.ram_inc,
+            stage6.output_claims.cycle_phase.inc_claim_reduction.ram_inc,
             commitment_embedding_scale(opening_point, inc_claim_reduction_opening_point),
         )),
         JoltCommittedPolynomial::RdInc => Ok((
-            stage6.output_claims.inc_claim_reduction.rd_inc,
+            stage6.output_claims.cycle_phase.inc_claim_reduction.rd_inc,
             commitment_embedding_scale(opening_point, inc_claim_reduction_opening_point),
         )),
         JoltCommittedPolynomial::InstructionRa(index) => hamming_weight_opening_claim(

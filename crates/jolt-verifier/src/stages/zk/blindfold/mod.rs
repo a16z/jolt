@@ -1027,7 +1027,12 @@ where
                 [..REGISTER_ADDRESS_BITS],
             register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
                 [..REGISTER_ADDRESS_BITS],
-            bytecode_r_address: &input.stage6.output_points.address_phase.bytecode_read_raf,
+            bytecode_r_address: &input
+                .stage6
+                .output_points
+                .address_phase
+                .bytecode_read_raf
+                .intermediate,
         },
     )
 }
@@ -1243,6 +1248,7 @@ where
     let output_points = &input.stage6.output_points;
     let mut points = Vec::with_capacity(dimensions.layout.total());
     for point in &output_points
+        .cycle_phase
         .instruction_ra_virtualization
         .committed_instruction_ra
     {
@@ -1251,13 +1257,13 @@ where
             point,
         )?);
     }
-    for point in &output_points.bytecode_read_raf.bytecode_ra {
+    for point in &output_points.cycle_phase.bytecode_read_raf.bytecode_ra {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,
         )?);
     }
-    for point in &output_points.ram_ra_virtualization.ram_ra {
+    for point in &output_points.cycle_phase.ram_ra_virtualization.ram_ra {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,

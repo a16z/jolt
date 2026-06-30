@@ -245,7 +245,7 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
     clear_claims: Option<(
-        &Stage6OutputClaims<F>,
+        &Stage6OutputClaims<F, F>,
         &Stage7OutputClaims<F, OpeningClaim<F>>,
     )>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
@@ -278,12 +278,12 @@ where
                 JoltCommittedPolynomial::RamInc => (
                     &proof.commitments.ram_inc,
                     inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
+                    clear_claims.map(|(stage6, _)| stage6.cycle_phase.inc_claim_reduction.ram_inc),
                 ),
                 JoltCommittedPolynomial::RdInc => (
                     &proof.commitments.rd_inc,
                     inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
+                    clear_claims.map(|(stage6, _)| stage6.cycle_phase.inc_claim_reduction.rd_inc),
                 ),
                 JoltCommittedPolynomial::InstructionRa(index) => (
                     proof
