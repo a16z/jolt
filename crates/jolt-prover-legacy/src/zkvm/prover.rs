@@ -20,6 +20,8 @@ use std::{
     sync::Arc,
 };
 
+const UNBOUND_TRANSCRIPT_INSTANCE: [u8; 32] = [u8::MAX; 32];
+
 #[cfg(not(feature = "zk"))]
 use crate::poly::commitment::dory::bind_opening_inputs;
 #[cfg(feature = "zk")]
@@ -386,6 +388,7 @@ where
             entry_address: self.preprocessing.shared.program_meta.entry_address,
             preprocessing_digest: self.preprocessing.shared.digest(),
             trusted_advice_commitment_present,
+            untrusted_advice_commitment_present,
             vc_capacity: cfg!(feature = "zk")
                 .then_some(common::constants::MAX_BLINDFOLD_GENERATORS),
             precommitted,
@@ -451,9 +454,9 @@ where
             )
             .next_power_of_two() as usize;
 
-        // Placeholder transcript: it is never used before `prove()` rebuilds it with the
-        // real `instance = Blake2b(statement)` (A.1), once the dory layout is known.
-        let transcript = prover_transcript(b"Jolt", [0u8; 32], H::default());
+        // Placeholder transcript: `prove()` rebuilds it with the real statement
+        // instance once the Dory layout is known.
+        let transcript = prover_transcript(b"Jolt", UNBOUND_TRANSCRIPT_INSTANCE, H::default());
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
 
         let spartan_key = UniformSpartanKey::new(trace.len());
@@ -525,31 +528,26 @@ where
 
         #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
-        // The current modular verifier uses the structured Option-A transcript:
-        // zero Spongefish instance, then an explicit public preamble absorb. Keep
-        // the prover bridge byte-for-byte aligned with that path.
         let trace_polynomial_order = verifier_trace_polynomial_order(DoryGlobals::get_layout());
         let rw_config = verifier_read_write_config(&self.rw_config);
         let one_hot_config = verifier_one_hot_config(&self.one_hot_params.to_config());
         let checked = self.checked_inputs_for_preamble(trace_polynomial_order, one_hot_config);
-        self.transcript = prover_transcript(b"Jolt", [0u8; 32], H::default());
-        jolt_verifier::absorb_transcript_preamble(
-            &checked,
-            jolt_verifier::ProofTranscriptConfig::new(
-                rw_config,
-                one_hot_config,
-                trace_polynomial_order,
-            ),
-            &mut self.transcript,
+        let transcript_config = jolt_verifier::ProofTranscriptConfig::new(
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
         );
+        let instance = jolt_verifier::transcript_instance(&checked, transcript_config);
+        self.transcript = prover_transcript(b"Jolt", instance, H::default());
 
         tracing::info!(
             "bytecode size: {}",
             self.preprocessing.shared.bytecode_size()
         );
 
-        let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
-        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
+        let (_commitments, mut opening_proof_hints) =
+            self.generate_and_commit_witness_polynomials();
+        self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
         // Add advice hints for batched Stage 8 opening
@@ -631,8 +629,6 @@ where
         let debug_info = None;
 
         let proof = JoltProofParts {
-            commitments,
-            untrusted_advice_commitment,
             joint_opening_proof,
             #[cfg(not(feature = "zk"))]
             opening_claims,
