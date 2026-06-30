@@ -1,12 +1,11 @@
 //! Verifier-owned proof model types.
 
-use ark_serialize::CanonicalSerialize;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{serialize_slice, BytesMsg, Encoding};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
@@ -29,14 +28,12 @@ where
 {
     pub protocol: JoltProtocolConfig,
     /// Spongefish NARG frames consumed by the modular verifier. This carries
-    /// witness commitments, prover-only sumcheck/uni-skip round payloads, and
-    /// BlindFold payloads. Dory's joint opening proof and non-ZK opening
-    /// claims remain structural because spongefish has no non-absorbing hint
-    /// channel for those values.
+    /// witness commitments, optional untrusted-advice commitment, prover-only
+    /// sumcheck/uni-skip round payloads, and BlindFold payloads. Dory's joint
+    /// opening proof and non-ZK opening claims remain structural because
+    /// spongefish has no non-absorbing hint channel for those values.
     pub narg: Vec<u8>,
-    pub commitments: JoltCommitments<PCS::Output>,
     pub joint_opening_proof: PCS::Proof,
-    pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -57,27 +54,20 @@ where
         reason = "Constructor mirrors the proof payload while keeping internal verifier claims private."
     )]
     pub fn new(
-        commitments: JoltCommitments<PCS::Output>,
+        narg: Vec<u8>,
         joint_opening_proof: PCS::Proof,
-        untrusted_advice_commitment: Option<PCS::Output>,
         claims: JoltProofClaims<PCS::Field>,
         trace_length: usize,
         ram_k: usize,
         rw_config: JoltReadWriteConfig,
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
-    ) -> Self
-    where
-        PCS::Output: CanonicalSerialize + Clone,
-    {
+    ) -> Self {
         let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
-        let narg = verifier_narg_prefix(&commitments, untrusted_advice_commitment.as_ref());
         Self {
             protocol,
             narg,
-            commitments,
             joint_opening_proof,
-            untrusted_advice_commitment,
             claims,
             trace_length,
             ram_K: ram_k,
@@ -130,6 +120,25 @@ impl<C> JoltCommitments<C> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NargProofCommitments<C> {
+    pub commitments: JoltCommitments<C>,
+    pub untrusted_advice_commitment: Option<C>,
+}
+
+impl<C> NargProofCommitments<C> {
+    pub fn new(commitments: JoltCommitments<C>, untrusted_advice_commitment: Option<C>) -> Self {
+        Self {
+            commitments,
+            untrusted_advice_commitment,
+        }
+    }
+
+    pub const fn untrusted_advice_commitment_present(&self) -> bool {
+        self.untrusted_advice_commitment.is_some()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::large_enum_variant,
@@ -165,39 +174,66 @@ pub struct ClearProofClaims<F: Field> {
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
 }
 
-fn append_narg_frame<T: CanonicalSerialize>(narg: &mut Vec<u8>, values: &[T]) {
-    let frame = BytesMsg(serialize_slice(values));
-    narg.extend_from_slice(frame.encode().as_ref());
-}
-
-pub(crate) fn verifier_narg_prefix<C>(
-    commitments: &JoltCommitments<C>,
-    untrusted_advice: Option<&C>,
-) -> Vec<u8>
-where
-    C: CanonicalSerialize + Clone,
-{
-    let mut narg = Vec::new();
-    append_narg_frame(&mut narg, &proof_commitments_payload_order(commitments));
-    match untrusted_advice {
-        Some(commitment) => append_narg_frame(&mut narg, std::slice::from_ref(commitment)),
-        None => append_narg_frame::<C>(&mut narg, &[]),
+pub(crate) fn proof_commitment_counts(
+    one_hot_config: JoltOneHotConfig,
+    ram_k: usize,
+) -> Result<(usize, usize), VerifierError> {
+    let committed_chunk_bits = one_hot_config.committed_chunk_bits();
+    if committed_chunk_bits == 0 {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: 2,
+            got: 0,
+        });
     }
-    narg
+    let instruction_ra_count = (2 * RISCV_XLEN).div_ceil(committed_chunk_bits);
+    let ram_ra_count = ceil_log_2(ram_k).div_ceil(committed_chunk_bits);
+    Ok((instruction_ra_count, ram_ra_count))
 }
 
-pub(crate) fn proof_commitments_payload_order<C: Clone>(
-    commitments: &JoltCommitments<C>,
-) -> Vec<C> {
-    let mut ordered = Vec::with_capacity(
-        2 + commitments.ra.instruction.len()
-            + commitments.ra.ram.len()
-            + commitments.ra.bytecode.len(),
-    );
-    ordered.push(commitments.rd_inc.clone());
-    ordered.push(commitments.ram_inc.clone());
-    ordered.extend(commitments.ra.instruction.iter().cloned());
-    ordered.extend(commitments.ra.ram.iter().cloned());
-    ordered.extend(commitments.ra.bytecode.iter().cloned());
-    ordered
+pub(crate) fn commitments_from_proof_payload_order<C>(
+    commitments: Vec<C>,
+    instruction_ra_count: usize,
+    ram_ra_count: usize,
+) -> Result<JoltCommitments<C>, VerifierError> {
+    let minimum = 2 + instruction_ra_count + ram_ra_count;
+    if commitments.len() < minimum {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: commitments.len(),
+        });
+    }
+
+    let mut commitments = commitments.into_iter();
+    let Some(rd_inc) = commitments.next() else {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: 0,
+        });
+    };
+    let Some(ram_inc) = commitments.next() else {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: 1,
+        });
+    };
+    let instruction_ra = commitments
+        .by_ref()
+        .take(instruction_ra_count)
+        .collect::<Vec<_>>();
+    let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
+    let bytecode_ra = commitments.collect::<Vec<_>>();
+
+    Ok(JoltCommitments::new(
+        rd_inc,
+        ram_inc,
+        JoltRaCommitments::new(instruction_ra, ram_ra, bytecode_ra),
+    ))
+}
+
+fn ceil_log_2(value: usize) -> usize {
+    if value <= 1 {
+        0
+    } else {
+        usize::BITS as usize - (value - 1).leading_zeros() as usize
+    }
 }

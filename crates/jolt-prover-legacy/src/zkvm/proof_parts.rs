@@ -32,9 +32,7 @@ pub(crate) struct JoltProofParts<
     PCS: CommitmentScheme<Field = F>,
     H: DuplexSpongeInterface,
 > {
-    pub commitments: Vec<PCS::Commitment>,
     pub joint_opening_proof: PCS::Proof,
-    pub untrusted_advice_commitment: Option<PCS::Commitment>,
     #[cfg(not(feature = "zk"))]
     pub opening_claims: ProverOpeningClaims<F>,
     /// Spongefish NARG byte-string produced by the legacy prover. Prover-only

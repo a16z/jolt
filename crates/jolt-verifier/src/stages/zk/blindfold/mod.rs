@@ -504,7 +504,7 @@ where
             -PCS::Field::one(),
         ));
     }
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.checked.untrusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
         contributions.push(ram::RamValCheckInitContribution::untrusted(-selector.0));
     }

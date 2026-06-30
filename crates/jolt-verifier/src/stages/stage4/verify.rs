@@ -159,7 +159,7 @@ where
                 checked,
                 output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage4_sumcheck_proof",
-                output_claim_count: stage4_committed_output_claims(checked, proof),
+                output_claim_count: stage4_committed_output_claims(checked),
                 stage: JoltRelationId::RegistersReadWriteChecking,
             })?;
 
@@ -214,13 +214,8 @@ where
     let stage2 = stage2.clear()?;
     let stage3 = stage3.clear()?;
     let claims = &proof.clear_claims()?.stage4;
-    let ram_val_check_init = ram_val_check_initial_evaluation(
-        checked,
-        proof,
-        claims,
-        r_address,
-        ram_val_check_public_eval,
-    )?;
+    let ram_val_check_init =
+        ram_val_check_initial_evaluation(checked, claims, r_address, ram_val_check_public_eval)?;
 
     // The init decomposition (public eval + advice/program-image contributions) is
     // shared with the prover and the BlindFold constraint via `decomposition()`, so
@@ -295,7 +290,7 @@ where
 
     append_stage4_opening_claims(
         transcript,
-        proof.untrusted_advice_commitment.is_some(),
+        checked.untrusted_advice_commitment_present,
         checked.trusted_advice_commitment_present,
         claims,
     )?;
@@ -411,16 +406,9 @@ where
     ))
 }
 
-fn stage4_committed_output_claims<PCS, VC, ZkProof>(
-    checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-) -> usize
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
+fn stage4_committed_output_claims(checked: &CheckedInputs) -> usize {
     STAGE4_BATCH_BASE_OUTPUT_CLAIMS
-        + usize::from(proof.untrusted_advice_commitment.is_some())
+        + usize::from(checked.untrusted_advice_commitment_present)
         + usize::from(checked.trusted_advice_commitment_present)
         + usize::from(checked.precommitted.program_image.is_some())
 }

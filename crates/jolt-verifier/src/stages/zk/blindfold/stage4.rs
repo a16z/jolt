@@ -79,7 +79,7 @@ where
     )?;
 
     let mut output_ids = Vec::new();
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.checked.untrusted_advice_commitment_present {
         output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
             JoltAdviceKind::Untrusted,
         )));

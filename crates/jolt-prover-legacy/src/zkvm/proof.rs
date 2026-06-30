@@ -11,7 +11,7 @@ use jolt_verifier::{
     preprocessing::{
         CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
     },
-    proof::{JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, TracePolynomialOrder},
+    proof::{JoltProof, JoltProofClaims, TracePolynomialOrder},
 };
 
 #[cfg(not(feature = "zk"))]
@@ -25,7 +25,6 @@ use jolt_crypto::{
 };
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field as VerifierFieldTrait, Fr as VerifierFr};
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::DuplexSpongeInterface;
@@ -303,80 +302,6 @@ fn convert_trace_polynomial_order(layout: ProverDoryLayout) -> TracePolynomialOr
     }
 }
 
-fn convert_proof_commitments<F, PCS>(
-    commitments: Vec<PCS::Commitment>,
-    one_hot_config: JoltOneHotConfig,
-    ram_k: usize,
-) -> Result<JoltCommitments<<PCS::VerifierPcs as VerifierCommitment>::Output>, VerifierError>
-where
-    F: ProofField,
-    PCS: ProofCommitmentScheme<F>,
-{
-    let committed_chunk_bits = one_hot_config.committed_chunk_bits();
-    if committed_chunk_bits == 0 {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: 2,
-            got: commitments.len(),
-        });
-    }
-    let instruction_ra_count = (2 * RISCV_XLEN).div_ceil(committed_chunk_bits);
-    let ram_ra_count = ceil_log_2(ram_k).div_ceil(committed_chunk_bits);
-    let commitments = commitments
-        .into_iter()
-        .map(PCS::commitment_into_verifier)
-        .collect::<Vec<_>>();
-
-    commitments_from_proof_payload_order(commitments, instruction_ra_count, ram_ra_count)
-}
-
-fn ceil_log_2(value: usize) -> usize {
-    if value <= 1 {
-        0
-    } else {
-        usize::BITS as usize - (value - 1).leading_zeros() as usize
-    }
-}
-
-fn commitments_from_proof_payload_order<C>(
-    commitments: Vec<C>,
-    instruction_ra_count: usize,
-    ram_ra_count: usize,
-) -> Result<JoltCommitments<C>, VerifierError> {
-    let minimum = 2 + instruction_ra_count + ram_ra_count;
-    if commitments.len() < minimum {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: commitments.len(),
-        });
-    }
-
-    let mut commitments = commitments.into_iter();
-    let Some(rd_inc) = commitments.next() else {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: 0,
-        });
-    };
-    let Some(ram_inc) = commitments.next() else {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: 1,
-        });
-    };
-    let instruction_ra = commitments
-        .by_ref()
-        .take(instruction_ra_count)
-        .collect::<Vec<_>>();
-    let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
-    let bytecode_ra = commitments.collect::<Vec<_>>();
-
-    Ok(JoltCommitments::new(
-        rd_inc,
-        ram_inc,
-        JoltRaCommitments::new(instruction_ra, ram_ra, bytecode_ra),
-    ))
-}
-
 #[cfg(not(feature = "zk"))]
 #[expect(
     clippy::type_complexity,
@@ -399,16 +324,10 @@ where
     H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
-    let commitments =
-        convert_proof_commitments::<F, PCS>(proof.commitments, one_hot_config, proof.ram_K)?;
-    let untrusted_advice_commitment = proof
-        .untrusted_advice_commitment
-        .map(PCS::commitment_into_verifier);
 
-    let mut verifier_proof = JoltProof::new(
-        commitments,
+    Ok(JoltProof::new(
+        proof.narg,
         PCS::opening_proof_into_verifier(proof.joint_opening_proof),
-        untrusted_advice_commitment,
         JoltProofClaims::Clear(convert_opening_claims(
             proof.opening_claims,
             proof.trace_length,
@@ -418,9 +337,7 @@ where
         convert_read_write_config(proof.rw_config),
         one_hot_config,
         convert_trace_polynomial_order(proof.dory_layout),
-    );
-    verifier_proof.narg = proof.narg;
-    Ok(verifier_proof)
+    ))
 }
 
 #[cfg(feature = "zk")]
@@ -445,25 +362,17 @@ where
     H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
-    let commitments =
-        convert_proof_commitments::<F, PCS>(proof.commitments, one_hot_config, proof.ram_K)?;
-    let untrusted_advice_commitment = proof
-        .untrusted_advice_commitment
-        .map(PCS::commitment_into_verifier);
 
-    let mut verifier_proof = JoltProof::new(
-        commitments,
+    Ok(JoltProof::new(
+        proof.narg,
         PCS::opening_proof_into_verifier(proof.joint_opening_proof),
-        untrusted_advice_commitment,
         JoltProofClaims::Zk,
         proof.trace_length,
         proof.ram_K,
         convert_read_write_config(proof.rw_config),
         one_hot_config,
         convert_trace_polynomial_order(proof.dory_layout),
-    );
-    verifier_proof.narg = proof.narg;
-    Ok(verifier_proof)
+    ))
 }
 
 fn prover_dory_commitment_into_verifier(commitment: &ProverDoryCommitment) -> Bn254GT {

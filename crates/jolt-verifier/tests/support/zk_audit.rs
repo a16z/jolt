@@ -61,7 +61,7 @@ where
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: CanonicalSerialize + HomomorphicCommitment<F>,
+    PCS::Output: CanonicalDeserialize + CanonicalSerialize + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize + CanonicalDeserialize,
     H: DuplexSpongeInterface<U = u8> + Default,
@@ -76,6 +76,7 @@ where
         true,
     )?;
     let checked = state.checked;
+    let narg_commitments = state.narg_commitments;
     let mut transcript = state.transcript;
 
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
@@ -130,6 +131,7 @@ where
         preprocessing,
         proof,
         &formula_dimensions,
+        &narg_commitments,
         trusted_advice_commitment,
         &mut transcript,
         &stage6,
