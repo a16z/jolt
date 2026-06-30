@@ -13,7 +13,7 @@ use crate::{SumcheckChallenges, SymbolicSumcheck};
 /// Fiat-Shamir challenge drawn by the cycle-phase split of the booleanity
 /// sumcheck. As in the monolith, the `gamma` is built inside
 /// `booleanity_cycle_output`, so this set is derived from `required_challenges()`.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BooleanityCyclePhaseChallenges<F> {
     #[challenge(BooleanityChallenge::Gamma)]
     pub gamma: F,

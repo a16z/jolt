@@ -25,7 +25,7 @@ pub struct BooleanityOutputClaims<C> {
 }
 
 /// The `BooleanityAddrClaim` intermediate consumed from the address phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct BooleanityInputClaims<C> {
     #[opening(BooleanityAddrClaim, from = Booleanity)]
     pub address_phase: C,
@@ -35,7 +35,7 @@ pub struct BooleanityInputClaims<C> {
 /// folding the RA family is built inside the `booleanity_cycle_output` geometry
 /// helper rather than appearing as a literal `challenge(..)` here, so this set is
 /// derived from `required_challenges()`, not a textual scan of the expressions.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BooleanityChallenges<F> {
     #[challenge(BooleanityChallenge::Gamma)]
     pub gamma: F,

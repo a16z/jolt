@@ -32,14 +32,14 @@ pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
 
 /// The consumed staged `BytecodeValStage` openings from the bytecode read-RAF
 /// address phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReductionCyclePhaseInputClaims<C> {
     #[opening(BytecodeValStage, from = BytecodeReadRaf)]
     pub val_stages: Vec<C>,
 }
 
 /// Fiat-Shamir challenge drawn by the committed-bytecode reduction cycle phase.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BytecodeReductionCyclePhaseChallenges<F> {
     #[challenge(BytecodeClaimReductionChallenge::Eta)]
     pub eta: F,

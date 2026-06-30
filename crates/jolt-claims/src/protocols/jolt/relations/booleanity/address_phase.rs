@@ -26,6 +26,7 @@ pub struct BooleanityAddressPhaseOutputClaims<C> {
 }
 
 /// The address phase consumes no openings (its input claim is the constant zero).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BooleanityAddressPhaseInputClaims<C> {
     _cell: PhantomData<C>,
 }

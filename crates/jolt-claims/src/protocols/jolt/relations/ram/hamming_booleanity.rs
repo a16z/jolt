@@ -26,6 +26,7 @@ pub struct RamHammingBooleanityOutputClaims<C> {
 /// `RamHammingBooleanity` consumes no openings (its input claim is the constant
 /// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
 /// since the derive requires at least one `#[opening]` field.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamHammingBooleanityInputClaims<C> {
     _cell: PhantomData<C>,
 }
