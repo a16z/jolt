@@ -1,14 +1,13 @@
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::Mul;
 
 use crate::{
-    CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize, FixedBytes,
-    FromPrimitiveInt, MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes, RingCore,
-    TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator, WithSmallScalarAccumulator,
+    CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize, FromPrimitiveInt,
+    MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes, RingCore, TranscriptChallenge,
+    WithAccumulator,
 };
 
 /// Prime field element abstraction used throughout Jolt.
@@ -35,18 +34,13 @@ pub trait Field:
     + CanonicalBytes
     + ReducingBytes
     + TranscriptChallenge
-    + FixedBytes<32>
     + FixedByteSize
     + CanonicalBitLength
     + CanonicalU64
     + RandomSampling
     + WithAccumulator
-    + WithSmallScalarAccumulator
-    + WithSignedProductAccumulator
     + MulPow2
     + MulPrimitiveInt
-    + Serialize
-    + DeserializeOwned
     + MaybeAllocative
 {
 }

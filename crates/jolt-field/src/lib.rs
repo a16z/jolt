@@ -32,6 +32,8 @@
 
 mod accumulator;
 mod additive_group;
+#[cfg(feature = "akita")]
+mod akita;
 mod canonical_bit_length;
 mod canonical_bytes;
 mod canonical_u64;
