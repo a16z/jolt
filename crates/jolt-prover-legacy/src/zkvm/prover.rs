@@ -532,11 +532,11 @@ where
         let rw_config = verifier_read_write_config(&self.rw_config);
         let one_hot_config = verifier_one_hot_config(&self.one_hot_params.to_config());
         let checked = self.checked_inputs_for_preamble(trace_polynomial_order, one_hot_config);
-        let transcript_config = jolt_verifier::ProofTranscriptConfig::new(
+        let transcript_config = jolt_verifier::ProofTranscriptConfig {
             rw_config,
             one_hot_config,
             trace_polynomial_order,
-        );
+        };
         let instance = jolt_verifier::transcript_instance(&checked, transcript_config);
         self.transcript = prover_transcript(b"Jolt", instance, H::default());
 
@@ -2299,7 +2299,7 @@ where
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
         for claim in &claims {
-            crate::transcript_msgs::absorb_jolt_field(&mut self.transcript, claim);
+            self.transcript.absorb(claim);
         }
         let gamma_powers: Vec<F> = self.transcript.challenge_powers(claims.len());
         #[cfg(feature = "zk")]

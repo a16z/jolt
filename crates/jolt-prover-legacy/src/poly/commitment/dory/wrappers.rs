@@ -6,7 +6,7 @@ use crate::{
         commitment::dory::{DoryContext, DoryGlobals, DoryLayout},
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
-    transcript_msgs::{absorb_jolt_field, FsAbsorb, FsChallenge},
+    transcript_msgs::{FsAbsorb, FsChallenge},
 };
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
@@ -447,7 +447,7 @@ impl<'a, T: FsAbsorb + FsChallenge<Fr>> DoryTranscript for JoltToDoryTranscript<
             .as_mut()
             .expect("Transcript not initialized");
         let jolt_scalar: Fr = ark_to_jolt(x);
-        absorb_jolt_field(*transcript, &jolt_scalar);
+        transcript.absorb(&jolt_scalar);
     }
 
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {

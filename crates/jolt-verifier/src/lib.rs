@@ -22,6 +22,6 @@ pub use stages::zk::committed::zk_vector_commitment_capacity_requirement;
 // reached as `crate::{OutputClaims, InputClaims}`.
 pub use jolt_verifier_derive::{InputClaims, OutputClaims};
 pub use verifier::{
-    transcript_instance, transcript_instance_from_parts, validate_inputs_from_parts, verify,
-    verify_until_stage1, CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,
+    transcript_instance, validate_inputs_from_parts, verify, verify_until_stage1, CheckedInputs,
+    PreStage1VerifierState, ProofTranscriptConfig,
 };

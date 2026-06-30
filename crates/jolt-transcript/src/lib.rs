@@ -1,10 +1,8 @@
 //! Fiat-Shamir transcripts for Jolt, backed by spongefish.
 //!
-//! The single public surface is the **split spongefish-native traits**
-//! ([`ProverTranscript`], [`VerifierTranscript`], [`OptimizedChallenge`]) —
-//! implemented directly on `spongefish::ProverState` / `spongefish::VerifierState` —
-//! plus the field-typed [`FsTranscript`] / [`FsAbsorb`] / [`FsChallenge`]
-//! vocabulary the modular consumer crates bind against.
+//! The public surface is the re-exported spongefish states, [`OptimizedChallenge`],
+//! plus the field-typed [`FsTranscript`] / [`FsAbsorb`] / [`FsChallenge`] vocabulary
+//! the modular consumer crates bind against.
 //!
 //! Three sponges feature-gated: `transcript-blake2b` (spongefish
 //! `Blake2b512`), `transcript-keccak` (spongefish `Keccak`),
@@ -24,12 +22,11 @@ pub use codec::BytesMsg;
 pub use messages::{
     deserialize_slice, serialize_slice, FsAbsorb, FsChallenge, FsNargRead, FsTranscript,
 };
-pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
+pub use setup::{prover_transcript, verifier_transcript};
 
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
-pub use prover::{OptimizedChallenge, ProverTranscript};
-pub use verifier::VerifierTranscript;
+pub use prover::OptimizedChallenge;
 
 // Re-export the spongefish state types + sponge interface the split traits are built on,
 // so jolt-core and the modular consumers name the entire transcript surface through

@@ -52,40 +52,6 @@ use rand::{CryptoRng, RngCore};
 
 use crate::field::JoltField;
 
-#[expect(
-    clippy::expect_used,
-    reason = "CanonicalSerialize into a Vec is infallible"
-)]
-pub fn absorb_jolt_field<T, F>(transcript: &mut T, value: &F)
-where
-    T: FsAbsorb,
-    F: JoltField,
-{
-    let mut buf = Vec::with_capacity(value.compressed_size());
-    value
-        .serialize_compressed(&mut buf)
-        .expect("CanonicalSerialize into a Vec is infallible");
-    transcript.absorb_bytes(&buf);
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "CanonicalSerialize into a Vec is infallible"
-)]
-pub fn absorb_jolt_field_slice<T, F>(transcript: &mut T, values: &[F])
-where
-    T: FsAbsorb,
-    F: JoltField,
-{
-    let mut buf = Vec::with_capacity(values.iter().map(CanonicalSerialize::compressed_size).sum());
-    for value in values {
-        value
-            .serialize_compressed(&mut buf)
-            .expect("CanonicalSerialize into a Vec is infallible");
-    }
-    transcript.absorb_bytes(&buf);
-}
-
 // NARG frames are anonymous and positional: each prover-only payload is one
 // length-prefixed `BytesMsg` whose concrete type is determined by the verifier's
 // read order. Keep the encoder/decoder shared with `jolt-transcript` so the
@@ -316,7 +282,7 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
-    use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512, VerifierTranscript};
+    use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512};
 
     const SESSION: &[u8] = b"jolt-transcript-msgs-test/v1";
     type Bl = Blake2b512;
@@ -335,7 +301,7 @@ mod tests {
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
         let read: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
         assert_eq!(read, scalars);
-        VerifierTranscript::<Bl>::check_eof(v).unwrap();
+        v.check_eof().unwrap();
     }
 
     /// `write_slice` must be transcript-state identical to `absorb_slice`, and
@@ -429,7 +395,7 @@ mod tests {
         for c in &flushed_claims {
             FsAbsorb::absorb(&mut v, c);
         }
-        VerifierTranscript::<Bl>::check_eof(v).unwrap();
+        v.check_eof().unwrap();
 
         assert_eq!(p_batching, v_batching, "batching challenges diverged");
         assert_eq!(
@@ -449,7 +415,7 @@ mod tests {
 
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
         let _: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
-        assert!(VerifierTranscript::<Bl>::check_eof(v).is_err());
+        assert!(v.check_eof().is_err());
     }
 
     /// Reading fewer frames than the prover wrote cannot silently pass: the unconsumed
@@ -471,7 +437,7 @@ mod tests {
         let read_a: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
         assert_eq!(read_a, frame_a);
         assert!(
-            VerifierTranscript::<Bl>::check_eof(v).is_err(),
+            v.check_eof().is_err(),
             "an unconsumed NARG frame must be rejected"
         );
     }
@@ -499,7 +465,7 @@ mod tests {
             let got = FsChallenge::<Fr>::challenge_optimized(&mut v);
             assert_eq!(*expected, got, "full-field optimized challenge diverged");
         }
-        VerifierTranscript::<PoseidonSponge>::check_eof(v).unwrap();
+        v.check_eof().unwrap();
 
         // A 128-bit-truncated path would leave the top two limbs (bits 128+) zero
         // for every challenge; a genuine full-field squeeze sets them w.h.p.

@@ -1651,7 +1651,8 @@ mod tests {
         assert_eq!(r_sumcheck, r_sumcheck_verif);
 
         // Compatibility guard for any caller that still writes NARG frames.
-        jolt_transcript::VerifierTranscript::<Blake2b512>::check_eof(verifier_transcript)
+        verifier_transcript
+            .check_eof()
             .expect("verifier must fully consume the NARG (no trailing prover messages)");
     }
 

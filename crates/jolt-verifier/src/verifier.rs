@@ -12,7 +12,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_transcript::{
     deserialize_slice, verifier_transcript, BytesMsg, DuplexSpongeInterface, FsTranscript,
-    VerifierState, VerifierTranscript,
+    VerifierState,
 };
 
 use crate::{
@@ -38,20 +38,6 @@ pub struct ProofTranscriptConfig {
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
-}
-
-impl ProofTranscriptConfig {
-    pub const fn new(
-        rw_config: JoltReadWriteConfig,
-        one_hot_config: JoltOneHotConfig,
-        trace_polynomial_order: TracePolynomialOrder,
-    ) -> Self {
-        Self {
-            rw_config,
-            one_hot_config,
-            trace_polynomial_order,
-        }
-    }
 }
 
 pub fn verify<F, PCS, VC, H>(
@@ -84,7 +70,7 @@ where
         public_io,
         proof,
         trusted_advice_commitment.is_some(),
-        narg_commitments.untrusted_advice_commitment_present(),
+        narg_commitments.untrusted_advice_commitment.is_some(),
         zk,
     )?;
     absorb_preprocessing_commitments(preprocessing, trusted_advice_commitment, &mut transcript);
@@ -177,7 +163,9 @@ where
             .map_err(|error| VerifierError::BlindFoldVerificationFailed {
                 reason: error.to_string(),
             })?;
-        VerifierTranscript::<H>::check_eof(transcript).map_err(|_| VerifierError::MalformedNarg)?;
+        transcript
+            .check_eof()
+            .map_err(|_| VerifierError::MalformedNarg)?;
         return Ok(());
     }
 
@@ -185,7 +173,9 @@ where
         return Err(VerifierError::ExpectedClearProof { field: "stage8" });
     };
 
-    VerifierTranscript::<H>::check_eof(transcript).map_err(|_| VerifierError::MalformedNarg)
+    transcript
+        .check_eof()
+        .map_err(|_| VerifierError::MalformedNarg)
 }
 
 /// Verifier state captured immediately before stage 1, after input validation
@@ -229,7 +219,7 @@ where
         public_io,
         proof,
         trusted_advice_commitment.is_some(),
-        narg_commitments.untrusted_advice_commitment_present(),
+        narg_commitments.untrusted_advice_commitment.is_some(),
         zk,
     )?;
     absorb_preprocessing_commitments(preprocessing, trusted_advice_commitment, &mut transcript);
@@ -472,11 +462,11 @@ where
         proof.ram_K,
         proof.trace_length,
         preprocessing.program.entry_address(),
-        ProofTranscriptConfig::new(
-            proof.rw_config,
-            proof.one_hot_config,
-            proof.trace_polynomial_order,
-        ),
+        ProofTranscriptConfig {
+            rw_config: proof.rw_config,
+            one_hot_config: proof.one_hot_config,
+            trace_polynomial_order: proof.trace_polynomial_order,
+        },
     )
 }
 
@@ -498,7 +488,7 @@ pub fn transcript_instance(checked: &CheckedInputs, config: ProofTranscriptConfi
     )
 }
 
-pub fn transcript_instance_from_parts(
+fn transcript_instance_from_parts(
     public_io: &JoltDevice,
     preprocessing_digest: &[u8; 32],
     ram_k: usize,
@@ -600,10 +590,10 @@ where
         _ => return Err(VerifierError::MalformedNarg),
     };
 
-    Ok(NargProofCommitments::new(
+    Ok(NargProofCommitments {
         commitments,
         untrusted_advice_commitment,
-    ))
+    })
 }
 
 fn read_narg_values<T, H>(transcript: &mut VerifierState<'_, H>) -> Result<Vec<T>, VerifierError>
@@ -611,16 +601,10 @@ where
     T: CanonicalDeserialize,
     H: DuplexSpongeInterface<U = u8>,
 {
-    deserialize_slice(&read_narg_frame(transcript)?).map_err(|_| VerifierError::MalformedNarg)
-}
-
-fn read_narg_frame<H>(transcript: &mut VerifierState<'_, H>) -> Result<Vec<u8>, VerifierError>
-where
-    H: DuplexSpongeInterface<U = u8>,
-{
-    VerifierTranscript::<H>::prover_message::<BytesMsg>(transcript)
-        .map(|bytes| bytes.0)
-        .map_err(|_| VerifierError::MalformedNarg)
+    let bytes = transcript
+        .prover_message::<BytesMsg>()
+        .map_err(|_| VerifierError::MalformedNarg)?;
+    deserialize_slice(&bytes.0).map_err(|_| VerifierError::MalformedNarg)
 }
 
 pub fn validate_proof_consistency<PCS, VC, ZkProof>(
@@ -859,11 +843,11 @@ mod tests {
         let Ok(checked) = checked else {
             return;
         };
-        let config = ProofTranscriptConfig::new(
-            proof.rw_config,
-            proof.one_hot_config,
-            proof.trace_polynomial_order,
-        );
+        let config = ProofTranscriptConfig {
+            rw_config: proof.rw_config,
+            one_hot_config: proof.one_hot_config,
+            trace_polynomial_order: proof.trace_polynomial_order,
+        };
 
         let instance = transcript_instance(&checked, config);
         assert_ne!(instance, [0u8; 32]);

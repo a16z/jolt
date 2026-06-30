@@ -8,7 +8,7 @@
 #![cfg(feature = "transcript-blake2b")]
 #![expect(clippy::expect_used, reason = "tests")]
 
-use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PROTOCOL_ID};
+use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg};
 use spongefish::instantiations::Blake2b512;
 
 const SESSION: &[u8] = b"narg-eof-test";
@@ -36,7 +36,7 @@ fn check_eof_accepts_exact_narg() {
         let got: BytesMsg = verifier
             .prover_message()
             .expect("valid prover message must deserialize");
-        assert_eq!(got.as_slice(), *expected);
+        assert_eq!(got.0.as_slice(), *expected);
     }
     verifier
         .check_eof()
@@ -55,7 +55,7 @@ fn check_eof_rejects_trailing_garbage() {
         let got: BytesMsg = verifier
             .prover_message()
             .expect("valid prefix must deserialize");
-        assert_eq!(got.as_slice(), *expected);
+        assert_eq!(got.0.as_slice(), *expected);
     }
     let result = verifier.check_eof();
     assert!(
@@ -96,10 +96,4 @@ fn check_eof_rejects_unread_messages() {
         verifier.check_eof().is_err(),
         "leaving prover messages unread must fail check_eof",
     );
-}
-
-#[test]
-fn protocol_id_byte_check() {
-    assert_eq!(&PROTOCOL_ID[..23], b"a16z/jolt-transcript/v1");
-    assert!(PROTOCOL_ID[23..].iter().all(|&b| b == 0));
 }

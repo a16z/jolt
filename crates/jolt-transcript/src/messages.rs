@@ -6,7 +6,7 @@
 //! `absorb`'d on *both* the (test-)prover and verifier side. Most modular
 //! protocol crates still consume structured proof fields through this surface.
 //! The top-level `jolt-verifier` wrapper can additionally use
-//! [`VerifierTranscript`](crate::VerifierTranscript) directly for proof bytes
+//! [`VerifierState`](crate::VerifierState) directly for proof bytes
 //! that have moved into Spongefish NARG frames, then hand the same transcript
 //! back to these traits for the remaining structured paths.
 //!
@@ -72,15 +72,6 @@ impl Encoding<[u8]> for BorrowedBytesMsg<'_> {
     fn encode(&self) -> impl AsRef<[u8]> {
         encode_bytes_frame(self.0)
     }
-}
-
-#[expect(clippy::expect_used)]
-fn serialize_one<T: CanonicalSerialize>(value: &T) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(value.compressed_size());
-    value
-        .serialize_compressed(&mut buf)
-        .expect("CanonicalSerialize into a Vec is infallible");
-    buf
 }
 
 /// Compressed serialization of every element, concatenated with no length prefix.
@@ -162,7 +153,7 @@ where
     R: RngCore + CryptoRng,
 {
     fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
-        self.public_message(&BytesMsg(serialize_one(value)));
+        self.public_message(&BytesMsg(serialize_slice(std::slice::from_ref(value))));
     }
 
     fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
@@ -179,7 +170,7 @@ where
     H: DuplexSpongeInterface<U = u8>,
 {
     fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
-        self.public_message(&BytesMsg(serialize_one(value)));
+        self.public_message(&BytesMsg(serialize_slice(std::slice::from_ref(value))));
     }
 
     fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
@@ -345,7 +336,7 @@ where
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::{prover_transcript, verifier_transcript, VerifierTranscript};
+    use crate::{prover_transcript, verifier_transcript};
     use jolt_field::{Fr, FromPrimitiveInt};
     use spongefish::instantiations::Blake2b512;
 
@@ -375,7 +366,7 @@ mod tests {
         let v_plain = FsChallenge::<Fr>::challenge_scalar(&mut v);
         let v_vec = FsChallenge::<Fr>::challenge_vector(&mut v, 3);
         let v_pow = FsChallenge::<Fr>::challenge_scalar_powers(&mut v, 4);
-        VerifierTranscript::<Bl>::check_eof(v).unwrap();
+        v.check_eof().unwrap();
 
         assert_eq!(p_opt, v_opt, "optimized challenge diverged");
         assert_eq!(p_plain, v_plain, "plain scalar challenge diverged");

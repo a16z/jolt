@@ -100,43 +100,10 @@ pub struct JoltRaCommitments<C> {
     pub bytecode: Vec<C>,
 }
 
-impl<C> JoltRaCommitments<C> {
-    pub fn new(instruction: Vec<C>, ram: Vec<C>, bytecode: Vec<C>) -> Self {
-        Self {
-            instruction,
-            ram,
-            bytecode,
-        }
-    }
-}
-
-impl<C> JoltCommitments<C> {
-    pub fn new(rd_inc: C, ram_inc: C, ra: JoltRaCommitments<C>) -> Self {
-        Self {
-            rd_inc,
-            ram_inc,
-            ra,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NargProofCommitments<C> {
     pub commitments: JoltCommitments<C>,
     pub untrusted_advice_commitment: Option<C>,
-}
-
-impl<C> NargProofCommitments<C> {
-    pub fn new(commitments: JoltCommitments<C>, untrusted_advice_commitment: Option<C>) -> Self {
-        Self {
-            commitments,
-            untrusted_advice_commitment,
-        }
-    }
-
-    pub const fn untrusted_advice_commitment_present(&self) -> bool {
-        self.untrusted_advice_commitment.is_some()
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,11 +190,15 @@ pub(crate) fn commitments_from_proof_payload_order<C>(
     let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
     let bytecode_ra = commitments.collect::<Vec<_>>();
 
-    Ok(JoltCommitments::new(
+    Ok(JoltCommitments {
         rd_inc,
         ram_inc,
-        JoltRaCommitments::new(instruction_ra, ram_ra, bytecode_ra),
-    ))
+        ra: JoltRaCommitments {
+            instruction: instruction_ra,
+            ram: ram_ra,
+            bytecode: bytecode_ra,
+        },
+    })
 }
 
 fn ceil_log_2(value: usize) -> usize {
