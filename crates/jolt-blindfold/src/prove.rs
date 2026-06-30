@@ -8,7 +8,10 @@ use jolt_transcript::{FsAbsorb, FsTranscript};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
-use crate::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
+use crate::{
+    transcript_codec::absorb_legacy_field_vec, BlindFoldProof, BlindFoldProtocol, ProverError,
+    WitnessCoordinate,
+};
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
 const INNER_SUMCHECK_DEGREE: usize = 2;
@@ -455,20 +458,10 @@ where
         }
     }
     for opening in &folded_eval_output_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_out_open",
-            b"bf_eval_out_blind",
-            opening,
-        );
+        append_vector_opening(transcript, opening);
     }
     for opening in &folded_eval_blinding_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_blind_open",
-            b"bf_eval_blind_bl",
-            opening,
-        );
+        append_vector_opening(transcript, opening);
     }
 
     let outer_num_vars = log2_power_of_two("error row count", protocol.dimensions.error.row_count)?
@@ -508,12 +501,7 @@ where
     )?;
 
     transcript.absorb_field_slice(&[az_rx, bz_rx, cz_rx]);
-    append_vector_opening(
-        transcript,
-        b"bf_error_opening",
-        b"bf_error_blind",
-        &error_opening,
-    );
+    append_vector_opening(transcript, &error_opening);
 
     let ra = transcript.challenge();
     let rb = transcript.challenge();
@@ -1048,30 +1036,13 @@ fn append_relaxed_instance<F, C, T>(
     transcript.absorb(eval_commitments);
 }
 
-fn append_vector_opening<F, T>(
-    transcript: &mut T,
-    _row_label: &'static [u8],
-    _blinding_label: &'static [u8],
-    opening: &VectorCommitmentOpening<F>,
-) where
+fn append_vector_opening<F, T>(transcript: &mut T, opening: &VectorCommitmentOpening<F>)
+where
     F: Field,
     T: FsAbsorb,
 {
     absorb_legacy_field_vec(transcript, &opening.combined_vector);
     transcript.absorb_field(&opening.combined_blinding);
-}
-
-fn absorb_legacy_field_vec<F, T>(transcript: &mut T, values: &[F])
-where
-    F: Field,
-    T: FsAbsorb,
-{
-    let mut bytes = Vec::with_capacity(8 + values.len() * F::NUM_BYTES);
-    bytes.extend_from_slice(&(values.len() as u64).to_le_bytes());
-    for value in values {
-        bytes.extend_from_slice(&value.to_bytes_le_vec());
-    }
-    transcript.absorb_bytes(&bytes);
 }
 
 fn random_rows<F, R>(row_count: usize, row_len: usize, rng: &mut R) -> Vec<Vec<F>>

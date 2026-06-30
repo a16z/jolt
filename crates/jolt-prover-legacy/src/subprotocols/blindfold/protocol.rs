@@ -286,10 +286,6 @@ fn read_hyrax_opening<F: JoltField>(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "checks two final-opening witness vectors against folded BlindFold rows"
-)]
 fn verify_folded_eval_witness_bindings<F: JoltField, C: JoltCurve<F = F>>(
     r1cs: &VerifierR1CS<F>,
     gens: &PedersenGenerators<C>,

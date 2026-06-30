@@ -6,14 +6,14 @@
 
 use ark_serialize::CanonicalSerialize;
 use jolt_blindfold::{
-    BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
-    FinalOpeningBinding, WitnessCoordinate,
+    absorb_legacy_field_vec, BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement,
+    CommittedClaimRows, FinalOpeningBinding, WitnessCoordinate,
 };
 use jolt_claims::{challenge, constant, opening, public, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
-use jolt_field::{CanonicalBytes, FixedByteSize, FixedBytes, Fr, FromPrimitiveInt, Invertible};
+use jolt_field::{FixedBytes, Fr, FromPrimitiveInt, Invertible};
 use jolt_poly::{CompressedPoly, EqPolynomial};
 use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
@@ -1651,15 +1651,6 @@ fn prove_slow_sumcheck(
         },
         point: prefix,
     }
-}
-
-fn absorb_legacy_field_vec(transcript: &mut impl FsAbsorb, values: &[F]) {
-    let mut bytes = Vec::with_capacity(8 + values.len() * F::NUM_BYTES);
-    bytes.extend_from_slice(&(values.len() as u64).to_le_bytes());
-    for value in values {
-        bytes.extend_from_slice(&value.to_bytes_le_vec());
-    }
-    transcript.absorb_bytes(&bytes);
 }
 
 fn interpolate_zero_to_degree(values: &[F]) -> Vec<F> {

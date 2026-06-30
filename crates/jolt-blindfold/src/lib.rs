@@ -8,6 +8,7 @@ mod prove;
 pub mod r1cs;
 mod relaxed;
 mod statements;
+mod transcript_codec;
 mod verify;
 
 pub use builder::{BlindFoldProtocolBuilder, BlindFoldStageBuilder};
@@ -25,3 +26,5 @@ pub use relaxed::{RelaxedInstance, RelaxedWitness};
 pub use statements::{
     BlindFoldStage, BlindFoldStatement, CommittedClaimRows, FinalOpeningBinding, OpeningAlias,
 };
+#[doc(hidden)]
+pub use transcript_codec::absorb_legacy_field_vec;
