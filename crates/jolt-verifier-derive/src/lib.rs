@@ -153,7 +153,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // match; `PartialEq`/`Eq`/serde are added to those members (and here) when a
     // migration first needs them.
     Ok(quote! {
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Debug, PartialEq, Eq)]
         #vis struct #input_name<#f: ::jolt_field::Field, #cell> {
             #(#input_fields,)*
         }
@@ -167,7 +167,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #(#output_fields,)*
         }
 
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Debug, PartialEq, Eq)]
         #vis struct #challenges_name<#f: ::jolt_field::Field> {
             #(#challenge_fields,)*
         }

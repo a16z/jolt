@@ -30,7 +30,7 @@ pub struct RamRaClaimReductionOutputClaims<C> {
 /// from the upstream RAF-evaluation, read-write-checking, and val-check
 /// relations. Generic over the cell (`OpeningClaim<F>` on the clear path,
 /// `Vec<F>` for ZK points).
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct RamRaClaimReductionInputClaims<C> {
     #[opening(RamRa, from = RamRafEvaluation)]
     pub raf: C,
@@ -41,7 +41,7 @@ pub struct RamRaClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the RAM `ra` claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct RamRaClaimReductionChallenges<F> {
     #[challenge(RamRaClaimReductionChallenge::Gamma)]
     pub gamma: F,

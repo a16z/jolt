@@ -8,7 +8,8 @@ pub use instruction_read_raf::{
     InstructionReadRaf, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };
 pub use outputs::{
-    Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5OutputClaims, Stage5ZkOutput,
+    Stage5Challenges, Stage5ClearOutput, Stage5InputClaims, Stage5Output, Stage5OutputClaims,
+    Stage5ZkOutput,
 };
 pub use ram_ra_claim_reduction::{
     RamRaClaimReduction, RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,

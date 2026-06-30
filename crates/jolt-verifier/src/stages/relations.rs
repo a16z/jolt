@@ -936,7 +936,10 @@ mod sumcheck_batch_derive_tests {
                 rd_wa: fr(5),
             }),
         };
-        assert_eq!(present.opening_values(), vec![fr(1), fr(2), fr(3), fr(4), fr(5)]);
+        assert_eq!(
+            present.opening_values(),
+            vec![fr(1), fr(2), fr(3), fr(4), fr(5)]
+        );
 
         let absent = FixtureOptionOutputClaims::<Fr, Fr> {
             instruction_read_raf: instruction(),

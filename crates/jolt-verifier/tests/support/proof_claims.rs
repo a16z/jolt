@@ -238,7 +238,7 @@ fn stage4_claims_from_native<F: Field>(
 
 fn stage5_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage5OutputClaims<F>, VerifierError> {
+) -> Result<Stage5OutputClaims<F, F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
         .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
         .collect::<Result<Vec<_>, _>>()?;
@@ -1436,7 +1436,7 @@ fn claim_mut_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage5_outputs<F: Field>(
-    claims: &Stage5OutputClaims<F>,
+    claims: &Stage5OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
@@ -1477,7 +1477,7 @@ fn claim_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage5_outputs<F: Field>(
-    claims: &mut Stage5OutputClaims<F>,
+    claims: &mut Stage5OutputClaims<F, F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {

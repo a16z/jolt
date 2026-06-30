@@ -16,7 +16,8 @@ use super::{
         InstructionReadRafInputClaims,
     },
     outputs::{
-        Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5OutputClaims, Stage5ZkOutput,
+        Stage5Challenges, Stage5ClearOutput, Stage5InputClaims, Stage5Output, Stage5OutputClaims,
+        Stage5Sumchecks, Stage5ZkOutput,
     },
     ram_ra_claim_reduction::{
         ram_ra_claim_reduction_inputs_from_upstream, RamRaClaimReduction,
@@ -34,13 +35,28 @@ use crate::{
             check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
             OutputClaims,
         },
-        stage2::Stage2Output,
-        stage4::Stage4Output,
+        stage2::{Stage2ClearOutput, Stage2Output},
+        stage4::{Stage4ClearOutput, Stage4Output},
         zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
 };
+
+/// Assemble the stage-5 consumed openings from the upstream clear outputs into the
+/// generated `Stage5InputClaims` aggregate. This is the single place the stage's
+/// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
+/// wires which upstream opening feeds which downstream input.
+fn stage5_inputs_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+) -> Stage5InputClaims<F, OpeningClaim<F>> {
+    Stage5InputClaims {
+        instruction_read_raf: instruction_read_raf_inputs_from_upstream(stage2),
+        ram_ra_claim_reduction: ram_ra_claim_reduction_inputs_from_upstream(stage2, stage4),
+        registers_val_evaluation: registers_val_evaluation_inputs_from_upstream(stage4),
+    }
+}
 
 /// Combine the three stage 5 expected output claims with the batch's coefficients,
 /// in canonical batch order (instruction read-RAF, RAM-RA reduction, register
@@ -67,9 +83,9 @@ pub fn stage5_expected_final_claim<F: Field>(
 /// together) from the wire claim values and each relation's opening points. Shared
 /// by the verifier and the prover so these opening claims are built once.
 pub fn stage5_output_claims_with_points<F: Field>(
-    claims: &Stage5OutputClaims<F>,
-    points: &Stage5OutputClaims<Vec<F>>,
-) -> Stage5OutputClaims<OpeningClaim<F>> {
+    claims: &Stage5OutputClaims<F, F>,
+    points: &Stage5OutputClaims<F, Vec<F>>,
+) -> Stage5OutputClaims<F, OpeningClaim<F>> {
     Stage5OutputClaims {
         instruction_read_raf: zip_openings(
             &claims.instruction_read_raf,
@@ -126,19 +142,26 @@ where
     ] {
         check_relation_boolean_hypercube(relation, domain, degree)?;
     }
-    let instruction_relation = InstructionReadRaf::new(formula_dimensions.instruction_read_raf);
-    let ram_relation = RamRaClaimReduction::new(trace_dimensions, log_k);
-    let registers_relation = RegistersValEvaluation::new(trace_dimensions);
+    let sumchecks = Stage5Sumchecks {
+        instruction_read_raf: InstructionReadRaf::new(formula_dimensions.instruction_read_raf),
+        ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, log_k),
+        registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
+    };
 
     // Draw each relation's batching gamma in the inline order (instruction, then
     // RAM); registers draws nothing. The drawn structs feed the input/output claims;
     // their scalars also populate the stage aggregate carried downstream.
-    let instruction_challenges = instruction_relation.draw_challenges(transcript)?;
-    let ram_challenges = ram_relation.draw_challenges(transcript)?;
-    let registers_challenges = registers_relation.draw_challenges(transcript)?;
+    let instruction_challenges = sumchecks.instruction_read_raf.draw_challenges(transcript)?;
+    let ram_challenges = sumchecks
+        .ram_ra_claim_reduction
+        .draw_challenges(transcript)?;
+    let registers_challenges = sumchecks
+        .registers_val_evaluation
+        .draw_challenges(transcript)?;
     let challenges = Stage5Challenges {
-        instruction_gamma: instruction_challenges.gamma,
-        ram_gamma: ram_challenges.gamma,
+        instruction_read_raf: instruction_challenges,
+        ram_ra_claim_reduction: ram_challenges,
+        registers_val_evaluation: registers_challenges,
     };
 
     let instruction_output_openings =
@@ -206,25 +229,31 @@ where
         // instruction relation ignores its inputs (empty point cells suffice); RAM
         // and registers splice the fixed address/cycle prefixes from upstream points.
         let empty = Vec::<PCS::Field>::new;
-        let instruction_inputs = InstructionReadRafInputClaims {
-            lookup_output: empty(),
-            left_lookup_operand: empty(),
-            right_lookup_operand: empty(),
-        };
-        let ram_inputs = RamRaClaimReductionInputClaims {
-            raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
-            read_write: stage2.output_points.ram_read_write_point().to_vec(),
-            val_check: stage4.output_points.ram_val_check_point().to_vec(),
-        };
-        let registers_inputs = RegistersValEvaluationInputClaims {
-            registers_val: stage4.output_points.registers_read_write_point().to_vec(),
+        let inputs = Stage5InputClaims::<PCS::Field, Vec<PCS::Field>> {
+            instruction_read_raf: InstructionReadRafInputClaims {
+                lookup_output: empty(),
+                left_lookup_operand: empty(),
+                right_lookup_operand: empty(),
+            },
+            ram_ra_claim_reduction: RamRaClaimReductionInputClaims {
+                raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
+                read_write: stage2.output_points.ram_read_write_point().to_vec(),
+                val_check: stage4.output_points.ram_val_check_point().to_vec(),
+            },
+            registers_val_evaluation: RegistersValEvaluationInputClaims {
+                registers_val: stage4.output_points.registers_read_write_point().to_vec(),
+            },
         };
         let output_points = Stage5OutputClaims {
-            instruction_read_raf: instruction_relation
-                .derive_opening_points(&instruction_point, &instruction_inputs)?,
-            ram_ra_claim_reduction: ram_relation.derive_opening_points(&ram_point, &ram_inputs)?,
-            registers_val_evaluation: registers_relation
-                .derive_opening_points(&registers_point, &registers_inputs)?,
+            instruction_read_raf: sumchecks
+                .instruction_read_raf
+                .derive_opening_points(&instruction_point, &inputs.instruction_read_raf)?,
+            ram_ra_claim_reduction: sumchecks
+                .ram_ra_claim_reduction
+                .derive_opening_points(&ram_point, &inputs.ram_ra_claim_reduction)?,
+            registers_val_evaluation: sumchecks
+                .registers_val_evaluation
+                .derive_opening_points(&registers_point, &inputs.registers_val_evaluation)?,
         };
         let instruction_r_address = output_points.instruction_r_address();
 
@@ -269,25 +298,32 @@ where
     // (same opening point and value); stage 2 validates that alias, which the
     // instruction read-RAF input wiring relies on when it falls back to the
     // product remainder.
-    let instruction_inputs = instruction_read_raf_inputs_from_upstream(stage2);
-    let ram_inputs = ram_ra_claim_reduction_inputs_from_upstream(stage2, stage4);
-    let registers_inputs = registers_val_evaluation_inputs_from_upstream(stage4);
+    let inputs = stage5_inputs_from_upstream(stage2, stage4);
 
     let sumcheck_claims = [
         SumcheckClaim::new(
             instruction_claims.rounds(),
             instruction_claims.degree(),
-            instruction_relation.input_claim(&instruction_inputs, &instruction_challenges)?,
+            sumchecks.instruction_read_raf.input_claim(
+                &inputs.instruction_read_raf,
+                &challenges.instruction_read_raf,
+            )?,
         ),
         SumcheckClaim::new(
             ram_claims.rounds(),
             ram_claims.degree(),
-            ram_relation.input_claim(&ram_inputs, &ram_challenges)?,
+            sumchecks.ram_ra_claim_reduction.input_claim(
+                &inputs.ram_ra_claim_reduction,
+                &challenges.ram_ra_claim_reduction,
+            )?,
         ),
         SumcheckClaim::new(
             registers_claims.rounds(),
             registers_claims.degree(),
-            registers_relation.input_claim(&registers_inputs, &registers_challenges)?,
+            sumchecks.registers_val_evaluation.input_claim(
+                &inputs.registers_val_evaluation,
+                &challenges.registers_val_evaluation,
+            )?,
         ),
     ];
     let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
@@ -320,28 +356,32 @@ where
         })?;
 
     let points = Stage5OutputClaims {
-        instruction_read_raf: instruction_relation
-            .derive_opening_points(instruction_point, &instruction_inputs)?,
-        ram_ra_claim_reduction: ram_relation.derive_opening_points(ram_point, &ram_inputs)?,
-        registers_val_evaluation: registers_relation
-            .derive_opening_points(registers_point, &registers_inputs)?,
+        instruction_read_raf: sumchecks
+            .instruction_read_raf
+            .derive_opening_points(instruction_point, &inputs.instruction_read_raf)?,
+        ram_ra_claim_reduction: sumchecks
+            .ram_ra_claim_reduction
+            .derive_opening_points(ram_point, &inputs.ram_ra_claim_reduction)?,
+        registers_val_evaluation: sumchecks
+            .registers_val_evaluation
+            .derive_opening_points(registers_point, &inputs.registers_val_evaluation)?,
     };
     let output_claims = stage5_output_claims_with_points(claims, &points);
 
-    let instruction_output = instruction_relation.expected_output(
-        &instruction_inputs,
+    let instruction_output = sumchecks.instruction_read_raf.expected_output(
+        &inputs.instruction_read_raf,
         &output_claims.instruction_read_raf,
-        &instruction_challenges,
+        &challenges.instruction_read_raf,
     )?;
-    let ram_output = ram_relation.expected_output(
-        &ram_inputs,
+    let ram_output = sumchecks.ram_ra_claim_reduction.expected_output(
+        &inputs.ram_ra_claim_reduction,
         &output_claims.ram_ra_claim_reduction,
-        &ram_challenges,
+        &challenges.ram_ra_claim_reduction,
     )?;
-    let registers_output = registers_relation.expected_output(
-        &registers_inputs,
+    let registers_output = sumchecks.registers_val_evaluation.expected_output(
+        &inputs.registers_val_evaluation,
         &output_claims.registers_val_evaluation,
-        &registers_challenges,
+        &challenges.registers_val_evaluation,
     )?;
 
     let expected_final_claim = stage5_expected_final_claim(
