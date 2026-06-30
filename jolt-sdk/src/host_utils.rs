@@ -27,40 +27,22 @@ pub use jolt_prover_legacy::zkvm::{
 pub use jolt_prover_legacy::AdviceTape;
 pub use jolt_transcript::DEFAULT_JOLT_SESSION;
 
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type VerifierPCS = jolt_dory::DoryScheme;
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type VerifierField = jolt_field::Fr;
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type VerifierTranscript = jolt_transcript::Blake2b512;
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS>;
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type JoltProof = RV64IMACProof;
-#[cfg(feature = "host")]
-pub type VerifierTrustedAdviceCommitment = jolt_dory::DoryCommitment;
-
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierPCS = jolt_dory::DoryScheme;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierField = jolt_field::Fr;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierTranscript = jolt_transcript::Blake2b512;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type JoltVerifierPreprocessing =
-    jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS>;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type JoltProof = RV64IMACProof;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub type VerifierTrustedAdviceCommitment = jolt_dory::DoryCommitment;
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
