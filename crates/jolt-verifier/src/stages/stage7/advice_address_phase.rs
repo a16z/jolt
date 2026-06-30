@@ -5,8 +5,8 @@
 //! instances differ only by a runtime [`JoltAdviceKind`], so each is a separate
 //! batch member built from a per-kind relation that carries the kind; the produced
 //! and consumed openings are keyed positionally by kind (trusted/untrusted
-//! `Option<C>` fields, exactly as stage 4's `RamValCheckAdviceClaims`), so the
-//! claim structs stay fully derive-driven.
+//! `Option<C>` fields, exactly as the advice leaves folded into stage 4's
+//! `RamValCheckOutputClaims`), so the claim structs stay fully derive-driven.
 //!
 //! As with the committed-program address phases, the `FinalScale` public is a
 //! function of the reduction's final opening point, which `derive_output_term`

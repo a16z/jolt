@@ -30,10 +30,7 @@ use jolt_verifier::{
             InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
             SpartanShiftOutputClaims, Stage3OutputClaims,
         },
-        stage4::{
-            RamValCheckAdviceClaims, RamValCheckOutputClaims, RegistersReadWriteOutputClaims,
-            Stage4OutputClaims,
-        },
+        stage4::{RamValCheckOutputClaims, RegistersReadWriteOutputClaims, Stage4OutputClaims},
         stage5::{
             InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
             RegistersValEvaluationOutputClaims, Stage5OutputClaims,
@@ -212,13 +209,8 @@ fn stage3_claims_from_openings<F: Field>(
 
 fn stage4_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage4OutputClaims<F>, VerifierError> {
+) -> Result<Stage4OutputClaims<F, F>, VerifierError> {
     Ok(Stage4OutputClaims {
-        advice: RamValCheckAdviceClaims {
-            untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
-            trusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
-        },
-        program_image_contribution: claims.get(program_image::ram_val_check_contribution_opening()),
         registers_read_write: RegistersReadWriteOutputClaims {
             registers_val: claims.require(registers::registers_val_read_write())?,
             rs1_ra: claims.require(registers::rs1_ra_read_write())?,
@@ -226,7 +218,13 @@ fn stage4_claims_from_openings<F: Field>(
             rd_wa: claims.require(registers::rd_wa_read_write())?,
             rd_inc: claims.require(registers::rd_inc_read_write())?,
         },
+        // The advice / program-image openings are produced by the RAM value-check
+        // instance, so they are folded into `RamValCheckOutputClaims`. Their values
+        // are sourced identically to before; only the struct shape changed.
         ram_val_check: RamValCheckOutputClaims {
+            untrusted_advice: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
+            trusted_advice: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
+            program_image: claims.get(program_image::ram_val_check_contribution_opening()),
             ram_ra: claims.require(ram::ram_ra_val_check())?,
             ram_inc: claims.require(ram::ram_inc_val_check())?,
         },

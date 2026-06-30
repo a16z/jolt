@@ -46,7 +46,7 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)),
-        input.stage4.challenges.registers_gamma,
+        input.stage4.challenges.registers_read_write.gamma,
     )?;
     let registers_point = input
         .stage4
@@ -74,7 +74,7 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma)),
-        input.stage4.challenges.ram_val_check_gamma,
+        input.stage4.challenges.ram_val_check.gamma,
     )?;
     let ram_val_point = input
         .stage4
@@ -94,7 +94,7 @@ where
     values.public(
         JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
         LtPolynomial::evaluate(&ram_val_cycle, r_cycle)
-            + input.stage4.challenges.ram_val_check_gamma,
+            + input.stage4.challenges.ram_val_check.gamma,
     )?;
 
     let mut output_ids = Vec::new();
@@ -123,8 +123,16 @@ where
         }
         .canonical_order(),
     ));
+    // The advice / program-image openings are produced by the RAM value-check
+    // instance, but the stage-4 commit (flush) order appends them *first* (above),
+    // before the registers; so here, at the tail, only the main `ram_ra`/`ram_inc`
+    // canonical order is emitted (advice / program-image leaves left `None`),
+    // preserving the prover's per-stage opening-id block order.
     output_ids.extend(map_jolt_opening_ids(
         relations::ram::RamValCheckOutputClaims::<PCS::Field> {
+            untrusted_advice: None,
+            trusted_advice: None,
+            program_image: None,
             ram_ra: PCS::Field::zero(),
             ram_inc: PCS::Field::zero(),
         }

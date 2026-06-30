@@ -632,7 +632,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage4.claims.advice.untrusted",
-        "claims.stage4.advice.untrusted",
+        "claims.stage4.ram_val_check.untrusted_advice",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -640,7 +640,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage4.claims.advice.trusted",
-        "claims.stage4.advice.trusted",
+        "claims.stage4.ram_val_check.trusted_advice",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -648,7 +648,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage4.claims.program_image_contribution",
-        "claims.stage4.program_image_contribution",
+        "claims.stage4.ram_val_check.program_image",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
@@ -1349,11 +1349,6 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             },
         },
         stage4: stage4::outputs::Stage4OutputClaims {
-            advice: stage4::RamValCheckAdviceClaims {
-                untrusted: Some(zero),
-                trusted: Some(zero),
-            },
-            program_image_contribution: None,
             registers_read_write: stage4::RegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
@@ -1362,6 +1357,9 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rd_inc: zero,
             },
             ram_val_check: stage4::RamValCheckOutputClaims {
+                untrusted_advice: Some(zero),
+                trusted_advice: Some(zero),
+                program_image: None,
                 ram_ra: zero,
                 ram_inc: zero,
             },
