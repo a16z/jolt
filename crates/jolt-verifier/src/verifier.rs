@@ -16,7 +16,7 @@ use jolt_transcript::{
 };
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig},
+    config::{validate_proof_config, ZkConfig},
     preprocessing::JoltVerifierPreprocessing,
     proof::{
         commitments_from_proof_payload_order, proof_commitment_counts, JoltProof,
@@ -43,7 +43,7 @@ pub struct ProofTranscriptConfig {
 pub fn verify<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC>,
+    proof: &JoltProof<PCS>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
 ) -> Result<(), VerifierError>
@@ -60,7 +60,7 @@ where
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     validate_proof_consistency(proof, zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(zk), proof)?;
+    validate_proof_config(ZkConfig::from_bool(zk), proof)?;
 
     let instance = proof_transcript_instance(preprocessing, public_io, proof);
     let mut transcript = verifier_transcript(b"Jolt", instance, H::default(), &proof.narg);
@@ -85,10 +85,10 @@ where
         JoltRelationId::InstructionReadRaf,
     )?;
 
-    let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
-    let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
-    let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
-    let stage4 = stage4::verify(
+    let stage1 = stage1::verify::<PCS, VC, _>(&checked, proof, &mut transcript)?;
+    let stage2 = stage2::verify::<PCS, VC, _>(&checked, proof, &mut transcript, &stage1)?;
+    let stage3 = stage3::verify::<PCS, VC, _>(&checked, proof, &mut transcript, &stage1, &stage2)?;
+    let stage4 = stage4::verify::<PCS, VC, _>(
         &checked,
         preprocessing,
         proof,
@@ -96,7 +96,7 @@ where
         &stage2,
         &stage3,
     )?;
-    let stage5 = stage5::verify(
+    let stage5 = stage5::verify::<PCS, VC, _>(
         &checked,
         proof,
         &formula_dimensions,
@@ -104,7 +104,7 @@ where
         &stage2,
         &stage4,
     )?;
-    let stage6 = stage6::verify(
+    let stage6 = stage6::verify::<PCS, VC, _>(
         &checked,
         preprocessing,
         proof,
@@ -116,7 +116,7 @@ where
         &stage4,
         &stage5,
     )?;
-    let stage7 = stage7::verify(
+    let stage7 = stage7::verify::<PCS, VC, _>(
         &checked,
         proof,
         &formula_dimensions,
@@ -124,7 +124,7 @@ where
         &stage4,
         &stage6,
     )?;
-    let stage8 = stage8::verify(
+    let stage8 = stage8::verify::<F, PCS, VC, _>(
         &checked,
         preprocessing,
         proof,
@@ -193,10 +193,10 @@ pub struct PreStage1VerifierState<T, C> {
 /// instance binding, input validation, and commitment absorption — and returns
 /// the pre-stage-1 state. WARNING: the transcript order here must stay
 /// identical to [`verify`] or the prover and verifier transcripts diverge.
-pub fn verify_until_stage1<'a, PCS, VC, H, ZkProof>(
+pub fn verify_until_stage1<'a, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &'a JoltProof<PCS, VC, ZkProof>,
+    proof: &'a JoltProof<PCS>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
 ) -> Result<PreStage1VerifierState<VerifierState<'a, H>, PCS::Output>, VerifierError>
@@ -209,7 +209,7 @@ where
     for<'tx> VerifierState<'tx, H>: FsTranscript<PCS::Field>,
 {
     validate_proof_consistency(proof, zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(zk), proof)?;
+    validate_proof_config(ZkConfig::from_bool(zk), proof)?;
 
     let instance = proof_transcript_instance(preprocessing, public_io, proof);
     let mut transcript = verifier_transcript(b"Jolt", instance, H::default(), &proof.narg);
@@ -249,10 +249,10 @@ pub struct CheckedInputs {
     pub precommitted: PrecommittedSchedule,
 }
 
-pub fn validate_inputs<PCS, VC, ZkProof>(
+pub fn validate_inputs<PCS, VC>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     trusted_advice_commitment_present: bool,
     untrusted_advice_commitment_present: bool,
     zk: bool,
@@ -446,10 +446,10 @@ where
     Ok(got)
 }
 
-fn proof_transcript_instance<PCS, VC, ZkProof>(
+fn proof_transcript_instance<PCS, VC>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
 ) -> [u8; 32]
 where
     PCS: CommitmentScheme,
@@ -567,14 +567,13 @@ pub(crate) fn absorb_preprocessing_commitments<PCS, VC, T>(
     }
 }
 
-fn read_proof_commitments_from_narg<PCS, VC, ZkProof, H>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+fn read_proof_commitments_from_narg<PCS, H>(
+    proof: &JoltProof<PCS>,
     transcript: &mut VerifierState<'_, H>,
 ) -> Result<NargProofCommitments<PCS::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     PCS::Output: CanonicalDeserialize,
-    VC: VectorCommitment<Field = PCS::Field>,
     H: DuplexSpongeInterface<U = u8>,
 {
     let commitments = read_narg_values(transcript)?;
@@ -607,13 +606,12 @@ where
     deserialize_slice(&bytes.0).map_err(|_| VerifierError::MalformedNarg)
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn validate_proof_consistency<PCS>(
+    proof: &JoltProof<PCS>,
     zk: bool,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     match (&proof.claims, zk) {
         (crate::proof::JoltProofClaims::Clear(_), false)
@@ -739,7 +737,7 @@ mod tests {
         }
     }
 
-    type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
+    type TestProof = JoltProof<TestPcs>;
     type TestClaims = JoltProofClaims<Fr>;
 
     #[test]
@@ -968,7 +966,7 @@ mod tests {
         proof.narg.clear();
 
         assert!(matches!(
-            verify_until_stage1::<TestPcs, Pedersen<Bn254G1>, jolt_transcript::Blake2b512, ()>(
+            verify_until_stage1::<TestPcs, Pedersen<Bn254G1>, jolt_transcript::Blake2b512>(
                 &preprocessing,
                 &public_io,
                 &proof,

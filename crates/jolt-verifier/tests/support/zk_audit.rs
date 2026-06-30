@@ -50,10 +50,10 @@ impl ZkBlindFoldProtocolShape {
     }
 }
 
-pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, H, ZkProof>(
+pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<ZkBlindFoldProtocolShape, VerifierError>
 where
@@ -68,7 +68,7 @@ where
     for<'a> VerifierState<'a, H>: jolt_transcript::FsTranscript<F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    let state = verify_until_stage1::<PCS, VC, H, ZkProof>(
+    let state = verify_until_stage1::<PCS, VC, H>(
         preprocessing,
         public_io,
         proof,

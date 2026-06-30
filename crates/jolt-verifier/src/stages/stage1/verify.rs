@@ -21,9 +21,9 @@ use super::outputs::{
 };
 use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
 ) -> Result<Stage1Output<PCS::Field, VC::Output>, VerifierError>
 where

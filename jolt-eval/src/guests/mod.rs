@@ -27,7 +27,7 @@ pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 pub type VerifierTranscript = Blake2b512;
 
-pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+pub type Proof = jolt_verifier::JoltProof<VerifierPCS>;
 pub type ProverPreprocessing = jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
 pub type VerifierPreprocessing = jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 

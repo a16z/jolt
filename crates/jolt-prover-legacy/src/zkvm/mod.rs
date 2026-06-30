@@ -53,7 +53,6 @@ pub type RV64IMACSponge = jolt_transcript::PoseidonSponge;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
-use jolt_transcript::DuplexSpongeInterface;
 #[cfg(feature = "prover")]
 use prover::JoltCpuProver;
 use std::io::Cursor;
@@ -317,15 +316,13 @@ macro_rules! pprof_scope {
     dead_code,
     reason = "test-only prover debug payload is compiled in host builds"
 )]
-pub struct ProverDebugInfo<F, H, PCS>
+pub struct ProverDebugInfo<F, PCS>
 where
     F: JoltField,
-    H: DuplexSpongeInterface,
     PCS: CommitmentScheme<Field = F>,
 {
     pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
     pub(crate) prover_setup: PCS::ProverSetup,
-    pub(crate) _marker: std::marker::PhantomData<fn() -> H>,
 }
 
 // The per-sponge variance lives entirely in `RV64IMACSponge` (cfg-gated above), so

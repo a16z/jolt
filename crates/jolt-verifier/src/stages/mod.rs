@@ -78,8 +78,8 @@ pub(crate) mod test_support {
 /// the verifier-trusted geometry (trace length, lookup operand width, bytecode
 /// length, RAM size), mapping the layout error to `stage`. Shared by the stages
 /// (5, 6, 7) that derive their RA layouts from it.
-pub fn build_formula_dimensions<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn build_formula_dimensions<PCS, VC>(
+    proof: &JoltProof<PCS>,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     checked: &CheckedInputs,
     log_t: usize,

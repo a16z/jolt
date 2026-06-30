@@ -52,9 +52,9 @@ use crate::{
     VerifierError,
 };
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage4: &Stage4Output<PCS::Field, VC::Output>,

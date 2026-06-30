@@ -133,7 +133,7 @@ fn lock_exclusive(file: &fs::File) {
 type ProverField = jolt_prover_legacy::ark_bn254::Fr;
 type ProverCommitment = <DoryCommitmentScheme as ProverCommitmentScheme>::Commitment;
 type ProverOpeningHint = <DoryCommitmentScheme as ProverCommitmentScheme>::OpeningProofHint;
-type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 type TrustedAdviceCommitter = fn(
     &JoltProverPreprocessing<ProverField, Bn254Curve, DoryCommitmentScheme>,

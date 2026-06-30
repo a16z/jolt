@@ -57,12 +57,9 @@ pub fn prove<
     preprocessing: &JoltProverPreprocessing<F, C, PCS>,
 ) -> Result<
     (
-        jolt_verifier::JoltProof<
-            <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
-            <C as ProofCurve<F>>::VerifierVectorCommitment,
-        >,
+        jolt_verifier::JoltProof<<PCS as ProofCommitmentScheme<F>>::VerifierPcs>,
         JoltDevice,
-        Option<ProverDebugInfo<F, H, PCS>>,
+        Option<ProverDebugInfo<F, PCS>>,
     ),
     crate::zkvm::proof::VerifierError,
 >

@@ -76,10 +76,10 @@ use crate::{
     clippy::too_many_arguments,
     reason = "Stage 6 consumes all five prior clear-stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
@@ -219,7 +219,7 @@ where
 
     if checked.zk {
         let stage5 = stage5.zk()?;
-        let stage6a = verify_zk(
+        let stage6a = verify_zk::<PCS, VC, T>(
             checked,
             proof,
             transcript,
@@ -615,7 +615,7 @@ where
         });
     }
 
-    let stage6a = verify_clear(
+    let stage6a = verify_clear::<PCS, T>(
         proof,
         transcript,
         claims,
@@ -1790,9 +1790,9 @@ pub(super) struct Stage6AClearOutput<F: Field> {
     pub booleanity_r_address: Vec<F>,
 }
 
-pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
+pub(super) fn verify_zk<PCS, VC, T>(
     checked: &CheckedInputs,
-    _proof: &JoltProof<PCS, VC, ZkProof>,
+    _proof: &JoltProof<PCS>,
     transcript: &mut T,
     bytecode_address_claims: &JoltRelationClaims<PCS::Field>,
     booleanity_address_claims: &JoltRelationClaims<PCS::Field>,
@@ -1867,8 +1867,8 @@ where
     })
 }
 
-pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
-    _proof: &JoltProof<PCS, VC, ZkProof>,
+pub(super) fn verify_clear<PCS, T>(
+    _proof: &JoltProof<PCS>,
     transcript: &mut T,
     claims: &Stage6OutputClaims<PCS::Field>,
     bytecode_relation: &BytecodeReadRafAddressPhase<PCS::Field>,
@@ -1877,7 +1877,6 @@ pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
 ) -> Result<Stage6AClearOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
     T: FsNargRead<PCS::Field>,
 {
     let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();

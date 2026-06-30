@@ -2,15 +2,13 @@
 
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
 
 use crate::{
-    config::JoltProtocolConfig,
+    config::ZkConfig,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
@@ -21,12 +19,11 @@ use crate::{
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct JoltProof<PCS, VC, ZkProof = ()>
+pub struct JoltProof<PCS>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
-    pub protocol: JoltProtocolConfig,
+    pub protocol: ZkConfig,
     /// Spongefish NARG frames consumed by the modular verifier. This carries
     /// witness commitments, optional untrusted-advice commitment, prover-only
     /// sumcheck/uni-skip round payloads, and BlindFold payloads. Dory's joint
@@ -40,14 +37,11 @@ where
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
-    #[serde(skip)]
-    _proof_marker: PhantomData<fn() -> (VC, ZkProof)>,
 }
 
-impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+impl<PCS> JoltProof<PCS>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     #[expect(
         clippy::too_many_arguments,
@@ -63,7 +57,7 @@ where
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
     ) -> Self {
-        let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
+        let protocol = ZkConfig::from_bool(claims.is_zk());
         Self {
             protocol,
             narg,
@@ -74,7 +68,6 @@ where
             rw_config,
             one_hot_config,
             trace_polynomial_order,
-            _proof_marker: PhantomData,
         }
     }
 

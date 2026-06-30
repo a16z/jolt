@@ -38,7 +38,7 @@ pub type VerifierTranscript = jolt_transcript::Blake2b512;
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 #[cfg(feature = "host")]
-pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS>;
 #[cfg(feature = "host")]
 pub type JoltProof = RV64IMACProof;
 #[cfg(feature = "host")]
@@ -56,7 +56,7 @@ pub type VerifierTranscript = jolt_transcript::Blake2b512;
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltProof = RV64IMACProof;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]

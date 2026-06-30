@@ -173,9 +173,9 @@ pub fn stage2_expected_final_claim<F: Field>(
         + *ram_output_coefficient * ram_output_check)
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2Output<PCS::Field, VC::Output>, VerifierError>
@@ -195,15 +195,9 @@ where
         _ => {}
     }
 
-    let product_uniskip =
-        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
-    let batch = verify_regular_batch::<PCS, VC, T, ZkProof>(
-        checked,
-        proof,
-        transcript,
-        &product_uniskip,
-        stage1,
-    )?;
+    let product_uniskip = verify_product_uniskip::<PCS, VC, T>(checked, proof, transcript, stage1)?;
+    let batch =
+        verify_regular_batch::<PCS, VC, T>(checked, proof, transcript, &product_uniskip, stage1)?;
 
     match (product_uniskip, batch) {
         (
@@ -249,9 +243,9 @@ where
     }
 }
 
-fn verify_product_uniskip<PCS, VC, T, ZkProof>(
+fn verify_product_uniskip<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2ProductUniSkip<PCS::Field, VC::Output>, VerifierError>
@@ -377,9 +371,9 @@ where
     }
 }
 
-fn verify_regular_batch<PCS, VC, T, ZkProof>(
+fn verify_regular_batch<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     product_uniskip: &Stage2ProductUniSkip<PCS::Field, VC::Output>,
     stage1: &Stage1Output<PCS::Field, VC::Output>,

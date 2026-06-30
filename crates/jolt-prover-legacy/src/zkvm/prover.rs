@@ -9,7 +9,6 @@ use jolt_verifier::{
     CheckedInputs,
 };
 use rand::rngs::StdRng;
-use std::marker::PhantomData;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
@@ -513,17 +512,8 @@ where
         }
     }
 
-    #[expect(
-        clippy::type_complexity,
-        reason = "internal proof assembly returns prover-native parts plus debug payload"
-    )]
     #[tracing::instrument(skip_all)]
-    fn prove_parts(
-        mut self,
-    ) -> (
-        JoltProofParts<F, C, PCS, H>,
-        Option<ProverDebugInfo<F, H, PCS>>,
-    ) {
+    fn prove_parts(mut self) -> (JoltProofParts<F, PCS>, Option<ProverDebugInfo<F, PCS>>) {
         let _pprof_prove = pprof_scope!("prove");
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -623,7 +613,6 @@ where
         let debug_info = Some(ProverDebugInfo {
             opening_accumulator: self.opening_accumulator.clone(),
             prover_setup: self.preprocessing.generators.clone(),
-            _marker: PhantomData,
         });
         #[cfg(not(test))]
         let debug_info = None;
@@ -638,7 +627,6 @@ where
             one_hot_config: self.one_hot_params.to_config(),
             dory_layout: DoryGlobals::get_layout(),
             narg,
-            _marker: PhantomData,
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -665,9 +653,8 @@ where
         (
             jolt_verifier::JoltProof<
                 <PCS as crate::zkvm::proof::ProofCommitmentScheme<F>>::VerifierPcs,
-                <C as crate::zkvm::proof::ProofCurve<F>>::VerifierVectorCommitment,
             >,
-            Option<ProverDebugInfo<F, H, PCS>>,
+            Option<ProverDebugInfo<F, PCS>>,
         ),
         jolt_verifier::VerifierError,
     >

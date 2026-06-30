@@ -27,7 +27,6 @@ use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field as VerifierFieldTrait, Fr as VerifierFr};
 use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
-use jolt_transcript::DuplexSpongeInterface;
 
 use crate::{
     curve::{Bn254Curve, JoltCurve},
@@ -52,7 +51,7 @@ use crate::{
     zkvm::{instruction as prover_instruction, witness as prover_witness},
 };
 
-pub type RV64IMACProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+pub type RV64IMACProof = JoltProof<DoryScheme>;
 
 pub trait ProofField: JoltField {
     type VerifierField: VerifierFieldTrait;
@@ -303,25 +302,13 @@ fn convert_trace_polynomial_order(layout: ProverDoryLayout) -> TracePolynomialOr
 }
 
 #[cfg(not(feature = "zk"))]
-#[expect(
-    clippy::type_complexity,
-    reason = "private converter returns the verifier-native proof with projected backend types"
-)]
-pub(crate) fn proof_parts_into_verifier<F, C, PCS, H>(
-    proof: ProverProofParts<F, C, PCS, H>,
-) -> Result<
-    JoltProof<
-        <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
-        <C as ProofCurve<F>>::VerifierVectorCommitment,
-    >,
-    VerifierError,
->
+pub(crate) fn proof_parts_into_verifier<F, PCS>(
+    proof: ProverProofParts<F, PCS>,
+) -> Result<JoltProof<<PCS as ProofCommitmentScheme<F>>::VerifierPcs>, VerifierError>
 where
     F: ProofField,
-    C: ProofCurve<F>,
     PCS: ProofCommitmentScheme<F>,
     <PCS::VerifierPcs as VerifierCommitment>::Output: ark_serialize::CanonicalSerialize + Clone,
-    H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
 
@@ -341,25 +328,13 @@ where
 }
 
 #[cfg(feature = "zk")]
-#[expect(
-    clippy::type_complexity,
-    reason = "private converter returns the verifier-native proof with projected backend types"
-)]
-pub(crate) fn proof_parts_into_verifier<F, C, PCS, H>(
-    proof: ProverProofParts<F, C, PCS, H>,
-) -> Result<
-    JoltProof<
-        <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
-        <C as ProofCurve<F>>::VerifierVectorCommitment,
-    >,
-    VerifierError,
->
+pub(crate) fn proof_parts_into_verifier<F, PCS>(
+    proof: ProverProofParts<F, PCS>,
+) -> Result<JoltProof<<PCS as ProofCommitmentScheme<F>>::VerifierPcs>, VerifierError>
 where
     F: ProofField,
-    C: ProofCurve<F>,
     PCS: ProofCommitmentScheme<F>,
     <PCS::VerifierPcs as VerifierCommitment>::Output: ark_serialize::CanonicalSerialize + Clone,
-    H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
 

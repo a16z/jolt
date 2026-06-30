@@ -7,7 +7,7 @@ pub mod proof;
 pub mod stages;
 pub mod verifier;
 
-pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG};
+pub use config::{validate_proof_config, ZkConfig};
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,

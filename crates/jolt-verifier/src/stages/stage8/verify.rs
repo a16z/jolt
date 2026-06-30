@@ -46,10 +46,10 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     clippy::too_many_arguments,
     reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
 )]
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify<F, PCS, VC, T>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     formula_dimensions: &JoltFormulaDimensions,
     narg_commitments: &NargProofCommitments<PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,

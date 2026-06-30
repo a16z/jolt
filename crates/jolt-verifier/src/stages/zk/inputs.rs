@@ -21,14 +21,14 @@ pub(crate) struct CommittedOutputClaimInputs<'a, C> {
     pub stage: JoltRelationId,
 }
 
-pub struct BlindFoldInputs<'a, PCS, VC, ZkProof>
+pub struct BlindFoldInputs<'a, PCS, VC>
 where
     PCS: CommitmentScheme,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
 {
     pub checked: &'a CheckedInputs,
     pub preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    pub proof: &'a JoltProof<PCS, VC, ZkProof>,
+    pub proof: &'a JoltProof<PCS>,
     pub stage1: &'a Stage1ZkOutput<PCS::Field, VC::Output>,
     pub stage2: &'a Stage2ZkOutput<PCS::Field, VC::Output>,
     pub stage3: &'a Stage3ZkOutput<PCS::Field, VC::Output>,

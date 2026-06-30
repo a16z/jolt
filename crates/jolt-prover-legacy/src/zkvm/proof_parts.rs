@@ -1,12 +1,10 @@
 #[cfg(not(feature = "zk"))]
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_transcript::DuplexSpongeInterface;
 use num::FromPrimitive;
 use strum::EnumCount;
 
@@ -18,7 +16,6 @@ use crate::zkvm::{
     witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use crate::{
-    curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
@@ -26,12 +23,7 @@ use crate::{
     },
 };
 
-pub(crate) struct JoltProofParts<
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-    H: DuplexSpongeInterface,
-> {
+pub(crate) struct JoltProofParts<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub joint_opening_proof: PCS::Proof,
     #[cfg(not(feature = "zk"))]
     pub opening_claims: ProverOpeningClaims<F>,
@@ -44,9 +36,6 @@ pub(crate) struct JoltProofParts<
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
-    /// Compile-time curve/transcript link. Serializes to zero bytes; `fn() -> ...`
-    /// keeps the proof `Send + Sync` without bounding the marker types.
-    pub _marker: PhantomData<fn() -> (C, H)>,
 }
 
 #[cfg(not(feature = "zk"))]
