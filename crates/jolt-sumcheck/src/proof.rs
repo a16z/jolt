@@ -8,9 +8,9 @@ use crate::{
     round_proof::RoundPoly,
     verifier::SumcheckVerifier,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{FsNargRead, FsTranscript};
+use jolt_transcript::FsTranscript;
 use serde::{Deserialize, Serialize};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
@@ -112,34 +112,6 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         }
     }
 
-    /// Verifies a full-round clear sumcheck proof by consuming round
-    /// polynomial frames from the NARG.
-    pub fn verify_from_narg<T, D>(
-        &self,
-        claim: &SumcheckClaim<F>,
-        domain: D,
-        transcript: &mut T,
-    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
-    where
-        T: FsNargRead<F>,
-        D: SumcheckDomain<F>,
-        C: Clone + CanonicalSerialize,
-    {
-        match self {
-            Self::Clear(ClearProof::Full(_)) => {
-                SumcheckVerifier::verify_from_narg(claim, domain, transcript)
-            }
-            Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
-                expected: "full clear",
-                got: "compressed clear",
-            }),
-            Self::Committed(_) => Err(SumcheckError::WrongProofEncoding {
-                expected: "full clear",
-                got: "committed",
-            }),
-        }
-    }
-
     /// Verifies a compressed clear Boolean-hypercube sumcheck proof.
     pub fn verify_compressed_boolean<T>(
         &self,
@@ -153,31 +125,6 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         match self {
             Self::Clear(ClearProof::Compressed(proof)) => {
                 SumcheckVerifier::verify_compressed(claim, proof, BooleanHypercube, transcript)
-            }
-            Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
-                expected: "compressed clear",
-                got: "full clear",
-            }),
-            Self::Committed(_) => Err(SumcheckError::WrongProofEncoding {
-                expected: "compressed clear",
-                got: "committed",
-            }),
-        }
-    }
-
-    /// Verifies a compressed clear Boolean-hypercube proof from NARG frames.
-    pub fn verify_compressed_boolean_from_narg<T>(
-        &self,
-        claim: &SumcheckClaim<F>,
-        transcript: &mut T,
-    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
-    where
-        T: FsNargRead<F>,
-        C: Clone + CanonicalSerialize,
-    {
-        match self {
-            Self::Clear(ClearProof::Compressed(_)) => {
-                SumcheckVerifier::verify_compressed_from_narg(claim, BooleanHypercube, transcript)
             }
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "compressed clear",
@@ -207,34 +154,6 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
     {
         match self {
             Self::Committed(proof) => proof.verify_committed_consistency(statement, transcript),
-            Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
-                expected: "committed",
-                got: "full clear",
-            }),
-            Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
-                expected: "committed",
-                got: "compressed clear",
-            }),
-        }
-    }
-
-    /// Checks public consistency for a committed proof by consuming its
-    /// commitments, degrees, and output-claim commitments from the NARG.
-    pub fn verify_committed_consistency_from_narg<T>(
-        &self,
-        statement: SumcheckStatement,
-        transcript: &mut T,
-    ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
-    where
-        T: FsNargRead<F>,
-        C: Clone + CanonicalSerialize + CanonicalDeserialize,
-    {
-        match self {
-            Self::Committed(_) => {
-                CommittedSumcheckProof::<C>::verify_committed_consistency_from_narg(
-                    statement, transcript,
-                )
-            }
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "committed",
                 got: "full clear",
