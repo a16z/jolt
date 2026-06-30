@@ -34,7 +34,7 @@ where
         JoltSumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE);
     let product_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.challenges.product_tau_high,
+        input.stage2.product_tau_high,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::SpartanProductVirtualization,
@@ -75,7 +75,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
-        input.stage2.challenges.ram_read_write_gamma,
+        input.stage2.challenges.ram_read_write.gamma,
     )?;
     values.public(JoltDerivedId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
 
@@ -89,15 +89,15 @@ where
     let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
     let product_tau_high_bound = centered_lagrange_kernel(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.challenges.product_tau_high,
-        input.stage2.challenges.product_uniskip_challenge,
+        input.stage2.product_tau_high,
+        input.stage2.product_uniskip_challenge,
     )
     .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_tau_low_eq = try_eq_mle(&product_tau_low, &product_opening_point)
         .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_lagrange_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.challenges.product_uniskip_challenge,
+        input.stage2.product_uniskip_challenge,
     )
     .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_tau_kernel = product_tau_high_bound * product_tau_low_eq;
@@ -118,7 +118,7 @@ where
         VerifierPublicId::Challenge(JoltChallengeId::from(
             InstructionClaimReductionChallenge::Gamma,
         )),
-        input.stage2.challenges.instruction_gamma,
+        input.stage2.challenges.instruction_claim_reduction.gamma,
     )?;
     values.public(
         JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan),
@@ -158,7 +158,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let output_publics = ram_output_publics(
         input,
-        &input.stage2.challenges.output_address_challenges,
+        &input.stage2.output_address_challenges,
         &ram_output_address,
     )?;
     values.public(

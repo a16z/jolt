@@ -29,6 +29,7 @@ pub struct RamOutputCheckOutputClaims<C> {
 /// The RAM output check consumes no openings (its input claim is the constant
 /// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
 /// since the derive requires at least one `#[opening]` field.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamOutputCheckInputClaims<C> {
     _cell: PhantomData<C>,
 }

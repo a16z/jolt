@@ -44,7 +44,7 @@ pub struct InstructionClaimReductionOutputClaims<C> {
 /// its own sumcheck point), so the input points are left empty. Generic over the
 /// cell. Field order matches
 /// [`instruction_claim_reduction::claim_reduction_input_openings`].
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct InstructionClaimReductionInputClaims<C> {
     #[opening(LookupOutput, from = SpartanOuter)]
     pub lookup_output: C,
@@ -59,7 +59,7 @@ pub struct InstructionClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionClaimReductionChallenges<F> {
     #[challenge(InstructionClaimReductionChallenge::Gamma)]
     pub gamma: F,
