@@ -10,7 +10,8 @@ pub use instruction_input::{
     InstructionInput, InstructionInputInputClaims, InstructionInputOutputClaims,
 };
 pub use outputs::{
-    Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3OutputClaims, Stage3ZkOutput,
+    Stage3Challenges, Stage3ClearOutput, Stage3InputClaims, Stage3Output, Stage3OutputClaims,
+    Stage3Sumchecks, Stage3ZkOutput,
 };
 pub use registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionInputClaims,

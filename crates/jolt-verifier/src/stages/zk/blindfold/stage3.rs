@@ -19,17 +19,17 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(SpartanShiftChallenge::Gamma)),
-        input.stage3.challenges.shift_gamma,
+        input.stage3.challenges.shift.gamma,
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(InstructionInputChallenge::Gamma)),
-        input.stage3.challenges.instruction_gamma,
+        input.stage3.challenges.instruction_input.gamma,
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(
             RegistersClaimReductionChallenge::Gamma,
         )),
-        input.stage3.challenges.registers_gamma,
+        input.stage3.challenges.registers_claim_reduction.gamma,
     )?;
 
     let shift_point = input

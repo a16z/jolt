@@ -7,32 +7,46 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{OpeningClaim, OutputClaims};
+use crate::stages::relations::{OpeningClaim, OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
-pub use super::instruction_input::InstructionInputOutputClaims;
-pub use super::registers_claim_reduction::RegistersClaimReductionOutputClaims;
-pub use super::spartan_shift::SpartanShiftOutputClaims;
+pub use super::instruction_input::{InstructionInput, InstructionInputOutputClaims};
+pub use super::registers_claim_reduction::{
+    RegistersClaimReduction, RegistersClaimReductionOutputClaims,
+};
+pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 
-/// The stage 3 produced opening claims: the Spartan shift, instruction-input
-/// virtualization, and register claim-reduction relations' outputs. Generic over
-/// the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>` on the
-/// clear path once the opening points are derived).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct Stage3OutputClaims<C> {
-    pub shift: SpartanShiftOutputClaims<C>,
-    pub instruction_input: InstructionInputOutputClaims<C>,
-    pub registers_claim_reduction: RegistersClaimReductionOutputClaims<C>,
+/// Source-of-truth for stage 3's sumcheck batch: the three instances in
+/// Fiat-Shamir batch order (Spartan shift, instruction-input virtualization,
+/// register claim-reduction). `#[derive(SumcheckBatch)]` generates the
+/// `Stage3InputClaims<F, C>`, `Stage3OutputClaims<F, C>`, and `Stage3Challenges<F>`
+/// aggregates — one field per instance, in this declaration order.
+///
+/// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
+/// `opening_values` / `append_to_transcript`: stage 3 has three cross-relation
+/// aliased openings (`instruction_input.unexpanded_pc` = `shift.unexpanded_pc`, and
+/// the register-reduction `rs1`/`rs2` = the instruction-input ones) that are
+/// absorbed once via their canonical source, so the canonical order is curated by
+/// hand below (and enforced by `validate`).
+#[derive(SumcheckBatch)]
+#[sumcheck_batch(custom_opening_values)]
+pub struct Stage3Sumchecks<F: Field> {
+    pub shift: SpartanShift<F>,
+    pub instruction_input: InstructionInput<F>,
+    pub registers_claim_reduction: RegistersClaimReduction<F>,
 }
 
-impl<F: Field> Stage3OutputClaims<F> {
+// The wire form pins the generated cell param `C` to the field `F` (value-only
+// openings), so the impl's second type argument is `F`. Both arguments naming `F`
+// is intentional and mirrors the `Stage3OutputClaims<F, F>` the derive emits its
+// own opening plumbing on; the lint's reordering hint does not apply.
+#[expect(
+    clippy::mismatching_type_param_order,
+    reason = "the cell param C is pinned to F for the value-only wire form; the second `F` is the cell, not a reordered field param"
+)]
+impl<F: Field> Stage3OutputClaims<F, F> {
     /// The produced opening claims absorbed into the transcript, in canonical
     /// (Fiat-Shamir) order. Three of the sixteen produced openings are aliases —
     /// `instruction_input.unexpanded_pc` equals `shift.unexpanded_pc`, and the
@@ -108,7 +122,7 @@ impl<F: Field> Stage3OutputClaims<F> {
     }
 }
 
-impl<F: Field> Stage3OutputClaims<OpeningClaim<F>> {
+impl<F: Field> Stage3OutputClaims<F, OpeningClaim<F>> {
     /// The shift relation's shared opening point (every shift output carries it).
     pub fn shift_opening_point(&self) -> &[F] {
         &self.shift.unexpanded_pc.point
@@ -120,17 +134,6 @@ impl<F: Field> Stage3OutputClaims<OpeningClaim<F>> {
     }
 }
 
-/// The Fiat-Shamir challenges the verifier draws during stage 3: the three
-/// per-relation batching gammas. (The batch's own sumcheck point and batching
-/// coefficients are stage-local verification artifacts and are not propagated to
-/// later stages.)
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3Challenges<F: Field> {
-    pub shift_gamma: F,
-    pub instruction_gamma: F,
-    pub registers_gamma: F,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3ClearOutput<F: Field> {
     pub challenges: Stage3Challenges<F>,
@@ -139,7 +142,7 @@ pub struct Stage3ClearOutput<F: Field> {
     /// sumcheck point; pairing them with the values here lets later stages consume a
     /// ready `OpeningClaim` instead of re-joining a value with a separately-tracked
     /// point.
-    pub output_claims: Stage3OutputClaims<OpeningClaim<F>>,
+    pub output_claims: Stage3OutputClaims<F, OpeningClaim<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,14 +152,6 @@ pub struct Stage3ZkOutput<F: Field, C> {
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
 }
 
-// The clear variant carries the located opening claims (point + value) that
-// stages 4 and 6 read on the hot path; the ZK variant carries only committed
-// consistency. Boxing the common clear variant to shrink the rarer ZK one would
-// add indirection to every clear-path access.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
-)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage3Output<F: Field, C> {
     Clear(Stage3ClearOutput<F>),
@@ -195,7 +190,7 @@ mod tests {
     /// distinct sentinels here to prove they are skipped.
     #[test]
     fn opening_values_follow_canonical_order() {
-        let claims = Stage3OutputClaims {
+        let claims = Stage3OutputClaims::<Fr, Fr> {
             shift: SpartanShiftOutputClaims {
                 unexpanded_pc: fr(1),
                 pc: fr(2),
@@ -230,8 +225,8 @@ mod tests {
     /// instruction-input `unexpanded_pc` equal, and register-reduction `rs1`/`rs2`
     /// equal the instruction-input ones. `validate` (value-cell `<F>`) accepts it;
     /// the tests below perturb one alias each to assert rejection.
-    fn consistent() -> Stage3OutputClaims<Fr> {
-        Stage3OutputClaims {
+    fn consistent() -> Stage3OutputClaims<Fr, Fr> {
+        Stage3OutputClaims::<Fr, Fr> {
             shift: SpartanShiftOutputClaims {
                 unexpanded_pc: fr(1),
                 pc: fr(2),
