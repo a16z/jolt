@@ -43,12 +43,13 @@ pub fn instruction_claim_reduction_inputs_from_upstream<F: Field>(
         point: Vec::new(),
         value,
     };
+    let outer = &stage1.output_claims.outer_remainder;
     InstructionClaimReductionInputClaims {
-        lookup_output: value(stage1.outer.lookup_output),
-        left_lookup_operand: value(stage1.outer.left_lookup_operand),
-        right_lookup_operand: value(stage1.outer.right_lookup_operand),
-        left_instruction_input: value(stage1.outer.left_instruction_input),
-        right_instruction_input: value(stage1.outer.right_instruction_input),
+        lookup_output: value(outer.lookup_output.value),
+        left_lookup_operand: value(outer.left_lookup_operand.value),
+        right_lookup_operand: value(outer.right_lookup_operand.value),
+        left_instruction_input: value(outer.left_instruction_input.value),
+        right_instruction_input: value(outer.right_instruction_input.value),
     }
 }
 

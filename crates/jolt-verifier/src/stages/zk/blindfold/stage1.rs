@@ -29,7 +29,7 @@ where
         opening(VerifierOpeningId::Jolt(outer_uniskip_opening())),
     )?;
 
-    let opening_order = spartan_outer_opening_order(&dimensions);
+    let opening_order = dimensions.variables().to_vec();
     // The remainder sumcheck point is opening-derived: for the singleton remainder
     // batch the committed round challenges are the raw (un-reversed) point that the
     // clear path obtains from the bound remainder reduction.
@@ -80,8 +80,9 @@ where
         &input.stage1.remainder_output_claims,
         values,
         opening_order
-            .into_iter()
-            .map(stage1_spartan_outer_opening_id)
+            .iter()
+            .copied()
+            .map(|variable| VerifierOpeningId::Jolt(outer_opening(variable)))
             .collect(),
         Vec::new(),
         input_claim,
@@ -90,34 +91,28 @@ where
 }
 
 fn stage1_spartan_outer_output_expr<F: Field>(
-    openings: &[Stage1SpartanOuterOpening],
+    openings: &[JoltVirtualPolynomial],
 ) -> VerifierExpr<F> {
+    let opening_id =
+        |variable: JoltVirtualPolynomial| VerifierOpeningId::Jolt(outer_opening(variable));
     let mut output = VerifierExpr::zero();
     for left in 0..openings.len() {
         for right in 0..openings.len() {
             output = output
                 + derived(VerifierPublicId::SpartanOuter(
                     JoltSpartanOuterPublic::QuadraticCoefficient { left, right },
-                )) * opening(stage1_spartan_outer_opening_id(openings[left]))
-                    * opening(stage1_spartan_outer_opening_id(openings[right]));
+                )) * opening(opening_id(openings[left]))
+                    * opening(opening_id(openings[right]));
         }
     }
-    for (index, opening_id) in openings.iter().copied().enumerate() {
+    for (index, variable) in openings.iter().copied().enumerate() {
         output = output
             + derived(VerifierPublicId::SpartanOuter(
                 JoltSpartanOuterPublic::LinearCoefficient(index),
-            )) * opening(stage1_spartan_outer_opening_id(opening_id));
+            )) * opening(opening_id(variable));
     }
     output
         + derived(VerifierPublicId::SpartanOuter(
             JoltSpartanOuterPublic::ConstantCoefficient,
         ))
-}
-
-fn stage1_spartan_outer_opening_id(opening_id: Stage1SpartanOuterOpening) -> VerifierOpeningId {
-    match opening_id {
-        Stage1SpartanOuterOpening::Jolt(variable) => {
-            VerifierOpeningId::Jolt(outer_opening(variable))
-        }
-    }
 }

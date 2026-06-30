@@ -35,11 +35,12 @@ pub fn spartan_shift_inputs_from_upstream<F: Field>(
         point: Vec::new(),
         value,
     };
+    let outer = &stage1.output_claims.outer_remainder;
     SpartanShiftInputClaims {
-        next_unexpanded_pc: value(stage1.outer.next_unexpanded_pc),
-        next_pc: value(stage1.outer.next_pc),
-        next_is_virtual: value(stage1.outer.next_is_virtual),
-        next_is_first_in_sequence: value(stage1.outer.next_is_first_in_sequence),
+        next_unexpanded_pc: value(outer.next_unexpanded_pc.value),
+        next_pc: value(outer.next_pc.value),
+        next_is_virtual: value(outer.next_is_virtual.value),
+        next_is_first_in_sequence: value(outer.next_is_first_in_sequence.value),
         next_is_noop: value(stage2.output_claims.product_remainder.next_is_noop.value),
     }
 }

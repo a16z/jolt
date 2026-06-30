@@ -31,56 +31,7 @@ use jolt_r1cs::constraints::jolt::{
 };
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
-use crate::stages::stage1::outputs::SpartanOuterClaims;
 use crate::VerifierError;
-
-/// Project the serialized outer claims (the wire value-only form) into the
-/// remainder relation's produced-opening struct, preserving the canonical
-/// `SPARTAN_OUTER_R1CS_INPUTS` field order. The two structs intentionally duplicate
-/// the 35 R1CS-input fields: `SpartanOuterClaims` is the serialized proof form (with
-/// its nested flag struct), and `OuterRemainderOutputClaims` is the relation's
-/// GAT-cell form that `zip_openings` / the output `Expr` consume.
-pub fn outer_remainder_outputs_from_spartan_outer_claims<F: Field>(
-    outer: &SpartanOuterClaims<F>,
-) -> OuterRemainderOutputClaims<F> {
-    OuterRemainderOutputClaims {
-        left_instruction_input: outer.left_instruction_input,
-        right_instruction_input: outer.right_instruction_input,
-        product: outer.product,
-        should_branch: outer.should_branch,
-        pc: outer.pc,
-        unexpanded_pc: outer.unexpanded_pc,
-        imm: outer.imm,
-        ram_address: outer.ram_address,
-        rs1_value: outer.rs1_value,
-        rs2_value: outer.rs2_value,
-        rd_write_value: outer.rd_write_value,
-        ram_read_value: outer.ram_read_value,
-        ram_write_value: outer.ram_write_value,
-        left_lookup_operand: outer.left_lookup_operand,
-        right_lookup_operand: outer.right_lookup_operand,
-        next_unexpanded_pc: outer.next_unexpanded_pc,
-        next_pc: outer.next_pc,
-        next_is_virtual: outer.next_is_virtual,
-        next_is_first_in_sequence: outer.next_is_first_in_sequence,
-        lookup_output: outer.lookup_output,
-        should_jump: outer.should_jump,
-        add_operands: outer.flags.add_operands,
-        subtract_operands: outer.flags.subtract_operands,
-        multiply_operands: outer.flags.multiply_operands,
-        load: outer.flags.load,
-        store: outer.flags.store,
-        jump: outer.flags.jump,
-        write_lookup_output_to_rd: outer.flags.write_lookup_output_to_rd,
-        virtual_instruction: outer.flags.virtual_instruction,
-        assert: outer.flags.assert,
-        do_not_update_unexpanded_pc: outer.flags.do_not_update_unexpanded_pc,
-        advice: outer.flags.advice,
-        is_compressed: outer.flags.is_compressed,
-        is_first_in_sequence: outer.flags.is_first_in_sequence,
-        is_last_in_sequence: outer.flags.is_last_in_sequence,
-    }
-}
 
 /// Wire the consumed opening from the Spartan outer uni-skip's reduced output claim.
 /// Only the value feeds the input claim (the output point comes from this relation's
@@ -260,29 +211,27 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::OutputClaims;
-    use crate::stages::stage1::outputs::spartan_outer_claims_from_r1cs_inputs;
+    use crate::stages::stage1::outputs::outer_remainder_outputs_from_r1cs_inputs;
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_field::{Fr, FromPrimitiveInt};
 
-    /// The 35 appended opening values (declaration order of
-    /// `OuterRemainderOutputClaims`) match the previous explicit append loop, which
-    /// iterated `SpartanOuterClaims::r1cs_input_claims` in `dimensions.variables()`
-    /// order. Equal value sequences ⇒ byte-identical Fiat-Shamir appends.
+    /// The assembled `OuterRemainderOutputClaims` field (declaration) order is the
+    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so `opening_values()` (which the
+    /// generated `append_to_transcript` iterates) reproduces the input order. Equal
+    /// value sequences ⇒ byte-identical Fiat-Shamir appends.
     #[test]
-    fn append_order_matches_legacy_r1cs_input_claims() {
-        let dimensions = SpartanOuterDimensions::rv64(3);
+    fn append_order_matches_r1cs_input_order() {
         // Distinct values, one per R1CS input, in canonical order.
         let values = SPARTAN_OUTER_R1CS_INPUTS
             .iter()
             .copied()
             .enumerate()
-            .map(|(index, variable)| (variable, Fr::from_u64(1_000 + index as u64)));
-        let outer = spartan_outer_claims_from_r1cs_inputs(values).unwrap();
+            .map(|(index, variable)| (variable, Fr::from_u64(1_000 + index as u64)))
+            .collect::<Vec<_>>();
+        let expected = values.iter().map(|(_, value)| *value).collect::<Vec<_>>();
+        let relation_form = outer_remainder_outputs_from_r1cs_inputs(values).unwrap();
 
-        let legacy = outer.r1cs_input_claims(&dimensions).unwrap();
-        let relation_form = outer_remainder_outputs_from_spartan_outer_claims(&outer);
-
-        assert_eq!(relation_form.opening_values(), legacy);
+        assert_eq!(relation_form.opening_values(), expected);
     }
 
     /// Fill all 35 produced openings with the given values (in canonical field /

@@ -20,7 +20,10 @@ use jolt_riscv::CircuitFlags;
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::{
-        stage1::outputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1OutputClaims},
+        stage1::{
+            outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
+            OuterRemainderOutputClaims,
+        },
         stage2::outputs::{
             InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
             RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
@@ -80,33 +83,33 @@ pub(crate) fn build_clear_claims<F: Field>(
 
 fn spartan_outer_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<SpartanOuterClaims<F>, VerifierError> {
+) -> Result<Stage1BatchOutputClaims<F, F>, VerifierError> {
     let outer_claim = |variable| claims.require(outer_opening(variable));
     let flag_claim = |flag| outer_claim(JoltVirtualPolynomial::OpFlags(flag));
 
-    Ok(SpartanOuterClaims {
-        left_instruction_input: outer_claim(JoltVirtualPolynomial::LeftInstructionInput)?,
-        right_instruction_input: outer_claim(JoltVirtualPolynomial::RightInstructionInput)?,
-        product: outer_claim(JoltVirtualPolynomial::Product)?,
-        should_branch: outer_claim(JoltVirtualPolynomial::ShouldBranch)?,
-        pc: outer_claim(JoltVirtualPolynomial::PC)?,
-        unexpanded_pc: outer_claim(JoltVirtualPolynomial::UnexpandedPC)?,
-        imm: outer_claim(JoltVirtualPolynomial::Imm)?,
-        ram_address: outer_claim(JoltVirtualPolynomial::RamAddress)?,
-        rs1_value: outer_claim(JoltVirtualPolynomial::Rs1Value)?,
-        rs2_value: outer_claim(JoltVirtualPolynomial::Rs2Value)?,
-        rd_write_value: outer_claim(JoltVirtualPolynomial::RdWriteValue)?,
-        ram_read_value: outer_claim(JoltVirtualPolynomial::RamReadValue)?,
-        ram_write_value: outer_claim(JoltVirtualPolynomial::RamWriteValue)?,
-        left_lookup_operand: outer_claim(JoltVirtualPolynomial::LeftLookupOperand)?,
-        right_lookup_operand: outer_claim(JoltVirtualPolynomial::RightLookupOperand)?,
-        next_unexpanded_pc: outer_claim(JoltVirtualPolynomial::NextUnexpandedPC)?,
-        next_pc: outer_claim(JoltVirtualPolynomial::NextPC)?,
-        next_is_virtual: outer_claim(JoltVirtualPolynomial::NextIsVirtual)?,
-        next_is_first_in_sequence: outer_claim(JoltVirtualPolynomial::NextIsFirstInSequence)?,
-        lookup_output: outer_claim(JoltVirtualPolynomial::LookupOutput)?,
-        should_jump: outer_claim(JoltVirtualPolynomial::ShouldJump)?,
-        flags: SpartanOuterFlagClaims {
+    Ok(Stage1BatchOutputClaims {
+        outer_remainder: OuterRemainderOutputClaims {
+            left_instruction_input: outer_claim(JoltVirtualPolynomial::LeftInstructionInput)?,
+            right_instruction_input: outer_claim(JoltVirtualPolynomial::RightInstructionInput)?,
+            product: outer_claim(JoltVirtualPolynomial::Product)?,
+            should_branch: outer_claim(JoltVirtualPolynomial::ShouldBranch)?,
+            pc: outer_claim(JoltVirtualPolynomial::PC)?,
+            unexpanded_pc: outer_claim(JoltVirtualPolynomial::UnexpandedPC)?,
+            imm: outer_claim(JoltVirtualPolynomial::Imm)?,
+            ram_address: outer_claim(JoltVirtualPolynomial::RamAddress)?,
+            rs1_value: outer_claim(JoltVirtualPolynomial::Rs1Value)?,
+            rs2_value: outer_claim(JoltVirtualPolynomial::Rs2Value)?,
+            rd_write_value: outer_claim(JoltVirtualPolynomial::RdWriteValue)?,
+            ram_read_value: outer_claim(JoltVirtualPolynomial::RamReadValue)?,
+            ram_write_value: outer_claim(JoltVirtualPolynomial::RamWriteValue)?,
+            left_lookup_operand: outer_claim(JoltVirtualPolynomial::LeftLookupOperand)?,
+            right_lookup_operand: outer_claim(JoltVirtualPolynomial::RightLookupOperand)?,
+            next_unexpanded_pc: outer_claim(JoltVirtualPolynomial::NextUnexpandedPC)?,
+            next_pc: outer_claim(JoltVirtualPolynomial::NextPC)?,
+            next_is_virtual: outer_claim(JoltVirtualPolynomial::NextIsVirtual)?,
+            next_is_first_in_sequence: outer_claim(JoltVirtualPolynomial::NextIsFirstInSequence)?,
+            lookup_output: outer_claim(JoltVirtualPolynomial::LookupOutput)?,
+            should_jump: outer_claim(JoltVirtualPolynomial::ShouldJump)?,
             add_operands: flag_claim(CircuitFlags::AddOperands)?,
             subtract_operands: flag_claim(CircuitFlags::SubtractOperands)?,
             multiply_operands: flag_claim(CircuitFlags::MultiplyOperands)?,

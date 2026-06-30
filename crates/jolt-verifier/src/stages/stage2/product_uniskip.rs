@@ -40,10 +40,11 @@ pub fn product_uniskip_inputs_from_stage1<F: Field>(
         point: Vec::new(),
         value,
     };
+    let outer = &stage1.output_claims.outer_remainder;
     ProductUniskipInputClaims {
-        product: value(stage1.outer.product),
-        should_branch: value(stage1.outer.should_branch),
-        should_jump: value(stage1.outer.should_jump),
+        product: value(outer.product.value),
+        should_branch: value(outer.should_branch.value),
+        should_jump: value(outer.should_jump.value),
     }
 }
 

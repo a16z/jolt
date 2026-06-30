@@ -15,7 +15,7 @@ use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 /// Consumed Spartan outer remainder input: the uni-skip's reduced opening. The
 /// relation reads only this value (its output point comes from its own sumcheck
 /// point), so the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct OuterRemainderInputClaims<C> {
     #[opening(UnivariateSkip, from = SpartanOuter)]
     pub outer_uniskip: C,
@@ -26,7 +26,7 @@ pub struct OuterRemainderInputClaims<C> {
 /// wire / serialized proof form, `OpeningClaim<F>` on the clear path). Field order
 /// is the canonical Fiat-Shamir / append order and MUST equal
 /// [`SpartanOuterDimensions::variables`] /
-/// [`spartan_outer_opening_order`](crate::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS).
+/// [`SPARTAN_OUTER_R1CS_INPUTS`](crate::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

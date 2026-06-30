@@ -15,16 +15,12 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::Transcript;
 
-use super::outer_remainder::{
-    outer_remainder_inputs_from_uniskip_output, outer_remainder_outputs_from_spartan_outer_claims,
-    OuterRemainder,
-};
+use super::outer_remainder::{outer_remainder_inputs_from_uniskip_output, OuterRemainder};
 use super::outer_uniskip::OuterUniskip;
 use super::outputs::{
-    spartan_outer_opening_order, stage1_challenges, Stage1ClearOutput, Stage1Output,
-    Stage1ZkOutput, VerifiedSpartanOuterSumcheck,
+    Stage1BatchOutputClaims, Stage1Challenges, Stage1ClearOutput, Stage1Output, Stage1ZkOutput,
 };
-use crate::stages::relations::{zip_openings, ConcreteSumcheck, OutputAppend};
+use crate::stages::relations::{zip_openings, ConcreteSumcheck};
 use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -115,24 +111,19 @@ where
         if uniskip_reduction.value != claims.uniskip_output_claim {
             return Err(VerifierError::StageClaimOutputMismatch { stage });
         }
-        let uniskip = VerifiedSpartanOuterSumcheck {
-            input_claim: uniskip_input_claim,
-            sumcheck_point: uniskip_reduction.point,
-            sumcheck_final_claim: uniskip_reduction.value,
-            expected_output_claim: claims.uniskip_output_claim,
-        };
+        let uniskip_output_claim = claims.uniskip_output_claim;
 
         // Match the prover transcript: the uni-skip output is absorbed as an
         // opening claim before deriving the remainder batching challenge.
-        transcript.append_labeled(b"opening_claim", &uniskip.expected_output_claim);
+        transcript.append_labeled(b"opening_claim", &uniskip_output_claim);
 
-        let [uniskip_challenge] = uniskip.sumcheck_point.as_slice() else {
+        let [uniskip_challenge] = uniskip_reduction.point.as_slice() else {
             return Err(VerifierError::StageClaimSumcheckFailed {
                 stage,
                 reason: "uni-skip proof did not reduce to one challenge".to_string(),
             });
         };
-        (*uniskip_challenge, Some(uniskip), None)
+        (*uniskip_challenge, Some(uniskip_output_claim), None)
     };
 
     let remainder_rounds = 1 + log_t;
@@ -159,7 +150,7 @@ where
                 checked,
                 proof: &proof.stages.stage1_sumcheck_proof,
                 proof_label: "stage1_sumcheck_proof",
-                output_claim_count: spartan_outer_opening_order(&dimensions).len(),
+                output_claim_count: dimensions.variables().len(),
                 stage,
             })?;
         // Validate the singleton batch shape early; BlindFold re-reads the
@@ -176,21 +167,19 @@ where
         (None, Some((consistency, remainder_output_claims)))
     } else {
         let claims = &proof.clear_claims()?.stage1;
-        let uniskip = clear_uniskip
-            .as_ref()
-            .ok_or(VerifierError::StageClaimSumcheckFailed {
+        let uniskip_output_claim =
+            clear_uniskip.ok_or(VerifierError::StageClaimSumcheckFailed {
                 stage,
                 reason: "clear Stage 1 uni-skip output is missing".to_string(),
             })?;
         // The remainder consumes the uni-skip's reduced opening as its input claim.
         // The input claim drawn into the singleton batch is the relation's
-        // `input_claim` (the bare consumed opening), which equals
-        // `uniskip.expected_output_claim`; it must be known before the sumcheck binds
-        // (the `OuterRemainder` coefficients depend on the remainder challenges, which
-        // are only available after binding, so the relation itself is built below).
-        let remainder_inputs =
-            outer_remainder_inputs_from_uniskip_output(uniskip.expected_output_claim);
-        let remainder_input_claim = uniskip.expected_output_claim;
+        // `input_claim` (the bare consumed opening), which equals the absorbed
+        // `uniskip_output_claim`; it must be known before the sumcheck binds (the
+        // `OuterRemainder` coefficients depend on the remainder challenges, which are
+        // only available after binding, so the relation itself is built below).
+        let remainder_inputs = outer_remainder_inputs_from_uniskip_output(uniskip_output_claim);
+        let remainder_input_claim = uniskip_output_claim;
         let no_challenges = NoChallenges::default();
         let remainder_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
             &[SumcheckClaim::new(
@@ -217,7 +206,6 @@ where
                     .to_string(),
             });
         };
-        let batched_remainder_input_claim = remainder_input_claim * *remainder_batching_coefficient;
         let remainder_reduction = remainder_batch.reduction;
 
         // Build the remainder relation now that the bound point is known: its
@@ -236,12 +224,11 @@ where
         );
         let remainder_points = remainder_relation
             .derive_opening_points(remainder_reduction.point.as_slice(), &remainder_inputs)?;
-        // The produced opening values come from the serialized outer claims (the wire
+        // The produced opening values come from the serialized batch outputs (the wire
         // form); pairing them with the shared remainder point yields the located
         // openings the output `Expr` evaluates against.
-        let remainder_output_values =
-            outer_remainder_outputs_from_spartan_outer_claims(&claims.outer);
-        let remainder_output_claims = zip_openings(&remainder_output_values, &remainder_points);
+        let remainder_output_claims =
+            zip_openings(&claims.outer.outer_remainder, &remainder_points);
         let expected_remainder_output_claim = remainder_relation.expected_output(
             &remainder_inputs,
             &remainder_output_claims,
@@ -250,19 +237,17 @@ where
         if remainder_reduction.value != expected_remainder_output_claim {
             return Err(VerifierError::StageClaimOutputMismatch { stage });
         }
-        let remainder = VerifiedSpartanOuterSumcheck {
-            input_claim: batched_remainder_input_claim,
-            sumcheck_point: remainder_reduction.point,
-            sumcheck_final_claim: remainder_reduction.value,
-            expected_output_claim: expected_remainder_output_claim,
+        let output_claims = Stage1BatchOutputClaims {
+            outer_remainder: remainder_output_claims,
         };
         // Append the 35 produced openings in canonical (declaration) order, matching
-        // the prover's commitment order. `OuterRemainderOutputClaims`' field order is
-        // `dimensions.variables()` (= `SPARTAN_OUTER_R1CS_INPUTS`), so this is the same
-        // order as the previous explicit `r1cs_input_claims` loop.
-        remainder_output_claims.append_openings(transcript);
+        // the prover's commitment order. The generated `append_to_transcript`
+        // iterates `OuterRemainderOutputClaims`' field order (= `dimensions.variables()`
+        // = `SPARTAN_OUTER_R1CS_INPUTS`), so this is the same order as the previous
+        // explicit `r1cs_input_claims` loop.
+        claims.outer.append_to_transcript(transcript);
 
-        (Some(remainder), None)
+        (Some(output_claims), None)
     };
 
     if checked.zk {
@@ -278,7 +263,10 @@ where
             })?;
 
         return Ok(Stage1Output::Zk(Stage1ZkOutput {
-            challenges: stage1_challenges(tau, uniskip_challenge),
+            challenges: Stage1Challenges {
+                tau,
+                uniskip_challenge,
+            },
             uniskip_consistency,
             uniskip_output_claims,
             remainder_consistency,
@@ -286,19 +274,17 @@ where
         }));
     }
 
-    let claims = &proof.clear_claims()?.stage1;
-    let uniskip = clear_uniskip.ok_or(VerifierError::StageClaimSumcheckFailed {
+    let uniskip_output_claim = clear_uniskip.ok_or(VerifierError::StageClaimSumcheckFailed {
         stage,
         reason: "clear Stage 1 uni-skip output is missing".to_string(),
     })?;
-    let remainder = clear_remainder.ok_or(VerifierError::StageClaimSumcheckFailed {
+    let output_claims = clear_remainder.ok_or(VerifierError::StageClaimSumcheckFailed {
         stage,
         reason: "clear Stage 1 remainder output is missing".to_string(),
     })?;
 
     Ok(Stage1Output::Clear(Stage1ClearOutput {
-        uniskip,
-        remainder,
-        outer: claims.outer.clone(),
+        output_claims,
+        uniskip_output_claim,
     }))
 }
