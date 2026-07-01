@@ -188,13 +188,10 @@ jobs:
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
 
-      - name: Pin jolt-sdk to current commit in Cargo.toml files
+      - name: Use local jolt-sdk checkout in Cargo.toml files
         run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          # Pin jolt-sdk in the host Cargo.toml
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
-          # Pin jolt-sdk in the guest Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { path = "../jolt-sdk", features = ["host"] }|' sample_project/Cargo.toml
+          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", path = "../../jolt-sdk" }|' sample_project/guest/Cargo.toml
 
       - name: Make sure the generated code runs
         working-directory: ./sample_project
@@ -233,11 +230,10 @@ jobs:
       - name: Generate sample project
         run: jolt new sample_project
 
-      - name: Pin jolt-sdk to current commit
+      - name: Use local jolt-sdk checkout
         run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { path = "../jolt-sdk", features = ["host"] }|' sample_project/Cargo.toml
+          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", path = "../../jolt-sdk" }|' sample_project/guest/Cargo.toml
 
       - name: Set up prover and verifier scripts
         run: |
