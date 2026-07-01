@@ -29,24 +29,6 @@ use jolt_transcript::Transcript;
 
 use crate::VerifierError;
 
-/// Reject a relation's sumcheck spec that isn't a positive-degree
-/// Boolean-hypercube sumcheck. Every stage that runs a compressed-Boolean batched
-/// sumcheck applies this guard to its relation specs before trusting them; sharing
-/// it keeps the two error conditions identical across stages.
-pub fn check_relation_boolean_hypercube(
-    stage: JoltRelationId,
-    domain: JoltSumcheckDomain,
-    degree: usize,
-) -> Result<(), VerifierError> {
-    if degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree { stage, degree });
-    }
-    if !matches!(domain, JoltSumcheckDomain::BooleanHypercube) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage });
-    }
-    Ok(())
-}
-
 /// Transcript-side companion to [`OutputClaims`]: append a relation's produced
 /// openings to the Fiat-Shamir transcript in canonical order.
 ///
@@ -857,9 +839,9 @@ mod tests {
 }
 
 #[cfg(test)]
-// `FixtureSumchecks` and the sibling generated aggregates exist only to exercise
-// `#[derive(SumcheckBatch)]`; they are never constructed at runtime.
-#[expect(dead_code)]
+// `Fixture*Sumchecks` exist only to exercise `#[derive(SumcheckBatch)]`; the tests
+// drive the generated aggregates directly and never construct the source structs,
+// so each carries its own `#[expect(dead_code)]`.
 mod sumcheck_batch_derive_tests {
     use super::SumcheckBatch;
     use crate::stages::stage5::{
@@ -869,6 +851,7 @@ mod sumcheck_batch_derive_tests {
     use jolt_field::{Field, Fr, FromPrimitiveInt};
 
     #[derive(SumcheckBatch)]
+    #[expect(dead_code)]
     struct FixtureSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: RegistersValEvaluation<F>,
@@ -896,6 +879,7 @@ mod sumcheck_batch_derive_tests {
     }
 
     #[derive(SumcheckBatch)]
+    #[expect(dead_code)]
     struct FixtureOptionSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: Option<RegistersValEvaluation<F>>,
@@ -936,6 +920,7 @@ mod sumcheck_batch_derive_tests {
     // name), so this module compiling at all proves the opt-out suppressed it.
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(custom_opening_values)]
+    #[expect(dead_code)]
     struct FixtureCustomSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: RegistersValEvaluation<F>,

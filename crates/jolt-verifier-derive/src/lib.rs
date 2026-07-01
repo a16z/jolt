@@ -33,11 +33,16 @@
 //! normalizes to the concrete per-relation claim struct, so the plain derives
 //! apply.
 //!
-//! The set of generated *delegated impls* is intentionally minimal — currently
-//! the Fiat-Shamir opening plumbing consumed today (`opening_values` /
-//! `append_to_transcript` on the `OutputClaims` (values) aggregate, delegating to
-//! each member in declaration order) — and grows as the migration requires. See
-//! `specs/sumcheck-batch-derive.md`.
+//! The set of generated *delegated impls* is intentionally minimal and grows as
+//! the migration requires. Currently emitted for every stage:
+//!
+//! - the Fiat-Shamir opening plumbing (`opening_values` / `append_to_transcript`
+//!   on the `OutputClaims` (values) aggregate, delegating to each member in
+//!   declaration order); and
+//! - the per-instance driver method on the source `StageNSumchecks` struct —
+//!   `draw_challenges` (draw each member's challenges into `StageNChallenges`).
+//!
+//! See `specs/sumcheck-batch-derive.md`.
 //!
 //! The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
 //! suppresses *only* that generated `opening_values` / `append_to_transcript`
@@ -163,6 +168,46 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     });
 
+    // Per-instance driver plumbing on the source `StageNSumchecks` struct itself:
+    // draw each member's challenges into the stage's challenge aggregate, delegating
+    // to each member's `ConcreteSumcheck::draw_challenges` in declaration order;
+    // `Option` members draw only when present. Always emitted — it compiles for
+    // every stage because every member is a `ConcreteSumcheck` and the challenge
+    // aggregate has exactly the member fields.
+    let draw_fields = plans.iter().map(|plan| {
+        let id = &plan.ident;
+        if plan.is_option {
+            quote! {
+                #id: match self.#id.as_ref() {
+                    ::core::option::Option::Some(member) => {
+                        ::core::option::Option::Some(member.draw_challenges(transcript)?)
+                    }
+                    ::core::option::Option::None => ::core::option::Option::None,
+                }
+            }
+        } else {
+            quote!(#id: self.#id.draw_challenges(transcript)?)
+        }
+    });
+    let driver_impl = quote! {
+        impl<#f: ::jolt_field::Field> #name<#f> {
+            /// Draw each instance's Fiat-Shamir challenges in declaration order,
+            /// assembling the stage's challenge aggregate. Members with no
+            /// challenges draw nothing; `Option` members draw only when present.
+            /// This single-sources the stage's inline per-instance draw, so its
+            /// Fiat-Shamir order follows member declaration order.
+            pub fn draw_challenges<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
+                &self,
+                transcript: &mut __T,
+            ) -> ::core::result::Result<#challenges_name<#f>, crate::VerifierError> {
+                use #relations::ConcreteSumcheck as _;
+                ::core::result::Result::Ok(#challenges_name {
+                    #(#draw_fields,)*
+                })
+            }
+        }
+    };
+
     // The generated `OutputClaims` opening plumbing. Gated out when the stage opts
     // in to `#[sumcheck_batch(custom_opening_values)]`, in which case the stage
     // supplies its own alias-curated `opening_values` / `append_to_transcript` (and
@@ -228,6 +273,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #vis struct #challenges_name<#f: ::jolt_field::Field> {
             #(#challenge_fields,)*
         }
+
+        #driver_impl
 
         #opening_impl
     })

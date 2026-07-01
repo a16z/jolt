@@ -54,7 +54,7 @@ use super::{
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{check_relation_boolean_hypercube, ConcreteSumcheck},
+        relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
         zk::committed,
     },
@@ -452,32 +452,26 @@ where
     struct RelSpec {
         rounds: usize,
         degree: usize,
-        domain: JoltSumcheckDomain,
     }
     let ram_read_write_claims = RelSpec {
         rounds: ram_read_write_rel.rounds(),
         degree: ram_read_write_rel.degree(),
-        domain: ram_read_write_rel.domain(),
     };
     let product_remainder_claims = RelSpec {
         rounds: product_remainder_rel.rounds(),
         degree: product_remainder_rel.degree(),
-        domain: product_remainder_rel.domain(),
     };
     let instruction_claim_reduction_claims = RelSpec {
         rounds: instruction_claim_reduction_rel.rounds(),
         degree: instruction_claim_reduction_rel.degree(),
-        domain: instruction_claim_reduction_rel.domain(),
     };
     let ram_raf_evaluation_claims = RelSpec {
         rounds: ram_raf_evaluation_rel.rounds(),
         degree: ram_raf_evaluation_rel.degree(),
-        domain: ram_raf_evaluation_rel.domain(),
     };
     let ram_output_check_claims = RelSpec {
         rounds: ram_output_check_rel.rounds(),
         degree: ram_output_check_rel.degree(),
-        domain: ram_output_check_rel.domain(),
     };
     // The RAM read-write and instruction-reduction batching gammas (each a single
     // `challenge_scalar`, matching their default `draw_challenges`), drawn in inline
@@ -503,36 +497,6 @@ where
     let output_address_challenges = (0..log_k)
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
-
-    for (relation, domain, degree) in [
-        (
-            relations::ram::ReadWriteChecking::id(),
-            ram_read_write_claims.domain,
-            ram_read_write_claims.degree,
-        ),
-        (
-            relations::spartan::ProductRemainder::id(),
-            product_remainder_claims.domain,
-            product_remainder_claims.degree,
-        ),
-        (
-            relations::claim_reductions::instruction::ClaimReduction::id(),
-            instruction_claim_reduction_claims.domain,
-            instruction_claim_reduction_claims.degree,
-        ),
-        (
-            relations::ram::RafEvaluation::id(),
-            ram_raf_evaluation_claims.domain,
-            ram_raf_evaluation_claims.degree,
-        ),
-        (
-            relations::ram::OutputCheck::id(),
-            ram_output_check_claims.domain,
-            ram_output_check_claims.degree,
-        ),
-    ] {
-        check_relation_boolean_hypercube(relation, domain, degree)?;
-    }
 
     match (stage1, product_uniskip) {
         (Stage1Output::Clear(stage1), Stage2ProductUniSkip::Clear(product_uniskip)) => {

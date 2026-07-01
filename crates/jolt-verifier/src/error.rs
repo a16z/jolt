@@ -96,9 +96,6 @@ pub enum VerifierError {
         degree: usize,
     },
 
-    #[error("stage {stage:?} compressed sumcheck proof requires a Boolean domain")]
-    CompressedStageClaimRequiresBooleanDomain { stage: JoltRelationId },
-
     #[error("stage {stage:?} sumcheck verification failed: {reason}")]
     StageClaimSumcheckFailed {
         stage: JoltRelationId,

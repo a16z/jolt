@@ -39,7 +39,7 @@ use super::outputs::{
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{check_relation_boolean_hypercube, ConcreteSumcheck},
+        relations::ConcreteSumcheck,
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput},
         zk::committed,
@@ -103,43 +103,6 @@ where
             relations::claim_reductions::program_image::AddressPhase::new(layout.dimensions())
         })
     });
-
-    check_relation_boolean_hypercube(
-        relations::claim_reductions::hamming_weight::ClaimReduction::id(),
-        hamming_claims.domain(),
-        hamming_claims.degree(),
-    )?;
-    for (relation, domain, degree) in [
-        (
-            relations::claim_reductions::advice::AddressPhase::id(),
-            trusted_advice_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::advice::AddressPhase::id(),
-            untrusted_advice_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::bytecode::AddressPhase::id(),
-            bytecode_reduction_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::program_image::AddressPhase::id(),
-            program_image_reduction_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(relation, opt)| opt.map(|(domain, degree)| (relation, domain, degree)))
-    {
-        check_relation_boolean_hypercube(relation, domain, degree)?;
-    }
 
     // The hamming-weight reduction's batching gamma is drawn path-agnostically before
     // the ZK/clear branch (a single `challenge_scalar`, matching the relation's default

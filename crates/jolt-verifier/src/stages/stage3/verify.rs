@@ -32,7 +32,7 @@ use super::{
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{check_relation_boolean_hypercube, ConcreteSumcheck},
+        relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},
         zk::committed,
@@ -108,26 +108,6 @@ where
     let shift_rel = relations::spartan::Shift::new(dimensions);
     let instruction_rel = relations::instruction::InputVirtualization::new(dimensions);
     let registers_rel = relations::claim_reductions::registers::ClaimReduction::new(dimensions);
-
-    for (relation, domain, degree) in [
-        (
-            relations::spartan::Shift::id(),
-            shift_rel.domain(),
-            shift_rel.degree(),
-        ),
-        (
-            relations::instruction::InputVirtualization::id(),
-            instruction_rel.domain(),
-            instruction_rel.degree(),
-        ),
-        (
-            relations::claim_reductions::registers::ClaimReduction::id(),
-            registers_rel.domain(),
-            registers_rel.degree(),
-        ),
-    ] {
-        check_relation_boolean_hypercube(relation, domain, degree)?;
-    }
 
     // Draw each relation's batching gamma in the inline order (shift, instruction
     // input, register reduction). Each is a single `challenge_scalar`, matching the
