@@ -1886,7 +1886,7 @@ impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
     ) -> Result<Self, Stage6KernelError> {
         match claim_relation(program, claim)? {
             Stage6Relation::BytecodeReadRaf => {
-                bytecode_read_raf_state(program, claim, inputs, store, active_scale)
+                bytecode_read_raf_state(program, claim, inputs, store, active_scale, backend)
             }
             Stage6Relation::Booleanity => {
                 booleanity_state(program, claim, inputs, store, active_scale)
@@ -2058,6 +2058,16 @@ impl<F: Field> BytecodeReadRafCycleFactors<F> {
 
     fn factor_eval(&self, chunk: usize) -> Option<F> {
         (chunk < self.len()).then(|| self.get(chunk, 0))
+    }
+
+    #[cfg(feature = "cuda")]
+    fn dense_chunk_vecs(&self) -> Option<Vec<Vec<F>>> {
+        let current_len = self.current_len();
+        Some(
+            (0..self.len())
+                .map(|chunk| (0..current_len).map(|index| self.get(chunk, index)).collect())
+                .collect(),
+        )
     }
 
     fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
@@ -2290,6 +2300,9 @@ struct BytecodeReadRafStage6State<F: Field> {
     active_scale: F,
     degree_bound: usize,
     phase: BytecodeReadRafPhase,
+    backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaBytecodeReadRafState>,
 }
 
 impl<F: Field> BytecodeReadRafStage6State<F> {
@@ -2306,6 +2319,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         active_scale: F,
         degree_bound: usize,
         outputs: Vec<FactorOutput>,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         if degree_bound < 2 || degree_bound < chunk_lens.len() + 1 {
             return Err(Stage6KernelError::InvalidProof {
@@ -2421,6 +2435,19 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         let mut cycle_entry_eq = vec![F::zero(); 1usize << log_t];
         cycle_entry_eq[0] = F::one();
 
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            cuda::CudaBytecodeReadRafState::new_address(
+                &stage_factors,
+                &stage_values,
+                &entry_trace,
+                &entry_expected,
+                &gamma_powers,
+            )
+        } else {
+            None
+        };
+
         Ok(Self {
             log_k,
             log_t,
@@ -2453,6 +2480,9 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             active_scale,
             degree_bound,
             phase: BytecodeReadRafPhase::Address,
+            backend,
+            #[cfg(feature = "cuda")]
+            cuda,
         })
     }
 
@@ -2485,6 +2515,18 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF address phase has invalid length",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(evals) = cuda.round_poly_evals() {
+                if let Some(evals) = evals
+                    .iter()
+                    .map(|v| crate::cuda::fr_into::<F>(*v).map(|v| v * self.active_scale))
+                    .collect::<Option<Vec<F>>>()
+                {
+                    return Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals));
+                }
+            }
         }
         let eval_count = 2;
         let eval_accs = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
@@ -2564,6 +2606,18 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF cycle phase has invalid length",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(evals) = cuda.round_poly_evals() {
+                if let Some(evals) = evals
+                    .iter()
+                    .map(|v| crate::cuda::fr_into::<F>(*v).map(|v| v * self.active_scale))
+                    .collect::<Option<Vec<F>>>()
+                {
+                    return Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals));
+                }
+            }
         }
         let eval_count = self.degree_bound;
         let eval_accs = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
@@ -2668,6 +2722,18 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn bind_address(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.address_challenges.push(challenge);
+                    if self.address_challenges.len() == self.log_k {
+                        self.init_cycle_phase();
+                    }
+                    return;
+                }
+            }
+        }
         rayon::join(
             || {
                 rayon::join(
@@ -2715,13 +2781,31 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn init_cycle_phase(&mut self) {
-        let bound_stage_values = std::array::from_fn(|stage| {
-            self.stage_values[stage]
-                .first()
-                .copied()
-                .unwrap_or(F::zero())
+        let stages = BYTECODE_READ_RAF_STAGE_COUNT;
+        #[cfg(feature = "cuda")]
+        let device_bound: Option<([F; BYTECODE_READ_RAF_STAGE_COUNT], F)> =
+            self.cuda.as_ref().and_then(|cuda| {
+                let mut values = [F::zero(); BYTECODE_READ_RAF_STAGE_COUNT];
+                for (stage, value) in values.iter_mut().enumerate() {
+                    *value = crate::cuda::fr_into::<F>(cuda.factor_first(stages + stage)?.ok()?)?;
+                }
+                let entry =
+                    crate::cuda::fr_into::<F>(cuda.factor_first(2 * stages + 1)?.ok()?)?;
+                Some((values, entry))
+            });
+        #[cfg(not(feature = "cuda"))]
+        let device_bound: Option<([F; BYTECODE_READ_RAF_STAGE_COUNT], F)> = None;
+
+        let (bound_stage_values, bound_entry_expected) = device_bound.unwrap_or_else(|| {
+            let values = std::array::from_fn(|stage| {
+                self.stage_values[stage]
+                    .first()
+                    .copied()
+                    .unwrap_or(F::zero())
+            });
+            let entry = self.entry_expected.first().copied().unwrap_or(F::zero());
+            (values, entry)
         });
-        let bound_entry_expected = self.entry_expected.first().copied().unwrap_or(F::zero());
         let mut address_point = self.address_challenges.clone();
         address_point.reverse();
 
@@ -2769,6 +2853,17 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         self.cycle_entry_eq.clear();
         self.cycle_entry_eq_scratch.clear();
         self.phase = BytecodeReadRafPhase::Cycle;
+
+        #[cfg(feature = "cuda")]
+        if self.backend == "cuda" {
+            self.cuda = self.cycle_factors.dense_chunk_vecs().and_then(|chunk_vecs| {
+                cuda::CudaBytecodeReadRafState::new_cycle(
+                    &chunk_vecs,
+                    &self.cycle_combined_eq,
+                    self.degree_bound,
+                )
+            });
+        }
     }
 
     fn dense_cycle_factors(&self, address_point: &[F]) -> Vec<Vec<F>> {
@@ -2798,6 +2893,14 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn bind_cycle(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         self.cycle_factors.bind(challenge);
         bind_dense_evals_reuse(
             &mut self.cycle_combined_eq,
@@ -2818,6 +2921,22 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF final eval missing entry value",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            let num_chunks = self.cycle_factors.len();
+            let device_factors: Option<Vec<F>> = (0..=num_chunks)
+                .map(|factor| {
+                    cuda.factor_first(factor)
+                        .and_then(|r| r.ok())
+                        .and_then(crate::cuda::fr_into::<F>)
+                })
+                .collect();
+            if let Some(factors) = device_factors {
+                let weighted = factors[num_chunks];
+                let ra_product = factors[..num_chunks].iter().copied().product::<F>();
+                return Ok(ra_product * weighted);
+            }
         }
         let mut ra_product = F::one();
         for chunk in 0..self.cycle_factors.len() {
@@ -2855,6 +2974,16 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                             driver: relation.symbol(),
                             reason: "bytecode read RAF output factor underflow",
                         })?;
+                #[cfg(feature = "cuda")]
+                if let Some(cuda) = &self.cuda {
+                    if let Some(value) = cuda
+                        .output_factor_first(factor)
+                        .and_then(|r| r.ok())
+                        .and_then(crate::cuda::fr_into::<F>)
+                    {
+                        return Ok(named_eval(output.name, output.oracle, value));
+                    }
+                }
                 let value = self.cycle_factors.factor_eval(factor).ok_or(
                     Stage6KernelError::InvalidProof {
                         driver: relation.symbol(),
@@ -5670,6 +5799,7 @@ fn bytecode_read_raf_state<'a, F: Field>(
     inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<Stage6ProverInstanceState<'a, F>, Stage6KernelError> {
     let witness = inputs
         .bytecode_read_raf
@@ -5782,6 +5912,7 @@ fn bytecode_read_raf_state<'a, F: Field>(
             active_scale,
             claim.degree,
             outputs,
+            backend,
         )
         .map(|state| Stage6ProverInstanceState::BytecodeReadRaf(Box::new(state)));
     }

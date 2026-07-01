@@ -5,6 +5,122 @@ use crate::cuda::{
     RoundPolyTerms,
 };
 
+pub(crate) struct CudaBytecodeReadRafState {
+    factors: Vec<DeviceFrVec>,
+    scratch: DeviceFrVec,
+    term_coeffs: Vec<Fr>,
+    term_factor_offsets: Vec<u32>,
+    term_factor_indices: Vec<u32>,
+    points: Vec<Fr>,
+    num_output_factors: usize,
+}
+
+impl CudaBytecodeReadRafState {
+    pub(crate) fn new_address<F: Field>(
+        stage_factors: &[Vec<F>],
+        stage_values: &[Vec<F>],
+        entry_trace: &[F],
+        entry_expected: &[F],
+        gamma_powers: &[F],
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let stages = stage_factors.len();
+        let mut factors = Vec::with_capacity(2 * stages + 2);
+        for factor in stage_factors {
+            factors.push(ctx.upload(crate::cuda::as_fr_slice(factor)?).ok()?);
+        }
+        for value in stage_values {
+            factors.push(ctx.upload(crate::cuda::as_fr_slice(value)?).ok()?);
+        }
+        factors.push(ctx.upload(crate::cuda::as_fr_slice(entry_trace)?).ok()?);
+        factors.push(ctx.upload(crate::cuda::as_fr_slice(entry_expected)?).ok()?);
+
+        let mut term_coeffs = Vec::with_capacity(stages + 1);
+        let mut term_factor_offsets = vec![0u32];
+        let mut term_factor_indices = Vec::new();
+        for (stage, gamma) in gamma_powers.iter().take(stages).enumerate() {
+            term_coeffs.push(crate::cuda::into_fr(*gamma)?);
+            term_factor_indices.push(stage as u32);
+            term_factor_indices.push((stages + stage) as u32);
+            term_factor_offsets.push(term_factor_indices.len() as u32);
+        }
+        term_coeffs.push(crate::cuda::into_fr(gamma_powers[7])?);
+        term_factor_indices.push((2 * stages) as u32);
+        term_factor_indices.push((2 * stages + 1) as u32);
+        term_factor_offsets.push(term_factor_indices.len() as u32);
+
+        Some(Self {
+            factors,
+            scratch: ctx.upload(&[]).ok()?,
+            term_coeffs,
+            term_factor_offsets,
+            term_factor_indices,
+            points: vec![Fr::from(0u64), Fr::from(2u64)],
+            num_output_factors: 0,
+        })
+    }
+
+    pub(crate) fn new_cycle<F: Field>(
+        cycle_chunks: &[Vec<F>],
+        combined_eq: &[F],
+        degree: usize,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let num_chunks = cycle_chunks.len();
+        let mut factors = Vec::with_capacity(num_chunks + 1);
+        for chunk in cycle_chunks {
+            factors.push(ctx.upload(crate::cuda::as_fr_slice(chunk)?).ok()?);
+        }
+        factors.push(ctx.upload(crate::cuda::as_fr_slice(combined_eq)?).ok()?);
+
+        let term_factor_indices: Vec<u32> = (0..=num_chunks as u32).collect();
+        let points: Vec<Fr> = (0..degree)
+            .map(|e| Fr::from(if e == 0 { 0 } else { (e + 1) as u64 }))
+            .collect();
+        Some(Self {
+            factors,
+            scratch: ctx.upload(&[]).ok()?,
+            term_coeffs: vec![Fr::from(1u64)],
+            term_factor_offsets: vec![0, (num_chunks + 1) as u32],
+            term_factor_indices,
+            points,
+            num_output_factors: num_chunks,
+        })
+    }
+
+    pub(crate) fn round_poly_evals(&self) -> Option<Vec<Fr>> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let factor_refs: Vec<&DeviceFrVec> = self.factors.iter().collect();
+        ctx.sum_of_products_round_poly_at(
+            RoundPolyTerms {
+                factors: &factor_refs,
+                term_coeffs: &self.term_coeffs,
+                term_factor_offsets: &self.term_factor_offsets,
+                term_factor_indices: &self.term_factor_indices,
+                degree: self.points.len(),
+            },
+            &self.points,
+        )
+        .ok()
+    }
+
+    pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        for factor in &mut self.factors {
+            ctx.bind(factor, &mut self.scratch, challenge)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn factor_first(&self, factor: usize) -> Option<Result<Fr, CudaError>> {
+        self.factors.get(factor).map(DeviceFrVec::first)
+    }
+
+    pub(crate) fn output_factor_first(&self, factor: usize) -> Option<Result<Fr, CudaError>> {
+        (factor < self.num_output_factors).then(|| self.factors[factor].first())
+    }
+}
+
 pub(crate) struct CudaRaVirtualD4State {
     chunks: Vec<DeviceFrVec>,
     scratch: DeviceFrVec,
