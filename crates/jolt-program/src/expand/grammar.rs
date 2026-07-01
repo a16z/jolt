@@ -3,6 +3,8 @@ use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceInstructionRo
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
 /// Symbolic register placeholder, resolved to a physical virtual register during materialization.
+/// The number counts temps in the order they were requested: first `allocate()` gives `TempId(0)`,
+/// second gives `TempId(1)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TempId(pub(super) u8);
 
@@ -164,7 +166,8 @@ impl<K> InstructionTemplate<K> {
 }
 
 /// A single step in a symbolic expansion recipe.
-#[derive(Clone, Copy)]
+// Debug added so the transpiler extractor can print a recipe's ops for inspection.
+#[derive(Clone, Copy, Debug)]
 pub(super) enum ExpansionOp {
     /// Append this row directly to the output.
     Emit(RowTemplate),
