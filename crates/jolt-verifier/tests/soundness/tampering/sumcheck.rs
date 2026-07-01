@@ -7,7 +7,9 @@
 )]
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use crate::support::{tamper_manifest, verifier_fixtures::VerifierFixtureCase};
+use crate::support::{
+    narg_frame_has_body, narg_frame_ranges, tamper_manifest, verifier_fixtures::VerifierFixtureCase,
+};
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::proof_claims::{offset_opening_claim, opening_claim, upsert_opening_claim};
@@ -39,8 +41,6 @@ use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_verifier::stages::PrecommittedSchedule;
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use std::ops::Range;
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
@@ -532,13 +532,6 @@ struct NargPayloadSpans {
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-#[derive(Clone)]
-struct NargFrameRange {
-    full: Range<usize>,
-    body: Range<usize>,
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn narg_payload_spans(base: &VerifierFixtureCase) -> NargPayloadSpans {
     let log_t = base.proof.trace_length.ilog2() as usize;
     let mut cursor = 2;
@@ -647,36 +640,6 @@ fn duplicate_narg_frame(case: &mut VerifierFixtureCase, frame_index: usize) {
         .clone();
     let frame = case.proof.narg[full.clone()].to_vec();
     drop(case.proof.narg.splice(full.end..full.end, frame));
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn narg_frame_ranges(narg: &[u8]) -> Vec<NargFrameRange> {
-    let mut offset = 0;
-    let mut ranges = Vec::new();
-    while offset < narg.len() {
-        assert!(
-            narg.len() - offset >= 8,
-            "NARG has a truncated frame prefix at byte {offset}"
-        );
-        let mut len_bytes = [0u8; 8];
-        len_bytes.copy_from_slice(&narg[offset..offset + 8]);
-        let len = usize::try_from(u64::from_le_bytes(len_bytes))
-            .expect("NARG frame length should fit in usize");
-        let body_start = offset + 8;
-        let body_end = body_start
-            .checked_add(len)
-            .expect("NARG frame body range should not overflow");
-        assert!(
-            body_end <= narg.len(),
-            "NARG frame at byte {offset} is truncated"
-        );
-        ranges.push(NargFrameRange {
-            full: offset..body_end,
-            body: body_start..body_end,
-        });
-        offset = body_end;
-    }
-    ranges
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -809,10 +772,7 @@ fn stage7_batch_round_count(base: &VerifierFixtureCase) -> usize {
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn max_round_count<const N: usize>(rounds: [usize; N]) -> usize {
-    rounds
-        .into_iter()
-        .max()
-        .expect("batched sumcheck must include at least one relation")
+    rounds.into_iter().fold(0, usize::max)
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -1144,9 +1104,7 @@ fn case_advice_layouts(base: &VerifierFixtureCase) -> PrecommittedSchedule {
         base.trusted_advice_commitment
             .is_some()
             .then_some(base.public_io.memory_layout.max_trusted_advice_size as usize),
-        base.proof
-            .untrusted_advice_commitment
-            .is_some()
+        narg_frame_has_body(&base.proof.narg, 1)
             .then_some(base.public_io.memory_layout.max_untrusted_advice_size as usize),
         None,
     )

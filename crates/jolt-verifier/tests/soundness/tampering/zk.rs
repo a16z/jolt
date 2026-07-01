@@ -2,7 +2,6 @@
     all(feature = "prover-fixtures", feature = "zk"),
     expect(
         clippy::expect_used,
-        clippy::panic,
         reason = "ZK tampering helpers assert fixture shape before mutating real verifier objects"
     )
 )]

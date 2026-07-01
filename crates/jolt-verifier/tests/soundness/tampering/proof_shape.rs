@@ -20,6 +20,15 @@ fn zk_claim_payload_in_clear_mode_rejects_now() {
     );
 }
 
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn trailing_narg_bytes_reject_now() {
+    let mut case = verifier_fixture_case();
+    case.proof.narg.push(0xff);
+
+    crate::support::assert_rejects(case.verify());
+}
+
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[test]
 fn unexpected_zk_opening_claims_reject_now() {

@@ -2,7 +2,6 @@
     all(feature = "prover-fixtures", feature = "zk"),
     expect(
         clippy::expect_used,
-        clippy::panic,
         reason = "fixture audit tests should fail loudly when verifier object shape assumptions break"
     )
 )]
@@ -43,7 +42,6 @@ fn zk_committed_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         DoryScheme,
         Pedersen<Bn254G1>,
         Blake2b512,
-        _,
     >(&case.preprocessing, &case.public_io, &case.proof, None)
     .expect("build modular BlindFold protocol shape");
 
@@ -65,7 +63,6 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         DoryScheme,
         Pedersen<Bn254G1>,
         Blake2b512,
-        _,
     >(&case.preprocessing, &case.public_io, &case.proof, None)
     .expect("build modular BlindFold protocol shape");
 

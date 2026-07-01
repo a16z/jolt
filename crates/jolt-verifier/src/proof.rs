@@ -24,11 +24,6 @@ where
     PCS: CommitmentScheme,
 {
     pub protocol: ZkConfig,
-    /// Spongefish NARG frames consumed by the modular verifier. This carries
-    /// witness commitments, optional untrusted-advice commitment, prover-only
-    /// sumcheck/uni-skip round payloads, and BlindFold payloads. Dory's joint
-    /// opening proof and non-ZK opening claims remain structural because
-    /// spongefish has no non-absorbing hint channel for those values.
     pub narg: Vec<u8>,
     pub joint_opening_proof: PCS::Proof,
     pub claims: JoltProofClaims<PCS::Field>,

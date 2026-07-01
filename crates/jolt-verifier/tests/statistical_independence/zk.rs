@@ -3,7 +3,6 @@
     expect(
         clippy::cast_precision_loss,
         clippy::expect_used,
-        clippy::panic,
         reason = "statistical tests compute empirical floating-point test statistics and fail loudly"
     )
 )]
@@ -13,6 +12,8 @@ use std::collections::BTreeMap;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use ark_serialize::CanonicalSerialize;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_dory::DoryCommitment;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_field::{FixedBytes, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -133,12 +134,7 @@ impl StableZkProofShape {
             rw_config: case.proof.rw_config,
             one_hot_config: case.proof.one_hot_config,
             trace_polynomial_order: case.proof.trace_polynomial_order,
-            commitment_shape: CommitmentShape {
-                instruction_ra: case.proof.commitments.ra.instruction.len(),
-                ram_ra: case.proof.commitments.ra.ram.len(),
-                bytecode_ra: case.proof.commitments.ra.bytecode.len(),
-                has_untrusted_advice: case.proof.untrusted_advice_commitment.is_some(),
-            },
+            commitment_shape: CommitmentShape::from_proof(&case.proof),
             dory_shape: DoryOpeningProofShape::from_proof(&case.proof.joint_opening_proof),
             narg_len: case.proof.narg.len(),
         }
@@ -148,10 +144,19 @@ impl StableZkProofShape {
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CommitmentShape {
-    instruction_ra: usize,
-    ram_ra: usize,
-    bytecode_ra: usize,
+    proof_commitments: usize,
     has_untrusted_advice: bool,
+}
+
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+impl CommitmentShape {
+    fn from_proof(proof: &jolt_verifier::JoltProof<jolt_dory::DoryScheme>) -> Self {
+        Self {
+            proof_commitments: proof_commitments_from_narg(proof).len(),
+            has_untrusted_advice: narg_frame_body(&proof.narg, 1)
+                .is_some_and(|body| !body.is_empty()),
+        }
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -193,15 +198,10 @@ fn collect_jolt_proof_statistics(
 ) {
     let proof = &case.proof;
 
-    tracker.record_append("pcs.commitment.rd_inc", &proof.commitments.rd_inc);
-    tracker.record_append("pcs.commitment.ram_inc", &proof.commitments.ram_inc);
-    tracker.record_append_positions(
-        "pcs.commitment.instruction_ra",
-        &proof.commitments.ra.instruction,
-    );
-    tracker.record_append_positions("pcs.commitment.ram_ra", &proof.commitments.ra.ram);
-    tracker.record_append_positions("pcs.commitment.bytecode_ra", &proof.commitments.ra.bytecode);
-    if let Some(commitment) = &proof.untrusted_advice_commitment {
+    let commitments = proof_commitments_from_narg(proof);
+    tracker.record_append_positions("pcs.commitment", &commitments);
+    let untrusted_advice = untrusted_advice_commitments_from_narg(proof);
+    if let Some(commitment) = untrusted_advice.first() {
         tracker.record_append("pcs.commitment.untrusted_advice", commitment);
     }
 
@@ -212,6 +212,35 @@ fn collect_jolt_proof_statistics(
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn collect_narg_statistics(narg: &[u8], tracker: &mut BucketTracker) {
     tracker.record_bytes("proof.narg".to_string(), narg);
+}
+
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn proof_commitments_from_narg(
+    proof: &jolt_verifier::JoltProof<jolt_dory::DoryScheme>,
+) -> Vec<DoryCommitment> {
+    narg_frame_body(&proof.narg, 0)
+        .map(|body| jolt_transcript::deserialize_slice(&body).expect("proof commitments decode"))
+        .unwrap_or_default()
+}
+
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn untrusted_advice_commitments_from_narg(
+    proof: &jolt_verifier::JoltProof<jolt_dory::DoryScheme>,
+) -> Vec<DoryCommitment> {
+    narg_frame_body(&proof.narg, 1)
+        .map(|body| {
+            jolt_transcript::deserialize_slice(&body).expect("untrusted advice commitment decodes")
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn narg_frame_body(narg: &[u8], frame_index: usize) -> Option<Vec<u8>> {
+    let range = crate::support::narg_frame_ranges(narg)
+        .get(frame_index)?
+        .body
+        .clone();
+    Some(narg[range].to_vec())
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
