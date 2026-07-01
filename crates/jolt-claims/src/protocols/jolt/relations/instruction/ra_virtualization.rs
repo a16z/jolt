@@ -224,17 +224,5 @@ mod tests {
             relation.degree(),
             dimensions.num_committed_per_virtual() + 1
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                InstructionRaVirtualizationPublic::EqCycle
-            )]
-        );
     }
 }

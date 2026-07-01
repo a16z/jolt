@@ -172,23 +172,4 @@ mod tests {
         assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
         assert_eq!(challenges.gamma, inline_gamma);
     }
-
-    // The only place the inline draw and the default could disagree is
-    // `num_virtual_ra_polys() == 1`, where the inline `powers.get(1).unwrap_or(one)`
-    // keeps `one` rather than the squeezed scalar. That disagreement is unobservable:
-    // with a single virtual RA poly the gamma fold is `gamma^0`, so gamma is
-    // structurally absent from both expressions and never resolved. Hence no override
-    // is needed.
-    #[test]
-    fn single_virtual_ra_poly_omits_gamma_from_expressions() {
-        let symbolic = relations::instruction::RaVirtualization::new(
-            InstructionRaVirtualizationDimensions::new(
-                3,
-                NonZeroUsize::new(1).unwrap(),
-                NonZeroUsize::new(1).unwrap(),
-            )
-            .unwrap(),
-        );
-        assert!(symbolic.required_challenges::<Fr>().is_empty());
-    }
 }

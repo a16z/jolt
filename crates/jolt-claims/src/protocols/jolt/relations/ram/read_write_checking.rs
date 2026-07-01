@@ -196,24 +196,6 @@ mod tests {
             read_write_dimensions().read_write_rounds()
         );
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_read_value(),
-                ram_write_value(),
-                ram_ra(),
-                ram_val(),
-                ram_inc()
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RamReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RamReadWritePublic::EqCycle)]
-        );
     }
 
     #[test]

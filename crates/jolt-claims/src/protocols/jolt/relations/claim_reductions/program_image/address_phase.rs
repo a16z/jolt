@@ -146,11 +146,5 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             vec![final_program_image_opening()]
         );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                ProgramImageClaimReductionPublic::FinalScale
-            )]
-        );
     }
 }

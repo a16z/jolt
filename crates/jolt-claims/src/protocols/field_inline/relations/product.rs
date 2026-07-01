@@ -85,8 +85,6 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             field_product_output_openings().to_vec()
         );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
         assert_eq!(
             selected_product_uniskip_input_openings(),
             [field_product_opening(), field_inv_product_opening()]

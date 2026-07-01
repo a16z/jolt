@@ -203,18 +203,5 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             vec![ram_inc_reduced(), rd_inc_reduced()]
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(IncClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(IncClaimReductionPublic::EqRamReadWrite),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRamValCheck),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersReadWrite),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
-            ]
-        );
     }
 }

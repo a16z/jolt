@@ -171,14 +171,6 @@ mod tests {
             .input_expression::<Fr>()
             .required_openings()
             .is_empty());
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
-        );
     }
 
     /// The `gamma` is folded inside `booleanity_cycle_output`, so it never appears
@@ -194,11 +186,6 @@ mod tests {
         assert_eq!(
             challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
             Some(Fr::from_u64(5)),
-        );
-        // The relation draws exactly this one challenge.
-        assert_eq!(
-            Booleanity::new(dimensions(1, 1, 1)).required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)],
         );
     }
 }

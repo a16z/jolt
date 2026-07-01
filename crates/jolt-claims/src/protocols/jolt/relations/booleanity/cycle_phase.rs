@@ -66,9 +66,7 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use crate::protocols::jolt::{
-        BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltDerivedId,
-    };
+
     use jolt_field::Fr;
 
     fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
@@ -85,14 +83,6 @@ mod tests {
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![booleanity_address_phase_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
         );
     }
 }

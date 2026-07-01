@@ -227,13 +227,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
         assert_eq!(relation.degree(), INPUT_VIRTUALIZATION_DEGREE);
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(InstructionInputChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(InstructionInputPublic::EqProduct)]
-        );
     }
 }

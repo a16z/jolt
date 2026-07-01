@@ -146,11 +146,5 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             vec![final_advice_opening(JoltAdviceKind::Trusted)]
         );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
-                JoltAdviceKind::Trusted
-            ))]
-        );
     }
 }

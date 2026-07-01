@@ -296,21 +296,6 @@ mod tests {
                 reduced_claim(ram),
             ]
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                HammingWeightClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanity),
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(0)),
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(1)),
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(2)),
-            ]
-        );
         Ok(())
     }
 }

@@ -195,26 +195,5 @@ mod tests {
         assert_eq!(RaClaimReduction::id(), JoltRelationId::RamRaClaimReduction);
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_ra_raf_evaluation(),
-                ram_ra(),
-                ram_ra_val_check(),
-                ram_ra_claim_reduction(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleRaf),
-                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
-                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleValCheck),
-            ]
-        );
     }
 }

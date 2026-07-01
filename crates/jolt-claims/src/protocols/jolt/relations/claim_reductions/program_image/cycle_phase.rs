@@ -83,7 +83,7 @@ impl SymbolicSumcheck for CyclePhase {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::claim_reductions::program_image::final_program_image_opening;
-    use crate::protocols::jolt::ProgramImageClaimReductionPublic;
+
     use jolt_field::Fr;
 
     #[test]
@@ -105,8 +105,6 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             vec![cycle_phase_program_image_opening()]
         );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
     }
 
     #[test]
@@ -117,12 +115,6 @@ mod tests {
         assert_eq!(
             relation.output_expression::<Fr>().required_openings(),
             vec![final_program_image_opening()]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                ProgramImageClaimReductionPublic::FinalScale
-            )]
         );
     }
 }

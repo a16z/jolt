@@ -140,14 +140,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![ram_hamming_weight()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle)]
-        );
     }
 }

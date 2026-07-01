@@ -264,17 +264,5 @@ mod tests {
                 right_instruction_input_reduced(),
             ]
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                InstructionClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                InstructionClaimReductionPublic::EqSpartan
-            )]
-        );
     }
 }

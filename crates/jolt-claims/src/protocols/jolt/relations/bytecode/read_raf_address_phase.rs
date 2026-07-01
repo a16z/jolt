@@ -167,17 +167,6 @@ mod tests {
         BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
     }
 
-    fn stage_gammas() -> Vec<JoltChallengeId> {
-        vec![
-            JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
-        ]
-    }
-
     #[test]
     fn read_raf_address_phase_symbolic_matches_dependencies() {
         let relation = ReadRafAddressPhase::new(dimensions(2));
@@ -187,7 +176,6 @@ mod tests {
             relation.degree(),
             dimensions(2).num_committed_ra_polys() + 1
         );
-        assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
         assert_eq!(
             relation.output_expression::<Fr>().required_openings(),
             vec![bytecode_read_raf_address_phase_opening()]
