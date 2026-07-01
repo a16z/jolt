@@ -84,44 +84,33 @@ The `expand_*` function is the hand-written Rust that builds the sequence:
   keeps the symbolic form; our dump shows the concrete number. This is a
   representation gap to resolve on the Lean side, not in the prover.
 
-## For future me — read before building the AST→Lean backend
+## For future me — the AST→Lean backend
 
-Context settled with Ari (2026-07-01):
+**Bar:** generated Lean resembles the existing hand-written Lean closely enough
+that its proofs survive with only small edits. Don't touch the live prover.
 
-- The hand-written Lean in `JoltBytecode/JoltISA/Expansions/` will be **replaced**
-  by auto-translated Lean. Goal: make the auto-translation *as similar as possible*
-  to the hand-written Lean so the existing proofs don't break much (and to confirm
-  the hand-written Lean was done well).
-- The AST→Lean backend is **not written yet**, and we have full freedom there.
-- Do **not** change the live prover. Reconcile representation gaps on the Lean
-  side or in the backend.
+**What we record:** the final artifact — the flattened native program (list of
+`JoltInstructionRow`). This maps to the Lean `Program` = cons-list of `Instr`
+ending in `.done RETIRE_SUCCESS`.
 
-**The one decision this pins down: the backend must read the NESTED recipe
-(`expand_source_only_instruction`), not the flattened materialized output
-(`expand_instruction`).** The flat/symbolic dumps in this file were for eyeballing
-only — they are the wrong input for generating proof-compatible Lean.
+**Feasibility (checked field-by-field):** the AST *can* generate the `Instr`/
+`Program` syntax. What generation needs:
 
-Why nested is right — the hand-written Lean is built from block helpers
-(`slliBlock`, `srlBlock`, `sllBlock`, `mulhBlock`, `sraiBlock`,
-`amoDoubleBinopProgram`), and the nested recipe preserves exactly those block
-boundaries:
+- A per-opcode table (~40 entries, read off the `Instr` inductive): which args are
+  `Dst` vs `Src`, and each immediate's width (`BitVec 12/13/20/21/64`, or `Nat`).
+- Register number → operand: `<32` = `.xreg`, `>= 32` = `.vreg` (the `label` fn).
+- Chain rows into `.instr … <| … <| .done RETIRE_SUCCESS`.
 
-| nested recipe | hand-written Lean |
-|---|---|
-| one `Expand(kind, ..)` node | one block-helper call (`srlBlock`, `slliBlock`, …) |
-| `Expand(SllI, imm=3)` — raw shift amount survives | `slliBlock … (3 : BitVec 6)` |
-| `Temp(0)`, `Temp(1)` (allocation order) | `inlineTmp0` (v40), `inlineTmp1` (v41) |
-| side-effect metadata on the kind | `pureWritebackTraceProgram rd` vs side-effecting rewrite |
+**Sail wart — `LD.faultClass` and assert `ExceptionType`:** not in the row (they
+exist only for the Sail proof). Recover by rule: an `LD` is `amo` iff its source
+instruction is atomic (`AMO*`/`LR*`/`SC*`), else `normal`. We know the source kind
+because extraction is per source instruction.
 
-The immediate "problem" is **not real at the nested level**. In the flattened
-output, `SLLI` is already lowered to `VirtualMULI … 8` (2^3 pre-computed), which
-loses the shift amount. In the nested recipe, `SLLI` is a single `Expand` node
-carrying `imm=3` (the actual shift). The backend emits `slliBlock … 3`; the
-`2^shamt` lives inside the Lean helper (`slliMultiplier`), which we neither
-generate nor touch. So no immediate recovery/recognition is needed — just read
-the nested recipe and emit block calls.
+**Blocks (`slliBlock`, `mulhBlock`, `pureWritebackTraceProgram`, …):** hand-written
+proof-support over the flat program, not generated. So generation only has to hit
+the `Instr`/`Program` syntax — immediates like `2^shamt` stay inside those
+hand-written helpers.
 
-One-level nesting maps perfectly: emit the block call, and the block's own Lean
-definition handles the deeper expansion. Register numbering (`v40 = inlineTmp0`)
-already matches the Lean because both use the same allocator order — keep a golden
-test pinning it so an allocator change shows as a visible diff.
+**Open / to verify next:** confirm all ~40 `instruction_kind.name()` values match
+the Lean constructor names exactly; decide whether recorded programs are concrete
+per-instruction or parametric (affects immediate values).
