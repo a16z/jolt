@@ -1,8 +1,8 @@
 use jolt_field::{Field, Fr};
 
 use crate::cuda::{
-    CudaError, DeviceFrVec, Gather8Inputs, HammingBooleanityInputs, RaVirtualD4Inputs,
-    RoundPolyTerms,
+    CoreBooleanityCycleInputs, CudaError, DeviceFrVec, Gather8Inputs, HammingBooleanityInputs,
+    RaVirtualD4Inputs, RoundPolyTerms,
 };
 
 pub(crate) struct CudaBytecodeReadRafState {
@@ -208,6 +208,60 @@ impl CudaHammingBooleanityState {
 
     pub(crate) fn hamming_weight_first(&self) -> Result<Fr, CudaError> {
         self.hamming_weight.first()
+    }
+}
+
+pub(crate) struct CudaCoreBooleanityState {
+    h: Vec<DeviceFrVec>,
+    scratch: DeviceFrVec,
+    rho: Vec<Fr>,
+}
+
+impl CudaCoreBooleanityState {
+    pub(crate) fn new<F: Field>(h: &[Vec<F>], rho: &[F]) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        if h.is_empty() || h.len() != rho.len() {
+            return None;
+        }
+        let device_h = h
+            .iter()
+            .map(|poly| ctx.upload(crate::cuda::as_fr_slice(poly)?).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let rho = rho
+            .iter()
+            .map(|r| crate::cuda::into_fr(*r))
+            .collect::<Option<Vec<Fr>>>()?;
+        Some(Self {
+            h: device_h,
+            scratch: ctx.upload(&[]).ok()?,
+            rho,
+        })
+    }
+
+    pub(crate) fn round_poly_q<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 2]> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
+        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
+        let h_refs: Vec<&DeviceFrVec> = self.h.iter().collect();
+        ctx.core_booleanity_cycle_round_poly(CoreBooleanityCycleInputs {
+            h_polys: &h_refs,
+            rho: &self.rho,
+            e_in: &e_in_dev,
+            e_out: &e_out_dev,
+        })
+        .ok()
+    }
+
+    pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        for poly in &mut self.h {
+            ctx.bind(poly, &mut self.scratch, challenge)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn poly_first(&self, index: usize) -> Option<Result<Fr, CudaError>> {
+        self.h.get(index).map(DeviceFrVec::first)
     }
 }
 
