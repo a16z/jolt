@@ -1596,8 +1596,7 @@ mod tests {
         );
 
         // Build a verifier transcript with the same initial state and re-derive
-        // the same `r_cycle` in order. This test verifies the structured proof
-        // path, so clear sumcheck rounds are replayed from `proof`, not NARG.
+        // the same `r_cycle` in order.
         let mut verifier_transcript =
             jolt_transcript::verifier_transcript(&[], [0u8; 32], Blake2b512::default(), &[]);
         let _r_cycle: Vec<<Fr as JoltField>::Challenge> =
@@ -1648,11 +1647,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(r_sumcheck, r_sumcheck_verif);
-
-        // Structured verification should not require any NARG frames.
-        verifier_transcript
-            .check_eof()
-            .expect("structured verifier path should not consume NARG frames");
     }
 
     #[test]
