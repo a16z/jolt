@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 const MODULUS: u64 = (1u64 << 61) - 1;
 const INSTANCE: [u8; 32] = [0u8; 32];
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct Mersenne61(u64);
 
