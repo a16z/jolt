@@ -353,6 +353,13 @@ pub struct RaVirtualD4Inputs<'a> {
     pub e_out: &'a DeviceFrVec,
 }
 
+pub struct CoreBooleanityCycleInputs<'a> {
+    pub h_polys: &'a [&'a DeviceFrVec],
+    pub rho: &'a [Fr],
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -778,6 +785,14 @@ impl CudaKernelContext {
         Ok(core::array::from_fn(|e| {
             limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]])
         }))
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn core_booleanity_cycle_round_poly(
+        &self,
+        inputs: CoreBooleanityCycleInputs<'_>,
+    ) -> Result<[Fr; 2], CudaError> {
+        todo!()
     }
 
     pub fn hamming_booleanity_round_poly(
@@ -2740,6 +2755,71 @@ mod tests {
             let mut got = state.eq.gruen_poly_deg_3(q[0], q[1], previous_claim);
             got *= scale;
             prop_assert_eq!(got.coefficients(), expected.coefficients());
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::core_booleanity_cycle_round_poly is todo!()"]
+        fn core_booleanity_cycle_round_poly_matches_cpu(
+            num_vars in 1usize..9,
+            num_polys in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            use jolt_field::FieldAccumulator;
+            use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+            let len = 1usize << num_vars;
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| seed + Fr::from_u64((i + 1) as u64))
+                .collect();
+            let h_polys: Vec<Vec<Fr>> = (0..num_polys)
+                .map(|p| (0..len).map(|j| seed + Fr::from_u64((p * len + j + 7) as u64)).collect())
+                .collect();
+            let rho: Vec<Fr> =
+                (0..num_polys).map(|i| seed + Fr::from_u64((i + 101) as u64)).collect();
+
+            let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+            let e_in = split_eq.e_in_current();
+            let e_out = split_eq.e_out_current();
+            let in_bits = e_in.len().trailing_zeros() as usize;
+
+            type Acc = <Fr as Field>::Accumulator;
+            let mut outer = [Acc::default(); 2];
+            for (x_out, &eo) in e_out.iter().enumerate() {
+                let mut inner = [Acc::default(); 2];
+                let base = x_out << in_bits;
+                for (x_in, &ei) in e_in.iter().enumerate() {
+                    let j = base | x_in;
+                    let mut c = Acc::default();
+                    let mut q = Acc::default();
+                    for (i, h) in h_polys.iter().enumerate() {
+                        let h0 = h[2 * j];
+                        let h1 = h[2 * j + 1];
+                        let delta = h1 - h0;
+                        c.fmadd(h0, h0 - rho[i]);
+                        q.fmadd(delta, delta);
+                    }
+                    inner[0].fmadd(ei, c.reduce());
+                    inner[1].fmadd(ei, q.reduce());
+                }
+                outer[0].fmadd(eo, inner[0].reduce());
+                outer[1].fmadd(eo, inner[1].reduce());
+            }
+            let expected = [outer[0].reduce(), outer[1].reduce()];
+
+            let c = ctx();
+            let h_devs: Vec<DeviceFrVec> = h_polys.iter().map(|v| c.upload(v).unwrap()).collect();
+            let h_refs: Vec<&DeviceFrVec> = h_devs.iter().collect();
+            let e_in_dev = c.upload(e_in).unwrap();
+            let e_out_dev = c.upload(e_out).unwrap();
+            let got = c
+                .core_booleanity_cycle_round_poly(CoreBooleanityCycleInputs {
+                    h_polys: &h_refs,
+                    rho: &rho,
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                })
+                .unwrap();
+            prop_assert_eq!(got.to_vec(), expected.to_vec());
         }
 
         #[test]
