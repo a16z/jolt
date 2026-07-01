@@ -6,20 +6,29 @@ use crate::cuda::{
 };
 
 pub(crate) struct CudaRaVirtualD4State {
-    chunks: [DeviceFrVec; 4],
+    chunks: Vec<DeviceFrVec>,
     scratch: DeviceFrVec,
+    gamma_powers: Vec<Fr>,
 }
 
 impl CudaRaVirtualD4State {
-    pub(crate) fn new<F: Field>(chunks: &[Vec<F>]) -> Option<Self> {
+    pub(crate) fn new<F: Field>(chunks: &[Vec<F>], gamma_powers: &[F]) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        if chunks.len() != 4 {
+        if chunks.is_empty() || chunks.len() != gamma_powers.len() * 4 {
             return None;
         }
-        let upload = |i: usize| ctx.upload(crate::cuda::as_fr_slice(&chunks[i])?).ok();
+        let device_chunks = chunks
+            .iter()
+            .map(|chunk| ctx.upload(crate::cuda::as_fr_slice(chunk)?).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let gamma_powers = gamma_powers
+            .iter()
+            .map(|g| crate::cuda::into_fr(*g))
+            .collect::<Option<Vec<Fr>>>()?;
         Some(Self {
-            chunks: [upload(0)?, upload(1)?, upload(2)?, upload(3)?],
+            chunks: device_chunks,
             scratch: ctx.upload(&[]).ok()?,
+            gamma_powers,
         })
     }
 
@@ -27,8 +36,10 @@ impl CudaRaVirtualD4State {
         let ctx = crate::cuda::shared_ctx()?;
         let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
         let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
+        let chunk_refs: Vec<&DeviceFrVec> = self.chunks.iter().collect();
         ctx.ra_virtual_d4_round_poly(RaVirtualD4Inputs {
-            chunks: [&self.chunks[0], &self.chunks[1], &self.chunks[2], &self.chunks[3]],
+            chunks: &chunk_refs,
+            gamma_powers: &self.gamma_powers,
             e_in: &e_in_dev,
             e_out: &e_out_dev,
         })

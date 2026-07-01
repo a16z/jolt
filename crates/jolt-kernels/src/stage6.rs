@@ -5127,7 +5127,16 @@ impl<F: Field> InstructionRaVirtualChunks<'_, F> {
             Self::Dense(InstructionRaVirtualDenseChunks::Bound { chunks, .. }) => {
                 Some(chunks.clone())
             }
-            Self::Sparse(_) => None,
+            Self::Sparse(sparse) => {
+                let current_len = sparse.current_len();
+                Some(
+                    (0..sparse.len())
+                        .map(|chunk| {
+                            (0..current_len).map(|index| sparse.get(chunk, index)).collect()
+                        })
+                        .collect(),
+                )
+            }
         }
     }
 }
@@ -5217,17 +5226,16 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             gamma_power *= gamma;
         }
 
-        // GPU d4 path covers only the RamRaVirtual shape: dense chunks, 1 virtual,
-        // chunks_per_virtual == 4. (InstructionRaVirtual is sparse / multi-virtual.)
         #[cfg(feature = "cuda")]
-        let cuda = if backend == "cuda"
-            && chunks_per_virtual == 4
-            && virtual_count == 1
-            && split_eq.is_some()
-        {
+        let cuda = if backend == "cuda" && chunks_per_virtual == 4 && split_eq.is_some() {
+            let d4_gamma: Vec<F> = if gamma_absorbed {
+                vec![F::one(); virtual_count]
+            } else {
+                gamma_powers.clone()
+            };
             chunks
                 .dense_chunk_vecs()
-                .and_then(|chunk_vecs| cuda::CudaRaVirtualD4State::new(&chunk_vecs))
+                .and_then(|chunk_vecs| cuda::CudaRaVirtualD4State::new(&chunk_vecs, &d4_gamma))
         } else {
             None
         };

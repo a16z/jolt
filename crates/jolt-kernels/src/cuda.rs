@@ -347,7 +347,8 @@ pub struct HammingBooleanityInputs<'a> {
 }
 
 pub struct RaVirtualD4Inputs<'a> {
-    pub chunks: [&'a DeviceFrVec; 4],
+    pub chunks: &'a [&'a DeviceFrVec],
+    pub gamma_powers: &'a [Fr],
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
 }
@@ -684,6 +685,13 @@ impl CudaKernelContext {
         inputs: RaVirtualD4Inputs<'_>,
     ) -> Result<[Fr; 4], CudaError> {
         use num_traits::Zero;
+        let virtual_count = inputs.gamma_powers.len();
+        assert!(virtual_count > 0, "ra-virtual d4 needs at least one virtual");
+        assert_eq!(
+            inputs.chunks.len(),
+            virtual_count * 4,
+            "ra-virtual d4 needs 4 chunks per virtual"
+        );
         let half = inputs.chunks[0].len() / 2;
         for chunk in inputs.chunks {
             assert_eq!(chunk.len(), half * 2, "ra-virtual d4 chunks must have equal length");
@@ -699,6 +707,17 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
+        let mut packed: CudaSlice<u64> =
+            self.stream.alloc_zeros(inputs.chunks.len() * half * 2 * LIMBS)?;
+        for (index, chunk) in inputs.chunks.iter().enumerate() {
+            let offset = index * half * 2 * LIMBS;
+            self.stream.memcpy_dtod(
+                &chunk.buf.slice(0..half * 2 * LIMBS),
+                &mut packed.slice_mut(offset..offset + half * 2 * LIMBS),
+            )?;
+        }
+        let gammas_dev = self.upload(inputs.gamma_powers)?;
+
         const WIDTH: usize = 4;
         let tuple = WIDTH * LIMBS;
         let block = BLOCK;
@@ -706,6 +725,8 @@ impl CudaKernelContext {
         let blocks = (half as u32).div_ceil(block);
         let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
 
+        let pair_stride_arg = half as u64;
+        let virtual_count_arg = virtual_count as u32;
         let half_arg = half as u64;
         let in_bits_arg = in_bits;
         let width_arg = WIDTH as u32;
@@ -718,18 +739,18 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&inputs.chunks[0].buf)
-            .arg(&inputs.chunks[1].buf)
-            .arg(&inputs.chunks[2].buf)
-            .arg(&inputs.chunks[3].buf)
+            .arg(&packed)
+            .arg(&gammas_dev.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
+            .arg(&pair_stride_arg)
+            .arg(&virtual_count_arg)
             .arg(&half_arg)
             .arg(&in_bits_arg);
-        // SAFETY: one thread per row reads its pair from each of the 4 chunks and its
-        // e_in[row & mask] / e_out[row >> in_bits] weights (in range since
-        // e_in*e_out == half), writing one 4-lane tuple per block; shared memory holds
-        // `block` tuples.
+        // SAFETY: one thread per row reads its pair from each of the 4*virtual_count
+        // packed chunks, the per-virtual gamma, and its e_in[row & mask] /
+        // e_out[row >> in_bits] weights (in range since e_in*e_out == half), writing
+        // one 4-lane tuple per block; shared memory holds `block` tuples.
         let _ = unsafe { launch.launch(cfg) }?;
 
         let mut len = blocks as usize;
@@ -2723,7 +2744,8 @@ mod tests {
 
         #[test]
         fn ra_virtual_d4_round_poly_matches_cpu(
-            num_vars in 1usize..10,
+            num_vars in 1usize..9,
+            num_virtuals in 1usize..4,
             point_seed in fr_strategy(),
             seed in fr_strategy(),
         ) {
@@ -2731,19 +2753,19 @@ mod tests {
             use jolt_field::FieldAccumulator;
             use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
-            // RamRaVirtual config: 4 dense chunks, 1 virtual, weight = e_in (gamma
-            // absorbed into a unit gamma^0). Mirror round_poly_sparse_d4's fold.
             let len = 1usize << num_vars;
             let point: Vec<Fr> = (0..num_vars)
                 .map(|i| point_seed + Fr::from_u64(i as u64))
                 .collect();
-            let chunks: Vec<Vec<Fr>> = (0..4)
+            let chunks: Vec<Vec<Fr>> = (0..4 * num_virtuals)
                 .map(|c| {
                     (0..len)
                         .map(|j| seed + Fr::from_u64((c * len + j + 1) as u64))
                         .collect()
                 })
                 .collect();
+            let gamma_powers: Vec<Fr> =
+                (0..num_virtuals).map(|v| seed + Fr::from_u64((v + 3) as u64)).collect();
 
             let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
             let e_in = split_eq.e_in_current();
@@ -2757,15 +2779,20 @@ mod tests {
                 let base = x_out << in_bits;
                 for (x_in, &ei) in e_in.iter().enumerate() {
                     let row = base | x_in;
-                    let pair = |c: usize| (chunks[c][2 * row], chunks[c][2 * row + 1]);
-                    accumulate_instruction_ra_d4_products(
-                        ei,
-                        &mut inner,
-                        pair(0),
-                        pair(1),
-                        pair(2),
-                        pair(3),
-                    );
+                    for (v, &gamma) in gamma_powers.iter().enumerate() {
+                        let pair = |c: usize| {
+                            let chunk = v * 4 + c;
+                            (chunks[chunk][2 * row], chunks[chunk][2 * row + 1])
+                        };
+                        accumulate_instruction_ra_d4_products(
+                            ei * gamma,
+                            &mut inner,
+                            pair(0),
+                            pair(1),
+                            pair(2),
+                            pair(3),
+                        );
+                    }
                 }
                 for (acc, inner) in expected_accs.iter_mut().zip(inner) {
                     acc.fmadd(eo, inner.reduce());
@@ -2777,16 +2804,13 @@ mod tests {
             let c = ctx();
             let chunk_devs: Vec<DeviceFrVec> =
                 chunks.iter().map(|v| c.upload(v).unwrap()).collect();
+            let chunk_refs: Vec<&DeviceFrVec> = chunk_devs.iter().collect();
             let e_in_dev = c.upload(e_in).unwrap();
             let e_out_dev = c.upload(e_out).unwrap();
             let got = c
                 .ra_virtual_d4_round_poly(RaVirtualD4Inputs {
-                    chunks: [
-                        &chunk_devs[0],
-                        &chunk_devs[1],
-                        &chunk_devs[2],
-                        &chunk_devs[3],
-                    ],
+                    chunks: &chunk_refs,
+                    gamma_powers: &gamma_powers,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                 })
