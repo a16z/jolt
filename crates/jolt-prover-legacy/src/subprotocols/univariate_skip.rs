@@ -133,11 +133,16 @@ pub fn build_uniskip_first_round_poly<
 
 /// Prove-only helper for a uni-skip first round instance (non-ZK mode).
 /// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
-pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
+pub fn prove_uniskip_round<F, I, T>(
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
-) -> UniSkipFirstRoundProof<F> {
+    transcript: &mut T,
+) -> UniSkipFirstRoundProof<F>
+where
+    F: JoltField,
+    I: SumcheckInstanceProver<F>,
+    T: FsChallenge<F> + FsAbsorb + FsNargWrite,
+{
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
     // Write the clear first-round polynomial into the prover-side NARG. The
@@ -157,14 +162,18 @@ pub fn prove_uniskip_round_zk<
     C: JoltCurve<F = F>,
     I: SumcheckInstanceProver<F>,
     R: CryptoRngCore,
+    T,
 >(
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
+    transcript: &mut T,
     pedersen_gens: &PedersenGenerators<C>,
     rng: &mut R,
-) -> ZkUniSkipFirstRoundProof<F, C> {
+) -> ZkUniSkipFirstRoundProof<F, C>
+where
+    T: FsChallenge<F> + FsAbsorb + FsNargWrite,
+{
     use crate::subprotocols::blindfold::UniSkipStageData;
 
     let input_claim = instance.input_claim(opening_accumulator);
@@ -242,12 +251,16 @@ impl<F: JoltField> UniSkipFirstRoundProof<F> {
         const N: usize,
         const FIRST_ROUND_POLY_NUM_COEFFS: usize,
         A: AbstractVerifierOpeningAccumulator<F>,
+        T,
     >(
         &self,
         sumcheck_instance: &dyn SumcheckInstanceVerifier<F, A>,
         opening_accumulator: &mut A,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<F::Challenge, ProofVerifyError> {
+        transcript: &mut T,
+    ) -> Result<F::Challenge, ProofVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         let degree_bound = sumcheck_instance.degree();
 
         let uni_poly = if self.uni_poly.coeffs.is_empty() {
@@ -328,12 +341,16 @@ impl<F: JoltField, C: JoltCurve<F = F>> ZkUniSkipFirstRoundProof<F, C> {
     pub fn verify_transcript<
         A: AbstractVerifierOpeningAccumulator<F>,
         I: SumcheckInstanceVerifier<F, A>,
+        T,
     >(
         &self,
         sumcheck_instance: &I,
         opening_accumulator: &mut A,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<F::Challenge, ProofVerifyError> {
+        transcript: &mut T,
+    ) -> Result<F::Challenge, ProofVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         let degree_bound = sumcheck_instance.degree();
         if self.poly_degree > degree_bound {
             return Err(ProofVerifyError::InvalidInputLength(

@@ -691,7 +691,7 @@ where
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
-            BatchedSumcheck::prove_zk::<F, C, _>(
+            BatchedSumcheck::prove_zk::<F, C, _, _>(
                 instances,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,
@@ -718,7 +718,7 @@ where
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
-            let zk_proof = prove_uniskip_round_zk::<F, C, _, _>(
+            let zk_proof = prove_uniskip_round_zk::<F, C, _, _, _>(
                 instance,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,

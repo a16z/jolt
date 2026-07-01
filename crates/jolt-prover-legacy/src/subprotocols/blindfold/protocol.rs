@@ -40,13 +40,15 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
     }
 
     #[tracing::instrument(skip_all, name = "BlindFoldProver::prove")]
-    pub fn prove(
+    pub fn prove<T>(
         &self,
         real_instance: &RelaxedR1CSInstance<F, C>,
         real_witness: &RelaxedR1CSWitness<F>,
         real_z: &[F],
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
-    ) {
+        transcript: &mut T,
+    ) where
+        T: FsChallenge<F> + FsAbsorb + FsNargWrite,
+    {
         use super::spartan::{BlindFoldInnerSumcheckProver, BlindFoldSpartanProver};
 
         let mut rng = rand::thread_rng();
@@ -245,36 +247,45 @@ fn open_witness_variable<F: JoltField>(
     }
 }
 
-fn write_hyrax_opening<F: JoltField>(
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
-    opening: &HyraxOpeningProof<F>,
-) {
+fn write_hyrax_opening<F: JoltField, T>(transcript: &mut T, opening: &HyraxOpeningProof<F>)
+where
+    T: FsChallenge<F> + FsAbsorb + FsNargWrite,
+{
     transcript.write_slice(&opening.combined_row);
     transcript.write_slice(std::slice::from_ref(&opening.combined_blinding));
 }
 
-fn read_vec<F: JoltField, T: ark_serialize::CanonicalDeserialize>(
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-) -> Result<Vec<T>, BlindFoldVerifyError> {
+fn read_vec<F, T, U>(transcript: &mut T) -> Result<Vec<U>, BlindFoldVerifyError>
+where
+    F: JoltField,
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    U: ark_serialize::CanonicalDeserialize,
+{
     transcript
         .read_slice()
         .map_err(|_| BlindFoldVerifyError::MalformedProof)
 }
 
-fn read_one<F: JoltField, T: ark_serialize::CanonicalDeserialize>(
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-) -> Result<T, BlindFoldVerifyError> {
-    let values: Vec<T> = read_vec(transcript)?;
-    match <[T; 1]>::try_from(values) {
+fn read_one<F, T, U>(transcript: &mut T) -> Result<U, BlindFoldVerifyError>
+where
+    F: JoltField,
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    U: ark_serialize::CanonicalDeserialize,
+{
+    let values: Vec<U> = read_vec(transcript)?;
+    match <[U; 1]>::try_from(values) {
         Ok([value]) => Ok(value),
         Err(_) => Err(BlindFoldVerifyError::MalformedProof),
     }
 }
 
-fn read_hyrax_opening<F: JoltField>(
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
+fn read_hyrax_opening<F: JoltField, T>(
+    transcript: &mut T,
     expected_len: usize,
-) -> Result<HyraxOpeningProof<F>, BlindFoldVerifyError> {
+) -> Result<HyraxOpeningProof<F>, BlindFoldVerifyError>
+where
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
+{
     let combined_row: Vec<F> = read_vec(transcript)?;
     if combined_row.len() != expected_len {
         return Err(BlindFoldVerifyError::MalformedProof);
@@ -409,11 +420,14 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
     }
 
     #[tracing::instrument(skip_all, name = "BlindFoldVerifier::verify")]
-    pub fn verify(
+    pub fn verify<T>(
         &self,
         input: BlindFoldVerifierInput<C>,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<(), BlindFoldVerifyError> {
+        transcript: &mut T,
+    ) -> Result<(), BlindFoldVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         use super::spartan::{compute_L_w_at_ry, BlindFoldSpartanVerifier};
 
         let hyrax = &self.r1cs.hyrax;
@@ -428,7 +442,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
 
-        let real_instance = read_real_instance_from_transcript::<F, C>(
+        let real_instance = read_real_instance_from_transcript::<F, C, T>(
             F::one(),
             input.round_commitments,
             input.output_claims_row_commitments,
@@ -440,7 +454,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
 
-        let random_instance = read_random_instance_from_transcript::<F, C>(transcript)?;
+        let random_instance = read_random_instance_from_transcript::<F, C, T>(transcript)?;
         if random_instance.noncoeff_row_commitments.len() != expected_noncoeff_rows
             || random_instance.round_commitments.len() != hyrax.R_coeff
             || random_instance.output_claims_row_commitments.len() != expected_oc_rows
@@ -621,11 +635,13 @@ enum InstanceRole {
     Random,
 }
 
-fn write_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
+fn write_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>, T>(
     instance: &RelaxedR1CSInstance<F, C>,
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
+    transcript: &mut T,
     role: InstanceRole,
-) {
+) where
+    T: FsChallenge<F> + FsAbsorb + FsNargWrite,
+{
     match role {
         InstanceRole::Real => {
             transcript.absorb(&instance.u);
@@ -646,14 +662,17 @@ fn write_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
     }
 }
 
-fn read_real_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
+fn read_real_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>, T>(
     u: F,
     round_commitments: Vec<C::G1>,
     output_claims_row_commitments: Vec<C::G1>,
     e_row_commitments: Vec<C::G1>,
     eval_commitments: Vec<C::G1>,
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-) -> Result<RelaxedR1CSInstance<F, C>, BlindFoldVerifyError> {
+    transcript: &mut T,
+) -> Result<RelaxedR1CSInstance<F, C>, BlindFoldVerifyError>
+where
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
+{
     transcript.absorb(&u);
     transcript.absorb(&round_commitments);
     transcript.absorb(&output_claims_row_commitments);
@@ -670,9 +689,12 @@ fn read_real_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
     })
 }
 
-fn read_random_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
-    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-) -> Result<RelaxedR1CSInstance<F, C>, BlindFoldVerifyError> {
+fn read_random_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>, T>(
+    transcript: &mut T,
+) -> Result<RelaxedR1CSInstance<F, C>, BlindFoldVerifyError>
+where
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
+{
     let u: F = read_one(transcript)?;
     let round_commitments: Vec<C::G1> = read_vec(transcript)?;
     let output_claims_row_commitments: Vec<C::G1> = read_vec(transcript)?;

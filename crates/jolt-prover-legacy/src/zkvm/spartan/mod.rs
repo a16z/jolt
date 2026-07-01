@@ -32,7 +32,7 @@ pub fn verify_stage1_uni_skip<
 
     let challenge = match proof {
         UniSkipFirstRoundProofVariant::Standard(std_proof) => std_proof
-            .verify::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_FIRST_ROUND_POLY_NUM_COEFFS, A>(
+            .verify::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_FIRST_ROUND_POLY_NUM_COEFFS, A, T>(
             &verifier,
             opening_accumulator,
             transcript,
@@ -63,6 +63,7 @@ pub fn verify_stage2_uni_skip<
                 PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
                 A,
+                T,
             >(&verifier, opening_accumulator, transcript)?
         }
         UniSkipFirstRoundProofVariant::Zk(zk_proof) => {

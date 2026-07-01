@@ -34,11 +34,15 @@ pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     /// Returns (proof, challenges, initial_batched_claim)
     /// For non-ZK mode - returns ClearSumcheckProof with polynomial coefficients visible.
-    pub fn prove<F: JoltField>(
+    pub fn prove<F, T>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
-    ) -> (ClearSumcheckProof<F>, Vec<F::Challenge>, F) {
+        transcript: &mut T,
+    ) -> (ClearSumcheckProof<F>, Vec<F::Challenge>, F)
+    where
+        F: JoltField,
+        T: FsChallenge<F> + FsAbsorb + FsNargWrite,
+    {
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -199,14 +203,17 @@ impl BatchedSumcheck {
     ///
     /// Returns (proof, challenges, initial_batched_claim)
     #[cfg(feature = "zk")]
-    pub fn prove_zk<F: JoltField, C: JoltCurve<F = F>, R: CryptoRngCore>(
+    pub fn prove_zk<F: JoltField, C: JoltCurve<F = F>, R: CryptoRngCore, T>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
+        transcript: &mut T,
         pedersen_gens: &PedersenGenerators<C>,
         rng: &mut R,
-    ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>, F) {
+    ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>, F)
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargWrite,
+    {
         use crate::subprotocols::blindfold::ZkStageData;
 
         let max_num_rounds = sumcheck_instances
@@ -399,12 +406,15 @@ impl BatchedSumcheck {
         )
     }
 
-    pub fn verify<F: JoltField, C: JoltCurve<F = F>>(
+    pub fn verify<F: JoltField, C: JoltCurve<F = F>, T>(
         proof: &SumcheckInstanceProof<F, C>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
+        transcript: &mut T,
+    ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -480,12 +490,15 @@ impl BatchedSumcheck {
 
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
     /// Used by opening proof reduction which doesn't need ZK mode.
-    pub fn verify_standard<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
+    pub fn verify_standard<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>, T>(
         proof: &ClearSumcheckProof<F>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, A>>,
         opening_accumulator: &mut A,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
+        transcript: &mut T,
+    ) -> Result<Vec<F::Challenge>, ProofVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -559,13 +572,16 @@ impl<F: JoltField> ClearSumcheckProof<F> {
 
     /// Verify this standard sumcheck. Structured proofs replay each round as a
     /// shared absorb; an empty proof reads round polynomials from the NARG.
-    pub fn verify(
+    pub fn verify<T>(
         &self,
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
+        transcript: &mut T,
+    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         if !self.compressed_polys.is_empty() && self.compressed_polys.len() != num_rounds {
             return Err(ProofVerifyError::InvalidInputLength(
                 num_rounds,
@@ -687,12 +703,15 @@ impl<F: JoltField, C: JoltCurve<F = F>> ZkSumcheckProof<F, C> {
 
     /// Verify ZK sumcheck by appending commitments to transcript and deriving challenges.
     /// Does NOT evaluate polynomials - that's handled by BlindFold verification.
-    pub fn verify_transcript_only(
+    pub fn verify_transcript_only<T>(
         &self,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
+        transcript: &mut T,
+    ) -> Result<Vec<F::Challenge>, ProofVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         if self.round_commitments.len() != num_rounds {
             return Err(ProofVerifyError::InvalidInputLength(
                 num_rounds,
@@ -812,13 +831,16 @@ impl<F: JoltField, C: JoltCurve<F = F>> SumcheckInstanceProof<F, C> {
     /// Verify the sumcheck proof.
     /// For Standard: evaluates polynomials and returns (final_claim, challenges).
     /// For Zk: only derives challenges (BlindFold handles evaluation verification).
-    pub fn verify(
+    pub fn verify<T>(
         &self,
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
-    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
+        transcript: &mut T,
+    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError>
+    where
+        T: FsChallenge<F> + FsAbsorb + FsNargRead,
+    {
         match self {
             Self::Clear(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),
             Self::Zk(proof) => {
