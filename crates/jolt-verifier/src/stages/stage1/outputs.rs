@@ -9,7 +9,7 @@ use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsis
 use serde::{Deserialize, Serialize};
 
 use super::outer_remainder::{OuterRemainder, OuterRemainderOutputClaims};
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckBatch};
+use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
@@ -17,14 +17,15 @@ use crate::VerifierError;
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage1OutputClaims<F: Field> {
     pub uniskip_output_claim: F,
-    pub outer: Stage1BatchOutputClaims<F, F>,
+    pub outer: Stage1BatchOutputClaims<F>,
 }
 
 /// Source-of-truth for stage 1's singleton sumcheck batch: the Spartan outer
 /// *remainder* sumcheck (the companion uni-skip first round is a separate
 /// sub-sumcheck, not a batch member — see [`OuterUniskip`](super::OuterUniskip)).
-/// `#[derive(SumcheckBatch)]` generates the `Stage1BatchInputClaims<F, C>`,
-/// `Stage1BatchOutputClaims<F, C>`, and `Stage1BatchChallenges<F>` aggregates — one
+/// `#[derive(SumcheckBatch)]` generates the `Stage1BatchInputClaims<F>` /
+/// `Stage1BatchInputPoints<F>`, `Stage1BatchOutputClaims<F>` /
+/// `Stage1BatchOutputPoints<F>`, and `Stage1BatchChallenges<F>` aggregates — one
 /// field per instance, in this declaration order. With a single instance and no
 /// cross-relation aliasing there is no `custom_opening_values` opt-out: the
 /// generated `opening_values` / `append_to_transcript` delegates to
@@ -35,27 +36,16 @@ pub struct Stage1BatchSumchecks<F: Field> {
     pub outer_remainder: OuterRemainder<F>,
 }
 
-/// The shared per-relation opening-point accessor, generated for each concrete cell
-/// (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form) so both
-/// expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>` can't
-/// express this — `F` would be unconstrained by the self type.
-macro_rules! stage1_batch_point_accessors {
-    ($cell:ident) => {
-        impl<F: Field> Stage1BatchOutputClaims<F, $cell<F>> {
-            /// The Spartan outer remainder *opening* point (shared by all 35
-            /// openings): the bound remainder sumcheck point reversed, as
-            /// `derive_opening_points` produces. The raw (un-reversed) reduction
-            /// point that downstream stages slice is exposed by
-            /// [`Stage1Output::remainder_point`].
-            pub fn remainder_opening_point(&self) -> &[F] {
-                self.outer_remainder.left_instruction_input.point()
-            }
-        }
-    };
+/// The shared opening-point accessor over the point-only stage-1 aggregate.
+impl<F: Field> Stage1BatchOutputPoints<F> {
+    /// The Spartan outer remainder *opening* point (shared by all 35 openings): the
+    /// bound remainder sumcheck point reversed, as `derive_opening_points` produces.
+    /// The raw (un-reversed) reduction point that downstream stages slice is exposed
+    /// by [`Stage1Output::remainder_point`].
+    pub fn remainder_opening_point(&self) -> &[F] {
+        self.outer_remainder.left_instruction_input()
+    }
 }
-
-stage1_batch_point_accessors!(OpeningClaim);
-stage1_batch_point_accessors!(Vec);
 
 /// Assemble the stage-1 produced openings (the verifier-only wire form,
 /// `OuterRemainderOutputClaims<F>`) from a prover-supplied `(variable, value)`
@@ -181,8 +171,9 @@ fn stage1_public_input_failed(reason: String) -> VerifierError {
 /// so BlindFold can source `tau`/`uniskip` from `challenges.<field>` (matching
 /// the `input.stageN.challenges.<field>` idiom used by the sibling stages). The
 /// remainder sumcheck point is opening-derived, so it lives on the produced
-/// reduction (clear: `output_claims.remainder_point()`; ZK: `remainder_consistency`)
-/// rather than here; the singleton remainder batching coefficient is likewise
+/// reduction (clear: `output_points.remainder_opening_point()`; ZK:
+/// `remainder_consistency`) rather than here; the singleton remainder batching
+/// coefficient is likewise
 /// read from `remainder_consistency` on the ZK path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1Challenges<F: Field> {
@@ -192,12 +183,15 @@ pub struct Stage1Challenges<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1ClearOutput<F: Field> {
-    /// The produced remainder openings paired with their shared point (point +
-    /// value) via the `OpeningClaim` cell. The opening point is derived from the
-    /// remainder's sumcheck point; later stages read values through
-    /// `.outer_remainder.<field>.value` and the shared point through
-    /// [`remainder_point`](Stage1BatchOutputClaims::remainder_point).
-    pub output_claims: Stage1BatchOutputClaims<F, OpeningClaim<F>>,
+    /// The produced remainder opening *values* (wire form). The opening point is
+    /// derived from the remainder's sumcheck point; later stages read values through
+    /// `.outer_remainder.<field>`.
+    pub output_values: Stage1BatchOutputClaims<F>,
+    /// The produced remainder opening *points*, paired field-for-field with
+    /// `output_values`. All 35 openings share the single remainder point, exposed
+    /// through
+    /// [`remainder_opening_point`](Stage1BatchOutputPoints::remainder_opening_point).
+    pub output_points: Stage1BatchOutputPoints<F>,
     /// The Spartan outer uni-skip's reduced opening (consumed as the remainder's
     /// input claim; absorbed into the transcript before the remainder RLC squeeze).
     pub uniskip_output_claim: F,
@@ -238,7 +232,7 @@ impl<F: Field, C> Stage1Output<F, C> {
     pub fn remainder_point(&self) -> Vec<F> {
         match self {
             Self::Clear(output) => output
-                .output_claims
+                .output_points
                 .remainder_opening_point()
                 .iter()
                 .rev()

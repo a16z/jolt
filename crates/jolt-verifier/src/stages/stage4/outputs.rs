@@ -4,7 +4,7 @@ use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
 
-use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims, SumcheckBatch};
+use crate::stages::relations::{OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation};
@@ -12,9 +12,10 @@ use super::registers_read_write_checking::RegistersReadWriteChecking;
 
 /// Source-of-truth for stage 4's sumcheck batch: the two instances in
 /// Fiat-Shamir batch order (registers read-write, then RAM value-check).
-/// `#[derive(SumcheckBatch)]` generates the `Stage4InputClaims<F, C>`,
-/// `Stage4OutputClaims<F, C>`, and `Stage4Challenges<F>` aggregates — one field
-/// per instance, in this declaration order.
+/// `#[derive(SumcheckBatch)]` generates the `Stage4InputClaims<F>`,
+/// `Stage4InputPoints<F>`, `Stage4OutputClaims<F>`, `Stage4OutputPoints<F>`, and
+/// `Stage4Challenges<F>` aggregates — one field per instance, in this declaration
+/// order.
 ///
 /// The RAM value-check instance produces *more* openings than the register one:
 /// besides its main `ram_ra`/`ram_inc`, it also stages the `Val_init` advice
@@ -34,11 +35,7 @@ pub struct Stage4Sumchecks<F: Field> {
     pub ram_val_check: RamValCheck<F>,
 }
 
-#[expect(
-    clippy::mismatching_type_param_order,
-    reason = "the cell param C is pinned to F for the value-only wire form; the second `F` is the cell, not a reordered field param"
-)]
-impl<F: Field> Stage4OutputClaims<F, F> {
+impl<F: Field> Stage4OutputClaims<F> {
     /// The produced opening claims in canonical (Fiat-Shamir) order, matching the
     /// prover's commitment (flush) order exactly: the `Val_init` advice openings,
     /// the committed program-image contribution, the register read-write openings,
@@ -66,39 +63,32 @@ impl<F: Field> Stage4OutputClaims<F, F> {
     }
 }
 
-/// The shared opening-point accessors, generated for each concrete cell
-/// (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form) so
-/// both expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>`
-/// can't express this — `F` would be unconstrained by the self type.
-macro_rules! stage4_point_accessors {
-    ($cell:ident) => {
-        impl<F: Field> Stage4OutputClaims<F, $cell<F>> {
-            /// The register read-write opening point (shared by all five register
-            /// openings).
-            pub fn registers_read_write_point(&self) -> &[F] {
-                self.registers_read_write.registers_val.point()
-            }
+/// The shared opening-point accessors over the point-only stage-4 aggregate.
+impl<F: Field> Stage4OutputPoints<F> {
+    /// The register read-write opening point (shared by all five register
+    /// openings).
+    pub fn registers_read_write_point(&self) -> &[F] {
+        self.registers_read_write.registers_val()
+    }
 
-            /// The RAM value-check opening point (shared by `ram_ra`/`ram_inc`).
-            pub fn ram_val_check_point(&self) -> &[F] {
-                self.ram_val_check.ram_ra.point()
-            }
-        }
-    };
+    /// The RAM value-check opening point (shared by `ram_ra`/`ram_inc`).
+    pub fn ram_val_check_point(&self) -> &[F] {
+        self.ram_val_check.ram_ra()
+    }
 }
-
-stage4_point_accessors!(OpeningClaim);
-stage4_point_accessors!(Vec);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage4ClearOutput<F: Field> {
     pub challenges: Stage4Challenges<F>,
-    /// The produced stage-4 openings paired with their points (point + value)
-    /// via the `OpeningClaim` cell. The opening points are derived from the
-    /// batch's sumcheck point; pairing them with the values here lets later stages
-    /// consume a ready `OpeningClaim` instead of re-joining a value with a
-    /// separately-tracked point.
-    pub output_claims: Stage4OutputClaims<F, OpeningClaim<F>>,
+    /// The produced stage-4 opening *values* (wire form); read by later stages and
+    /// the Fiat-Shamir opening-claim encoder.
+    pub output_values: Stage4OutputClaims<F>,
+    /// The produced stage-4 opening *points*, paired field-for-field with
+    /// `output_values` for the register and RAM value-check leaves. The advice /
+    /// program-image opening points are carried on `ram_val_check_init` (they sit at
+    /// the staged RAM address sub-point, not the batch sumcheck point), so they are
+    /// left absent here.
+    pub output_points: Stage4OutputPoints<F>,
     pub ram_val_check_init: RamValCheckInitialEvaluation<F>,
 }
 
@@ -108,21 +98,13 @@ pub struct Stage4ZkOutput<F: Field, C> {
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub ram_val_check_public_eval: F,
-    /// The produced opening points (point-only cell), the ZK counterpart of the
-    /// clear path's `output_claims`. Read through the same `*_point()` accessors.
-    /// The advice / program-image leaves are absent in ZK (BlindFold carries those
-    /// openings), so only the register and RAM value-check points are populated.
-    pub output_points: Stage4OutputClaims<F, Vec<F>>,
+    /// The produced opening points, the ZK counterpart of the clear path's
+    /// `output_points`. Read through the same `*_point()` accessors. The advice /
+    /// program-image leaves are absent in ZK (BlindFold carries those openings), so
+    /// only the register and RAM value-check points are populated.
+    pub output_points: Stage4OutputPoints<F>,
 }
 
-// The clear variant carries the located opening claims (point + value) that
-// later stages read on the hot path; the ZK variant carries the committed
-// consistency and output-claim commitments. Boxing the common clear variant to
-// shrink the rarer ZK one would add indirection to every clear-path access.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
-)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage4Output<F: Field, C> {
     Clear(Stage4ClearOutput<F>),
@@ -172,7 +154,7 @@ mod tests {
     /// breaks soundness, so it is pinned with distinct sentinels.
     #[test]
     fn opening_values_follow_canonical_order_without_advice() {
-        let claims = Stage4OutputClaims::<Fr, Fr> {
+        let claims = Stage4OutputClaims::<Fr> {
             registers_read_write: registers_claims(),
             ram_val_check: RamValCheckOutputClaims {
                 untrusted_advice: None,
@@ -192,7 +174,7 @@ mod tests {
     /// `pending_claims` flush order.
     #[test]
     fn opening_values_interleave_advice_then_registers_then_ram() {
-        let claims = Stage4OutputClaims::<Fr, Fr> {
+        let claims = Stage4OutputClaims::<Fr> {
             registers_read_write: registers_claims(),
             ram_val_check: RamValCheckOutputClaims {
                 untrusted_advice: Some(fr(1)),

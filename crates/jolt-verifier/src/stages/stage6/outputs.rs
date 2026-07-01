@@ -35,8 +35,8 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 
 /// Source-of-truth for stage 6a's two-instance address-phase sumcheck batch
 /// (bytecode read-RAF, booleanity). `#[derive(SumcheckBatch)]` generates the
-/// `Stage6AddressPhaseInputClaims<F, C>`, `Stage6AddressPhaseOutputClaims<F, C>`,
-/// and `Stage6AddressPhaseChallenges<F>` aggregates — one field per instance, in
+/// `Stage6AddressPhase{Input,Output}{Claims,Points}<F>` and
+/// `Stage6AddressPhaseChallenges<F>` aggregates — one field per instance, in
 /// this declaration order. No alias dedup in the address phase, so the generated
 /// `opening_values` / `append_to_transcript` (member order: bytecode read-RAF's
 /// `intermediate` then `val_stages`, then booleanity's `intermediate`) is the
@@ -49,7 +49,7 @@ pub struct Stage6AddressPhaseSumchecks<F: Field> {
 
 /// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
 /// Fiat-Shamir batch order. `#[derive(SumcheckBatch)]` generates the
-/// `Stage6CyclePhaseInputClaims<F, C>`, `Stage6CyclePhaseOutputClaims<F, C>`, and
+/// `Stage6CyclePhase{Input,Output}{Claims,Points}<F>` and
 /// `Stage6CyclePhaseChallenges<F>` aggregates — one field per instance, in this
 /// declaration order.
 ///
@@ -79,28 +79,32 @@ pub struct Stage6CyclePhaseSumchecks<F: Field> {
     pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
 }
 
-/// The stage 6 produced opening claims, generic over the cell (`F` on the wire,
-/// `Vec<F>` for derived points). Combines the stage-6a address-phase aggregate and
-/// the stage-6b cycle-phase aggregate so the single serialized stage-6 proof field
-/// stays byte-identical: address-phase openings absorbed in 6a, cycle-phase
-/// openings absorbed in 6b.
+/// The stage 6 produced opening *values* (wire form). Combines the stage-6a
+/// address-phase aggregate and the stage-6b cycle-phase aggregate so the single
+/// serialized stage-6 proof field stays byte-identical: address-phase openings
+/// absorbed in 6a, cycle-phase openings absorbed in 6b.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-pub struct Stage6OutputClaims<F: Field, C> {
-    pub address_phase: Stage6AddressPhaseOutputClaims<F, C>,
-    pub cycle_phase: Stage6CyclePhaseOutputClaims<F, C>,
+#[serde(bound(serialize = "", deserialize = ""))]
+pub struct Stage6OutputClaims<F: Field> {
+    pub address_phase: Stage6AddressPhaseOutputClaims<F>,
+    pub cycle_phase: Stage6CyclePhaseOutputClaims<F>,
 }
 
-/// Opening-point accessors over the point-only (`Vec<F>`) cell form of the stage-6
-/// produced claims. Stages 7 and 8 read each relation's produced opening point off
-/// these cells, single-sourcing the points that the retired `VerifiedStage6Batch`
-/// used to carry. The per-cycle-phase reduction's `cycle_phase_variables` are
-/// recovered as `reverse(opening_point)` (see `cycle_phase_opening_point` in
-/// `jolt-claims` `claim_reductions::precommitted`).
-impl<F: Field> Stage6OutputClaims<F, Vec<F>> {
+/// The stage 6 produced opening *points* (point-only form), paired field-for-field
+/// with [`Stage6OutputClaims`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage6OutputPoints<F: Field> {
+    pub address_phase: Stage6AddressPhaseOutputPoints<F>,
+    pub cycle_phase: Stage6CyclePhaseOutputPoints<F>,
+}
+
+/// Opening-point accessors over the point-only form of the stage-6 produced claims.
+/// Stages 7 and 8 read each relation's produced opening point off these cells,
+/// single-sourcing the points that the retired `VerifiedStage6Batch` used to carry.
+/// The per-cycle-phase reduction's `cycle_phase_variables` are recovered as
+/// `reverse(opening_point)` (see `cycle_phase_opening_point` in `jolt-claims`
+/// `claim_reductions::precommitted`).
+impl<F: Field> Stage6OutputPoints<F> {
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
@@ -213,11 +217,11 @@ pub struct Stage6Challenges<F: Field> {
 pub struct Stage6ClearOutput<F: Field> {
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
-    pub output_claims: Stage6OutputClaims<F, F>,
-    /// The produced opening *points* (point-only cell), paired field-for-field with
-    /// `output_claims`. Stages 7 and 8 read each relation's opening point off these
-    /// cells (via the `Stage6OutputClaims<F, Vec<F>>` accessors).
-    pub output_points: Stage6OutputClaims<F, Vec<F>>,
+    pub output_values: Stage6OutputClaims<F>,
+    /// The produced opening *points*, paired field-for-field with `output_values`.
+    /// Stages 7 and 8 read each relation's opening point off these cells (via the
+    /// `Stage6OutputPoints<F>` accessors).
+    pub output_points: Stage6OutputPoints<F>,
     /// Committed-program mode only: the bytecode claim-reduction's per-chunk
     /// weights (`r_bc`, chunk weights, gamma-folded lane weights). These are
     /// public derived data (not openings), so stage 7's bytecode address phase
@@ -232,12 +236,12 @@ pub struct Stage6ZkOutput<F: Field, C> {
     pub address_phase_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    /// The produced opening *points* (point-only cell), the ZK counterpart of the
-    /// clear path's `Stage6ClearOutput::output_points`. Stages 7/8 and BlindFold
-    /// read each relation's opening point off these cells through the same
-    /// `Stage6OutputClaims<F, Vec<F>>` accessors. (BlindFold recomputes the bytecode
-    /// reduction weights locally, so the ZK output carries no weights aux.)
-    pub output_points: Stage6OutputClaims<F, Vec<F>>,
+    /// The produced opening *points*, the ZK counterpart of the clear path's
+    /// `Stage6ClearOutput::output_points`. Stages 7/8 and BlindFold read each
+    /// relation's opening point off these cells through the same `Stage6OutputPoints<F>`
+    /// accessors. (BlindFold recomputes the bytecode reduction weights locally, so
+    /// the ZK output carries no weights aux.)
+    pub output_points: Stage6OutputPoints<F>,
 }
 
 // The clear variant carries the located opening claims read on the hot path; the

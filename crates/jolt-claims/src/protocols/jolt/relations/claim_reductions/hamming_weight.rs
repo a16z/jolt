@@ -17,8 +17,8 @@ use crate::{
 
 /// Produced one-hot `Ra` opening claims, grouped by family (instruction,
 /// bytecode, RAM) in canonical layout order. Every produced opening shares the
-/// single hamming-weight opening point. Generic over the cell (`F` on the wire,
-/// `Vec<F>` for ZK points, `OpeningClaim<F>` on the clear path).
+/// single hamming-weight opening point. Generic over the opening cell (`F` for
+/// the serialized wire value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

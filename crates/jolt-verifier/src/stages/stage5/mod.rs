@@ -8,8 +8,8 @@ pub use instruction_read_raf::{
     InstructionReadRaf, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };
 pub use outputs::{
-    Stage5Challenges, Stage5ClearOutput, Stage5InputClaims, Stage5Output, Stage5OutputClaims,
-    Stage5ZkOutput,
+    Stage5Challenges, Stage5ClearOutput, Stage5InputClaims, Stage5InputPoints, Stage5Output,
+    Stage5OutputClaims, Stage5OutputPoints, Stage5ZkOutput,
 };
 pub use ram_ra_claim_reduction::{
     RamRaClaimReduction, RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,
@@ -17,4 +17,4 @@ pub use ram_ra_claim_reduction::{
 pub use registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
 };
-pub use verify::{stage5_expected_final_claim, stage5_output_claims_with_points, verify};
+pub use verify::{stage5_expected_final_claim, verify};

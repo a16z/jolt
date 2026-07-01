@@ -23,7 +23,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 pub struct AdviceAddressPhase<F: Field> {
@@ -60,18 +60,16 @@ impl<F: Field> AdviceAddressPhase<F> {
         self.kind
     }
 
-    /// This kind's produced opening point, recovered from the output claims.
+    /// This kind's produced opening point, recovered from the output points.
     fn output_point<'a>(
         &self,
-        outputs: &'a AdviceAddressPhaseOutputClaims<OpeningClaim<F>>,
+        output_points: &'a AdviceAddressPhaseOutputClaims<Vec<F>>,
     ) -> Result<&'a [F], VerifierError> {
-        let claim = match self.kind {
-            JoltAdviceKind::Trusted => outputs.trusted.as_ref(),
-            JoltAdviceKind::Untrusted => outputs.untrusted.as_ref(),
+        let point = match self.kind {
+            JoltAdviceKind::Trusted => output_points.trusted(),
+            JoltAdviceKind::Untrusted => output_points.untrusted(),
         };
-        claim
-            .map(|opening| opening.point.as_slice())
-            .ok_or_else(|| advice_public_failed("advice address phase produced no opening"))
+        point.ok_or_else(|| advice_public_failed("advice address phase produced no opening"))
     }
 }
 
@@ -89,10 +87,10 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &AdviceAddressPhaseInputClaims<C>,
+        _input_points: &AdviceAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<AdviceAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -110,11 +108,11 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &AdviceAddressPhaseInputClaims<C>,
-        outputs: &AdviceAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &AdviceAddressPhaseInputClaims<Vec<F>>,
+        output_points: &AdviceAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
@@ -127,7 +125,7 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         self.layout
             .address_phase_scale_at_opening_point(
                 &self.reference_opening_point,
-                self.output_point(outputs)?,
+                self.output_point(output_points)?,
             )
             .map_err(advice_public_failed)
     }

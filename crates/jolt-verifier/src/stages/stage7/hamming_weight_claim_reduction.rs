@@ -22,7 +22,7 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 pub struct HammingWeightClaimReduction<F: Field> {
@@ -60,14 +60,14 @@ impl<F: Field> HammingWeightClaimReduction<F> {
     /// challenges — so the EQ publics evaluate against it directly.
     fn rho_reversed<'a>(
         &self,
-        outputs: &'a HammingWeightClaimReductionOutputClaims<OpeningClaim<F>>,
+        output_points: &'a HammingWeightClaimReductionOutputClaims<Vec<F>>,
     ) -> Result<&'a [F], VerifierError> {
-        let opening_point = outputs
-            .instruction_ra
+        let opening_point = output_points
+            .instruction_ra()
             .first()
-            .or_else(|| outputs.bytecode_ra.first())
-            .or_else(|| outputs.ram_ra.first())
-            .map(|claim| claim.point.as_slice())
+            .or_else(|| output_points.bytecode_ra().first())
+            .or_else(|| output_points.ram_ra().first())
+            .map(|point| point.as_slice())
             .ok_or_else(|| {
                 public_input_failed("HammingWeight reduction produced no openings".to_string())
             })?;
@@ -97,10 +97,10 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &HammingWeightClaimReductionInputClaims<C>,
+        _input_points: &HammingWeightClaimReductionInputClaims<Vec<F>>,
     ) -> Result<HammingWeightClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .dimensions
@@ -114,17 +114,17 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &HammingWeightClaimReductionInputClaims<C>,
-        outputs: &HammingWeightClaimReductionOutputClaims<OpeningClaim<F>>,
+        _input_points: &HammingWeightClaimReductionInputClaims<Vec<F>>,
+        output_points: &HammingWeightClaimReductionOutputClaims<Vec<F>>,
         _challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let rho_rev = self.rho_reversed(outputs)?;
+        let rho_rev = self.rho_reversed(output_points)?;
         match public_id {
             HammingWeightClaimReductionPublic::EqBooleanity => {
                 try_eq_mle(rho_rev, &self.r_address).map_err(public_input_failed)

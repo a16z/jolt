@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 pub struct BytecodeReductionAddressPhase<F: Field> {
@@ -85,10 +85,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
+        _input_points: &BytecodeReductionAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<BytecodeReductionAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -99,11 +99,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
-        outputs: &BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &BytecodeReductionAddressPhaseInputClaims<Vec<F>>,
+        output_points: &BytecodeReductionAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
@@ -112,9 +112,13 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let opening_point = outputs.chunks.first().map(GetPoint::point).ok_or_else(|| {
-            bytecode_public_failed("bytecode reduction produced no chunk openings")
-        })?;
+        let opening_point = output_points
+            .chunks()
+            .first()
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                bytecode_public_failed("bytecode reduction produced no chunk openings")
+            })?;
         let weights = self
             .layout
             .address_phase_final_output_weights_at_opening_point(
@@ -170,10 +174,10 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
+        _input_points: &ProgramImageReductionAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<ProgramImageReductionAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -184,11 +188,11 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
-        outputs: &ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &ProgramImageReductionAddressPhaseInputClaims<Vec<F>>,
+        output_points: &ProgramImageReductionAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
@@ -199,7 +203,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         self.layout
             .address_phase_scale_at_opening_point(
                 &self.reference_opening_point,
-                outputs.program_image.point(),
+                output_points.program_image(),
             )
             .map_err(program_image_public_failed)
     }

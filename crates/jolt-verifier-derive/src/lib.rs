@@ -13,13 +13,16 @@
 //! }
 //! ```
 //!
-//! generates `Stage5InputClaims<F, C>`, `Stage5OutputClaims<F, C>`, and
-//! `Stage5Challenges<F>` (the `Sumchecks` suffix is replaced by `InputClaims` /
-//! `OutputClaims` / `Challenges`), each with one field per instance projected
-//! through the `ConcreteSumcheckInputs` / `ConcreteSumcheckOutputs` /
-//! `ConcreteSumcheckChallenges` aliases in `jolt-verifier`'s `stages::relations`.
-//! A source field `Option<Instance>` becomes an `Option<projection>` (a
-//! conditional instance), chained only when `Some`.
+//! generates `Stage5InputClaims<F>`, `Stage5InputPoints<F>`,
+//! `Stage5OutputClaims<F>`, `Stage5OutputPoints<F>`, and `Stage5Challenges<F>` (the
+//! `Sumchecks` suffix is replaced by `InputClaims` / `InputPoints` / `OutputClaims`
+//! / `OutputPoints` / `Challenges`), each with one field per instance projected
+//! through the `SumcheckInputClaims` / `SumcheckInputPoints` / `SumcheckOutputClaims`
+//! / `SumcheckOutputPoints` / `ConcreteSumcheckChallenges` aliases in
+//! `jolt-verifier`'s `stages::relations` (the `*Claims` aggregates hold the wire
+//! *values*, the `*Points` aggregates the derived opening points). A source field
+//! `Option<Instance>` becomes an `Option<projection>` (a conditional instance),
+//! chained only when `Some`.
 //!
 //! The projections are emitted *without* `Instance: ConcreteSumcheck<F>`
 //! where-bounds on purpose: such a bound would make the compiler treat each
@@ -31,14 +34,14 @@
 //! apply.
 //!
 //! The set of generated *delegated impls* is intentionally minimal — currently
-//! the Fiat-Shamir opening plumbing consumed today (`OutputClaims`
-//! `opening_values` / `append_to_transcript`, delegating to each member in
-//! declaration order) — and grows as the migration requires. See
+//! the Fiat-Shamir opening plumbing consumed today (`opening_values` /
+//! `append_to_transcript` on the `OutputClaims` (values) aggregate, delegating to
+//! each member in declaration order) — and grows as the migration requires. See
 //! `specs/sumcheck-batch-derive.md`.
 //!
 //! The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
 //! suppresses *only* that generated `opening_values` / `append_to_transcript`
-//! inherent impl, leaving the three aggregate structs (and their derives /
+//! inherent impl, leaving the five aggregate structs (and their derives /
 //! serde) untouched. An alias-curated stage (one whose canonical opening order
 //! skips cross-relation aliased openings) uses it to supply its own consistent
 //! `opening_values` / `append_to_transcript` (and `validate`) as an inherent impl.
@@ -51,15 +54,15 @@ use syn::{
     Meta, PathArguments, Token, Type,
 };
 
-/// Generate a stage's aggregate claim types (`StageNInputClaims` /
-/// `StageNOutputClaims` / `StageNChallenges`) from a struct of `ConcreteSumcheck`
-/// instances. See the crate-level docs.
+/// Generate a stage's aggregate claim types (`StageN{Input,Output}{Claims,Points}`
+/// / `StageNChallenges`) from a struct of `ConcreteSumcheck` instances. See the
+/// crate-level docs.
 ///
 /// The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
-/// opts a stage out of the generated `OutputClaims` `opening_values` /
-/// `append_to_transcript` inherent impl, so an alias-curated stage can supply its
-/// own (e.g. one that skips cross-relation aliased openings). The three aggregate
-/// structs and their derives are emitted unchanged.
+/// opts a stage out of the generated `opening_values` / `append_to_transcript`
+/// inherent impl on the `OutputClaims` (values) aggregate, so an alias-curated
+/// stage can supply its own (e.g. one that skips cross-relation aliased openings).
+/// The five aggregate structs and their derives are emitted unchanged.
 #[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -92,8 +95,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 "a #[derive(SumcheckBatch)] struct must be named `<Stage>Sumchecks`",
             )
         })?;
-    let input_name = format_ident!("{base}InputClaims");
-    let output_name = format_ident!("{base}OutputClaims");
+    let input_claims_name = format_ident!("{base}InputClaims");
+    let input_points_name = format_ident!("{base}InputPoints");
+    let output_claims_name = format_ident!("{base}OutputClaims");
+    let output_points_name = format_ident!("{base}OutputPoints");
     let challenges_name = format_ident!("{base}Challenges");
 
     let options = StageOptions::parse(&input.attrs)?;
@@ -114,13 +119,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let relations = quote!(crate::stages::relations);
 
-    let project = |alias: &TokenStream2, plan: &InstanceField, cell: Option<&TokenStream2>| {
+    let project = |alias: &TokenStream2, plan: &InstanceField| {
         let instance = &plan.instance;
-        let projected = if let Some(cell) = cell {
-            quote!(#relations::#alias<#f, #instance, #cell>)
-        } else {
-            quote!(#relations::#alias<#f, #instance>)
-        };
+        let projected = quote!(#relations::#alias<#f, #instance>);
         if plan.is_option {
             quote!(::core::option::Option<#projected>)
         } else {
@@ -128,26 +129,27 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    let cell = quote!(__C);
-    let inputs_alias = quote!(ConcreteSumcheckInputs);
-    let outputs_alias = quote!(ConcreteSumcheckOutputs);
+    let input_claims_alias = quote!(SumcheckInputClaims);
+    let input_points_alias = quote!(SumcheckInputPoints);
+    let output_claims_alias = quote!(SumcheckOutputClaims);
+    let output_points_alias = quote!(SumcheckOutputPoints);
     let challenges_alias = quote!(ConcreteSumcheckChallenges);
 
-    let input_fields = plans.iter().map(|plan| {
-        let id = &plan.ident;
-        let ty = project(&inputs_alias, plan, Some(&cell));
-        quote!(pub #id: #ty)
-    });
-    let output_fields = plans.iter().map(|plan| {
-        let id = &plan.ident;
-        let ty = project(&outputs_alias, plan, Some(&cell));
-        quote!(pub #id: #ty)
-    });
-    let challenge_fields = plans.iter().map(|plan| {
-        let id = &plan.ident;
-        let ty = project(&challenges_alias, plan, None);
-        quote!(pub #id: #ty)
-    });
+    let field_decls = |alias: &TokenStream2| {
+        plans
+            .iter()
+            .map(|plan| {
+                let id = &plan.ident;
+                let ty = project(alias, plan);
+                quote!(pub #id: #ty)
+            })
+            .collect::<Vec<_>>()
+    };
+    let input_claims_fields = field_decls(&input_claims_alias);
+    let input_points_fields = field_decls(&input_points_alias);
+    let output_claims_fields = field_decls(&output_claims_alias);
+    let output_points_fields = field_decls(&output_points_alias);
+    let challenge_fields = field_decls(&challenges_alias);
 
     // `opening_values` over the wire cell (`C = F`): chain each member's
     // `OutputClaims::opening_values` in declaration order; `Option` members
@@ -169,7 +171,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote!()
     } else {
         quote! {
-            impl<#f: ::jolt_field::Field> #output_name<#f, #f> {
+            impl<#f: ::jolt_field::Field> #output_claims_name<#f> {
                 /// Produced opening scalars in canonical (field-declaration) order,
                 /// delegating to each instance's `OutputClaims` in order.
                 pub fn opening_values(&self) -> ::std::vec::Vec<#f> {
@@ -194,25 +196,32 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // Derive sets start minimal: only what every per-relation member supports
-    // today. The `Output` members derive the full standard set (incl. serde, as
-    // the serialized wire form), so the `Output` aggregate does too. The `Input`
-    // and `Challenges` members derive only `Clone`/`Debug`, so their aggregates
-    // match; `PartialEq`/`Eq`/serde are added to those members (and here) when a
-    // migration first needs them.
+    // Each opening cell instantiation is its own concrete aggregate: `*Claims`
+    // holds the wire *values* (`Inputs<F>` / `Outputs<F>`); `*Points` holds the
+    // derived opening points (`Inputs<Vec<F>>` / `Outputs<Vec<F>>`). Only the
+    // `OutputClaims` (values) aggregate is serialized (the wire form), so it alone
+    // derives serde; the empty serde bound suffices because `F: Field` already
+    // implies `Serialize + DeserializeOwned` through the member structs.
     Ok(quote! {
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #input_name<#f: ::jolt_field::Field, #cell> {
-            #(#input_fields,)*
+        #vis struct #input_claims_name<#f: ::jolt_field::Field> {
+            #(#input_claims_fields,)*
+        }
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        #vis struct #input_points_name<#f: ::jolt_field::Field> {
+            #(#input_points_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq, ::serde::Serialize, ::serde::Deserialize)]
-        #[serde(bound(
-            serialize = "__C: ::serde::Serialize",
-            deserialize = "__C: ::serde::Deserialize<'de>"
-        ))]
-        #vis struct #output_name<#f: ::jolt_field::Field, #cell> {
-            #(#output_fields,)*
+        #[serde(bound(serialize = "", deserialize = ""))]
+        #vis struct #output_claims_name<#f: ::jolt_field::Field> {
+            #(#output_claims_fields,)*
+        }
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        #vis struct #output_points_name<#f: ::jolt_field::Field> {
+            #(#output_points_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]

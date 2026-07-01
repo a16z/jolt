@@ -1,12 +1,14 @@
-//! Transcript-free claim data model: the opening cells, the `*Claims` resolvers,
-//! and the value↔point zip.
+//! Transcript-free claim data model: the `*Claims` resolvers.
 //!
 //! This is the *order + id-resolution* half of the per-relation opening-claim
 //! plumbing. It is implemented by `#[derive(OutputClaims)]` /
 //! `#[derive(InputClaims)]` on each relation's claim struct and makes the
 //! canonical opening **order** and **count** a single-sourced consequence of a
 //! struct's field declaration order, instead of the hand-written copies that
-//! historically drift apart.
+//! historically drift apart. Each relation's claim struct is generic over an
+//! opening *cell* instantiated at `F` (the serialized wire value) or `Vec<F>`
+//! (the verifier-derived opening point); the derives emit the value resolver on
+//! the `F` form and the point accessors on the `Vec<F>` form.
 //!
 //! Transcript I/O (`append_openings`, `draw_challenges`) deliberately lives in
 //! `jolt-verifier`: `jolt-claims` stays free of any `Transcript` dependency. The
@@ -93,7 +95,7 @@ pub trait InputClaims<F: Field, O = JoltOpeningId> {
 ///
 /// Unlike the opening-claim resolvers, challenges carry no opening point, so the
 /// implementor is generic over the field `F` directly (not an opening cell) and
-/// reads each field's value without `GetValue` indirection.
+/// reads each field's value directly.
 ///
 /// Generic over the challenge-id type `C` (defaulting to [`JoltChallengeId`]).
 pub trait SumcheckChallenges<F: Field, C = JoltChallengeId>: Sized {
@@ -142,73 +144,6 @@ impl<F: Field, C> SumcheckChallenges<F, C> for NoChallenges<F> {
 /// real claim structs. Never resolved (no `ConcreteSumcheck` impl references it).
 pub struct NoInputs<C>(::core::marker::PhantomData<C>);
 pub struct NoOutputs<C>(::core::marker::PhantomData<C>);
-
-/// One opening-claim cell: a `(point, value)` pair. The opening point is
-/// verifier-derived (from the sumcheck), so it never crosses the wire — only the
-/// value is serialized into the proof.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpeningClaim<F> {
-    pub point: Vec<F>,
-    pub value: F,
-}
-
-/// A claim-struct cell that exposes an opening point. Implemented by the
-/// point-only ZK cell (`Vec<F>`) and the clear cell (`OpeningClaim<F>`).
-pub trait GetPoint<F> {
-    fn point(&self) -> &[F];
-}
-
-/// A claim-struct cell that exposes an opening value. Implemented by the
-/// value-only wire cell (`F`) and the clear cell (`OpeningClaim<F>`).
-pub trait GetValue<F> {
-    fn value(&self) -> F;
-}
-
-impl<F: Field> GetPoint<F> for Vec<F> {
-    fn point(&self) -> &[F] {
-        self.as_slice()
-    }
-}
-
-impl<F: Field> GetValue<F> for F {
-    fn value(&self) -> F {
-        *self
-    }
-}
-
-impl<F: Field> GetPoint<F> for OpeningClaim<F> {
-    fn point(&self) -> &[F] {
-        &self.point
-    }
-}
-
-impl<F: Field> GetValue<F> for OpeningClaim<F> {
-    fn value(&self) -> F {
-        self.value
-    }
-}
-
-/// A produced-claim struct in its clear `OpeningClaim<F>` (point + value) cell
-/// form, reconstructible by pairing the value-only (`F`) and point-only (`Vec<F>`)
-/// cell forms of the same struct field-by-field. `#[derive(OutputClaims)]` emits
-/// the implementation (one `OpeningClaim` per leaf, element-wise for `Vec`
-/// families, value-driven for `Option` leaves), so callers reach it through the
-/// free [`zip_openings`] function instead of hand-writing the pairing.
-pub trait ZipOpenings<F: Field>: Sized {
-    /// The value-only (`F`-cell) form — the serialized wire claims.
-    type Values;
-    /// The point-only (`Vec<F>`-cell) form — the derived opening points.
-    type Points;
-    /// Pair each opening's value with its derived point.
-    fn zip_openings(values: &Self::Values, points: &Self::Points) -> Self;
-}
-
-/// Pair a relation's value-only claims with its point-only claims into the clear
-/// `OpeningClaim<F>` form, single-sourcing the per-field `(point, value)` pairing
-/// that each stage's `*_output_claims_with_points` helper used to hand-write.
-pub fn zip_openings<F: Field, T: ZipOpenings<F>>(values: &T::Values, points: &T::Points) -> T {
-    T::zip_openings(values, points)
-}
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]

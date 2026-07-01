@@ -30,16 +30,18 @@ use num_traits::{One, Zero};
 use super::{
     batch::{Stage6Relations, Stage6RelationsParams},
     booleanity::{
-        booleanity_address_phase_inputs_from_upstream, BooleanityAddressPhase,
+        booleanity_address_phase_input_points_from_upstream,
+        booleanity_address_phase_input_values_from_upstream, BooleanityAddressPhase,
         BooleanityAddressPhaseOutputClaims,
     },
     bytecode_read_raf::{
-        bytecode_read_raf_address_phase_inputs_from_upstream, BytecodeReadRafAddressPhase,
+        bytecode_read_raf_address_phase_input_points_from_upstream,
+        bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
         BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafAddressPhaseInputClaims,
         BytecodeReadRafAddressPhaseOutputClaims,
     },
     committed_reduction_cycle_phase::{
-        bytecode_reduction_cycle_phase_inputs_from_values, AdviceCyclePhase,
+        bytecode_reduction_cycle_phase_input_points_from_points, AdviceCyclePhase,
         AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims, BytecodeReductionCyclePhase,
         BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseOutputClaims,
         ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseInputClaims,
@@ -49,8 +51,9 @@ use super::{
         BooleanityOutputClaims, BytecodeReadRafOutputClaims, BytecodeReductionWeights,
         IncClaimReductionOutputClaims, InstructionRaVirtualizationOutputClaims,
         RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
-        Stage6AddressPhaseOutputClaims, Stage6Challenges, Stage6ClearOutput,
-        Stage6CyclePhaseOutputClaims, Stage6Output, Stage6OutputClaims, Stage6ZkOutput,
+        Stage6AddressPhaseOutputPoints, Stage6Challenges, Stage6ClearOutput,
+        Stage6CyclePhaseOutputPoints, Stage6Output, Stage6OutputClaims, Stage6OutputPoints,
+        Stage6ZkOutput,
     },
 };
 use crate::{
@@ -58,8 +61,7 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-            OutputAppend, OutputClaims,
+            check_relation_boolean_hypercube, ConcreteSumcheck, OutputAppend, OutputClaims,
         },
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},
@@ -550,8 +552,8 @@ where
 
         let booleanity_layout = booleanity_dimensions.layout;
         let booleanity_points = |count: usize| vec![booleanity_opening_point.clone(); count];
-        let output_points = Stage6OutputClaims {
-            address_phase: Stage6AddressPhaseOutputClaims {
+        let output_points = Stage6OutputPoints {
+            address_phase: Stage6AddressPhaseOutputPoints {
                 bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
                     intermediate: stage6a.bytecode_r_address.clone(),
                     val_stages: if committed_program {
@@ -567,7 +569,7 @@ where
                     intermediate: stage6a.booleanity_r_address.clone(),
                 },
             },
-            cycle_phase: Stage6CyclePhaseOutputClaims {
+            cycle_phase: Stage6CyclePhaseOutputPoints {
                 bytecode_read_raf: BytecodeReadRafOutputClaims {
                     bytecode_ra: bytecode_ra_opening_points,
                 },
@@ -650,9 +652,11 @@ where
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening; the relation evaluates it through its input `Expr`
     // from these wired openings + the per-stage folding gammas.
-    let bytecode_address_inputs = bytecode_read_raf_address_phase_inputs_from_upstream(
+    let bytecode_address_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
         stage1, stage2, stage3, stage4, stage5,
     )?;
+    let bytecode_address_input_points =
+        bytecode_read_raf_address_phase_input_points_from_upstream();
     let num_bytecode_val_stages = if committed_program {
         bytecode_reduction::NUM_BYTECODE_VAL_STAGES
     } else {
@@ -703,7 +707,8 @@ where
         transcript,
         claims,
         &bytecode_address_relation,
-        &bytecode_address_inputs,
+        &bytecode_address_input_values,
+        &bytecode_address_input_points,
         &bytecode_address_challenges,
         &booleanity_address_relation,
     )?;
@@ -825,8 +830,7 @@ where
             bytecode_reduction_layout,
             program_image_reduction_layout,
             bytecode_reduction_weights: cycle_bytecode_reduction_weights.clone(),
-            program_image_r_addr_rw: stage4.output_claims.ram_val_check.ram_ra.point[..log_k]
-                .to_vec(),
+            program_image_r_addr_rw: stage4.output_points.ram_val_check.ram_ra()[..log_k].to_vec(),
         },
         stage2,
         stage4,
@@ -870,14 +874,14 @@ where
 
     let bytecode_points = relations
         .bytecode_read_raf
-        .derive_opening_points(bytecode_point, &relations.bytecode_read_raf_inputs)?;
-    let bytecode_outputs = zip_openings(&claims.cycle_phase.bytecode_read_raf, &bytecode_points);
+        .derive_opening_points(bytecode_point, &relations.bytecode_read_raf_input_points)?;
     // Relations that draw no challenges resolve against this empty set; the others
     // use the per-relation challenge structs the bundle built from the drawn gammas.
     let no_challenges = NoChallenges::default();
     let bytecode_output = relations.bytecode_read_raf.expected_output(
-        &relations.bytecode_read_raf_inputs,
-        &bytecode_outputs,
+        &relations.bytecode_read_raf_input_points,
+        &claims.cycle_phase.bytecode_read_raf,
+        &bytecode_points,
         relations.bytecode_gamma,
     )?;
     let bytecode_ra_opening_points = proof
@@ -901,11 +905,11 @@ where
     .concat();
     let booleanity_points = relations
         .booleanity
-        .derive_opening_points(booleanity_point, &relations.booleanity_inputs)?;
-    let booleanity_outputs = zip_openings(&claims.cycle_phase.booleanity, &booleanity_points);
+        .derive_opening_points(booleanity_point, &relations.booleanity_input_points)?;
     let booleanity_output = relations.booleanity.expected_output(
-        &relations.booleanity_inputs,
-        &booleanity_outputs,
+        &relations.booleanity_input_points,
+        &claims.cycle_phase.booleanity,
+        &booleanity_points,
         &relations.booleanity_challenges,
     )?;
     let ram_hamming_point =
@@ -917,14 +921,11 @@ where
             })?;
     let ram_hamming_points = relations
         .ram_hamming
-        .derive_opening_points(ram_hamming_point, &relations.ram_hamming_inputs)?;
-    let ram_hamming_outputs = zip_openings(
+        .derive_opening_points(ram_hamming_point, &relations.ram_hamming_input_points)?;
+    let ram_hamming_output = relations.ram_hamming.expected_output(
+        &relations.ram_hamming_input_points,
         &claims.cycle_phase.ram_hamming_booleanity,
         &ram_hamming_points,
-    );
-    let ram_hamming_output = relations.ram_hamming.expected_output(
-        &relations.ram_hamming_inputs,
-        &ram_hamming_outputs,
         &no_challenges,
     )?;
 
@@ -936,11 +937,11 @@ where
         })?;
     let ram_ra_points = relations
         .ram_ra
-        .derive_opening_points(ram_ra_point, &relations.ram_ra_inputs)?;
-    let ram_ra_outputs = zip_openings(&claims.cycle_phase.ram_ra_virtualization, &ram_ra_points);
+        .derive_opening_points(ram_ra_point, &relations.ram_ra_input_points)?;
     let ram_ra_output = relations.ram_ra.expected_output(
-        &relations.ram_ra_inputs,
-        &ram_ra_outputs,
+        &relations.ram_ra_input_points,
+        &claims.cycle_phase.ram_ra_virtualization,
+        &ram_ra_points,
         &no_challenges,
     )?;
 
@@ -952,14 +953,11 @@ where
         })?;
     let instruction_ra_points = relations
         .instruction_ra
-        .derive_opening_points(instruction_ra_point, &relations.instruction_ra_inputs)?;
-    let instruction_ra_outputs = zip_openings(
+        .derive_opening_points(instruction_ra_point, &relations.instruction_ra_input_points)?;
+    let instruction_ra_output = relations.instruction_ra.expected_output(
+        &relations.instruction_ra_input_points,
         &claims.cycle_phase.instruction_ra_virtualization,
         &instruction_ra_points,
-    );
-    let instruction_ra_output = relations.instruction_ra.expected_output(
-        &relations.instruction_ra_inputs,
-        &instruction_ra_outputs,
         &relations.instruction_ra_challenges,
     )?;
 
@@ -971,11 +969,11 @@ where
         })?;
     let inc_points = relations
         .inc
-        .derive_opening_points(inc_point, &relations.inc_inputs)?;
-    let inc_outputs = zip_openings(&claims.cycle_phase.inc_claim_reduction, &inc_points);
+        .derive_opening_points(inc_point, &relations.inc_input_points)?;
     let inc_output = relations.inc.expected_output(
-        &relations.inc_inputs,
-        &inc_outputs,
+        &relations.inc_input_points,
+        &claims.cycle_phase.inc_claim_reduction,
+        &inc_points,
         &relations.inc_challenges,
     )?;
 
@@ -1075,12 +1073,14 @@ where
                 id: program_image::cycle_phase_output_openings(layout.dimensions())[0],
             },
         )?;
-        let r_addr_rw = &stage4.output_claims.ram_val_check.ram_ra.point[..log_k];
+        let r_addr_rw = &stage4.output_points.ram_val_check.ram_ra()[..log_k];
         let input_claim = match (
             &relations.program_image_reduction,
-            &relations.program_image_reduction_inputs,
+            &relations.program_image_reduction_input_values,
         ) {
-            (Some(relation), Some(inputs)) => relation.input_claim(inputs, &no_challenges)?,
+            (Some(relation), Some(input_values)) => {
+                relation.input_claim(input_values, &no_challenges)?
+            }
             _ => {
                 return Err(VerifierError::MissingOpeningClaim {
                     id: program_image::ram_val_check_contribution_opening(),
@@ -1158,8 +1158,8 @@ where
         &booleanity_opening_point,
     );
 
-    let output_points = Stage6OutputClaims {
-        address_phase: Stage6AddressPhaseOutputClaims {
+    let output_points = Stage6OutputPoints {
+        address_phase: Stage6AddressPhaseOutputPoints {
             bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
                 intermediate: bytecode_r_address.clone(),
                 val_stages: vec![
@@ -1171,7 +1171,7 @@ where
                 intermediate: booleanity_r_address.clone(),
             },
         },
-        cycle_phase: Stage6CyclePhaseOutputClaims {
+        cycle_phase: Stage6CyclePhaseOutputPoints {
             bytecode_read_raf: bytecode_points,
             booleanity: booleanity_points,
             ram_hamming_booleanity: ram_hamming_points,
@@ -1222,7 +1222,7 @@ where
     };
 
     Ok(Stage6Output::Clear(Stage6ClearOutput {
-        output_claims: claims.clone(),
+        output_values: claims.clone(),
         output_points,
         bytecode_reduction_weights: cycle_bytecode_reduction_weights,
     }))
@@ -1247,7 +1247,7 @@ pub fn stage6_stage1_cycle_binding<F: Field>(
     // the ZK/BlindFold path, which slices `remainder_consistency.challenges()[1..]`
     // off the same raw point (see blindfold/mod.rs).
     let raw_point = stage1
-        .output_claims
+        .output_points
         .remainder_opening_point()
         .iter()
         .rev()
@@ -1277,11 +1277,7 @@ pub fn stage6_bytecode_register_points<'a, F: Field>(
 ) -> Result<Stage6BytecodeRegisterPoints<'a, F>, VerifierError> {
     let (register_read_write_address, register_read_write_cycle) = stage6_checked_split(
         "Stage 6 stage4 register read-write opening",
-        &stage4
-            .output_claims
-            .registers_read_write
-            .registers_val
-            .point,
+        stage4.output_points.registers_read_write.registers_val(),
         REGISTER_ADDRESS_BITS,
         JoltRelationId::BytecodeReadRaf,
     )?;
@@ -1311,8 +1307,8 @@ pub fn stage6_bytecode_cycle_points<F: Field>(
         .rev()
         .copied()
         .collect::<Vec<_>>();
-    let stage2_cycle = stage2.output_claims.product_remainder_point().to_vec();
-    let stage3_cycle = stage3.output_claims.shift_opening_point().to_vec();
+    let stage2_cycle = stage2.output_points.product_remainder_point().to_vec();
+    let stage3_cycle = stage3.output_points.shift_opening_point().to_vec();
     let register_points = stage6_bytecode_register_points(stage4, stage5)?;
     Ok([
         stage1_cycle,
@@ -1441,23 +1437,19 @@ pub fn stage6_inc_claim_reduction_cycle_points<'a, F: Field>(
 ) -> Result<Stage6IncClaimReductionCyclePoints<'a, F>, VerifierError> {
     let (_, ram_read_write_cycle) = stage6_checked_split(
         "Stage 6 RAM read-write opening",
-        stage2.output_claims.ram_read_write_point(),
+        stage2.output_points.ram_read_write_point(),
         log_k,
         JoltRelationId::IncClaimReduction,
     )?;
     let (_, ram_val_check_cycle) = stage6_checked_split(
         "Stage 6 RAM value-check opening",
-        &stage4.output_claims.ram_val_check.ram_ra.point,
+        stage4.output_points.ram_val_check.ram_ra(),
         log_k,
         JoltRelationId::IncClaimReduction,
     )?;
     let (_, registers_read_write_cycle) = stage6_checked_split(
         "Stage 6 register read-write opening",
-        &stage4
-            .output_claims
-            .registers_read_write
-            .registers_val
-            .point,
+        stage4.output_points.registers_read_write.registers_val(),
         REGISTER_ADDRESS_BITS,
         JoltRelationId::IncClaimReduction,
     )?;
@@ -1642,12 +1634,14 @@ where
     })
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    claims: &Stage6OutputClaims<PCS::Field, PCS::Field>,
+    claims: &Stage6OutputClaims<PCS::Field>,
     bytecode_relation: &BytecodeReadRafAddressPhase<PCS::Field>,
-    bytecode_inputs: &BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<PCS::Field>>,
+    bytecode_input_values: &BytecodeReadRafAddressPhaseInputClaims<PCS::Field>,
+    bytecode_input_points: &BytecodeReadRafAddressPhaseInputClaims<Vec<PCS::Field>>,
     bytecode_challenges: &BytecodeReadRafAddressPhaseChallenges<PCS::Field>,
     booleanity_relation: &BooleanityAddressPhase<PCS::Field>,
 ) -> Result<Stage6AClearOutput<PCS::Field>, VerifierError>
@@ -1657,10 +1651,12 @@ where
     T: Transcript<Challenge = PCS::Field>,
 {
     let no_challenges = NoChallenges::default();
-    let booleanity_inputs = booleanity_address_phase_inputs_from_upstream();
+    let booleanity_input_values = booleanity_address_phase_input_values_from_upstream();
+    let booleanity_input_points = booleanity_address_phase_input_points_from_upstream();
     let bytecode_read_raf_input =
-        bytecode_relation.input_claim(bytecode_inputs, bytecode_challenges)?;
-    let booleanity_input = booleanity_relation.input_claim(&booleanity_inputs, &no_challenges)?;
+        bytecode_relation.input_claim(bytecode_input_values, bytecode_challenges)?;
+    let booleanity_input =
+        booleanity_relation.input_claim(&booleanity_input_values, &no_challenges)?;
     let address_sumcheck_claims = vec![
         SumcheckClaim::new(
             bytecode_relation.rounds(),
@@ -1708,24 +1704,24 @@ where
         .copied()
         .collect::<Vec<_>>();
 
-    // Pair the produced address-phase openings (wire values + derived points) and
-    // check the expected outputs through the relation objects.
+    // Derive the produced address-phase opening points and check the expected
+    // outputs through the relation objects (wire values + derived points).
     let bytecode_points =
-        bytecode_relation.derive_opening_points(&bytecode_address_point, bytecode_inputs)?;
-    let bytecode_outputs = zip_openings(&claims.address_phase.bytecode_read_raf, &bytecode_points);
-    let booleanity_points =
-        booleanity_relation.derive_opening_points(&booleanity_address_point, &booleanity_inputs)?;
-    let booleanity_outputs = zip_openings(&claims.address_phase.booleanity, &booleanity_points);
+        bytecode_relation.derive_opening_points(&bytecode_address_point, bytecode_input_points)?;
+    let booleanity_points = booleanity_relation
+        .derive_opening_points(&booleanity_address_point, &booleanity_input_points)?;
 
     let address_expected_outputs = [
         bytecode_relation.expected_output(
-            bytecode_inputs,
-            &bytecode_outputs,
+            bytecode_input_points,
+            &claims.address_phase.bytecode_read_raf,
+            &bytecode_points,
             bytecode_challenges,
         )?,
         booleanity_relation.expected_output(
-            &booleanity_inputs,
-            &booleanity_outputs,
+            &booleanity_input_points,
+            &claims.address_phase.booleanity,
+            &booleanity_points,
             &no_challenges,
         )?,
     ];
@@ -1761,7 +1757,7 @@ where
 
 pub(super) fn append_address_phase_opening_claims<F, T>(
     transcript: &mut T,
-    claims: &Stage6OutputClaims<F, F>,
+    claims: &Stage6OutputClaims<F>,
 ) where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -1827,25 +1823,22 @@ pub(super) fn verify_advice_cycle_phase<F: Field>(
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: advice::ram_val_check_advice_opening(kind),
         })?;
-    let relation = AdviceCyclePhase::new(kind, layout, contribution.opening.point.clone());
-    let inputs = AdviceCyclePhaseInputClaims {
-        trusted: (kind == JoltAdviceKind::Trusted).then(|| OpeningClaim {
-            point: Vec::new(),
-            value: contribution.opening.value,
-        }),
-        untrusted: (kind == JoltAdviceKind::Untrusted).then(|| OpeningClaim {
-            point: Vec::new(),
-            value: contribution.opening.value,
-        }),
+    let relation = AdviceCyclePhase::new(kind, layout, contribution.opening_point.clone());
+    let input_points = AdviceCyclePhaseInputClaims {
+        trusted: (kind == JoltAdviceKind::Trusted).then(Vec::new),
+        untrusted: (kind == JoltAdviceKind::Untrusted).then(Vec::new),
     };
-    let derived = relation.derive_opening_points(advice_point, &inputs)?;
-    let values = AdviceCyclePhaseOutputClaims {
+    let derived = relation.derive_opening_points(advice_point, &input_points)?;
+    let output_values = AdviceCyclePhaseOutputClaims {
         trusted: (kind == JoltAdviceKind::Trusted).then_some(opening_value),
         untrusted: (kind == JoltAdviceKind::Untrusted).then_some(opening_value),
     };
-    let outputs = zip_openings(&values, &derived);
-    let expected_output_claim =
-        relation.expected_output(&inputs, &outputs, &NoChallenges::default())?;
+    let expected_output_claim = relation.expected_output(
+        &input_points,
+        &output_values,
+        &derived,
+        &NoChallenges::default(),
+    )?;
 
     Ok(CyclePhaseVerified {
         opening_point,
@@ -1961,13 +1954,12 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
             ),
         });
     }
-    let values = output_claims.clone();
     let relation = BytecodeReductionCyclePhase::new(layout, weights.clone());
     let challenges = BytecodeReductionCyclePhaseChallenges { eta };
-    let inputs = bytecode_reduction_cycle_phase_inputs_from_values(Vec::new());
-    let derived = relation.derive_opening_points(point, &inputs)?;
-    let outputs = zip_openings(&values, &derived);
-    let expected_output_claim = relation.expected_output(&inputs, &outputs, &challenges)?;
+    let input_points = bytecode_reduction_cycle_phase_input_points_from_points(Vec::new());
+    let derived = relation.derive_opening_points(point, &input_points)?;
+    let expected_output_claim =
+        relation.expected_output(&input_points, output_claims, &derived, &challenges)?;
 
     Ok(CyclePhaseVerified {
         opening_point,
@@ -2019,22 +2011,23 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
             reason: error.to_string(),
         }
     })?;
+    // The input claim value is not read by the points-only `derive_opening_points`
+    // / `expected_output`; it is folded into the batch's `sumcheck_claims` upstream.
+    let _ = input_claim;
     let relation = ProgramImageReductionCyclePhase::new(layout, r_addr_rw.to_vec());
-    let inputs = ProgramImageReductionCyclePhaseInputClaims {
-        contribution: OpeningClaim {
-            point: Vec::new(),
-            value: input_claim,
-        },
+    let input_points = ProgramImageReductionCyclePhaseInputClaims {
+        contribution: Vec::new(),
     };
-    let derived = relation.derive_opening_points(point, &inputs)?;
-    let outputs = zip_openings(
-        &ProgramImageReductionCyclePhaseOutputClaims {
-            program_image: output_claim.program_image,
-        },
+    let derived = relation.derive_opening_points(point, &input_points)?;
+    let output_values = ProgramImageReductionCyclePhaseOutputClaims {
+        program_image: output_claim.program_image,
+    };
+    let expected_output_claim = relation.expected_output(
+        &input_points,
+        &output_values,
         &derived,
-    );
-    let expected_output_claim =
-        relation.expected_output(&inputs, &outputs, &NoChallenges::default())?;
+        &NoChallenges::default(),
+    )?;
 
     Ok(CyclePhaseVerified {
         opening_point,
@@ -2044,7 +2037,7 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
 
 pub(super) fn append_opening_claims<F, T>(
     transcript: &mut T,
-    claims: &Stage6OutputClaims<F, F>,
+    claims: &Stage6OutputClaims<F>,
     bytecode_read_raf_points: &[Vec<F>],
     booleanity_point: &[F],
 ) where
@@ -2103,6 +2096,7 @@ pub(super) fn append_opening_claims<F, T>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::outputs::{Stage6AddressPhaseOutputClaims, Stage6CyclePhaseOutputClaims};
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -2131,7 +2125,7 @@ mod tests {
         }
     }
 
-    fn sample_claims() -> Stage6OutputClaims<Fr, Fr> {
+    fn sample_claims() -> Stage6OutputClaims<Fr> {
         Stage6OutputClaims {
             address_phase: Stage6AddressPhaseOutputClaims {
                 bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {

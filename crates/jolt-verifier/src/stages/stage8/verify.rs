@@ -3,7 +3,6 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
-        relations::OpeningClaim,
         stage6::{outputs::Stage6OutputClaims, Stage6Output},
         stage7::{
             outputs::{PrecommittedFinalOpening, Stage7OutputClaims},
@@ -75,7 +74,7 @@ where
                 stage7.hamming_weight_opening_point.as_slice(),
                 stage6.output_points.inc_opening_point(),
                 stage7.precommitted_final_openings.as_slice(),
-                Some((&stage6.output_claims, &stage7.output_claims)),
+                Some((&stage6.output_values, &stage7.output_values)),
             ),
             (Stage6Output::Zk(stage6), Stage7Output::Zk(stage7)) => (
                 stage7.hamming_weight_opening_point.as_slice(),
@@ -229,10 +228,6 @@ where
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
-#[expect(
-    clippy::type_complexity,
-    reason = "the two-generic clear-claims tuple is clearer inline than via a type alias"
-)]
 fn batch_entries<'a, F, PCS, VC, ZkProof>(
     preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
     proof: &'a JoltProof<PCS, VC, ZkProof>,
@@ -242,10 +237,7 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(
-        &Stage6OutputClaims<F, F>,
-        &Stage7OutputClaims<F, OpeningClaim<F>>,
-    )>,
+    clear_claims: Option<(&Stage6OutputClaims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,
@@ -297,7 +289,7 @@ where
                                 .hamming_weight_claim_reduction
                                 .instruction_ra
                                 .get(index)
-                                .map(|claim| claim.value)
+                                .copied()
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
@@ -317,7 +309,7 @@ where
                                 .hamming_weight_claim_reduction
                                 .bytecode_ra
                                 .get(index)
-                                .map(|claim| claim.value)
+                                .copied()
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
@@ -337,7 +329,7 @@ where
                                 .hamming_weight_claim_reduction
                                 .ram_ra
                                 .get(index)
-                                .map(|claim| claim.value)
+                                .copied()
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,

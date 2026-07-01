@@ -23,37 +23,32 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed openings from stage 2's product-remainder left/right
-/// instruction inputs. Only the values feed the input claim (the output points
-/// come from this relation's own sumcheck point), so the input points are left
-/// empty. (Verifier-side constructor for the moved
+/// Wire the consumed opening *values* from stage 2's product-remainder left/right
+/// instruction inputs. (Verifier-side constructor for the moved
 /// [`InstructionInputInputClaims`].)
-pub fn instruction_input_inputs_from_upstream<F: Field>(
+pub fn instruction_input_input_values_from_upstream<F: Field>(
     stage2: &Stage2ClearOutput<F>,
-) -> InstructionInputInputClaims<OpeningClaim<F>> {
-    let value = |value: F| OpeningClaim {
-        point: Vec::new(),
-        value,
-    };
+) -> InstructionInputInputClaims<F> {
+    let product_remainder = &stage2.output_values.product_remainder;
     InstructionInputInputClaims {
-        right_instruction_input: value(
-            stage2
-                .output_claims
-                .product_remainder
-                .right_instruction_input
-                .value,
-        ),
-        left_instruction_input: value(
-            stage2
-                .output_claims
-                .product_remainder
-                .left_instruction_input
-                .value,
-        ),
+        right_instruction_input: product_remainder.right_instruction_input,
+        left_instruction_input: product_remainder.left_instruction_input,
+    }
+}
+
+/// Wire the consumed opening *points* from stage 2. Only the values feed the input
+/// claim (the output points come from this relation's own sumcheck point), so the
+/// input points are left empty.
+pub fn instruction_input_input_points_from_upstream<F: Field>(
+    _stage2: &Stage2ClearOutput<F>,
+) -> InstructionInputInputClaims<Vec<F>> {
+    InstructionInputInputClaims {
+        right_instruction_input: Vec::new(),
+        left_instruction_input: Vec::new(),
     }
 }
 
@@ -78,10 +73,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionInputInputClaims<C>,
+        _input_points: &InstructionInputInputClaims<Vec<F>>,
     ) -> Result<InstructionInputOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(InstructionInputOutputClaims {
@@ -96,11 +91,11 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &InstructionInputInputClaims<C>,
-        outputs: &InstructionInputOutputClaims<OpeningClaim<F>>,
+        _input_points: &InstructionInputInputClaims<Vec<F>>,
+        output_points: &InstructionInputOutputClaims<Vec<F>>,
         _challenges: &InstructionInputChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionInput(public_id) = id else {
@@ -109,7 +104,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
         match public_id {
             // Every instruction-input output shares the one opening point.
             InstructionInputPublic::EqProduct => try_eq_mle(
-                outputs.unexpanded_pc.point(),
+                output_points.unexpanded_pc(),
                 &self.product_remainder_opening_point,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {

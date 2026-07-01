@@ -21,14 +21,20 @@ use jolt_field::Field;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 /// The RAM output check consumes no openings (its input claim is the constant
-/// zero), so its consumed-claim struct is empty. (Verifier-side constructor for the
-/// moved [`RamOutputCheckInputClaims`].)
-pub fn ram_output_check_inputs_from_upstream<F: Field>(
-) -> RamOutputCheckInputClaims<OpeningClaim<F>> {
+/// zero), so its consumed-claim *values* struct is empty. (Verifier-side
+/// constructor for the moved [`RamOutputCheckInputClaims`].)
+pub fn ram_output_check_input_values_from_upstream<F: Field>() -> RamOutputCheckInputClaims<F> {
+    RamOutputCheckInputClaims::default()
+}
+
+/// The RAM output check consumes no openings, so its consumed-claim *points* struct
+/// is empty.
+pub fn ram_output_check_input_points_from_upstream<F: Field>() -> RamOutputCheckInputClaims<Vec<F>>
+{
     RamOutputCheckInputClaims::default()
 }
 
@@ -107,10 +113,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RamOutputCheckInputClaims<C>,
+        _input_points: &RamOutputCheckInputClaims<Vec<F>>,
     ) -> Result<RamOutputCheckOutputClaims<Vec<F>>, VerifierError> {
         let address = self
             .read_write_dimensions
@@ -119,17 +125,17 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         Ok(RamOutputCheckOutputClaims { val_final: address })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &RamOutputCheckInputClaims<C>,
-        outputs: &RamOutputCheckOutputClaims<OpeningClaim<F>>,
+        _input_points: &RamOutputCheckInputClaims<Vec<F>>,
+        output_points: &RamOutputCheckOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamOutputCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let (eq_io_mask, neg_eq_io_mask_val_io) = self.output_publics(outputs.val_final.point())?;
+        let (eq_io_mask, neg_eq_io_mask_val_io) = self.output_publics(output_points.val_final())?;
         match public_id {
             RamOutputCheckPublic::EqIoMask => Ok(eq_io_mask),
             RamOutputCheckPublic::NegEqIoMaskValIo => Ok(neg_eq_io_mask_val_io),

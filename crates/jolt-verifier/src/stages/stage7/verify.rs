@@ -33,15 +33,13 @@ use super::hamming_weight_claim_reduction::{
     HammingWeightClaimReductionInputClaims,
 };
 use super::outputs::{
-    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7InputClaims, Stage7Output,
-    Stage7OutputClaims, Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7InputClaims,
+    Stage7InputPoints, Stage7Output, Stage7OutputClaims, Stage7OutputPoints, Stage7ZkOutput,
 };
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{
-            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-        },
+        relations::{check_relation_boolean_hypercube, ConcreteSumcheck},
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput},
         zk::committed,
@@ -453,27 +451,44 @@ where
     Ok(Stage7Output::Clear(parts.output))
 }
 
-/// Assemble the stage-7 consumed openings from the upstream stage-6 (and the
-/// committed-program relation presence) into the generated `Stage7InputClaims`
+/// Assemble the stage-7 consumed opening *values* from the upstream stage-6 (and
+/// the committed-program relation presence) into the generated `Stage7InputClaims`
 /// aggregate. This is the single place the stage's Outputs→Inputs dataflow is
-/// expressed: each per-relation `*_input_claims` helper wires which upstream
+/// expressed: each per-relation `*_input_values` helper wires which upstream
 /// opening feeds which downstream input. The two committed-program members are
 /// `Some` exactly when their address-phase relation is present.
-fn stage7_inputs_from_upstream<F: Field>(
+fn stage7_input_values_from_upstream<F: Field>(
     stage6: &Stage6ClearOutput<F>,
     bytecode: Option<&BytecodeReductionAddressPhase<F>>,
     program_image: Option<&ProgramImageReductionAddressPhase<F>>,
-) -> Result<Stage7InputClaims<F, OpeningClaim<F>>, VerifierError> {
+) -> Result<Stage7InputClaims<F>, VerifierError> {
     Ok(Stage7InputClaims {
-        hamming_weight_claim_reduction: hamming_input_claims(stage6),
-        advice_address_phase: clear_advice_input_claims(stage6),
+        hamming_weight_claim_reduction: hamming_input_values(stage6),
+        advice_address_phase: clear_advice_input_values(stage6),
         bytecode_address_phase: bytecode
-            .map(|_| clear_bytecode_input_claims(stage6))
+            .map(|_| clear_bytecode_input_values(stage6))
             .transpose()?,
         program_image_address_phase: program_image
-            .map(|_| clear_program_image_input_claims(stage6))
+            .map(|_| clear_program_image_input_values(stage6))
             .transpose()?,
     })
+}
+
+/// Assemble the stage-7 consumed opening *points*. Every stage-7 relation derives
+/// its produced points from its own sumcheck point and reads no input point, so
+/// all input point cells are empty; the two committed-program members are `Some`
+/// exactly when their address-phase relation is present (matching the values
+/// aggregate).
+fn stage7_input_points_from_upstream<F: Field>(
+    bytecode: Option<&BytecodeReductionAddressPhase<F>>,
+    program_image: Option<&ProgramImageReductionAddressPhase<F>>,
+) -> Stage7InputPoints<F> {
+    Stage7InputPoints {
+        hamming_weight_claim_reduction: hamming_input_points(),
+        advice_address_phase: clear_advice_input_points(),
+        bytecode_address_phase: bytecode.map(|_| clear_bytecode_input_points()),
+        program_image_address_phase: program_image.map(|_| clear_program_image_input_points()),
+    }
 }
 
 /// The committed-program claim-reduction layouts present in this proof
@@ -497,11 +512,14 @@ pub struct Stage7Relations<F: Field> {
     pub untrusted_advice: Option<AdviceAddressPhase<F>>,
     pub bytecode: Option<BytecodeReductionAddressPhase<F>>,
     pub program_image: Option<ProgramImageReductionAddressPhase<F>>,
-    /// The stage's consumed openings, one field per batch instance, assembled from
-    /// the upstream stage-4/stage-6 outputs. The two committed-program members are
-    /// `Some` exactly when their address phase runs (tracking `bytecode` /
-    /// `program_image` presence).
-    pub inputs: Stage7InputClaims<F, OpeningClaim<F>>,
+    /// The stage's consumed opening *values*, one field per batch instance,
+    /// assembled from the upstream stage-4/stage-6 outputs. The two committed-program
+    /// members are `Some` exactly when their address phase runs (tracking `bytecode`
+    /// / `program_image` presence).
+    pub input_values: Stage7InputClaims<F>,
+    /// The stage's consumed opening *points*, paired field-for-field with
+    /// `input_values` (all empty, since no stage-7 relation reads an input point).
+    pub input_points: Stage7InputPoints<F>,
 }
 
 /// Each present instance's sumcheck point, in batch order. The hamming reduction
@@ -545,8 +563,10 @@ impl<F: Field> Stage7Relations<F> {
         );
         let bytecode = clear_bytecode_relation(layouts.bytecode, stage6)?;
         let program_image = clear_program_image_relation(layouts.program_image, stage4, stage6)?;
-        let inputs =
-            stage7_inputs_from_upstream(stage6, bytecode.as_ref(), program_image.as_ref())?;
+        let input_values =
+            stage7_input_values_from_upstream(stage6, bytecode.as_ref(), program_image.as_ref())?;
+        let input_points =
+            stage7_input_points_from_upstream(bytecode.as_ref(), program_image.as_ref());
         Ok(Self {
             hamming_challenges,
             hamming,
@@ -564,7 +584,8 @@ impl<F: Field> Stage7Relations<F> {
             )?,
             bytecode,
             program_image,
-            inputs,
+            input_values,
+            input_points,
         })
     }
 
@@ -586,7 +607,7 @@ impl<F: Field> Stage7Relations<F> {
             hamming_rounds,
             hamming_degree,
             self.hamming.input_claim(
-                &self.inputs.hamming_weight_claim_reduction,
+                &self.input_values.hamming_weight_claim_reduction,
                 &self.hamming_challenges,
             )?,
         )];
@@ -597,11 +618,11 @@ impl<F: Field> Stage7Relations<F> {
             claims.push(SumcheckClaim::new(
                 relation.rounds(),
                 relation.degree(),
-                relation.input_claim(&self.inputs.advice_address_phase, &no_challenges)?,
+                relation.input_claim(&self.input_values.advice_address_phase, &no_challenges)?,
             ));
         }
         if let (Some(relation), Some(inputs)) =
-            (&self.bytecode, &self.inputs.bytecode_address_phase)
+            (&self.bytecode, &self.input_values.bytecode_address_phase)
         {
             claims.push(SumcheckClaim::new(
                 relation.rounds(),
@@ -611,7 +632,7 @@ impl<F: Field> Stage7Relations<F> {
         }
         if let (Some(relation), Some(inputs)) = (
             &self.program_image,
-            &self.inputs.program_image_address_phase,
+            &self.input_values.program_image_address_phase,
         ) {
             claims.push(SumcheckClaim::new(
                 relation.rounds(),
@@ -656,18 +677,20 @@ impl<F: Field> Stage7Relations<F> {
 
     /// Build the produced clear output from the wire opening values (`claims`) and
     /// the per-instance sumcheck points: derive each relation's opening points,
-    /// pair them with the values, evaluate the expected output claims, and resolve
-    /// the precommitted final openings. Shared by the verifier and the prover.
+    /// evaluate the expected output claims against the wire values and derived
+    /// points, and resolve the precommitted final openings. Shared by the verifier
+    /// and the prover.
     pub fn clear_output(
         &self,
         points: &Stage7InstancePoints<'_, F>,
-        claims: &Stage7OutputClaims<F, F>,
+        claims: &Stage7OutputClaims<F>,
         stage6: &Stage6ClearOutput<F>,
         layouts: &Stage7Layouts<'_>,
     ) -> Result<Stage7ClearOutputParts<F>, VerifierError> {
-        let hamming_output_points = self
-            .hamming
-            .derive_opening_points(points.hamming, &self.inputs.hamming_weight_claim_reduction)?;
+        let hamming_output_points = self.hamming.derive_opening_points(
+            points.hamming,
+            &self.input_points.hamming_weight_claim_reduction,
+        )?;
         let hamming_weight_opening_point = hamming_output_points
             .instruction_ra
             .first()
@@ -678,69 +701,53 @@ impl<F: Field> Stage7Relations<F> {
                 stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: "stage 7 produced no hamming-weight openings".to_string(),
             })?;
-        let hamming_output = zip_openings(
-            &claims.hamming_weight_claim_reduction,
-            &hamming_output_points,
-        );
 
         let advice_points = AdviceAddressPhaseOutputClaims {
             trusted: advice_kind_point(
                 self.trusted_advice.as_ref(),
                 points.trusted_advice,
-                &self.inputs.advice_address_phase,
+                &self.input_points.advice_address_phase,
             )?,
             untrusted: advice_kind_point(
                 self.untrusted_advice.as_ref(),
                 points.untrusted_advice,
-                &self.inputs.advice_address_phase,
+                &self.input_points.advice_address_phase,
             )?,
         };
-        let advice_output = zip_openings(&claims.advice_address_phase, &advice_points);
 
-        let bytecode_output = match (
+        let bytecode_points = match (
             &self.bytecode,
-            &self.inputs.bytecode_address_phase,
+            &self.input_points.bytecode_address_phase,
             points.bytecode,
         ) {
-            (Some(relation), Some(inputs), Some(point)) => {
-                let derived = relation.derive_opening_points(point, inputs)?;
-                let wire = claims.bytecode_address_phase.as_ref().ok_or(
-                    VerifierError::MissingOpeningClaim {
-                        id: bytecode_reduction::final_bytecode_chunk_opening(0),
-                    },
-                )?;
-                Some(zip_openings(wire, &derived))
+            (Some(relation), Some(input_points), Some(point)) => {
+                Some(relation.derive_opening_points(point, input_points)?)
             }
             _ => None,
         };
-        let program_image_output = match (
+        let program_image_points = match (
             &self.program_image,
-            &self.inputs.program_image_address_phase,
+            &self.input_points.program_image_address_phase,
             points.program_image,
         ) {
-            (Some(relation), Some(inputs), Some(point)) => {
-                let derived = relation.derive_opening_points(point, inputs)?;
-                let wire = claims.program_image_address_phase.as_ref().ok_or(
-                    VerifierError::MissingOpeningClaim {
-                        id: program_image::final_program_image_opening(),
-                    },
-                )?;
-                Some(zip_openings(wire, &derived))
+            (Some(relation), Some(input_points), Some(point)) => {
+                Some(relation.derive_opening_points(point, input_points)?)
             }
             _ => None,
         };
 
-        let output_claims = Stage7OutputClaims {
-            hamming_weight_claim_reduction: hamming_output,
-            advice_address_phase: advice_output,
-            bytecode_address_phase: bytecode_output,
-            program_image_address_phase: program_image_output,
+        let output_points = Stage7OutputPoints {
+            hamming_weight_claim_reduction: hamming_output_points,
+            advice_address_phase: advice_points,
+            bytecode_address_phase: bytecode_points,
+            program_image_address_phase: program_image_points,
         };
 
         let no_challenges = NoChallenges::default();
         let mut expected_outputs = vec![self.hamming.expected_output(
-            &self.inputs.hamming_weight_claim_reduction,
-            &output_claims.hamming_weight_claim_reduction,
+            &self.input_points.hamming_weight_claim_reduction,
+            &claims.hamming_weight_claim_reduction,
+            &output_points.hamming_weight_claim_reduction,
             &self.hamming_challenges,
         )?];
         for relation in [&self.trusted_advice, &self.untrusted_advice]
@@ -748,32 +755,54 @@ impl<F: Field> Stage7Relations<F> {
             .flatten()
         {
             expected_outputs.push(relation.expected_output(
-                &self.inputs.advice_address_phase,
-                &output_claims.advice_address_phase,
+                &self.input_points.advice_address_phase,
+                &claims.advice_address_phase,
+                &output_points.advice_address_phase,
                 &no_challenges,
             )?);
         }
-        if let (Some(relation), Some(inputs), Some(output)) = (
+        if let (Some(relation), Some(input_points), Some(output_points)) = (
             &self.bytecode,
-            &self.inputs.bytecode_address_phase,
-            &output_claims.bytecode_address_phase,
+            &self.input_points.bytecode_address_phase,
+            &output_points.bytecode_address_phase,
         ) {
-            expected_outputs.push(relation.expected_output(inputs, output, &no_challenges)?);
+            let values = claims.bytecode_address_phase.as_ref().ok_or(
+                VerifierError::MissingOpeningClaim {
+                    id: bytecode_reduction::final_bytecode_chunk_opening(0),
+                },
+            )?;
+            expected_outputs.push(relation.expected_output(
+                input_points,
+                values,
+                output_points,
+                &no_challenges,
+            )?);
         }
-        if let (Some(relation), Some(inputs), Some(output)) = (
+        if let (Some(relation), Some(input_points), Some(output_points)) = (
             &self.program_image,
-            &self.inputs.program_image_address_phase,
-            &output_claims.program_image_address_phase,
+            &self.input_points.program_image_address_phase,
+            &output_points.program_image_address_phase,
         ) {
-            expected_outputs.push(relation.expected_output(inputs, output, &no_challenges)?);
+            let values = claims.program_image_address_phase.as_ref().ok_or(
+                VerifierError::MissingOpeningClaim {
+                    id: program_image::final_program_image_opening(),
+                },
+            )?;
+            expected_outputs.push(relation.expected_output(
+                input_points,
+                values,
+                output_points,
+                &no_challenges,
+            )?);
         }
 
         let precommitted_final_openings =
-            clear_precommitted_final_openings(layouts, &output_claims, stage6)?;
+            clear_precommitted_final_openings(layouts, claims, &output_points, stage6)?;
 
         Ok(Stage7ClearOutputParts {
             output: Stage7ClearOutput {
-                output_claims,
+                output_values: claims.clone(),
+                output_points,
                 hamming_weight_opening_point,
                 precommitted_final_openings,
             },
@@ -809,66 +838,51 @@ fn address_phase_point<F: Field>(
 fn advice_kind_point<F: Field>(
     relation: Option<&AdviceAddressPhase<F>>,
     point: Option<&[F]>,
-    inputs: &AdviceAddressPhaseInputClaims<OpeningClaim<F>>,
+    input_points: &AdviceAddressPhaseInputClaims<Vec<F>>,
 ) -> Result<Option<Vec<F>>, VerifierError> {
     let (Some(relation), Some(point)) = (relation, point) else {
         return Ok(None);
     };
-    let derived = relation.derive_opening_points(point, inputs)?;
+    let derived = relation.derive_opening_points(point, input_points)?;
     Ok(match relation.kind() {
         JoltAdviceKind::Trusted => derived.trusted,
         JoltAdviceKind::Untrusted => derived.untrusted,
     })
 }
 
-fn input_opening<F: Field>(value: F) -> OpeningClaim<F> {
-    OpeningClaim {
-        point: Vec::new(),
-        value,
+/// The hamming reduction's consumed opening *values*, wired from stage 6. The
+/// relation reads only their values (its produced points are derived from its own
+/// sumcheck point), so no input points are needed.
+fn hamming_input_values<F: Field>(
+    stage6: &Stage6ClearOutput<F>,
+) -> HammingWeightClaimReductionInputClaims<F> {
+    let cycle_phase = &stage6.output_values.cycle_phase;
+    HammingWeightClaimReductionInputClaims {
+        ram_hamming_weight: cycle_phase.ram_hamming_booleanity.ram_hamming_weight,
+        instruction_booleanity: cycle_phase.booleanity.instruction_ra.clone(),
+        bytecode_booleanity: cycle_phase.booleanity.bytecode_ra.clone(),
+        ram_booleanity: cycle_phase.booleanity.ram_ra.clone(),
+        instruction_virtualization: cycle_phase
+            .instruction_ra_virtualization
+            .committed_instruction_ra
+            .clone(),
+        bytecode_virtualization: cycle_phase.bytecode_read_raf.bytecode_ra.clone(),
+        ram_virtualization: cycle_phase.ram_ra_virtualization.ram_ra.clone(),
     }
 }
 
-/// The hamming reduction's consumed claims, wired from stage 6. The relation reads
-/// only their values (its produced points are derived from its own sumcheck
-/// point), so the input opening points are left empty.
-fn hamming_input_claims<F: Field>(
-    stage6: &Stage6ClearOutput<F>,
-) -> HammingWeightClaimReductionInputClaims<OpeningClaim<F>> {
-    let openings = |values: &[F]| values.iter().copied().map(input_opening).collect();
+/// The hamming reduction's consumed opening *points* — all empty, since the
+/// relation derives its produced points from its own sumcheck point and reads no
+/// input point.
+fn hamming_input_points<F: Field>() -> HammingWeightClaimReductionInputClaims<Vec<F>> {
     HammingWeightClaimReductionInputClaims {
-        ram_hamming_weight: input_opening(
-            stage6
-                .output_claims
-                .cycle_phase
-                .ram_hamming_booleanity
-                .ram_hamming_weight,
-        ),
-        instruction_booleanity: openings(
-            &stage6.output_claims.cycle_phase.booleanity.instruction_ra,
-        ),
-        bytecode_booleanity: openings(&stage6.output_claims.cycle_phase.booleanity.bytecode_ra),
-        ram_booleanity: openings(&stage6.output_claims.cycle_phase.booleanity.ram_ra),
-        instruction_virtualization: openings(
-            &stage6
-                .output_claims
-                .cycle_phase
-                .instruction_ra_virtualization
-                .committed_instruction_ra,
-        ),
-        bytecode_virtualization: openings(
-            &stage6
-                .output_claims
-                .cycle_phase
-                .bytecode_read_raf
-                .bytecode_ra,
-        ),
-        ram_virtualization: openings(
-            &stage6
-                .output_claims
-                .cycle_phase
-                .ram_ra_virtualization
-                .ram_ra,
-        ),
+        ram_hamming_weight: Vec::new(),
+        instruction_booleanity: Vec::new(),
+        bytecode_booleanity: Vec::new(),
+        ram_booleanity: Vec::new(),
+        instruction_virtualization: Vec::new(),
+        bytecode_virtualization: Vec::new(),
+        ram_virtualization: Vec::new(),
     }
 }
 
@@ -896,23 +910,29 @@ fn clear_advice_relation<F: Field>(
     Ok(Some(AdviceAddressPhase::new(
         kind,
         layout,
-        contribution.opening.point.clone(),
+        contribution.opening_point.clone(),
         cycle_phase_variables,
     )))
 }
 
-/// The consumed cycle-phase advice openings (both kinds, present only when that
-/// kind ran). Each address-phase relation reads its own kind's field.
-fn clear_advice_input_claims<F: Field>(
+/// The consumed cycle-phase advice opening *values* (both kinds, present only when
+/// that kind ran). Each address-phase relation reads its own kind's field.
+fn clear_advice_input_values<F: Field>(
     stage6: &Stage6ClearOutput<F>,
-) -> AdviceAddressPhaseInputClaims<OpeningClaim<F>> {
+) -> AdviceAddressPhaseInputClaims<F> {
     AdviceAddressPhaseInputClaims {
-        trusted: stage6_advice_cycle_phase_claim(stage6, JoltAdviceKind::Trusted)
-            .ok()
-            .map(input_opening),
-        untrusted: stage6_advice_cycle_phase_claim(stage6, JoltAdviceKind::Untrusted)
-            .ok()
-            .map(input_opening),
+        trusted: stage6_advice_cycle_phase_claim(stage6, JoltAdviceKind::Trusted).ok(),
+        untrusted: stage6_advice_cycle_phase_claim(stage6, JoltAdviceKind::Untrusted).ok(),
+    }
+}
+
+/// The consumed cycle-phase advice opening *points* — empty (the advice address
+/// phase derives its produced point from its own sumcheck point and reads no input
+/// point).
+fn clear_advice_input_points<F: Field>() -> AdviceAddressPhaseInputClaims<Vec<F>> {
+    AdviceAddressPhaseInputClaims {
+        trusted: None,
+        untrusted: None,
     }
 }
 
@@ -947,11 +967,11 @@ fn clear_bytecode_relation<F: Field>(
     )))
 }
 
-fn clear_bytecode_input_claims<F: Field>(
+fn clear_bytecode_input_values<F: Field>(
     stage6: &Stage6ClearOutput<F>,
-) -> Result<BytecodeReductionAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
+) -> Result<BytecodeReductionAddressPhaseInputClaims<F>, VerifierError> {
     let value = match stage6
-        .output_claims
+        .output_values
         .cycle_phase
         .bytecode_reduction
         .as_ref()
@@ -965,8 +985,17 @@ fn clear_bytecode_input_claims<F: Field>(
         }
     };
     Ok(BytecodeReductionAddressPhaseInputClaims {
-        cycle_phase_intermediate: input_opening(value),
+        cycle_phase_intermediate: value,
     })
+}
+
+/// The consumed bytecode cycle-phase opening *point* — empty (the address phase
+/// derives its produced points from its own sumcheck point and reads no input
+/// point).
+fn clear_bytecode_input_points<F: Field>() -> BytecodeReductionAddressPhaseInputClaims<Vec<F>> {
+    BytecodeReductionAddressPhaseInputClaims {
+        cycle_phase_intermediate: Vec::new(),
+    }
 }
 
 fn clear_program_image_relation<F: Field>(
@@ -983,25 +1012,25 @@ fn clear_program_image_relation<F: Field>(
         .ok_or(VerifierError::MissingOpeningClaim {
             id: program_image::cycle_phase_program_image_opening(),
         })?;
-    let contribution = stage4
+    let contribution_point = stage4
         .ram_val_check_init
-        .program_image_contribution
+        .program_image_contribution_point
         .as_ref()
         .ok_or(VerifierError::MissingOpeningClaim {
             id: program_image::ram_val_check_contribution_opening(),
         })?;
     Ok(Some(ProgramImageReductionAddressPhase::new(
         layout,
-        contribution.point.clone(),
+        contribution_point.clone(),
         cycle_phase_variables,
     )))
 }
 
-fn clear_program_image_input_claims<F: Field>(
+fn clear_program_image_input_values<F: Field>(
     stage6: &Stage6ClearOutput<F>,
-) -> Result<ProgramImageReductionAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
+) -> Result<ProgramImageReductionAddressPhaseInputClaims<F>, VerifierError> {
     let value = stage6
-        .output_claims
+        .output_values
         .cycle_phase
         .program_image_reduction
         .as_ref()
@@ -1009,18 +1038,27 @@ fn clear_program_image_input_claims<F: Field>(
         .ok_or(VerifierError::MissingOpeningClaim {
             id: program_image::cycle_phase_program_image_opening(),
         })?;
-    Ok(ProgramImageReductionAddressPhaseInputClaims {
-        cycle_phase: input_opening(value),
-    })
+    Ok(ProgramImageReductionAddressPhaseInputClaims { cycle_phase: value })
+}
+
+/// The consumed program-image cycle-phase opening *point* — empty (the address
+/// phase derives its produced point from its own sumcheck point and reads no input
+/// point).
+fn clear_program_image_input_points<F: Field>(
+) -> ProgramImageReductionAddressPhaseInputClaims<Vec<F>> {
+    ProgramImageReductionAddressPhaseInputClaims {
+        cycle_phase: Vec::new(),
+    }
 }
 
 /// Resolve the final openings of the precommitted polynomials from whichever phase
 /// completed each reduction: this stage's address phase (when it ran) or the
 /// stage 6b cycle phase. Mirrors the ZK arm's assembly but reads the clear address
-/// openings from the produced [`Stage7OutputClaims`].
+/// openings from the produced stage-7 opening values and points.
 fn clear_precommitted_final_openings<F: Field>(
     layouts: &Stage7Layouts<'_>,
-    output_claims: &Stage7OutputClaims<F, OpeningClaim<F>>,
+    output_values: &Stage7OutputClaims<F>,
+    output_points: &Stage7OutputPoints<F>,
     stage6: &Stage6ClearOutput<F>,
 ) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
     let mut openings = Vec::new();
@@ -1028,13 +1066,16 @@ fn clear_precommitted_final_openings<F: Field>(
         (
             JoltAdviceKind::Trusted,
             layouts.trusted_advice,
-            output_claims.advice_address_phase.trusted.as_ref(),
+            output_points
+                .advice_address_phase
+                .trusted()
+                .zip(output_values.advice_address_phase.trusted),
             stage6
                 .output_points
                 .advice_cycle_phase_opening_point(JoltAdviceKind::Trusted)
                 .zip(
                     stage6
-                        .output_claims
+                        .output_values
                         .cycle_phase
                         .trusted_advice
                         .as_ref()
@@ -1044,13 +1085,16 @@ fn clear_precommitted_final_openings<F: Field>(
         (
             JoltAdviceKind::Untrusted,
             layouts.untrusted_advice,
-            output_claims.advice_address_phase.untrusted.as_ref(),
+            output_points
+                .advice_address_phase
+                .untrusted()
+                .zip(output_values.advice_address_phase.untrusted),
             stage6
                 .output_points
                 .advice_cycle_phase_opening_point(JoltAdviceKind::Untrusted)
                 .zip(
                     stage6
-                        .output_claims
+                        .output_values
                         .cycle_phase
                         .untrusted_advice
                         .as_ref()
@@ -1059,8 +1103,8 @@ fn clear_precommitted_final_openings<F: Field>(
         ),
     ] {
         if let Some(layout) = layout {
-            let address_phase = address
-                .map(|opening| PrecommittedFinalSource::clear(&opening.point, opening.value));
+            let address_phase =
+                address.map(|(point, value)| PrecommittedFinalSource::clear(point, value));
             let cycle_phase = cycle.map(|(opening_point, opening_claim)| {
                 PrecommittedFinalSource::clear(opening_point, opening_claim)
             });
@@ -1073,19 +1117,17 @@ fn clear_precommitted_final_openings<F: Field>(
         }
     }
     if let Some(layout) = layouts.bytecode {
-        let address_phase = output_claims
+        let address_phase = output_points
             .bytecode_address_phase
             .as_ref()
-            .and_then(|output| output.chunks.first().map(|first| (output, first)))
-            .map(|(output, first)| {
-                PrecommittedFinalSource::clear_chunks(
-                    &first.point,
-                    output.chunks.iter().map(|chunk| chunk.value).collect(),
-                )
+            .and_then(|points| points.chunks().first())
+            .zip(output_values.bytecode_address_phase.as_ref())
+            .map(|(first_point, values)| {
+                PrecommittedFinalSource::clear_chunks(first_point, values.chunks.clone())
             });
         let cycle_phase = match (
             stage6.output_points.bytecode_reduction_opening_point(),
-            &stage6.output_claims.cycle_phase.bytecode_reduction,
+            &stage6.output_values.cycle_phase.bytecode_reduction,
         ) {
             (Some(opening_point), Some(reduction))
                 if reduction.intermediate.is_none() && !reduction.chunks.is_empty() =>
@@ -1100,21 +1142,19 @@ fn clear_precommitted_final_openings<F: Field>(
         openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
     }
     if let Some(layout) = layouts.program_image {
-        let address_phase = output_claims
+        let address_phase = output_points
             .program_image_address_phase
             .as_ref()
-            .map(|output| {
-                PrecommittedFinalSource::clear(
-                    &output.program_image.point,
-                    output.program_image.value,
-                )
+            .zip(output_values.program_image_address_phase.as_ref())
+            .map(|(points, values)| {
+                PrecommittedFinalSource::clear(points.program_image(), values.program_image)
             });
         let cycle_phase = stage6
             .output_points
             .program_image_opening_point()
             .zip(
                 stage6
-                    .output_claims
+                    .output_values
                     .cycle_phase
                     .program_image_reduction
                     .as_ref(),
@@ -1135,21 +1175,21 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     stage6: &Stage6ClearOutput<F>,
 ) -> Result<Vec<Vec<F>>, VerifierError> {
-    let instruction_ra_points = &stage6
+    let instruction_ra_points = stage6
         .output_points
         .cycle_phase
         .instruction_ra_virtualization
-        .committed_instruction_ra;
-    let bytecode_ra_points = &stage6
+        .committed_instruction_ra();
+    let bytecode_ra_points = stage6
         .output_points
         .cycle_phase
         .bytecode_read_raf
-        .bytecode_ra;
-    let ram_ra_points = &stage6
+        .bytecode_ra();
+    let ram_ra_points = stage6
         .output_points
         .cycle_phase
         .ram_ra_virtualization
-        .ram_ra;
+        .ram_ra();
     if instruction_ra_points.len() != dimensions.layout.instruction()
         || bytecode_ra_points.len() != dimensions.layout.bytecode()
         || ram_ra_points.len() != dimensions.layout.ram()
@@ -1295,13 +1335,13 @@ fn stage6_advice_cycle_phase_claim<F: Field>(
 ) -> Result<F, VerifierError> {
     let claim = match kind {
         JoltAdviceKind::Trusted => stage6
-            .output_claims
+            .output_values
             .cycle_phase
             .trusted_advice
             .as_ref()
             .and_then(|claim| claim.trusted),
         JoltAdviceKind::Untrusted => stage6
-            .output_claims
+            .output_values
             .cycle_phase
             .untrusted_advice
             .as_ref()

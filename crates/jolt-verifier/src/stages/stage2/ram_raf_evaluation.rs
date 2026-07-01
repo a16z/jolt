@@ -23,20 +23,27 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed RAM address opening from stage 1's outer sumcheck.
+/// Wire the consumed RAM address opening *value* from stage 1's outer sumcheck.
 /// (Verifier-side constructor for the moved [`RamRafEvaluationInputClaims`].)
-pub fn ram_raf_evaluation_inputs_from_upstream<F: Field>(
+pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
-) -> RamRafEvaluationInputClaims<OpeningClaim<F>> {
+) -> RamRafEvaluationInputClaims<F> {
     RamRafEvaluationInputClaims {
-        ram_address: OpeningClaim {
-            point: Vec::new(),
-            value: stage1.output_claims.outer_remainder.ram_address.value,
-        },
+        ram_address: stage1.output_values.outer_remainder.ram_address,
+    }
+}
+
+/// Wire the consumed RAM address opening *point* (empty — this input carries no
+/// point at this stage).
+pub fn ram_raf_evaluation_input_points_from_upstream<F: Field>(
+    _stage1: &Stage1ClearOutput<F>,
+) -> RamRafEvaluationInputClaims<Vec<F>> {
+    RamRafEvaluationInputClaims {
+        ram_address: Vec::new(),
     }
 }
 
@@ -80,10 +87,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RamRafEvaluationInputClaims<C>,
+        _input_points: &RamRafEvaluationInputClaims<Vec<F>>,
     ) -> Result<RamRafEvaluationOutputClaims<Vec<F>>, VerifierError> {
         let address = self
             .read_write_dimensions
@@ -102,11 +109,11 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &RamRafEvaluationInputClaims<C>,
-        outputs: &RamRafEvaluationOutputClaims<OpeningClaim<F>>,
+        _input_points: &RamRafEvaluationInputClaims<Vec<F>>,
+        output_points: &RamRafEvaluationOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRafEvaluation(public_id) = id else {
@@ -117,7 +124,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
             // unmap reads only the address prefix and lifts it back to a byte
             // address (`identity(r_address) * 8 + lowest_address`).
             RamRafEvaluationPublic::UnmapAddress => {
-                let point = outputs.ram_ra.point();
+                let point = output_points.ram_ra();
                 if point.len() < self.ram_log_k {
                     return Err(public_input_failed(format!(
                         "RAM RAF opening point is too short: expected at least {}, got {}",

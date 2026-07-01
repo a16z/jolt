@@ -12,29 +12,29 @@ use num_traits::Zero;
 
 use super::{
     instruction_read_raf::{
-        instruction_read_raf_inputs_from_upstream, InstructionReadRaf,
+        instruction_read_raf_input_points_from_upstream,
+        instruction_read_raf_input_values_from_upstream, InstructionReadRaf,
         InstructionReadRafInputClaims,
     },
     outputs::{
-        Stage5Challenges, Stage5ClearOutput, Stage5InputClaims, Stage5Output, Stage5OutputClaims,
-        Stage5Sumchecks, Stage5ZkOutput,
+        Stage5Challenges, Stage5ClearOutput, Stage5InputClaims, Stage5InputPoints, Stage5Output,
+        Stage5OutputPoints, Stage5Sumchecks, Stage5ZkOutput,
     },
     ram_ra_claim_reduction::{
-        ram_ra_claim_reduction_inputs_from_upstream, RamRaClaimReduction,
+        ram_ra_claim_reduction_input_points_from_upstream,
+        ram_ra_claim_reduction_input_values_from_upstream, RamRaClaimReduction,
         RamRaClaimReductionInputClaims,
     },
     registers_val_evaluation::{
-        registers_val_evaluation_inputs_from_upstream, RegistersValEvaluation,
+        registers_val_evaluation_input_points_from_upstream,
+        registers_val_evaluation_input_values_from_upstream, RegistersValEvaluation,
         RegistersValEvaluationInputClaims,
     },
 };
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{
-            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-            OutputClaims,
-        },
+        relations::{check_relation_boolean_hypercube, ConcreteSumcheck, OutputClaims},
         stage2::{Stage2ClearOutput, Stage2Output},
         stage4::{Stage4ClearOutput, Stage4Output},
         zk::committed,
@@ -47,14 +47,26 @@ use crate::{
 /// generated `Stage5InputClaims` aggregate. This is the single place the stage's
 /// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
 /// wires which upstream opening feeds which downstream input.
-fn stage5_inputs_from_upstream<F: Field>(
+fn stage5_input_values_from_upstream<F: Field>(
     stage2: &Stage2ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
-) -> Stage5InputClaims<F, OpeningClaim<F>> {
+) -> Stage5InputClaims<F> {
     Stage5InputClaims {
-        instruction_read_raf: instruction_read_raf_inputs_from_upstream(stage2),
-        ram_ra_claim_reduction: ram_ra_claim_reduction_inputs_from_upstream(stage2, stage4),
-        registers_val_evaluation: registers_val_evaluation_inputs_from_upstream(stage4),
+        instruction_read_raf: instruction_read_raf_input_values_from_upstream(stage2),
+        ram_ra_claim_reduction: ram_ra_claim_reduction_input_values_from_upstream(stage2, stage4),
+        registers_val_evaluation: registers_val_evaluation_input_values_from_upstream(stage4),
+    }
+}
+
+/// Assemble the stage-5 consumed opening *points* from the upstream clear outputs.
+fn stage5_input_points_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+) -> Stage5InputPoints<F> {
+    Stage5InputPoints {
+        instruction_read_raf: instruction_read_raf_input_points_from_upstream(stage2),
+        ram_ra_claim_reduction: ram_ra_claim_reduction_input_points_from_upstream(stage2, stage4),
+        registers_val_evaluation: registers_val_evaluation_input_points_from_upstream(stage4),
     }
 }
 
@@ -77,29 +89,6 @@ pub fn stage5_expected_final_claim<F: Field>(
     Ok(*instruction_coefficient * instruction_read_raf
         + *ram_coefficient * ram_ra_claim_reduction
         + *registers_coefficient * registers_val_evaluation)
-}
-
-/// Pair the produced stage-5 openings with their derived points (point + value
-/// together) from the wire claim values and each relation's opening points. Shared
-/// by the verifier and the prover so these opening claims are built once.
-pub fn stage5_output_claims_with_points<F: Field>(
-    claims: &Stage5OutputClaims<F, F>,
-    points: &Stage5OutputClaims<F, Vec<F>>,
-) -> Stage5OutputClaims<F, OpeningClaim<F>> {
-    Stage5OutputClaims {
-        instruction_read_raf: zip_openings(
-            &claims.instruction_read_raf,
-            &points.instruction_read_raf,
-        ),
-        ram_ra_claim_reduction: zip_openings(
-            &claims.ram_ra_claim_reduction,
-            &points.ram_ra_claim_reduction,
-        ),
-        registers_val_evaluation: zip_openings(
-            &claims.registers_val_evaluation,
-            &points.registers_val_evaluation,
-        ),
-    }
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -225,11 +214,11 @@ where
             })?;
 
         // Map each relation's committed sumcheck point to its produced opening
-        // points, the point-only counterpart of the clear `output_claims`. The
+        // points, the point-only counterpart of the clear `output_points`. The
         // instruction relation ignores its inputs (empty point cells suffice); RAM
         // and registers splice the fixed address/cycle prefixes from upstream points.
         let empty = Vec::<PCS::Field>::new;
-        let inputs = Stage5InputClaims::<PCS::Field, Vec<PCS::Field>> {
+        let input_points = Stage5InputPoints::<PCS::Field> {
             instruction_read_raf: InstructionReadRafInputClaims {
                 lookup_output: empty(),
                 left_lookup_operand: empty(),
@@ -244,16 +233,16 @@ where
                 registers_val: stage4.output_points.registers_read_write_point().to_vec(),
             },
         };
-        let output_points = Stage5OutputClaims {
+        let output_points = Stage5OutputPoints {
             instruction_read_raf: sumchecks
                 .instruction_read_raf
-                .derive_opening_points(&instruction_point, &inputs.instruction_read_raf)?,
+                .derive_opening_points(&instruction_point, &input_points.instruction_read_raf)?,
             ram_ra_claim_reduction: sumchecks
                 .ram_ra_claim_reduction
-                .derive_opening_points(&ram_point, &inputs.ram_ra_claim_reduction)?,
+                .derive_opening_points(&ram_point, &input_points.ram_ra_claim_reduction)?,
             registers_val_evaluation: sumchecks
                 .registers_val_evaluation
-                .derive_opening_points(&registers_point, &inputs.registers_val_evaluation)?,
+                .derive_opening_points(&registers_point, &input_points.registers_val_evaluation)?,
         };
         let instruction_r_address = output_points.instruction_r_address();
 
@@ -298,14 +287,15 @@ where
     // (same opening point and value); stage 2 validates that alias, which the
     // instruction read-RAF input wiring relies on when it falls back to the
     // product remainder.
-    let inputs = stage5_inputs_from_upstream(stage2, stage4);
+    let input_values = stage5_input_values_from_upstream(stage2, stage4);
+    let input_points = stage5_input_points_from_upstream(stage2, stage4);
 
     let sumcheck_claims = [
         SumcheckClaim::new(
             instruction_claims.rounds(),
             instruction_claims.degree(),
             sumchecks.instruction_read_raf.input_claim(
-                &inputs.instruction_read_raf,
+                &input_values.instruction_read_raf,
                 &challenges.instruction_read_raf,
             )?,
         ),
@@ -313,7 +303,7 @@ where
             ram_claims.rounds(),
             ram_claims.degree(),
             sumchecks.ram_ra_claim_reduction.input_claim(
-                &inputs.ram_ra_claim_reduction,
+                &input_values.ram_ra_claim_reduction,
                 &challenges.ram_ra_claim_reduction,
             )?,
         ),
@@ -321,7 +311,7 @@ where
             registers_claims.rounds(),
             registers_claims.degree(),
             sumchecks.registers_val_evaluation.input_claim(
-                &inputs.registers_val_evaluation,
+                &input_values.registers_val_evaluation,
                 &challenges.registers_val_evaluation,
             )?,
         ),
@@ -355,32 +345,34 @@ where
             reason: error.to_string(),
         })?;
 
-    let points = Stage5OutputClaims {
+    let output_points = Stage5OutputPoints {
         instruction_read_raf: sumchecks
             .instruction_read_raf
-            .derive_opening_points(instruction_point, &inputs.instruction_read_raf)?,
+            .derive_opening_points(instruction_point, &input_points.instruction_read_raf)?,
         ram_ra_claim_reduction: sumchecks
             .ram_ra_claim_reduction
-            .derive_opening_points(ram_point, &inputs.ram_ra_claim_reduction)?,
+            .derive_opening_points(ram_point, &input_points.ram_ra_claim_reduction)?,
         registers_val_evaluation: sumchecks
             .registers_val_evaluation
-            .derive_opening_points(registers_point, &inputs.registers_val_evaluation)?,
+            .derive_opening_points(registers_point, &input_points.registers_val_evaluation)?,
     };
-    let output_claims = stage5_output_claims_with_points(claims, &points);
 
     let instruction_output = sumchecks.instruction_read_raf.expected_output(
-        &inputs.instruction_read_raf,
-        &output_claims.instruction_read_raf,
+        &input_points.instruction_read_raf,
+        &claims.instruction_read_raf,
+        &output_points.instruction_read_raf,
         &challenges.instruction_read_raf,
     )?;
     let ram_output = sumchecks.ram_ra_claim_reduction.expected_output(
-        &inputs.ram_ra_claim_reduction,
-        &output_claims.ram_ra_claim_reduction,
+        &input_points.ram_ra_claim_reduction,
+        &claims.ram_ra_claim_reduction,
+        &output_points.ram_ra_claim_reduction,
         &challenges.ram_ra_claim_reduction,
     )?;
     let registers_output = sumchecks.registers_val_evaluation.expected_output(
-        &inputs.registers_val_evaluation,
-        &output_claims.registers_val_evaluation,
+        &input_points.registers_val_evaluation,
+        &claims.registers_val_evaluation,
+        &output_points.registers_val_evaluation,
         &challenges.registers_val_evaluation,
     )?;
 
@@ -398,10 +390,11 @@ where
 
     claims.append_to_transcript(transcript);
 
-    let instruction_r_address = output_claims.instruction_r_address();
+    let instruction_r_address = output_points.instruction_r_address();
     Ok(Stage5Output::Clear(Stage5ClearOutput {
         challenges,
-        output_claims,
+        output_values: claims.clone(),
+        output_points,
         instruction_r_address,
     }))
 }

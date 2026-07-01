@@ -18,23 +18,30 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed RAM read/write value openings from stage 1's outer sumcheck.
-/// (Verifier-side constructor for the moved [`RamReadWriteInputClaims`].)
-pub fn ram_read_write_inputs_from_upstream<F: Field>(
+/// Wire the consumed RAM read/write value opening *values* from stage 1's outer
+/// sumcheck. (Verifier-side constructor for the moved [`RamReadWriteInputClaims`].)
+pub fn ram_read_write_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
-) -> RamReadWriteInputClaims<OpeningClaim<F>> {
-    let value = |value: F| OpeningClaim {
-        point: Vec::new(),
-        value,
-    };
-    let outer = &stage1.output_claims.outer_remainder;
+) -> RamReadWriteInputClaims<F> {
+    let outer = &stage1.output_values.outer_remainder;
     RamReadWriteInputClaims {
-        ram_read_value: value(outer.ram_read_value.value),
-        ram_write_value: value(outer.ram_write_value.value),
+        ram_read_value: outer.ram_read_value,
+        ram_write_value: outer.ram_write_value,
+    }
+}
+
+/// Wire the consumed RAM read/write value opening *points* (both empty — these
+/// openings carry no point at this stage).
+pub fn ram_read_write_input_points_from_upstream<F: Field>(
+    _stage1: &Stage1ClearOutput<F>,
+) -> RamReadWriteInputClaims<Vec<F>> {
+    RamReadWriteInputClaims {
+        ram_read_value: Vec::new(),
+        ram_write_value: Vec::new(),
     }
 }
 
@@ -70,10 +77,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RamReadWriteInputClaims<C>,
+        _input_points: &RamReadWriteInputClaims<Vec<F>>,
     ) -> Result<RamReadWriteOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .dimensions
@@ -87,11 +94,11 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &RamReadWriteInputClaims<C>,
-        outputs: &RamReadWriteOutputClaims<OpeningClaim<F>>,
+        _input_points: &RamReadWriteInputClaims<Vec<F>>,
+        output_points: &RamReadWriteOutputClaims<Vec<F>>,
         _challenges: &RamReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamReadWrite(public_id) = id else {
@@ -101,7 +108,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
             // cycle sub-point is the suffix past the address bits.
             RamReadWritePublic::EqCycle => {
-                let r_cycle = &outputs.val.point()[self.ram_log_k..];
+                let r_cycle = &output_points.val()[self.ram_log_k..];
                 try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)
             }
         }

@@ -7,7 +7,7 @@ use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsis
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims, SumcheckBatch};
+use crate::stages::relations::{OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
@@ -23,14 +23,14 @@ pub use super::ram_read_write_checking::{RamReadWriteChecking, RamReadWriteOutpu
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage2OutputClaims<F: Field> {
     pub product_uniskip_output_claim: F,
-    pub batch_outputs: Stage2BatchOutputClaims<F, F>,
+    pub batch_outputs: Stage2BatchOutputClaims<F>,
 }
 
 /// Source-of-truth for stage 2's five-instance sumcheck batch, in Fiat-Shamir
 /// batch order (RAM read-write, product remainder, instruction claim-reduction,
 /// RAM RAF evaluation, RAM output check). `#[derive(SumcheckBatch)]` generates the
-/// `Stage2BatchInputClaims<F, C>`, `Stage2BatchOutputClaims<F, C>`, and
-/// `Stage2BatchChallenges<F>` aggregates — one field per instance, in this
+/// `Stage2Batch{Input,Output}{Claims,Points}<F>` and `Stage2BatchChallenges<F>`
+/// aggregates — one field per instance, in this
 /// declaration order. The product uni-skip is a separate sub-sumcheck, not part of
 /// this batch.
 ///
@@ -50,14 +50,7 @@ pub struct Stage2BatchSumchecks<F: Field> {
     pub ram_output_check: RamOutputCheck<F>,
 }
 
-// The wire form pins the generated cell param `C` to the field `F` (value-only
-// openings), so the impl's second type argument is `F`. Both arguments naming `F`
-// is intentional; the lint's reordering hint does not apply.
-#[expect(
-    clippy::mismatching_type_param_order,
-    reason = "the cell param C is pinned to F for the value-only wire form; the second `F` is the cell, not a reordered field param"
-)]
-impl<F: Field> Stage2BatchOutputClaims<F, F> {
+impl<F: Field> Stage2BatchOutputClaims<F> {
     /// The stage 2 batch produced opening claims in canonical (Fiat-Shamir) order:
     /// the RAM read-write openings, the eight product-remainder openings, the two
     /// reduced instruction lookup operands (the other reduced openings alias the
@@ -92,57 +85,47 @@ impl<F: Field> Stage2BatchOutputClaims<F, F> {
     }
 }
 
-/// The shared per-relation opening-point accessors, generated for each concrete
-/// cell (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form)
-/// so both expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>`
-/// can't express this — `F` would be unconstrained by the self type.
-macro_rules! stage2_batch_point_accessors {
-    ($cell:ident) => {
-        impl<F: Field> Stage2BatchOutputClaims<F, $cell<F>> {
-            /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
-            pub fn ram_read_write_point(&self) -> &[F] {
-                self.ram_read_write.val.point()
-            }
+/// The shared per-relation opening-point accessors over the point-only stage-2
+/// batch aggregate.
+impl<F: Field> Stage2BatchOutputPoints<F> {
+    /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
+    pub fn ram_read_write_point(&self) -> &[F] {
+        self.ram_read_write.val()
+    }
 
-            /// The product-remainder opening point (shared by all eight openings).
-            pub fn product_remainder_point(&self) -> &[F] {
-                self.product_remainder.left_instruction_input.point()
-            }
+    /// The product-remainder opening point (shared by all eight openings).
+    pub fn product_remainder_point(&self) -> &[F] {
+        self.product_remainder.left_instruction_input()
+    }
 
-            /// The reduced instruction-claim opening point (shared by all five
-            /// openings).
-            pub fn instruction_claim_reduction_point(&self) -> &[F] {
-                self.instruction_claim_reduction.left_lookup_operand.point()
-            }
+    /// The reduced instruction-claim opening point (shared by all five openings).
+    pub fn instruction_claim_reduction_point(&self) -> &[F] {
+        self.instruction_claim_reduction.left_lookup_operand()
+    }
 
-            /// The RAM RAF opening point (`[r_address ‖ tau_low]`).
-            pub fn ram_raf_evaluation_point(&self) -> &[F] {
-                self.ram_raf_evaluation.ram_ra.point()
-            }
+    /// The RAM RAF opening point (`[r_address ‖ tau_low]`).
+    pub fn ram_raf_evaluation_point(&self) -> &[F] {
+        self.ram_raf_evaluation.ram_ra()
+    }
 
-            /// The RAM output-check opening point (`r_address`).
-            pub fn ram_output_check_point(&self) -> &[F] {
-                self.ram_output_check.val_final.point()
-            }
-        }
-    };
+    /// The RAM output-check opening point (`r_address`).
+    pub fn ram_output_check_point(&self) -> &[F] {
+        self.ram_output_check.val_final()
+    }
 }
 
-stage2_batch_point_accessors!(OpeningClaim);
-stage2_batch_point_accessors!(Vec);
-
-impl<F: Field> Stage2BatchOutputClaims<F, OpeningClaim<F>> {
+impl<F: Field> Stage2BatchOutputClaims<F> {
     /// Enforce the cross-relation aliases between the product-remainder openings and
     /// the reduced instruction-claim openings: when a reduced opening is present it
     /// must share the product-remainder opening's point and value. Downstream
     /// consumers rely on these aliases when they fall back to the product remainder —
     /// the stage-5 instruction read-RAF wiring (`lookup_output`) and the stage-3
     /// instruction-input virtualization (`left`/`right_instruction_input`) — so the
-    /// stage-2 verifier checks them here (mirroring
-    /// [`Stage3OutputClaims::validate`](crate::stages::stage3::Stage3OutputClaims::validate))
-    /// rather than each consumer re-checking. Errors preserve the opening and
-    /// relation ids those consumers reported.
-    pub fn validate(&self) -> Result<(), VerifierError> {
+    /// stage-2 verifier checks them here rather than each consumer re-checking. Errors
+    /// preserve the opening and relation ids those consumers reported. The value
+    /// fallbacks read off `self` (the values); the point-agreement test reads off the
+    /// paired `points` struct.
+    pub fn validate(&self, points: &Stage2BatchOutputPoints<F>) -> Result<(), VerifierError> {
         let [(lookup_output_reduced, lookup_output_product)] =
             instruction::read_raf_consistency_openings();
         let [(left_reduced, left_product), (right_reduced, right_product)] =
@@ -151,7 +134,7 @@ impl<F: Field> Stage2BatchOutputClaims<F, OpeningClaim<F>> {
         // Every reduced instruction opening shares the product-remainder opening
         // point; if the points disagree the reduced openings cannot alias the
         // product ones.
-        if self.product_remainder_point() != self.instruction_claim_reduction_point() {
+        if points.product_remainder_point() != points.instruction_claim_reduction_point() {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: JoltRelationId::InstructionReadRaf,
                 left: lookup_output_reduced,
@@ -160,12 +143,11 @@ impl<F: Field> Stage2BatchOutputClaims<F, OpeningClaim<F>> {
         }
 
         // `lookup_output`: stage-5 instruction read-RAF fallback to the product remainder.
-        let product_lookup_output = self.product_remainder.lookup_output.value;
+        let product_lookup_output = self.product_remainder.lookup_output;
         let reduced_lookup_output = self
             .instruction_claim_reduction
             .lookup_output
-            .as_ref()
-            .map_or(product_lookup_output, |claim| claim.value);
+            .unwrap_or(product_lookup_output);
         if reduced_lookup_output != product_lookup_output {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: JoltRelationId::InstructionReadRaf,
@@ -176,18 +158,16 @@ impl<F: Field> Stage2BatchOutputClaims<F, OpeningClaim<F>> {
 
         // `left`/`right_instruction_input`: stage-3 instruction-input virtualization
         // fallback to the product remainder.
-        let product_left = self.product_remainder.left_instruction_input.value;
-        let product_right = self.product_remainder.right_instruction_input.value;
+        let product_left = self.product_remainder.left_instruction_input;
+        let product_right = self.product_remainder.right_instruction_input;
         let reduced_left = self
             .instruction_claim_reduction
             .left_instruction_input
-            .as_ref()
-            .map_or(product_left, |claim| claim.value);
+            .unwrap_or(product_left);
         let reduced_right = self
             .instruction_claim_reduction
             .right_instruction_input
-            .as_ref()
-            .map_or(product_right, |claim| claim.value);
+            .unwrap_or(product_right);
         if reduced_left != product_left {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: JoltRelationId::InstructionInputVirtualization,
@@ -208,12 +188,13 @@ impl<F: Field> Stage2BatchOutputClaims<F, OpeningClaim<F>> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ClearOutput<F: Field> {
-    /// The produced batch openings paired with their points (point + value) via the
-    /// `OpeningClaim` cell. The opening points are derived from each relation's
-    /// sumcheck point; later stages read them through the
-    /// `*_point()` accessors and read values through `.value`, instead of joining a
-    /// separately-tracked `VerifiedStage2Batch` with the wire values.
-    pub output_claims: Stage2BatchOutputClaims<F, OpeningClaim<F>>,
+    /// The produced batch opening *values* (wire form); later stages read each
+    /// opening's value directly off these fields.
+    pub output_values: Stage2BatchOutputClaims<F>,
+    /// The produced batch opening *points*, paired field-for-field with
+    /// `output_values`. Later stages read the points through the `*_point()`
+    /// accessors.
+    pub output_points: Stage2BatchOutputPoints<F>,
     pub product_uniskip: VerifiedProductUniSkip<F>,
 }
 
@@ -239,20 +220,11 @@ pub struct Stage2ZkOutput<F: Field, C> {
     pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    /// The produced batch opening points (point-only cell), the ZK counterpart of
-    /// the clear path's `output_claims`. Later stages read them through the same
-    /// `*_point()` accessors via [`GetPoint`](crate::stages::relations::GetPoint).
-    pub output_points: Stage2BatchOutputClaims<F, Vec<F>>,
+    /// The produced batch opening points, the ZK counterpart of the clear path's
+    /// `output_points`. Later stages read them through the same `*_point()` accessors.
+    pub output_points: Stage2BatchOutputPoints<F>,
 }
 
-// The clear variant carries the located opening claims (point + value) that later
-// stages read on the hot path; the ZK variant carries committed consistency plus
-// the point-only `output_points`. Boxing the common clear variant to shrink the
-// rarer ZK one would add indirection to every clear-path access.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
-)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage2Output<F: Field, C> {
     Clear(Stage2ClearOutput<F>),
@@ -299,7 +271,7 @@ mod tests {
     /// to prove they are skipped.
     #[test]
     fn opening_values_follow_canonical_order() {
-        let claims = Stage2BatchOutputClaims::<Fr, Fr> {
+        let claims = Stage2BatchOutputClaims::<Fr> {
             ram_read_write: RamReadWriteOutputClaims {
                 val: fr(1),
                 ra: fr(2),
@@ -332,81 +304,107 @@ mod tests {
         );
     }
 
-    fn oc(value: u64) -> OpeningClaim<Fr> {
-        OpeningClaim {
-            point: Vec::new(),
-            value: fr(value),
+    /// A stage-2 batch output where the reduced instruction openings alias the
+    /// product-remainder ones (equal values): `lookup_output`,
+    /// `left`/`right_instruction_input`. The paired points agree on the shared
+    /// point. `validate` accepts it; the tests below perturb one alias value (or the
+    /// shared point) each to assert rejection.
+    fn consistent_values() -> Stage2BatchOutputClaims<Fr> {
+        Stage2BatchOutputClaims::<Fr> {
+            ram_read_write: RamReadWriteOutputClaims {
+                val: fr(1),
+                ra: fr(2),
+                inc: fr(3),
+            },
+            product_remainder: ProductRemainderOutputClaims {
+                left_instruction_input: fr(4),
+                right_instruction_input: fr(5),
+                jump_flag: fr(6),
+                write_lookup_output_to_rd: fr(7),
+                lookup_output: fr(8),
+                branch_flag: fr(9),
+                next_is_noop: fr(10),
+                virtual_instruction: fr(11),
+            },
+            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
+                lookup_output: Some(fr(8)),
+                left_lookup_operand: fr(12),
+                right_lookup_operand: fr(13),
+                left_instruction_input: Some(fr(4)),
+                right_instruction_input: Some(fr(5)),
+            },
+            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
+            ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
         }
     }
 
-    /// A stage-2 batch output where the reduced instruction openings alias the
-    /// product-remainder ones (equal points + values): `lookup_output`,
-    /// `left`/`right_instruction_input`. `validate` accepts it; the tests below
-    /// perturb one alias (or the shared point) each to assert rejection.
-    fn consistent() -> Stage2BatchOutputClaims<Fr, OpeningClaim<Fr>> {
-        Stage2BatchOutputClaims::<Fr, OpeningClaim<Fr>> {
+    /// The paired points for [`consistent_values`]: the product-remainder and
+    /// reduced instruction-claim openings share the SAME point (so the alias holds).
+    fn consistent_points(shared_point: Vec<Fr>) -> Stage2BatchOutputPoints<Fr> {
+        let p = || shared_point.clone();
+        Stage2BatchOutputPoints::<Fr> {
             ram_read_write: RamReadWriteOutputClaims {
-                val: oc(1),
-                ra: oc(2),
-                inc: oc(3),
+                val: p(),
+                ra: p(),
+                inc: p(),
             },
             product_remainder: ProductRemainderOutputClaims {
-                left_instruction_input: oc(4),
-                right_instruction_input: oc(5),
-                jump_flag: oc(6),
-                write_lookup_output_to_rd: oc(7),
-                lookup_output: oc(8),
-                branch_flag: oc(9),
-                next_is_noop: oc(10),
-                virtual_instruction: oc(11),
+                left_instruction_input: p(),
+                right_instruction_input: p(),
+                jump_flag: p(),
+                write_lookup_output_to_rd: p(),
+                lookup_output: p(),
+                branch_flag: p(),
+                next_is_noop: p(),
+                virtual_instruction: p(),
             },
             instruction_claim_reduction: InstructionClaimReductionOutputClaims {
-                lookup_output: Some(oc(8)),
-                left_lookup_operand: oc(12),
-                right_lookup_operand: oc(13),
-                left_instruction_input: Some(oc(4)),
-                right_instruction_input: Some(oc(5)),
+                lookup_output: Some(p()),
+                left_lookup_operand: p(),
+                right_lookup_operand: p(),
+                left_instruction_input: Some(p()),
+                right_instruction_input: Some(p()),
             },
-            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: oc(14) },
-            ram_output_check: RamOutputCheckOutputClaims { val_final: oc(15) },
+            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: p() },
+            ram_output_check: RamOutputCheckOutputClaims { val_final: p() },
         }
     }
 
     #[test]
     fn validate_accepts_consistent_reduction() {
-        assert!(consistent().validate().is_ok());
+        assert!(consistent_values()
+            .validate(&consistent_points(vec![fr(7)]))
+            .is_ok());
     }
 
     #[test]
     fn validate_rejects_lookup_output_mismatch() {
-        let mut claims = consistent();
-        claims.instruction_claim_reduction.lookup_output = Some(oc(99));
-        assert!(claims.validate().is_err());
+        let mut values = consistent_values();
+        values.instruction_claim_reduction.lookup_output = Some(fr(99));
+        assert!(values.validate(&consistent_points(vec![fr(7)])).is_err());
     }
 
     #[test]
     fn validate_rejects_left_instruction_input_mismatch() {
-        let mut claims = consistent();
-        claims.instruction_claim_reduction.left_instruction_input = Some(oc(99));
-        assert!(claims.validate().is_err());
+        let mut values = consistent_values();
+        values.instruction_claim_reduction.left_instruction_input = Some(fr(99));
+        assert!(values.validate(&consistent_points(vec![fr(7)])).is_err());
     }
 
     #[test]
     fn validate_rejects_right_instruction_input_mismatch() {
-        let mut claims = consistent();
-        claims.instruction_claim_reduction.right_instruction_input = Some(oc(99));
-        assert!(claims.validate().is_err());
+        let mut values = consistent_values();
+        values.instruction_claim_reduction.right_instruction_input = Some(fr(99));
+        assert!(values.validate(&consistent_points(vec![fr(7)])).is_err());
     }
 
     #[test]
     fn validate_rejects_reduction_point_mismatch() {
-        let mut claims = consistent();
+        let values = consistent_values();
         // Shift the product-remainder opening point away from the reduction's, so
         // the reduced openings cannot alias the product ones.
-        claims.product_remainder.left_instruction_input = OpeningClaim {
-            point: vec![fr(1)],
-            value: fr(4),
-        };
-        assert!(claims.validate().is_err());
+        let mut points = consistent_points(vec![fr(7)]);
+        points.product_remainder.left_instruction_input = vec![fr(1)];
+        assert!(values.validate(&points).is_err());
     }
 }

@@ -7,8 +7,8 @@ pub mod outputs;
 pub mod verify;
 
 pub use outputs::{
-    Stage7Challenges, Stage7ClearOutput, Stage7InputClaims, Stage7Output, Stage7OutputClaims,
-    Stage7ZkOutput,
+    Stage7Challenges, Stage7ClearOutput, Stage7InputClaims, Stage7InputPoints, Stage7Output,
+    Stage7OutputClaims, Stage7OutputPoints, Stage7ZkOutput,
 };
 pub use verify::{
     stage7_hamming_virtualization_address_points, verify, Stage7InstancePoints, Stage7Layouts,

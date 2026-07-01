@@ -28,28 +28,38 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed instruction-lookup openings from stage 1's outer sumcheck.
-/// (Verifier-side constructor for the moved [`InstructionClaimReductionInputClaims`]
-/// — it reads the verifier-only [`Stage1ClearOutput`], so it cannot live in
-/// `jolt-claims`.)
-pub fn instruction_claim_reduction_inputs_from_upstream<F: Field>(
+/// Wire the consumed instruction-lookup opening *values* from stage 1's outer
+/// sumcheck. (Verifier-side constructor for the moved
+/// [`InstructionClaimReductionInputClaims`] — it reads the verifier-only
+/// [`Stage1ClearOutput`], so it cannot live in `jolt-claims`.)
+pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
-) -> InstructionClaimReductionInputClaims<OpeningClaim<F>> {
-    let value = |value: F| OpeningClaim {
-        point: Vec::new(),
-        value,
-    };
-    let outer = &stage1.output_claims.outer_remainder;
+) -> InstructionClaimReductionInputClaims<F> {
+    let outer = &stage1.output_values.outer_remainder;
     InstructionClaimReductionInputClaims {
-        lookup_output: value(outer.lookup_output.value),
-        left_lookup_operand: value(outer.left_lookup_operand.value),
-        right_lookup_operand: value(outer.right_lookup_operand.value),
-        left_instruction_input: value(outer.left_instruction_input.value),
-        right_instruction_input: value(outer.right_instruction_input.value),
+        lookup_output: outer.lookup_output,
+        left_lookup_operand: outer.left_lookup_operand,
+        right_lookup_operand: outer.right_lookup_operand,
+        left_instruction_input: outer.left_instruction_input,
+        right_instruction_input: outer.right_instruction_input,
+    }
+}
+
+/// Wire the consumed instruction-lookup opening *points* (all empty — these
+/// openings carry no point at this stage).
+pub fn instruction_claim_reduction_input_points_from_upstream<F: Field>(
+    _stage1: &Stage1ClearOutput<F>,
+) -> InstructionClaimReductionInputClaims<Vec<F>> {
+    InstructionClaimReductionInputClaims {
+        lookup_output: Vec::new(),
+        left_lookup_operand: Vec::new(),
+        right_lookup_operand: Vec::new(),
+        left_instruction_input: Vec::new(),
+        right_instruction_input: Vec::new(),
     }
 }
 
@@ -83,10 +93,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionClaimReductionInputClaims<C>,
+        _input_points: &InstructionClaimReductionInputClaims<Vec<F>>,
     ) -> Result<InstructionClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(InstructionClaimReductionOutputClaims {
@@ -98,11 +108,11 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &InstructionClaimReductionInputClaims<C>,
-        outputs: &InstructionClaimReductionOutputClaims<OpeningClaim<F>>,
+        _input_points: &InstructionClaimReductionInputClaims<Vec<F>>,
+        output_points: &InstructionClaimReductionOutputClaims<Vec<F>>,
         _challenges: &InstructionClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionClaimReduction(public_id) = id else {
@@ -112,7 +122,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
             // The reduced openings share one opening point; bind it against the low
             // product remainder challenges (`tau_low`).
             InstructionClaimReductionPublic::EqSpartan => {
-                try_eq_mle(outputs.left_lookup_operand.point(), &self.tau_low)
+                try_eq_mle(output_points.left_lookup_operand(), &self.tau_low)
                     .map_err(public_input_failed)
             }
         }

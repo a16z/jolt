@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
-use crate::stages::relations::{OpeningClaim, SumcheckBatch};
+use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 use super::advice_address_phase::AdviceAddressPhase;
@@ -17,9 +17,10 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 /// batch order (hamming-weight reduction, advice address phase, then the
 /// committed-program-only bytecode and program-image address phases — each
 /// present only when its phase runs). `#[derive(SumcheckBatch)]` generates the
-/// `Stage7InputClaims<F, C>`, `Stage7OutputClaims<F, C>`, and `Stage7Challenges<F>`
-/// aggregates — one field per instance, in this declaration order — plus the
-/// `Stage7OutputClaims` Fiat-Shamir opening plumbing (`opening_values` /
+/// `Stage7InputClaims<F>`, `Stage7InputPoints<F>`, `Stage7OutputClaims<F>`,
+/// `Stage7OutputPoints<F>`, and `Stage7Challenges<F>` aggregates — one field per
+/// instance, in this declaration order — plus the `Stage7OutputClaims` Fiat-Shamir
+/// opening plumbing (`opening_values` /
 /// `append_to_transcript`). The field order is load-bearing: it fixes the canonical
 /// opening order absorbed into the transcript, which must match the prover's
 /// commitment order. The two `Option` members contribute only when their phase ran.
@@ -49,9 +50,12 @@ pub struct PrecommittedFinalOpening<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ClearOutput<F: Field> {
-    /// The produced stage-7 openings paired with their points (point + value) via
-    /// the `OpeningClaim` cell.
-    pub output_claims: Stage7OutputClaims<F, OpeningClaim<F>>,
+    /// The produced stage-7 opening *values* (wire form); read by later stages and
+    /// the Fiat-Shamir opening-claim encoder.
+    pub output_values: Stage7OutputClaims<F>,
+    /// The produced stage-7 opening *points*, paired field-for-field with
+    /// `output_values`. Later stages read each opening's point off these cells.
+    pub output_points: Stage7OutputPoints<F>,
     /// The hamming-weight reduction's opening point — the own point of the one-hot
     /// `Ra` polynomials, shared by all reduced RA openings. Stored contiguously so
     /// stage 8 can borrow it directly (the per-family RA opening cells can be empty
@@ -133,7 +137,7 @@ mod tests {
             untrusted: Some(fr(6)),
         };
 
-        let without_committed = Stage7OutputClaims::<Fr, Fr> {
+        let without_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming.clone(),
             advice_address_phase: advice.clone(),
             bytecode_address_phase: None,
@@ -144,7 +148,7 @@ mod tests {
             (1..=6).map(fr).collect::<Vec<_>>()
         );
 
-        let with_committed = Stage7OutputClaims::<Fr, Fr> {
+        let with_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming,
             advice_address_phase: advice,
             bytecode_address_phase: Some(BytecodeReductionAddressPhaseOutputClaims {

@@ -37,7 +37,7 @@ impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }

@@ -83,7 +83,7 @@ pub(crate) fn build_clear_claims<F: Field>(
 
 fn spartan_outer_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage1BatchOutputClaims<F, F>, VerifierError> {
+) -> Result<Stage1BatchOutputClaims<F>, VerifierError> {
     let outer_claim = |variable| claims.require(outer_opening(variable));
     let flag_claim = |flag| outer_claim(JoltVirtualPolynomial::OpFlags(flag));
 
@@ -175,7 +175,7 @@ fn stage2_claims_from_openings<F: Field>(
 
 fn stage3_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage3OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage3OutputClaims<F>, VerifierError> {
     let shift = SpartanShiftOutputClaims {
         unexpanded_pc: claims.require(spartan::unexpanded_pc_shift())?,
         pc: claims.require(spartan::pc_shift())?,
@@ -214,7 +214,7 @@ fn stage3_claims_from_openings<F: Field>(
 
 fn stage4_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage4OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage4OutputClaims<F>, VerifierError> {
     Ok(Stage4OutputClaims {
         registers_read_write: RegistersReadWriteOutputClaims {
             registers_val: claims.require(registers::registers_val_read_write())?,
@@ -238,7 +238,7 @@ fn stage4_claims_from_openings<F: Field>(
 
 fn stage5_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage5OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage5OutputClaims<F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
         .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
         .collect::<Result<Vec<_>, _>>()?;
@@ -274,7 +274,7 @@ fn stage5_claims_from_openings<F: Field>(
 
 fn stage6_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage6OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage6OutputClaims<F>, VerifierError> {
     let mut bytecode_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -481,7 +481,7 @@ fn final_bytecode_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<
 
 fn stage7_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Stage7OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage7OutputClaims<F>, VerifierError> {
     let mut instruction_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
