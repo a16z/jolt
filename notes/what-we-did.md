@@ -83,3 +83,45 @@ The `expand_*` function is the hand-written Rust that builds the sequence:
   `imm=-9223372036854775808`, which is `2^63` = Lean's `sraiBitmask(63)`. The Lean
   keeps the symbolic form; our dump shows the concrete number. This is a
   representation gap to resolve on the Lean side, not in the prover.
+
+## For future me — read before building the AST→Lean backend
+
+Context settled with Ari (2026-07-01):
+
+- The hand-written Lean in `JoltBytecode/JoltISA/Expansions/` will be **replaced**
+  by auto-translated Lean. Goal: make the auto-translation *as similar as possible*
+  to the hand-written Lean so the existing proofs don't break much (and to confirm
+  the hand-written Lean was done well).
+- The AST→Lean backend is **not written yet**, and we have full freedom there.
+- Do **not** change the live prover. Reconcile representation gaps on the Lean
+  side or in the backend.
+
+**The one decision this pins down: the backend must read the NESTED recipe
+(`expand_source_only_instruction`), not the flattened materialized output
+(`expand_instruction`).** The flat/symbolic dumps in this file were for eyeballing
+only — they are the wrong input for generating proof-compatible Lean.
+
+Why nested is right — the hand-written Lean is built from block helpers
+(`slliBlock`, `srlBlock`, `sllBlock`, `mulhBlock`, `sraiBlock`,
+`amoDoubleBinopProgram`), and the nested recipe preserves exactly those block
+boundaries:
+
+| nested recipe | hand-written Lean |
+|---|---|
+| one `Expand(kind, ..)` node | one block-helper call (`srlBlock`, `slliBlock`, …) |
+| `Expand(SllI, imm=3)` — raw shift amount survives | `slliBlock … (3 : BitVec 6)` |
+| `Temp(0)`, `Temp(1)` (allocation order) | `inlineTmp0` (v40), `inlineTmp1` (v41) |
+| side-effect metadata on the kind | `pureWritebackTraceProgram rd` vs side-effecting rewrite |
+
+The immediate "problem" is **not real at the nested level**. In the flattened
+output, `SLLI` is already lowered to `VirtualMULI … 8` (2^3 pre-computed), which
+loses the shift amount. In the nested recipe, `SLLI` is a single `Expand` node
+carrying `imm=3` (the actual shift). The backend emits `slliBlock … 3`; the
+`2^shamt` lives inside the Lean helper (`slliMultiplier`), which we neither
+generate nor touch. So no immediate recovery/recognition is needed — just read
+the nested recipe and emit block calls.
+
+One-level nesting maps perfectly: emit the block call, and the block's own Lean
+definition handles the deeper expansion. Register numbering (`v40 = inlineTmp0`)
+already matches the Lean because both use the same allocator order — keep a golden
+test pinning it so an allocator change shows as a visible diff.
