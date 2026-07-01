@@ -70,9 +70,15 @@ fn committed_rounds_complete_with_pedersen_commitments() {
     .unwrap();
 
     assert_eq!(consistency.challenges(), expected_challenges);
-    assert_eq!(consistency.round_degrees(), vec![2, 1, 2]);
-    // Both transcripts consumed identical messages; the next squeezed challenge
-    // must agree (the spongefish `state()` accessor the facade exposed is gone).
+    assert_eq!(
+        consistency
+            .rounds
+            .iter()
+            .map(|round| round.degree)
+            .collect::<Vec<_>>(),
+        vec![2, 1, 2]
+    );
+
     let verifier_next: F = FsChallenge::<F>::challenge(&mut verifier_transcript);
     let prover_next: F = FsChallenge::<F>::challenge(&mut prover_transcript);
     assert_eq!(verifier_next, prover_next);

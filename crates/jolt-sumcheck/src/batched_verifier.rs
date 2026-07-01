@@ -324,7 +324,17 @@ impl BatchedSumcheckVerifier {
     {
         match proof {
             SumcheckProof::Committed(proof) => {
-                Self::verify_committed_consistency_for_proof(statements, proof, transcript)
+                let statement = Self::batch_statement(statements)?;
+                let batching_coefficients =
+                    Self::batching_coefficients(statements.len(), transcript);
+                let consistency = proof.verify_committed_consistency(statement, transcript)?;
+
+                Ok(BatchedCommittedSumcheckConsistency {
+                    consistency,
+                    batching_coefficients,
+                    max_num_vars: statement.num_vars,
+                    max_degree: statement.degree,
+                })
             }
             SumcheckProof::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "committed",
@@ -349,22 +359,11 @@ impl BatchedSumcheckVerifier {
         C: Clone + CanonicalSerialize + CanonicalDeserialize,
         T: FsNargRead + FsTranscript<F>,
     {
-        Self::verify_committed_consistency_for_narg(statements, transcript)
-    }
-
-    fn verify_committed_consistency_for_proof<F, C, T>(
-        statements: &[SumcheckStatement],
-        proof: &CommittedSumcheckProof<C>,
-        transcript: &mut T,
-    ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
-    where
-        F: Field,
-        C: Clone + CanonicalSerialize,
-        T: FsTranscript<F>,
-    {
         let statement = Self::batch_statement(statements)?;
         let batching_coefficients = Self::batching_coefficients(statements.len(), transcript);
-        let consistency = proof.verify_committed_consistency(statement, transcript)?;
+        let consistency = CommittedSumcheckProof::<C>::verify_committed_consistency_from_narg(
+            statement, transcript,
+        )?;
 
         Ok(BatchedCommittedSumcheckConsistency {
             consistency,
@@ -415,29 +414,6 @@ impl BatchedSumcheckVerifier {
             batching_coefficients,
             max_num_vars,
             max_degree,
-        })
-    }
-
-    fn verify_committed_consistency_for_narg<F, C, T>(
-        statements: &[SumcheckStatement],
-        transcript: &mut T,
-    ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
-    where
-        F: Field,
-        C: Clone + CanonicalSerialize + CanonicalDeserialize,
-        T: FsNargRead + FsTranscript<F>,
-    {
-        let statement = Self::batch_statement(statements)?;
-        let batching_coefficients = Self::batching_coefficients(statements.len(), transcript);
-        let consistency = CommittedSumcheckProof::<C>::verify_committed_consistency_from_narg(
-            statement, transcript,
-        )?;
-
-        Ok(BatchedCommittedSumcheckConsistency {
-            consistency,
-            batching_coefficients,
-            max_num_vars: statement.num_vars,
-            max_degree: statement.degree,
         })
     }
 

@@ -58,28 +58,6 @@ pub enum SumcheckProof<F: jolt_field::Field, C> {
 }
 
 impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
-    pub fn is_committed(&self) -> bool {
-        matches!(self, Self::Committed(_))
-    }
-
-    pub fn is_clear(&self) -> bool {
-        matches!(self, Self::Clear(_))
-    }
-
-    pub fn as_clear(&self) -> Option<&ClearProof<F>> {
-        match self {
-            Self::Clear(proof) => Some(proof),
-            Self::Committed(_) => None,
-        }
-    }
-
-    pub fn as_committed(&self) -> Option<&CommittedSumcheckProof<C>> {
-        match self {
-            Self::Clear(_) => None,
-            Self::Committed(proof) => Some(proof),
-        }
-    }
-
     /// Verifies a full-round clear sumcheck proof over `domain`.
     pub fn verify<T, D>(
         &self,

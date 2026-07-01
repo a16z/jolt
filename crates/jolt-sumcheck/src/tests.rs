@@ -533,9 +533,13 @@ fn owned_compressed_verify_matches_borrowed_compressed_rounds() {
 
     let mut owned_transcript =
         verifier_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default(), &[]);
-    let owned = compressed_proof
-        .verify(&claim, BooleanHypercube, &mut owned_transcript)
-        .unwrap();
+    let owned = SumcheckVerifier::verify_compressed(
+        &claim,
+        &compressed_proof,
+        BooleanHypercube,
+        &mut owned_transcript,
+    )
+    .unwrap();
 
     assert_eq!(owned, borrowed);
     // Both transcripts consumed identical messages; the next squeezed challenge
@@ -560,7 +564,7 @@ fn owned_compressed_verify_rejects_wrong_round_count() {
     };
 
     let mut t = verifier_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default(), &[]);
-    let result = proof.verify(&claim, BooleanHypercube, &mut t);
+    let result = SumcheckVerifier::verify_compressed(&claim, &proof, BooleanHypercube, &mut t);
 
     assert!(matches!(
         result,
@@ -583,7 +587,7 @@ fn owned_compressed_verify_rejects_degree_bound_exceeded() {
     };
 
     let mut t = verifier_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default(), &[]);
-    let result = proof.verify(&claim, BooleanHypercube, &mut t);
+    let result = SumcheckVerifier::verify_compressed(&claim, &proof, BooleanHypercube, &mut t);
 
     assert!(matches!(
         result,
@@ -603,7 +607,7 @@ fn owned_compressed_verify_rejects_empty_round_polynomial() {
     };
 
     let mut t = verifier_transcript(b"sumcheck-test", INSTANCE, Blake2b512::default(), &[]);
-    let result = proof.verify(&claim, BooleanHypercube, &mut t);
+    let result = SumcheckVerifier::verify_compressed(&claim, &proof, BooleanHypercube, &mut t);
 
     assert!(matches!(
         result,
@@ -1152,9 +1156,20 @@ fn committed_rounds_check_transcript_and_return_public_data() {
     .unwrap();
 
     assert_eq!(consistency.challenges(), expected_challenges);
-    assert_eq!(consistency.round_degrees(), vec![1, 2, 0]);
     assert_eq!(
-        consistency.round_commitments(),
+        consistency
+            .rounds
+            .iter()
+            .map(|round| round.degree)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 0]
+    );
+    assert_eq!(
+        consistency
+            .rounds
+            .iter()
+            .map(|round| round.commitment)
+            .collect::<Vec<_>>(),
         rounds
             .iter()
             .map(|round| round.commitment)
@@ -1266,7 +1281,14 @@ fn committed_proof_checks_rounds_then_output_claims() {
         .unwrap();
 
     assert_eq!(consistency.challenges(), expected_challenges);
-    assert_eq!(consistency.round_degrees(), vec![1, 2]);
+    assert_eq!(
+        consistency
+            .rounds
+            .iter()
+            .map(|round| round.degree)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
     let verifier_next: F = FsChallenge::<F>::challenge(&mut verifier);
     let manual_next: F = FsChallenge::<F>::challenge(&mut manual);
     assert_eq!(verifier_next, manual_next);

@@ -59,20 +59,9 @@ pub struct CommittedSumcheckConsistency<F, C> {
     pub output_claims: CommittedOutputClaims<C>,
 }
 
-impl<F: Copy, C: Clone> CommittedSumcheckConsistency<F, C> {
+impl<F: Copy, C> CommittedSumcheckConsistency<F, C> {
     pub fn challenges(&self) -> Vec<F> {
         self.rounds.iter().map(|round| round.challenge).collect()
-    }
-
-    pub fn round_degrees(&self) -> Vec<usize> {
-        self.rounds.iter().map(|round| round.degree).collect()
-    }
-
-    pub fn round_commitments(&self) -> Vec<C> {
-        self.rounds
-            .iter()
-            .map(|round| round.commitment.clone())
-            .collect()
     }
 }
 

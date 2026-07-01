@@ -3,7 +3,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{FsChallenge, FsNargRead, FsTranscript};
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
@@ -17,51 +17,6 @@ use crate::round_proof::{ClearRound, RoundDegree, RoundMessage};
 
 /// Stateless sumcheck verifier engine.
 pub struct SumcheckVerifier;
-
-fn verify_compressed_rounds<'a, F, T, I, A>(
-    claim: &SumcheckClaim<F>,
-    rounds: I,
-    domain: BooleanHypercube,
-    transcript: &mut T,
-    mut absorb_round: A,
-) -> Result<EvaluationClaim<F>, SumcheckError<F>>
-where
-    F: Field + 'a,
-    T: FsChallenge<F>,
-    I: ExactSizeIterator<Item = (usize, &'a CompressedPoly<F>)>,
-    A: FnMut(&mut T, &'a CompressedPoly<F>),
-{
-    if rounds.len() != claim.num_vars {
-        return Err(SumcheckError::WrongNumberOfRounds {
-            expected: claim.num_vars,
-            got: rounds.len(),
-        });
-    }
-    let BooleanHypercube = domain;
-
-    let mut running_sum = claim.claimed_sum;
-    let mut challenges = Vec::with_capacity(claim.num_vars);
-
-    for (round, round_proof) in rounds {
-        if round_proof.degree() > claim.degree {
-            return Err(SumcheckError::DegreeBoundExceeded {
-                got: round_proof.degree(),
-                max: claim.degree,
-            });
-        }
-        let coeffs = round_proof.coeffs_except_linear_term();
-        if coeffs.is_empty() {
-            return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
-        }
-
-        absorb_round(transcript, round_proof);
-        let r: F = transcript.challenge();
-        running_sum = round_proof.evaluate_with_hint(running_sum, r);
-        challenges.push(r);
-    }
-
-    Ok(EvaluationClaim::new(challenges, running_sum))
-}
 
 impl SumcheckVerifier {
     /// Verifies a sumcheck proof.
@@ -178,39 +133,36 @@ impl SumcheckVerifier {
         F: Field,
         T: FsTranscript<F>,
     {
-        Self::verify_compressed_with_absorb(
-            claim,
-            proof,
-            domain,
-            transcript,
-            |transcript, coeffs| {
-                transcript.absorb_field_slice(coeffs);
-            },
-        )
-    }
+        if proof.round_polynomials.len() != claim.num_vars {
+            return Err(SumcheckError::WrongNumberOfRounds {
+                expected: claim.num_vars,
+                got: proof.round_polynomials.len(),
+            });
+        }
+        let BooleanHypercube = domain;
 
-    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_compressed_with_absorb")]
-    pub fn verify_compressed_with_absorb<F, T, A>(
-        claim: &SumcheckClaim<F>,
-        proof: &CompressedSumcheckProof<F>,
-        domain: BooleanHypercube,
-        transcript: &mut T,
-        mut absorb_coeffs: A,
-    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
-    where
-        F: Field,
-        T: FsChallenge<F>,
-        A: FnMut(&mut T, &[F]),
-    {
-        verify_compressed_rounds(
-            claim,
-            proof.round_polynomials.iter().enumerate(),
-            domain,
-            transcript,
-            |transcript, round_proof| {
-                absorb_coeffs(transcript, round_proof.coeffs_except_linear_term());
-            },
-        )
+        let mut running_sum = claim.claimed_sum;
+        let mut challenges = Vec::with_capacity(claim.num_vars);
+
+        for (round, round_proof) in proof.round_polynomials.iter().enumerate() {
+            if round_proof.degree() > claim.degree {
+                return Err(SumcheckError::DegreeBoundExceeded {
+                    got: round_proof.degree(),
+                    max: claim.degree,
+                });
+            }
+            let coeffs = round_proof.coeffs_except_linear_term();
+            if coeffs.is_empty() {
+                return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
+            }
+
+            transcript.absorb_field_slice(coeffs);
+            let r: F = transcript.challenge();
+            running_sum = round_proof.evaluate_with_hint(running_sum, r);
+            challenges.push(r);
+        }
+
+        Ok(EvaluationClaim::new(challenges, running_sum))
     }
 
     /// Verifies a compressed clear Boolean-hypercube proof from NARG frames.
@@ -298,23 +250,6 @@ impl SumcheckVerifier {
                 commitments: Vec::new(),
             },
         })
-    }
-}
-
-impl<F> CompressedSumcheckProof<F>
-where
-    F: Field,
-{
-    pub fn verify<T>(
-        &self,
-        claim: &SumcheckClaim<F>,
-        domain: BooleanHypercube,
-        transcript: &mut T,
-    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
-    where
-        T: FsTranscript<F>,
-    {
-        SumcheckVerifier::verify_compressed(claim, self, domain, transcript)
     }
 }
 

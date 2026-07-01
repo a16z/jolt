@@ -83,14 +83,6 @@ fuzz_target!(|data: &[u8]| {
             let poly = UnivariatePoly::new(coeffs);
 
             // Mirror the verifier's transcript / challenge / evaluate sequence
-            // EXACTLY. The verifier absorbs the round polynomial as a single
-            // `absorb_field_slice(coefficients())` message (see
-            // `RoundMessage for UnivariatePoly`), so the prover side must too —
-            // absorbing coefficients one-by-one is a different sponge input and
-            // yields a different challenge. `pt` is a concrete `ProverState`,
-            // which carries spongefish's deprecated inherent `challenge`; call
-            // the `FsChallenge` trait method explicitly so we get the migrated
-            // challenge, not the inherent one.
             pt.absorb_field_slice(poly.coefficients());
             let r: Fr = FsChallenge::<Fr>::challenge(&mut pt);
             running_sum = poly.evaluate(r);
