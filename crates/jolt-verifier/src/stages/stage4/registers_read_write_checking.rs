@@ -19,16 +19,15 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage3::outputs::Stage3ClearOutput;
+use crate::stages::stage3::{Stage3OutputClaims, Stage3OutputPoints};
 use crate::VerifierError;
 
 /// Wire the consumed opening *values* from stage 3's registers claim-reduction
-/// output. (Verifier-side constructor for the moved
-/// [`RegistersReadWriteInputClaims`].)
+/// output. Takes the ZK-agnostic stage-3 output-claims aggregate.
 pub fn registers_read_write_input_values_from_upstream<F: Field>(
-    stage3: &Stage3ClearOutput<F>,
+    stage3: &Stage3OutputClaims<F>,
 ) -> RegistersReadWriteInputClaims<F> {
-    let reduction = &stage3.output_values.registers_claim_reduction;
+    let reduction = &stage3.registers_claim_reduction;
     RegistersReadWriteInputClaims {
         rd_write_value: reduction.rd_write_value,
         rs1_value: reduction.rs1_value,
@@ -37,11 +36,12 @@ pub fn registers_read_write_input_values_from_upstream<F: Field>(
 }
 
 /// Wire the consumed opening *points* from stage 3's registers claim-reduction
-/// output, all sharing that relation's opening point.
+/// output, all sharing that relation's opening point. Takes the ZK-agnostic
+/// stage-3 output-points aggregate.
 pub fn registers_read_write_input_points_from_upstream<F: Field>(
-    stage3: &Stage3ClearOutput<F>,
+    stage3: &Stage3OutputPoints<F>,
 ) -> RegistersReadWriteInputClaims<Vec<F>> {
-    let reduction = &stage3.output_points.registers_claim_reduction;
+    let reduction = &stage3.registers_claim_reduction;
     RegistersReadWriteInputClaims {
         rd_write_value: reduction.rd_write_value().to_vec(),
         rs1_value: reduction.rs1_value().to_vec(),

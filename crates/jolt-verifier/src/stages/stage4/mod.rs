@@ -10,12 +10,11 @@ pub use outputs::{
     Stage4OutputClaims, Stage4OutputPoints, Stage4Sumchecks, Stage4ZkOutput,
 };
 pub use ram_val_check::{
-    ram_val_check_advice_block, RamValCheck, RamValCheckAdviceBlock, RamValCheckInitialEvaluation,
-    RamValCheckInputClaims, RamValCheckOutputClaims, VerifiedRamValCheckAdviceContribution,
+    append_ram_val_check_gamma_domain_separator, ram_val_check_advice_block, RamValCheck,
+    RamValCheckAdviceBlock, RamValCheckInitialEvaluation, RamValCheckInputClaims,
+    RamValCheckOutputClaims, VerifiedRamValCheckAdviceContribution,
 };
 pub use registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
 };
-pub use verify::{
-    append_ram_val_check_gamma_domain_separator, stage4_expected_final_claim, verify,
-};
+pub use verify::verify;
