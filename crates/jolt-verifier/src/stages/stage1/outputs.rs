@@ -31,7 +31,18 @@ pub struct Stage1OutputClaims<F: Field> {
 /// generated `opening_values` / `append_to_transcript` delegates to
 /// `OuterRemainderOutputClaims` in `dimensions.variables()` order (the canonical 35
 /// R1CS-input order), byte-identical to the previous explicit append loop.
+///
+/// The full driver-flag set applies. `expected_final_claim` additionally requires
+/// the member's late [`bind_coefficients`](OuterRemainder::bind_coefficients)
+/// (its coefficient table depends on the batch's own bound point).
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(
+    verify_clear,
+    verify_zk,
+    derive_opening_points,
+    expected_final_claim,
+    output_shape
+)]
 pub struct Stage1BatchSumchecks<F: Field> {
     pub outer_remainder: OuterRemainder<F>,
 }
@@ -204,6 +215,10 @@ pub struct Stage1ZkOutput<F: Field, C> {
     pub uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub remainder_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub remainder_output_claims: CommittedOutputClaimOutput<C>,
+    /// The produced opening points (the *reversed* bound point on every cell), the
+    /// ZK counterpart of the clear path's `output_points`. The raw un-reversed
+    /// reduction point stays exposed by [`Stage1Output::remainder_point`].
+    pub output_points: Stage1BatchOutputPoints<F>,
 }
 
 // The clear variant carries the located opening claims (point + value) read on the

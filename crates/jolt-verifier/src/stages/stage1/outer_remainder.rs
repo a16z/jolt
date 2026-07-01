@@ -109,17 +109,37 @@ impl<F: Field> OuterRemainderCoefficients<F> {
 
 pub struct OuterRemainder<F: Field> {
     symbolic: relations::spartan::OuterRemainder,
-    coefficients: OuterRemainderCoefficients<F>,
+    variable_count: usize,
+    /// Late-bound: the coefficient table depends on this sumcheck's own bound
+    /// point (the remainder challenges), which exists only after the batch
+    /// verifies, so it cannot be built in the constructor. Populated by
+    /// [`bind_coefficients`](Self::bind_coefficients); only the clear path's
+    /// `expected_output` / `derive_output_term` read it.
+    coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
 }
 
 impl<F: Field> OuterRemainder<F> {
-    pub fn new(
-        dimensions: SpartanOuterDimensions,
+    pub fn new(dimensions: SpartanOuterDimensions) -> Self {
+        let variable_count = dimensions.variables().len();
+        Self {
+            symbolic: relations::spartan::OuterRemainder::new(dimensions),
+            variable_count,
+            coefficients: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Build the expanded `SpartanOuterPublic` coefficient table from `tau`, the
+    /// uni-skip reduction challenge, and this sumcheck's bound point. Sourced from
+    /// [`JoltSpartanOuterRemainder::public_coefficients`] — the same source the
+    /// BlindFold constraint uses — so the output-claim algebra cannot drift from
+    /// that constraint. Must run before `expected_output` (the stage-1 verifier
+    /// calls it right after the batch's opening points are derived).
+    pub fn bind_coefficients(
+        &self,
         tau: &[F],
         uniskip_challenge: F,
         remainder_challenges: &[F],
-    ) -> Result<Self, VerifierError> {
-        let variable_count = dimensions.variables().len();
+    ) -> Result<(), VerifierError> {
         let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
             tau,
             uniskip: uniskip_challenge,
@@ -127,13 +147,12 @@ impl<F: Field> OuterRemainder<F> {
         })
         .map_err(public_input_failed)?;
         let coefficients = OuterRemainderCoefficients::from_public_coefficients(
-            variable_count,
+            self.variable_count,
             formula.public_coefficients(),
         );
-        Ok(Self {
-            symbolic: relations::spartan::OuterRemainder::new(dimensions),
-            coefficients,
-        })
+        self.coefficients
+            .set(coefficients)
+            .map_err(|_| public_input_failed("Spartan outer remainder coefficients already bound"))
     }
 }
 
@@ -207,6 +226,8 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         self.coefficients
+            .get()
+            .ok_or_else(|| public_input_failed("Spartan outer remainder coefficients not bound"))?
             .resolve(*public_id)
             .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
     }
@@ -361,9 +382,10 @@ mod tests {
             .collect::<Vec<_>>();
         let factored_output = factored.expected_output_claim(&openings).unwrap();
 
-        let relation =
-            OuterRemainder::new(dimensions, &tau, uniskip_challenge, &remainder_challenges)
-                .unwrap();
+        let relation = OuterRemainder::new(dimensions);
+        relation
+            .bind_coefficients(&tau, uniskip_challenge, &remainder_challenges)
+            .unwrap();
         let point = vec![Fr::from_u64(7); 1 + log_t];
         let output_values = output_values_from(&openings);
         let output_points = output_points_at(&point);
