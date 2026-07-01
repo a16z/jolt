@@ -112,7 +112,7 @@ where
                 reason: error.to_string(),
             })?;
         if uniskip_reduction.value != claims.uniskip_output_claim {
-            return Err(VerifierError::StageClaimOutputMismatch { stage });
+            return Err(VerifierError::StageClaimOutputMismatch { stage: 1 });
         }
         let uniskip_output_claim = claims.uniskip_output_claim;
 
@@ -242,7 +242,7 @@ where
             &no_challenges,
         )? * *remainder_batching_coefficient;
         if remainder_reduction.value != expected_remainder_output_claim {
-            return Err(VerifierError::StageClaimOutputMismatch { stage });
+            return Err(VerifierError::StageClaimOutputMismatch { stage: 1 });
         }
         let output_values = claims.outer.clone();
         let output_points = Stage1BatchOutputPoints {

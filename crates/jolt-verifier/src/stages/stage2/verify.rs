@@ -366,7 +366,7 @@ where
                     reason: error.to_string(),
                 })?;
             if uniskip_reduction.value != uniskip_claim {
-                return Err(VerifierError::StageClaimOutputMismatch { stage });
+                return Err(VerifierError::StageClaimOutputMismatch { stage: 2 });
             }
 
             transcript.append_labeled(b"opening_claim", &uniskip_claim);
@@ -714,9 +714,7 @@ where
                 )?,
             )?;
             if batch.reduction.value != expected_final_claim {
-                return Err(VerifierError::StageClaimOutputMismatch {
-                    stage: JoltRelationId::RamReadWriteChecking,
-                });
+                return Err(VerifierError::StageClaimOutputMismatch { stage: 2 });
             }
 
             claims.batch_outputs.append_to_transcript(transcript);

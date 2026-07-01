@@ -60,6 +60,14 @@
 //!   layout) and map it through the member's `ConcreteSumcheck::derive_opening_points`
 //!   into the stage's `OutputPoints` aggregate. Takes the challenge vector as `&[F]`,
 //!   so the clear and ZK paths each pass their own.
+//! - `expected_final_claim` — fold the members' `ConcreteSumcheck::expected_output`
+//!   with the batch coefficients (`StageNBatchingCoefficients`) into the final claim
+//!   the reduction is checked against. `verify_clear` returns the coefficients inside
+//!   `StageNClearBatch { reduction, coefficients }`.
+//! - `output_shape` — `output_claim_count` (total produced openings, e.g. the ZK
+//!   commitment count) and `validate_output_claims` (assert the proof's output claims
+//!   match the dims-derived shape), both via each member's
+//!   `SymbolicSumcheck::expected_output_openings` (derived from its output `Expr`).
 //!
 //! The `verify_*` drivers never name `SumcheckClaim` / `SumcheckStatement`; those
 //! stay internal to `jolt-sumcheck`.
@@ -68,9 +76,9 @@
 //!
 //! The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
 //! suppresses *only* that generated `opening_values` / `append_to_transcript`
-//! inherent impl, leaving the five aggregate structs (and their derives /
-//! serde) untouched. An alias-curated stage (one whose canonical opening order
-//! skips cross-relation aliased openings) uses it to supply its own consistent
+//! inherent impl, leaving the aggregate structs (and their derives / serde)
+//! untouched. An alias-curated stage (one whose canonical opening order skips
+//! cross-relation aliased openings) uses it to supply its own consistent
 //! `opening_values` / `append_to_transcript` (and `validate`) as an inherent impl.
 
 use proc_macro::TokenStream;
@@ -89,7 +97,7 @@ use syn::{
 /// opts a stage out of the generated `opening_values` / `append_to_transcript`
 /// inherent impl on the `OutputClaims` (values) aggregate, so an alias-curated
 /// stage can supply its own (e.g. one that skips cross-relation aliased openings).
-/// The five aggregate structs and their derives are emitted unchanged.
+/// The aggregate structs and their derives are emitted unchanged.
 #[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -127,6 +135,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let output_claims_name = format_ident!("{base}OutputClaims");
     let output_points_name = format_ident!("{base}OutputPoints");
     let challenges_name = format_ident!("{base}Challenges");
+    let batching_coefficients_name = format_ident!("{base}BatchingCoefficients");
+    let clear_batch_name = format_ident!("{base}ClearBatch");
 
     let options = StageOptions::parse(&input.attrs)?;
 
@@ -177,6 +187,22 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let output_claims_fields = field_decls(&output_claims_alias);
     let output_points_fields = field_decls(&output_points_alias);
     let challenge_fields = field_decls(&challenges_alias);
+
+    // The per-instance batching coefficients: one `F` per member (the scalar the
+    // batched verifier draws for that instance), `Option<F>` for a conditional
+    // member (present iff the instance ran). A named, typed view of what was a
+    // positional coefficient `Vec`, in member declaration order.
+    let batching_coefficient_fields = plans
+        .iter()
+        .map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote!(pub #id: ::core::option::Option<#f>)
+            } else {
+                quote!(pub #id: #f)
+            }
+        })
+        .collect::<Vec<_>>();
 
     // `opening_values` over the wire cell (`C = F`): chain each member's
     // `OutputClaims::opening_values` in declaration order; `Option` members
@@ -295,26 +321,26 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
 
         // Draw one batching coefficient per present member (declaration order),
-        // binding it to `__coeff_<member>` and recording it in
-        // `__batching_coefficients` for the returned batch result.
+        // binding it to `__coeff_<member>`. `Option` members draw only when present.
         let coeff_draws = plans.iter().zip(&coeff_idents).map(|(plan, coeff)| {
             let id = &plan.ident;
             if plan.is_option {
                 quote! {
                     let #coeff = if self.#id.is_some() {
-                        let __c = transcript.challenge_scalar();
-                        __batching_coefficients.push(__c);
-                        ::core::option::Option::Some(__c)
+                        ::core::option::Option::Some(transcript.challenge_scalar())
                     } else {
                         ::core::option::Option::None
                     };
                 }
             } else {
-                quote! {
-                    let #coeff = transcript.challenge_scalar();
-                    __batching_coefficients.push(#coeff);
-                }
+                quote!(let #coeff = transcript.challenge_scalar();)
             }
+        });
+
+        // Pack the drawn coefficients into the named aggregate, in member order.
+        let coeff_fields = plans.iter().zip(&coeff_idents).map(|(plan, coeff)| {
+            let id = &plan.ident;
+            quote!(#id: #coeff)
         });
 
         // Each member's contribution to the combined claim: `coeff * sum * 2^(max -
@@ -349,7 +375,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 challenges: &#challenges_name<#f>,
                 proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
                 transcript: &mut __T,
-            ) -> ::core::result::Result<::jolt_sumcheck::BatchedEvaluationClaim<#f>, crate::VerifierError>
+            ) -> ::core::result::Result<#clear_batch_name<#f>, crate::VerifierError>
             where
                 __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
                 __T: ::jolt_transcript::Transcript<Challenge = #f>,
@@ -365,8 +391,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
                 #(#sum_absorbs)*
 
-                let mut __batching_coefficients = ::std::vec::Vec::new();
                 #(#coeff_draws)*
+                let __coefficients = #batching_coefficients_name {
+                    #(#coeff_fields,)*
+                };
 
                 let mut __terms = ::std::vec::Vec::new();
                 #(#term_pushes)*
@@ -379,11 +407,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         reason: error.to_string(),
                     })?;
 
-                ::core::result::Result::Ok(::jolt_sumcheck::BatchedEvaluationClaim {
+                ::core::result::Result::Ok(#clear_batch_name {
                     reduction: __reduction,
-                    batching_coefficients: __batching_coefficients,
-                    max_num_vars: __max_num_vars,
-                    max_degree: __max_degree,
+                    coefficients: __coefficients,
                 })
             }
         }
@@ -543,6 +569,163 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote!()
     };
 
+    // Fold the members' expected output claims with the batch coefficients into the
+    // final claim the reduction is checked against: `Σ coeff_m * expected_output_m`.
+    // Opt-in via `#[sumcheck_batch(expected_final_claim)]`.
+    let expected_final_claim_method = if options.expected_final_claim {
+        let output_terms = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    if let (
+                        ::core::option::Option::Some(__coeff),
+                        ::core::option::Option::Some(__member),
+                        ::core::option::Option::Some(__input_points),
+                        ::core::option::Option::Some(__output_values),
+                        ::core::option::Option::Some(__output_points),
+                        ::core::option::Option::Some(__challenges),
+                    ) = (
+                        coefficients.#id,
+                        self.#id.as_ref(),
+                        input_points.#id.as_ref(),
+                        output_values.#id.as_ref(),
+                        output_points.#id.as_ref(),
+                        challenges.#id.as_ref(),
+                    ) {
+                        __terms.push(__coeff * __member.expected_output(
+                            __input_points,
+                            __output_values,
+                            __output_points,
+                            __challenges,
+                        )?);
+                    }
+                }
+            } else {
+                quote! {
+                    __terms.push(coefficients.#id * self.#id.expected_output(
+                        &input_points.#id,
+                        &output_values.#id,
+                        &output_points.#id,
+                        &challenges.#id,
+                    )?);
+                }
+            }
+        });
+        quote! {
+            pub fn expected_final_claim(
+                &self,
+                coefficients: &#batching_coefficients_name<#f>,
+                input_points: &#input_points_name<#f>,
+                output_values: &#output_claims_name<#f>,
+                output_points: &#output_points_name<#f>,
+                challenges: &#challenges_name<#f>,
+            ) -> ::core::result::Result<#f, crate::VerifierError> {
+                use #relations::ConcreteSumcheck as _;
+                let mut __terms = ::std::vec::Vec::new();
+                #(#output_terms)*
+                let __expected: #f = __terms.into_iter().sum();
+                ::core::result::Result::Ok(__expected)
+            }
+        }
+    } else {
+        quote!()
+    };
+
+    // The output-claim shape helpers: the total produced-opening count (for the ZK
+    // commitment count) and a validator that the proof-supplied output claims match
+    // the dims-derived expected shape (per member, comparing `canonical_order` id-sets
+    // against `expected_output_openings`). Opt-in via `#[sumcheck_batch(output_shape)]`.
+    let output_shape_methods = if options.output_shape {
+        let count_terms = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    if let ::core::option::Option::Some(__member) = self.#id.as_ref() {
+                        __count += __member.symbolic().expected_output_openings::<#f>().len();
+                    }
+                }
+            } else {
+                quote!(__count += self.#id.symbolic().expected_output_openings::<#f>().len();)
+            }
+        });
+        let validate_checks = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            let check = quote! {
+                let __expected = __member.symbolic().expected_output_openings::<#f>();
+                let __provided: ::std::collections::BTreeSet<_> =
+                    __claims.canonical_order().into_iter().collect();
+                if __provided != __expected {
+                    return ::core::result::Result::Err(
+                        crate::VerifierError::StageClaimPublicInputFailed {
+                            stage: __member.id(),
+                            reason: ::std::format!(
+                                "output claim shape mismatch: expected {} openings, got {}",
+                                __expected.len(),
+                                __provided.len(),
+                            ),
+                        },
+                    );
+                }
+            };
+            if plan.is_option {
+                quote! {
+                    match (self.#id.as_ref(), claims.#id.as_ref()) {
+                        (
+                            ::core::option::Option::Some(__member),
+                            ::core::option::Option::Some(__claims),
+                        ) => { #check }
+                        (::core::option::Option::None, ::core::option::Option::None) => {}
+                        (::core::option::Option::Some(__member), ::core::option::Option::None) => {
+                            return ::core::result::Result::Err(
+                                crate::VerifierError::StageClaimPublicInputFailed {
+                                    stage: __member.id(),
+                                    reason: "present instance is missing its output claims"
+                                        .to_string(),
+                                },
+                            );
+                        }
+                        (::core::option::Option::None, ::core::option::Option::Some(_)) => {}
+                    }
+                }
+            } else {
+                quote! {
+                    {
+                        let __member = &self.#id;
+                        let __claims = &claims.#id;
+                        #check
+                    }
+                }
+            }
+        });
+        quote! {
+            /// The total number of produced opening claims across the batch (the
+            /// dims-derived expected shape), e.g. the committed-output-claim count.
+            pub fn output_claim_count(&self) -> usize {
+                use #relations::ConcreteSumcheck as _;
+                use ::jolt_claims::SymbolicSumcheck as _;
+                let mut __count = 0usize;
+                #(#count_terms)*
+                __count
+            }
+
+            /// Assert the proof-supplied output claims match the expected shape: per
+            /// member, the provided `canonical_order` id-set equals the relation's
+            /// dims-derived `expected_output_openings`.
+            pub fn validate_output_claims(
+                &self,
+                claims: &#output_claims_name<#f>,
+            ) -> ::core::result::Result<(), crate::VerifierError> {
+                use #relations::ConcreteSumcheck as _;
+                use ::jolt_claims::OutputClaims as _;
+                use ::jolt_claims::SymbolicSumcheck as _;
+                #(#validate_checks)*
+                ::core::result::Result::Ok(())
+            }
+        }
+    } else {
+        quote!()
+    };
+
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
             /// Draw each instance's Fiat-Shamir challenges in declaration order,
@@ -563,6 +746,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #verify_clear_method
             #verify_zk_method
             #derive_points_method
+            #expected_final_claim_method
+            #output_shape_methods
         }
     };
 
@@ -605,6 +790,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // `OutputClaims` (values) aggregate is serialized (the wire form), so it alone
     // derives serde; the empty serde bound suffices because `F: Field` already
     // implies `Serialize + DeserializeOwned` through the member structs.
+    // `verify_clear`'s result: the single-instance reduction plus the named batching
+    // coefficients. Emitted only when `verify_clear` is generated (its return type).
+    let clear_batch_struct = if options.verify_clear {
+        quote! {
+            #[derive(Clone, Debug, PartialEq, Eq)]
+            #vis struct #clear_batch_name<#f: ::jolt_field::Field> {
+                pub reduction: ::jolt_sumcheck::EvaluationClaim<#f>,
+                pub coefficients: #batching_coefficients_name<#f>,
+            }
+        }
+    } else {
+        quote!()
+    };
+
     Ok(quote! {
         #[derive(Clone, Debug, PartialEq, Eq)]
         #vis struct #input_claims_name<#f: ::jolt_field::Field> {
@@ -631,6 +830,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #vis struct #challenges_name<#f: ::jolt_field::Field> {
             #(#challenge_fields,)*
         }
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        #vis struct #batching_coefficients_name<#f: ::jolt_field::Field> {
+            #(#batching_coefficient_fields,)*
+        }
+
+        #clear_batch_struct
 
         #driver_impl
 
@@ -661,6 +867,14 @@ struct StageOptions {
     /// `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
     /// aggregate.
     derive_opening_points: bool,
+    /// `#[sumcheck_batch(expected_final_claim)]`: emit `expected_final_claim`, which
+    /// folds the members' `expected_output` with the batch coefficients into the
+    /// final claim the reduction is checked against.
+    expected_final_claim: bool,
+    /// `#[sumcheck_batch(output_shape)]`: emit `output_claim_count` and
+    /// `validate_output_claims`, which derive the expected output-claim shape from each
+    /// member's `expected_output_openings` (its output `Expr`).
+    output_shape: bool,
 }
 
 impl StageOptions {
@@ -691,11 +905,16 @@ impl StageOptions {
                     options.verify_zk = true;
                 } else if path.is_ident("derive_opening_points") {
                     options.derive_opening_points = true;
+                } else if path.is_ident("expected_final_claim") {
+                    options.expected_final_claim = true;
+                } else if path.is_ident("output_shape") {
+                    options.output_shape = true;
                 } else {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
-                         `verify_clear`, `verify_zk`, `derive_opening_points`)",
+                         `verify_clear`, `verify_zk`, `derive_opening_points`, \
+                         `expected_final_claim`, `output_shape`)",
                     ));
                 }
             }

@@ -184,3 +184,38 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::ConcreteSumcheck;
+    use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
+    use jolt_claims::SymbolicSumcheck;
+    use jolt_field::Fr;
+
+    /// Locks the `expected_output_openings` invariant for the one stage-5 relation
+    /// with a size-parameter-dependent shape: the openings the read-RAF output `Expr`
+    /// references (looping over every lookup table and RA chunk) must be exactly the
+    /// geometry's `read_raf_output_openings` set. If they drift, the ZK
+    /// commitment-count and clear shape-check derived from the `Expr` would be wrong.
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn expected_output_openings_matches_geometry_shape() {
+        let dimensions = InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap();
+        let expected: std::collections::BTreeSet<_> = {
+            let openings = read_raf_output_openings(dimensions);
+            openings
+                .lookup_table_flags
+                .into_iter()
+                .chain(openings.instruction_ra)
+                .chain(std::iter::once(openings.instruction_raf_flag))
+                .collect()
+        };
+        assert_eq!(
+            InstructionReadRaf::<Fr>::new(dimensions)
+                .symbolic()
+                .expected_output_openings::<Fr>(),
+            expected,
+        );
+    }
+}

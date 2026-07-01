@@ -404,9 +404,7 @@ where
         .map(|(coefficient, output)| *coefficient * *output)
         .sum();
     if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 7 });
     }
 
     claims.append_to_transcript(transcript);

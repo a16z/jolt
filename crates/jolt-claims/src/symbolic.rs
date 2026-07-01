@@ -1,6 +1,6 @@
 use jolt_field::RingCore;
 
-use crate::{Expr, SumcheckDomain};
+use crate::{Expr, Source, SumcheckDomain};
 
 /// Pure symbolic description of one sumcheck relation: its id, sumcheck spec, and
 /// input/output algebra over the relation's id types. The expression methods are
@@ -60,4 +60,27 @@ pub trait SymbolicSumcheck {
     fn output_expression<F: RingCore>(
         &self,
     ) -> Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>;
+
+    /// The distinct opening ids this relation *produces*, read off its
+    /// [`output_expression`](Self::output_expression) — which references every
+    /// produced opening, expanded by the size parameters (it loops over indexed
+    /// families like lookup tables and RA chunks). This is the relation's expected
+    /// output-claim shape, derived symbolically so no relation hand-writes it; it
+    /// holds because the output check constrains every produced opening (an
+    /// unconstrained produced opening would be unsound). The field `F` only
+    /// instantiates the expression — the ids are field-independent.
+    fn expected_output_openings<F: RingCore>(&self) -> std::collections::BTreeSet<Self::OpeningId>
+    where
+        Self::OpeningId: Ord,
+    {
+        self.output_expression::<F>()
+            .terms
+            .into_iter()
+            .flat_map(|term| term.factors)
+            .filter_map(|factor| match factor {
+                Source::Opening(id) => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
 }
