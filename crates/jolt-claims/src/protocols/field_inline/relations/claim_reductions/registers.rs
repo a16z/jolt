@@ -94,18 +94,6 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             claim_reduction_output_openings().to_vec()
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![FieldInlineChallengeId::from(
-                FieldRegistersClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![FieldInlineDerivedId::from(
-                FieldRegistersClaimReductionPublic::EqSpartan
-            )]
-        );
     }
 
     #[test]

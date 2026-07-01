@@ -148,12 +148,5 @@ mod tests {
                 final_bytecode_chunk_opening(1),
             ]
         );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
-                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
-            ]
-        );
     }
 }

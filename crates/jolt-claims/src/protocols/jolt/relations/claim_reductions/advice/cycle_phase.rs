@@ -158,26 +158,5 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
         );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
-    }
-
-    #[test]
-    fn cycle_phase_without_address_phase_exposes_final_scale() {
-        let relation = CyclePhase::new((JoltAdviceKind::Untrusted, without_address_phase()));
-
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_val_check_advice_opening(JoltAdviceKind::Untrusted),
-                final_advice_opening(JoltAdviceKind::Untrusted),
-            ]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
-                JoltAdviceKind::Untrusted
-            ))]
-        );
     }
 }

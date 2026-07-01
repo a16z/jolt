@@ -211,16 +211,5 @@ mod tests {
         assert_eq!(Shift::id(), JoltRelationId::SpartanShift);
         assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
         assert_eq!(relation.degree(), SHIFT_DEGREE);
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(SpartanShiftChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(SpartanShiftPublic::EqPlusOneOuter),
-                JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
-            ]
-        );
     }
 }

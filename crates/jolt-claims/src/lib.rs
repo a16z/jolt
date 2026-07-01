@@ -12,7 +12,6 @@ mod ops;
 pub mod protocols;
 mod sumcheck;
 mod symbolic;
-mod util;
 
 pub use claim_data::{
     ChallengeDrawError, InputClaims, NoChallenges, NoInputs, NoOutputs, OutputClaims,

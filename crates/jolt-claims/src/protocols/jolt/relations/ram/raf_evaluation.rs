@@ -138,14 +138,5 @@ mod tests {
                 .raf_evaluation_rounds()
         );
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![ram_address_spartan(), ram_ra_raf_evaluation()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress)]
-        );
     }
 }

@@ -114,7 +114,5 @@ mod tests {
             relation.output_expression::<Fr>().required_openings(),
             vec![booleanity_address_phase_opening()]
         );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
     }
 }

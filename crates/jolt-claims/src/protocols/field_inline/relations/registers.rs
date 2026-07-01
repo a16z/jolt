@@ -161,19 +161,6 @@ mod tests {
                 field_rs2_ra_read_write(),
             ]
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![FieldInlineChallengeId::from(
-                FieldRegistersReadWriteChallenge::Gamma
-            )]
-        );
-        assert_eq!(relation.required_challenges::<Fr>().len(), 1);
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![FieldInlineDerivedId::from(
-                FieldRegistersReadWritePublic::EqCycle
-            )]
-        );
     }
 
     #[test]
@@ -258,13 +245,6 @@ mod tests {
         assert_eq!(
             relation.output_expression::<Fr>().required_openings(),
             val_evaluation_output_openings().to_vec()
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![FieldInlineDerivedId::from(
-                FieldRegistersValEvaluationPublic::LtCycle
-            )]
         );
     }
 

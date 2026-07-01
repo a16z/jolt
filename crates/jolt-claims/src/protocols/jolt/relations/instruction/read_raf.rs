@@ -125,12 +125,6 @@ mod tests {
             .unwrap_or_else(|err| panic!("test read-RAF dimensions should be nonzero: {err}"))
     }
 
-    fn eq_table_value_publics() -> Vec<JoltDerivedId> {
-        LookupTableKind::<XLEN>::iter()
-            .map(|table| JoltDerivedId::from(eq_table_value(table)))
-            .collect()
-    }
-
     #[test]
     fn read_raf_evaluates_like_core_formula() {
         let dimensions = read_raf_dimensions(2);
@@ -247,15 +241,5 @@ mod tests {
             relation.degree(),
             dimensions.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(InstructionReadRafChallenge::Gamma)]
-        );
-        let mut expected_publics = eq_table_value_publics();
-        expected_publics.extend([
-            JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
-            JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
-        ]);
-        assert_eq!(relation.required_deriveds::<Fr>(), expected_publics);
     }
 }

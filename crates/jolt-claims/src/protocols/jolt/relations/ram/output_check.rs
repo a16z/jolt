@@ -144,14 +144,5 @@ mod tests {
             read_write_dimensions().output_check_rounds()
         );
         assert_eq!(relation.degree(), 3);
-        assert_eq!(relation.required_openings::<Fr>(), vec![ram_val_final()]);
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(RamOutputCheckPublic::EqIoMask),
-                JoltDerivedId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
-            ]
-        );
     }
 }

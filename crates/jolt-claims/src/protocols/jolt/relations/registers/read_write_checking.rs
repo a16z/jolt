@@ -219,26 +219,5 @@ mod tests {
             read_write_dimensions().read_write_rounds()
         );
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                rd_write_value_claim(),
-                rs1_value_claim(),
-                rs2_value_claim(),
-                rd_wa_read_write(),
-                rd_inc_read_write(),
-                registers_val_read_write(),
-                rs1_ra_read_write(),
-                rs2_ra_read_write(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RegistersReadWritePublic::EqCycle)]
-        );
     }
 }

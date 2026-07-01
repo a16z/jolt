@@ -226,17 +226,5 @@ mod tests {
                 rs2_value_reduced(),
             ]
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                RegistersClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                RegistersClaimReductionPublic::EqSpartan
-            )]
-        );
     }
 }

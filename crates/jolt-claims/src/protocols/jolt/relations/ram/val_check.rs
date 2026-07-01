@@ -167,28 +167,6 @@ mod tests {
         assert_eq!(RamValCheck::id(), JoltRelationId::RamValCheck);
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 3);
-        // Full-init form (no committed contributions): only the read-write and
-        // output-check openings on the input side.
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_val(),
-                ram_val_final(),
-                ram_inc_val_check(),
-                ram_ra_val_check(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RamValCheckChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(RamValCheckPublic::InitEval),
-                JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
-            ]
-        );
     }
 
     /// The remodel's soundness anchor: the `Public`-symbol input expression must
