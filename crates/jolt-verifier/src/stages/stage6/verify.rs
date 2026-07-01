@@ -60,9 +60,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{
-            check_relation_boolean_hypercube, ConcreteSumcheck, OutputAppend, OutputClaims,
-        },
+        relations::{ConcreteSumcheck, OutputAppend, OutputClaims},
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},
         stage3::{Stage3ClearOutput, Stage3Output},
@@ -125,14 +123,14 @@ where
 
     // Bytecode cycle-phase committed/uncommitted are distinct types with the same
     // rounds/degree/domain; collapse the active one to its shape values here.
-    let (bytecode_rounds, bytecode_degree, bytecode_domain) = if committed_program {
+    let (bytecode_rounds, bytecode_degree) = if committed_program {
         let r = relations::bytecode::ReadRafCyclePhaseCommitted::new(
             formula_dimensions.bytecode_read_raf,
         );
-        (r.rounds(), r.degree(), r.domain())
+        (r.rounds(), r.degree())
     } else {
         let r = relations::bytecode::ReadRafCyclePhase::new(formula_dimensions.bytecode_read_raf);
-        (r.rounds(), r.degree(), r.domain())
+        (r.rounds(), r.degree())
     };
 
     let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
@@ -160,82 +158,6 @@ where
     let program_image_reduction_claims = program_image_reduction_layout.map(|layout| {
         relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions())
     });
-
-    for (relation, domain, degree) in [
-        (
-            relations::bytecode::ReadRafAddressPhase::id(),
-            bytecode_address_rel.domain(),
-            bytecode_address_rel.degree(),
-        ),
-        (
-            relations::bytecode::ReadRafCyclePhase::id(),
-            bytecode_domain,
-            bytecode_degree,
-        ),
-        (
-            relations::booleanity::BooleanityAddressPhase::id(),
-            booleanity_address_rel.domain(),
-            booleanity_address_rel.degree(),
-        ),
-        (
-            relations::booleanity::BooleanityCyclePhase::id(),
-            booleanity_rel.domain(),
-            booleanity_rel.degree(),
-        ),
-        (
-            relations::ram::HammingBooleanity::id(),
-            ram_hamming_rel.domain(),
-            ram_hamming_rel.degree(),
-        ),
-        (
-            relations::ram::RaVirtualization::id(),
-            ram_ra_rel.domain(),
-            ram_ra_rel.degree(),
-        ),
-        (
-            relations::instruction::RaVirtualization::id(),
-            instruction_ra_rel.domain(),
-            instruction_ra_rel.degree(),
-        ),
-        (
-            relations::claim_reductions::increments::ClaimReduction::id(),
-            inc_rel.domain(),
-            inc_rel.degree(),
-        ),
-    ] {
-        check_relation_boolean_hypercube(relation, domain, degree)?;
-    }
-    for (relation, domain, degree) in [
-        (
-            relations::claim_reductions::advice::CyclePhase::id(),
-            trusted_advice_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::advice::CyclePhase::id(),
-            untrusted_advice_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::bytecode::CyclePhase::id(),
-            bytecode_reduction_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::program_image::CyclePhase::id(),
-            program_image_reduction_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(relation, opt)| opt.map(|(domain, degree)| (relation, domain, degree)))
-    {
-        check_relation_boolean_hypercube(relation, domain, degree)?;
-    }
 
     let bytecode_gamma_powers = transcript.challenge_scalar_powers(8);
     let bytecode_gamma = bytecode_gamma_powers[1];

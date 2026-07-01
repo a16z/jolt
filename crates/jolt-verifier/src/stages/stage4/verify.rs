@@ -35,7 +35,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{check_relation_boolean_hypercube, ConcreteSumcheck},
+        relations::ConcreteSumcheck,
         stage2::{Stage2ClearOutput, Stage2Output},
         stage3::{Stage3ClearOutput, Stage3Output},
         zk::committed,
@@ -113,11 +113,6 @@ where
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
 
     let registers_claims = relations::registers::ReadWriteChecking::new(register_dimensions);
-    check_relation_boolean_hypercube(
-        relations::registers::ReadWriteChecking::id(),
-        registers_claims.domain(),
-        registers_claims.degree(),
-    )?;
     // The registers batching gamma (a single `challenge_scalar`, matching the
     // relation's default `draw_challenges`), drawn before the RAM value-check gamma.
     let registers_challenges = RegistersReadWriteChallenges {
@@ -174,11 +169,6 @@ where
         dimensions: trace_dimensions,
         contributions: Vec::new(),
     });
-    check_relation_boolean_hypercube(
-        relations::ram::RamValCheck::id(),
-        ram_val_check_claims.domain(),
-        ram_val_check_claims.degree(),
-    )?;
 
     let challenges = Stage4Challenges {
         registers_read_write: registers_challenges,
