@@ -201,8 +201,9 @@ fn fmt_row(row: &JoltInstructionRow) -> String {
         parts.push(format!("rs2={}", label(rs2)));
     }
     // Always show the immediate, including 0, so it matches the Lean rows
-    // (e.g. `ADDI x0, x0, 0`).
-    parts.push(format!("imm={}", ops.imm));
+    // (e.g. `ADDI x0, x0, 0`). Print it as signed 64-bit so masks like -8 show as
+    // -8 rather than their unsigned 64-bit pattern.
+    parts.push(format!("imm={}", ops.imm as i64));
     // Use the clean instruction name (e.g. "Addi") instead of the nested Debug
     // form `Addi(Addi(()))`.
     format!("{}  {}", row.instruction_kind.name(), parts.join(", "))
