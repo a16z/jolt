@@ -14,15 +14,17 @@
 //! ```
 //!
 //! generates `Stage5InputClaims<F>`, `Stage5InputPoints<F>`,
-//! `Stage5OutputClaims<F>`, `Stage5OutputPoints<F>`, and `Stage5Challenges<F>` (the
-//! `Sumchecks` suffix is replaced by `InputClaims` / `InputPoints` / `OutputClaims`
-//! / `OutputPoints` / `Challenges`), each with one field per instance projected
+//! `Stage5OutputClaims<F>`, `Stage5OutputPoints<F>`, `Stage5Challenges<F>`, and
+//! `Stage5BatchingCoefficients<F>` (the `Sumchecks` suffix is replaced by
+//! `InputClaims` / `InputPoints` / `OutputClaims` / `OutputPoints` / `Challenges` /
+//! `BatchingCoefficients`). The claim/point/challenge aggregates project each field
 //! through the `SumcheckInputClaims` / `SumcheckInputPoints` / `SumcheckOutputClaims`
 //! / `SumcheckOutputPoints` / `ConcreteSumcheckChallenges` aliases in
 //! `jolt-verifier`'s `stages::relations` (the `*Claims` aggregates hold the wire
-//! *values*, the `*Points` aggregates the derived opening points). A source field
-//! `Option<Instance>` becomes an `Option<projection>` (a conditional instance),
-//! chained only when `Some`.
+//! *values*, the `*Points` aggregates the derived opening points); the
+//! `BatchingCoefficients` aggregate holds one `F` per member (the scalar the batched
+//! verifier draws for that instance). A source field `Option<Instance>` becomes an
+//! `Option<projection>` (a conditional instance), chained only when `Some`.
 //!
 //! The projections are emitted *without* `Instance: ConcreteSumcheck<F>`
 //! where-bounds on purpose: such a bound would make the compiler treat each
@@ -41,6 +43,21 @@
 //!   declaration order); and
 //! - the per-instance driver method on the source `StageNSumchecks` struct —
 //!   `draw_challenges` (draw each member's challenges into `StageNChallenges`).
+//!
+//! Opt-in per method via `#[sumcheck_batch(...)]` flags, emitted on the source
+//! `StageNSumchecks` struct only for stages that request them:
+//!
+//! - `verify_clear` — the clear-path batched-verify driver: fold the members into
+//!   one combined claim (max `(num_vars, degree)`, absorb each `input_claim`, draw
+//!   the batching coefficients, random-linear-combine the padded sums) and reduce it
+//!   through the single-instance `SumcheckProof::verify_compressed_boolean`. The
+//!   batching lives here rather than in `jolt-sumcheck`'s `BatchedSumcheckVerifier`.
+//! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
+//!   batching coefficients, and check committed consistency through
+//!   `SumcheckProof::verify_committed_consistency_dims`.
+//!
+//! Neither driver names `SumcheckClaim` / `SumcheckStatement`; those stay internal to
+//! `jolt-sumcheck`.
 //!
 //! See `specs/sumcheck-batch-derive.md`.
 //!
@@ -189,6 +206,250 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: self.#id.draw_challenges(transcript)?)
         }
     });
+    // The representative relation id used in a batch-level sumcheck error: the first
+    // non-`Option` member (the batch's leading instance), matching the hand-written
+    // stages' choice. Falls back to the first member if every member is optional.
+    let stage_id_ident = plans
+        .iter()
+        .find(|plan| !plan.is_option)
+        .map_or(&plans[0].ident, |plan| &plan.ident);
+
+    // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
+    // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
+    // by both the clear and ZK drivers, so it is a closure re-invoked per block (a
+    // `quote!` interpolation consumes its iterator).
+    let max_fold = || {
+        plans.iter().map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    if let ::core::option::Option::Some(__member) = self.#id.as_ref() {
+                        __max_num_vars = ::core::cmp::max(__max_num_vars, __member.rounds());
+                        __max_degree = ::core::cmp::max(__max_degree, __member.degree());
+                    }
+                }
+            } else {
+                quote! {
+                    __max_num_vars = ::core::cmp::max(__max_num_vars, self.#id.rounds());
+                    __max_degree = ::core::cmp::max(__max_degree, self.#id.degree());
+                }
+            }
+        })
+    };
+
+    // The clear-path batched-verify driver: compute the combined `(max_num_vars,
+    // max_degree, claimed_sum)` from the members (absorb sums, draw coefficients,
+    // random-linear-combine), then reduce through the single-instance
+    // `SumcheckProof::verify_compressed_boolean`. Opt-in via
+    // `#[sumcheck_batch(verify_clear)]`.
+    let verify_clear_method = if options.verify_clear {
+        let max_fold = max_fold();
+        let sum_idents = plans
+            .iter()
+            .map(|plan| format_ident!("__sum_{}", plan.ident))
+            .collect::<Vec<_>>();
+        let coeff_idents = plans
+            .iter()
+            .map(|plan| format_ident!("__coeff_{}", plan.ident))
+            .collect::<Vec<_>>();
+
+        // Each member's claimed sum (its `input_claim`), bound to `__sum_<member>`.
+        // `Option` members bind an `Option<F>`, present iff the instance and its
+        // wired input/challenge cells are all present.
+        let sum_bindings = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    let #sum = match (self.#id.as_ref(), inputs.#id.as_ref(), challenges.#id.as_ref()) {
+                        (
+                            ::core::option::Option::Some(__member),
+                            ::core::option::Option::Some(__inputs),
+                            ::core::option::Option::Some(__challenges),
+                        ) => ::core::option::Option::Some(__member.input_claim(__inputs, __challenges)?),
+                        _ => ::core::option::Option::None,
+                    };
+                }
+            } else {
+                quote!(let #sum = self.#id.input_claim(&inputs.#id, &challenges.#id)?;)
+            }
+        });
+
+        // Absorb each present member's claimed sum into the transcript, in
+        // declaration order — the Fiat-Shamir binding that must precede the
+        // batching-coefficient draw.
+        let sum_absorbs = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
+            if plan.is_option {
+                quote! {
+                    if let ::core::option::Option::Some(__sum) = #sum.as_ref() {
+                        ::jolt_sumcheck::append_sumcheck_claim(transcript, __sum);
+                    }
+                }
+            } else {
+                quote!(::jolt_sumcheck::append_sumcheck_claim(transcript, &#sum);)
+            }
+        });
+
+        // Draw one batching coefficient per present member (declaration order),
+        // binding it to `__coeff_<member>` and recording it in
+        // `__batching_coefficients` for the returned batch result.
+        let coeff_draws = plans.iter().zip(&coeff_idents).map(|(plan, coeff)| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    let #coeff = if self.#id.is_some() {
+                        let __c = transcript.challenge_scalar();
+                        __batching_coefficients.push(__c);
+                        ::core::option::Option::Some(__c)
+                    } else {
+                        ::core::option::Option::None
+                    };
+                }
+            } else {
+                quote! {
+                    let #coeff = transcript.challenge_scalar();
+                    __batching_coefficients.push(#coeff);
+                }
+            }
+        });
+
+        // Each member's contribution to the combined claim: `coeff * sum * 2^(max -
+        // rounds)` (front-loaded padding scale), pushed into `__terms` and summed.
+        let term_pushes = plans
+            .iter()
+            .zip(sum_idents.iter().zip(&coeff_idents))
+            .map(|(plan, (sum, coeff))| {
+                let id = &plan.ident;
+                if plan.is_option {
+                    quote! {
+                        if let (
+                            ::core::option::Option::Some(__coeff),
+                            ::core::option::Option::Some(__sum),
+                            ::core::option::Option::Some(__member),
+                        ) = (#coeff, #sum, self.#id.as_ref())
+                        {
+                            __terms.push(__coeff * __sum.mul_pow_2(__max_num_vars - __member.rounds()));
+                        }
+                    }
+                } else {
+                    quote! {
+                        __terms.push(#coeff * #sum.mul_pow_2(__max_num_vars - self.#id.rounds()));
+                    }
+                }
+            });
+
+        quote! {
+            pub fn verify_clear<__C, __T>(
+                &self,
+                inputs: &#input_claims_name<#f>,
+                challenges: &#challenges_name<#f>,
+                proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
+                transcript: &mut __T,
+            ) -> ::core::result::Result<::jolt_sumcheck::BatchedEvaluationClaim<#f>, crate::VerifierError>
+            where
+                __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
+                __T: ::jolt_transcript::Transcript<Challenge = #f>,
+            {
+                use #relations::ConcreteSumcheck as _;
+                use ::jolt_field::MulPow2 as _;
+
+                #(#sum_bindings)*
+
+                let mut __max_num_vars = 0usize;
+                let mut __max_degree = 0usize;
+                #(#max_fold)*
+
+                #(#sum_absorbs)*
+
+                let mut __batching_coefficients = ::std::vec::Vec::new();
+                #(#coeff_draws)*
+
+                let mut __terms = ::std::vec::Vec::new();
+                #(#term_pushes)*
+                let __claimed_sum: #f = __terms.into_iter().sum();
+
+                let __reduction = proof
+                    .verify_compressed_boolean(__max_num_vars, __max_degree, __claimed_sum, transcript)
+                    .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
+                        stage: self.#stage_id_ident.id(),
+                        reason: error.to_string(),
+                    })?;
+
+                ::core::result::Result::Ok(::jolt_sumcheck::BatchedEvaluationClaim {
+                    reduction: __reduction,
+                    batching_coefficients: __batching_coefficients,
+                    max_num_vars: __max_num_vars,
+                    max_degree: __max_degree,
+                })
+            }
+        }
+    } else {
+        quote!()
+    };
+
+    // The ZK-path batched-verify driver: compute the combined `(max_num_vars,
+    // max_degree)`, draw the batching coefficients, then check committed consistency
+    // through `SumcheckProof::verify_committed_consistency_dims`. Committed proofs
+    // never reveal claim scalars, so no claimed sums are absorbed. Opt-in via
+    // `#[sumcheck_batch(verify_zk)]`.
+    let verify_zk_method = if options.verify_zk {
+        let max_fold = max_fold();
+
+        // Draw one batching coefficient per present member (ZK path): no claimed sums
+        // are absorbed, so only the coefficients are recorded, in declaration order.
+        let coeff_draws_zk = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    if self.#id.is_some() {
+                        __batching_coefficients.push(transcript.challenge_scalar());
+                    }
+                }
+            } else {
+                quote!(__batching_coefficients.push(transcript.challenge_scalar());)
+            }
+        });
+
+        quote! {
+            pub fn verify_zk<__C, __T>(
+                &self,
+                proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
+                transcript: &mut __T,
+            ) -> ::core::result::Result<
+                ::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
+                crate::VerifierError,
+            >
+            where
+                __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
+                __T: ::jolt_transcript::Transcript<Challenge = #f>,
+            {
+                use #relations::ConcreteSumcheck as _;
+
+                let mut __max_num_vars = 0usize;
+                let mut __max_degree = 0usize;
+                #(#max_fold)*
+
+                let mut __batching_coefficients = ::std::vec::Vec::new();
+                #(#coeff_draws_zk)*
+
+                let __consistency = proof
+                    .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
+                    .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
+                        stage: self.#stage_id_ident.id(),
+                        reason: error.to_string(),
+                    })?;
+
+                ::core::result::Result::Ok(::jolt_sumcheck::BatchedCommittedSumcheckConsistency {
+                    consistency: __consistency,
+                    batching_coefficients: __batching_coefficients,
+                    max_num_vars: __max_num_vars,
+                    max_degree: __max_degree,
+                })
+            }
+        }
+    } else {
+        quote!()
+    };
+
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
             /// Draw each instance's Fiat-Shamir challenges in declaration order,
@@ -205,6 +466,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     #(#draw_fields,)*
                 })
             }
+
+            #verify_clear_method
+            #verify_zk_method
         }
     };
 
@@ -289,6 +553,14 @@ struct StageOptions {
     /// `OutputClaims` `opening_values` / `append_to_transcript` inherent impl so the
     /// stage can curate its own (e.g. skipping cross-relation aliased openings).
     custom_opening_values: bool,
+    /// `#[sumcheck_batch(verify_clear)]`: emit the clear-path batched-verify driver
+    /// (`verify_clear`) that folds the members into one combined claim (absorb sums,
+    /// draw coefficients, RLC) and reduces it through the single-instance verifier.
+    verify_clear: bool,
+    /// `#[sumcheck_batch(verify_zk)]`: emit the ZK-path batched-verify driver
+    /// (`verify_zk`) that folds the members' dimensions and checks committed
+    /// consistency through the single-instance verifier.
+    verify_zk: bool,
 }
 
 impl StageOptions {
@@ -313,10 +585,15 @@ impl StageOptions {
                 };
                 if path.is_ident("custom_opening_values") {
                     options.custom_opening_values = true;
+                } else if path.is_ident("verify_clear") {
+                    options.verify_clear = true;
+                } else if path.is_ident("verify_zk") {
+                    options.verify_zk = true;
                 } else {
                     return Err(syn::Error::new_spanned(
                         path,
-                        "unknown `sumcheck_batch` flag (supported: `custom_opening_values`)",
+                        "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
+                         `verify_clear`, `verify_zk`)",
                     ));
                 }
             }
