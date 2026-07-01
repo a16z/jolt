@@ -28,8 +28,20 @@ use super::registers_read_write_checking::RegistersReadWriteChecking;
 /// stage therefore opts out of the generated `opening_values` /
 /// `append_to_transcript` via `#[sumcheck_batch(custom_opening_values)]` and
 /// supplies the exact interleaved order below.
+///
+/// `output_shape` is intentionally NOT enabled: the RAM value-check output `Expr`
+/// references only `ram_ra`/`ram_inc`, but the batch's committed-claim count also
+/// covers the staged advice / program-image openings, so the count stays
+/// hand-written in `verify` and claim presence is validated by
+/// `ram_val_check_initial_evaluation`.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values)]
+#[sumcheck_batch(
+    custom_opening_values,
+    verify_clear,
+    verify_zk,
+    derive_opening_points,
+    expected_final_claim
+)]
 pub struct Stage4Sumchecks<F: Field> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     pub ram_val_check: RamValCheck<F>,

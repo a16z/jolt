@@ -166,6 +166,14 @@ pub enum Stage3Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage3Output<F, C> {
+    /// The produced opening points, available regardless of proving mode.
+    pub fn output_points(&self) -> &Stage3OutputPoints<F> {
+        match self {
+            Self::Clear(output) => &output.output_points,
+            Self::Zk(output) => &output.output_points,
+        }
+    }
+
     pub fn clear(&self) -> Result<&Stage3ClearOutput<F>, crate::VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
