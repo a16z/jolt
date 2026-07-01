@@ -277,9 +277,7 @@ where
         registers_output,
     )?;
     if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::SpartanShift,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 3 });
     }
 
     // After the per-relation output checks (which catch any single-claim offset),

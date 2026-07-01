@@ -17,4 +17,4 @@ pub use ram_ra_claim_reduction::{
 pub use registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
 };
-pub use verify::{stage5_expected_final_claim, verify};
+pub use verify::verify;

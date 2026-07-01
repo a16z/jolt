@@ -339,9 +339,7 @@ where
     let expected_final_claim =
         stage4_expected_final_claim(&batch.batching_coefficients, registers_output, ram_output)?;
     if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::RegistersReadWriteChecking,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 4 });
     }
 
     claims.append_to_transcript(transcript);

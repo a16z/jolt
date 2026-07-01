@@ -1,12 +1,8 @@
-use jolt_claims::protocols::jolt::{
-    geometry::{dimensions::JoltFormulaDimensions, instruction},
-    relations, JoltRelationId,
-};
+use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
-use num_traits::Zero;
 
 use super::{
     instruction_read_raf::{
@@ -29,7 +25,6 @@ use super::{
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{ConcreteSumcheck, OutputClaims},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
         zk::committed,
@@ -67,27 +62,6 @@ fn stage5_input_points_from_upstream<F: Field>(
     }
 }
 
-/// Combine the three stage 5 expected output claims with the batch's coefficients,
-/// in canonical batch order (instruction read-RAF, RAM-RA reduction, register
-/// value-evaluation). Shared by the verifier and the prover so the combination
-/// cannot drift.
-pub fn stage5_expected_final_claim<F: Field>(
-    coefficients: &[F],
-    instruction_read_raf: F,
-    ram_ra_claim_reduction: F,
-    registers_val_evaluation: F,
-) -> Result<F, VerifierError> {
-    let [instruction_coefficient, ram_coefficient, registers_coefficient] = coefficients else {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: "Stage 5 batch verifier returned the wrong number of coefficients".to_string(),
-        });
-    };
-    Ok(*instruction_coefficient * instruction_read_raf
-        + *ram_coefficient * ram_ra_claim_reduction
-        + *registers_coefficient * registers_val_evaluation)
-}
-
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -115,21 +89,6 @@ where
     // claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    let instruction_output_openings =
-        instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
-    let committed_output_claims = instruction_output_openings.opening_count()
-        + relations::ram::RamRaClaimReductionOutputClaims::<PCS::Field> {
-            ram_ra: PCS::Field::zero(),
-        }
-        .canonical_order()
-        .len()
-        + relations::registers::RegistersValEvaluationOutputClaims::<PCS::Field> {
-            rd_inc: PCS::Field::zero(),
-            rd_wa: PCS::Field::zero(),
-        }
-        .canonical_order()
-        .len();
-
     if checked.zk {
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
@@ -139,7 +98,7 @@ where
                 checked,
                 proof: &proof.stages.stage5_sumcheck_proof,
                 proof_label: "stage5_sumcheck_proof",
-                output_claim_count: committed_output_claims,
+                output_claim_count: sumchecks.output_claim_count(),
                 stage: JoltRelationId::InstructionReadRaf,
             })?;
 
@@ -164,30 +123,7 @@ where
     let stage2 = stage2.clear()?;
     let stage4 = stage4.clear()?;
     let claims = &proof.clear_claims()?.stage5;
-    if claims.instruction_read_raf.lookup_table_flags.len()
-        != instruction_output_openings.lookup_table_flags.len()
-    {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: format!(
-                "lookup table flag claim count mismatch: expected {}, got {}",
-                instruction_output_openings.lookup_table_flags.len(),
-                claims.instruction_read_raf.lookup_table_flags.len()
-            ),
-        });
-    }
-    if claims.instruction_read_raf.instruction_ra.len()
-        != instruction_output_openings.instruction_ra.len()
-    {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: format!(
-                "instruction RA claim count mismatch: expected {}, got {}",
-                instruction_output_openings.instruction_ra.len(),
-                claims.instruction_read_raf.instruction_ra.len()
-            ),
-        });
-    }
+    sumchecks.validate_output_claims(claims)?;
 
     // The reduced lookup output aliases the product remainder's lookup output
     // (same opening point and value); stage 2 validates that alias, which the
@@ -208,35 +144,15 @@ where
     let output_points =
         sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
 
-    let instruction_output = sumchecks.instruction_read_raf.expected_output(
-        &input_points.instruction_read_raf,
-        &claims.instruction_read_raf,
-        &output_points.instruction_read_raf,
-        &challenges.instruction_read_raf,
-    )?;
-    let ram_output = sumchecks.ram_ra_claim_reduction.expected_output(
-        &input_points.ram_ra_claim_reduction,
-        &claims.ram_ra_claim_reduction,
-        &output_points.ram_ra_claim_reduction,
-        &challenges.ram_ra_claim_reduction,
-    )?;
-    let registers_output = sumchecks.registers_val_evaluation.expected_output(
-        &input_points.registers_val_evaluation,
-        &claims.registers_val_evaluation,
-        &output_points.registers_val_evaluation,
-        &challenges.registers_val_evaluation,
-    )?;
-
-    let expected_final_claim = stage5_expected_final_claim(
-        batch.batching_coefficients.as_slice(),
-        instruction_output,
-        ram_output,
-        registers_output,
+    let expected_final_claim = sumchecks.expected_final_claim(
+        &batch.coefficients,
+        &input_points,
+        claims,
+        &output_points,
+        &challenges,
     )?;
     if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::InstructionReadRaf,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 5 });
     }
 
     claims.append_to_transcript(transcript);

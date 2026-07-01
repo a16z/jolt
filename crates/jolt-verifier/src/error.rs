@@ -108,8 +108,8 @@ pub enum VerifierError {
         reason: String,
     },
 
-    #[error("stage {stage:?} sumcheck output does not match evaluated output claim")]
-    StageClaimOutputMismatch { stage: JoltRelationId },
+    #[error("stage {stage} sumcheck output does not match evaluated output claim")]
+    StageClaimOutputMismatch { stage: usize },
 
     #[error("invalid final opening commitment count {got}; expected {expected}")]
     InvalidCommitmentCount { expected: usize, got: usize },

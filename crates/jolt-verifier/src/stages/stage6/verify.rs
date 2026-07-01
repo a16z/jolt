@@ -1068,9 +1068,7 @@ where
         .map(|(coefficient, output)| *coefficient * output)
         .sum();
     if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::BytecodeReadRaf,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 6 });
     }
 
     append_opening_claims(
@@ -1664,9 +1662,7 @@ where
         .map(|(coefficient, output)| *coefficient * output)
         .sum();
     if address_batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::BytecodeReadRaf,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 6 });
     }
 
     append_address_phase_opening_claims(transcript, claims);
