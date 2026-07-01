@@ -13,7 +13,7 @@ use crate::poly::opening_proof::{
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::transcript_msgs::{ProverFs, VerifierFs};
+use crate::transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead, FsNargWrite};
 use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -37,7 +37,7 @@ impl BatchedSumcheck {
     pub fn prove<F: JoltField>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut impl ProverFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
     ) -> (ClearSumcheckProof<F>, Vec<F::Challenge>, F) {
         let max_num_rounds = sumcheck_instances
             .iter()
@@ -203,7 +203,7 @@ impl BatchedSumcheck {
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
-        transcript: &mut impl ProverFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
         pedersen_gens: &PedersenGenerators<C>,
         rng: &mut R,
     ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>, F) {
@@ -277,10 +277,6 @@ impl BatchedSumcheck {
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
-            // Round commitments are prover-only, so record them in the prover-side NARG.
-            // The modular verifier bridge still carries the same commitments structurally
-            // and replays them with `absorb`; for a single commitment this is the same
-            // sponge message as `write_slice(&[commitment])`.
             transcript.write_slice(std::slice::from_ref(&commitment));
 
             let r_j = transcript.challenge_optimized();
@@ -407,7 +403,7 @@ impl BatchedSumcheck {
         proof: &SumcheckInstanceProof<F, C>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut impl VerifierFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
     ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
@@ -488,7 +484,7 @@ impl BatchedSumcheck {
         proof: &ClearSumcheckProof<F>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, A>>,
         opening_accumulator: &mut A,
-        transcript: &mut impl VerifierFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
@@ -568,7 +564,7 @@ impl<F: JoltField> ClearSumcheckProof<F> {
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut impl VerifierFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
     ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
         if !self.compressed_polys.is_empty() && self.compressed_polys.len() != num_rounds {
             return Err(ProofVerifyError::InvalidInputLength(
@@ -695,7 +691,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> ZkSumcheckProof<F, C> {
         &self,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut impl VerifierFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         if self.round_commitments.len() != num_rounds {
             return Err(ProofVerifyError::InvalidInputLength(
@@ -821,7 +817,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> SumcheckInstanceProof<F, C> {
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut impl VerifierFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
     ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
         match self {
             Self::Clear(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),

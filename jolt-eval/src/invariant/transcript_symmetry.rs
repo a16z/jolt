@@ -46,8 +46,6 @@ pub enum Op {
 pub struct Input {
     /// 32-byte instance digest — the per-statement `DomainSeparator` binding.
     /// Varied (not fixed to zero) so the corpus/fuzzer exercises instance
-    /// binding: an all-zeros-only fixture would mask a one-sided instance drop,
-    /// since `prover(0)` and `verifier(0-or-ignored)` agree regardless.
     pub instance: [u8; 32],
     /// Operations to apply in order.
     pub ops: Vec<Op>,
@@ -202,11 +200,6 @@ where
         )));
     }
 
-    // Domain separation: the same ops under a *different* instance digest must
-    // derive *different* challenges — otherwise the instance isn't bound into
-    // the sponge. The symmetry check above can't see a *symmetric* instance
-    // drop: if both sides ignored the instance they would still agree.
-    // (Skipped when the ops squeeze no challenges — nothing to compare.)
     if !prover_challenges.is_empty() {
         let mut other_instance = input.instance;
         other_instance[0] ^= 0xFF;
@@ -292,9 +285,6 @@ fn seed_corpus_shared() -> Vec<Input> {
         mixed_1k,
     ];
 
-    // Pair each op-sequence with a distinct instance digest: index 0 keeps the
-    // degenerate all-zeros case; the rest are non-zero so the corpus exercises
-    // instance binding (a zero-only fixture would mask a one-sided instance drop).
     op_sequences
         .into_iter()
         .enumerate()

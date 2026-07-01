@@ -6,7 +6,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    transcript_msgs::{ProverFs, VerifierFs},
+    transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead, FsNargWrite},
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
@@ -76,7 +76,7 @@ where
     ) -> Self::OpeningProofHint {
     }
 
-    fn prove<T: ProverFs<Self::Field>>(
+    fn prove<T: FsChallenge<Self::Field> + FsAbsorb + FsNargWrite>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
@@ -91,7 +91,7 @@ where
         )
     }
 
-    fn verify<T: VerifierFs<Self::Field>>(
+    fn verify<T: FsChallenge<Self::Field> + FsAbsorb + FsNargRead>(
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut T,

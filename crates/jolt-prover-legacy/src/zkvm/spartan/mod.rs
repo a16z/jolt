@@ -2,7 +2,7 @@ use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::opening_proof::AbstractVerifierOpeningAccumulator;
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
-use crate::transcript_msgs::VerifierFs;
+use crate::transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead};
 use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -20,7 +20,7 @@ pub mod shift;
 pub fn verify_stage1_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
-    T: VerifierFs<F>,
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
     A: AbstractVerifierOpeningAccumulator<F>,
 >(
     proof: &UniSkipFirstRoundProofVariant<F, C>,
@@ -48,7 +48,7 @@ pub fn verify_stage1_uni_skip<
 pub fn verify_stage2_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
-    T: VerifierFs<F>,
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
     A: AbstractVerifierOpeningAccumulator<F>,
 >(
     proof: &UniSkipFirstRoundProofVariant<F, C>,

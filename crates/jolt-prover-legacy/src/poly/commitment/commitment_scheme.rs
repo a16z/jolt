@@ -2,7 +2,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
-use crate::transcript_msgs::{ProverFs, VerifierFs};
+use crate::transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead, FsNargWrite};
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -103,7 +103,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// A tuple containing:
     /// - The proof of the polynomial evaluation at the specified point
     /// - An optional ZK blinding factor (y_blinding) for use in BlindFold; None for non-ZK schemes
-    fn prove<T: ProverFs<Self::Field>>(
+    fn prove<T: FsChallenge<Self::Field> + FsAbsorb + FsNargWrite>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
@@ -123,7 +123,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ///
     /// # Returns
     /// Ok(()) if the proof is valid, otherwise a ProofVerifyError
-    fn verify<T: VerifierFs<Self::Field>>(
+    fn verify<T: FsChallenge<Self::Field> + FsAbsorb + FsNargRead>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,

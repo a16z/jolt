@@ -13,7 +13,7 @@ use crate::{
         CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
-    transcript_msgs::{FsAbsorb, ProverFs, VerifierFs},
+    transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead, FsNargWrite},
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
 use ark_bn254::{G1Affine, G1Projective};
@@ -195,7 +195,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             .collect()
     }
 
-    fn prove<T: ProverFs<Self::Field>>(
+    fn prove<T: FsChallenge<Self::Field> + FsAbsorb + FsNargWrite>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
@@ -248,7 +248,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         (proof, y_blinding.map(|b| ark_to_jolt(&b)))
     }
 
-    fn verify<T: VerifierFs<Self::Field>>(
+    fn verify<T: FsChallenge<Self::Field> + FsAbsorb + FsNargRead>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,

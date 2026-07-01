@@ -56,12 +56,7 @@ field-inline = [
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
-# D5b (#1586 reviewer): `transcript-poseidon` forces `challenge-254-bit`, so
-# under Poseidon `F::Challenge` is the full-field `Mont254BitChallenge`. Poseidon
-# deliberately has NO 128-bit optimized challenge (`challenge_128` is
-# `unimplemented!` for the Poseidon sponge): for recursion the 128-bit truncation
-# is costly and defeats the purpose of using Poseidon in the first place, so the
-# Poseidon configuration keeps genuine full-field challenges.
+
 transcript-poseidon = [
   "jolt-transcript/transcript-poseidon",
   "challenge-254-bit",

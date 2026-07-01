@@ -3,7 +3,7 @@ use crate::curve::Bn254Curve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcript_msgs::ProverFs;
+use crate::transcript_msgs::{FsAbsorb, FsChallenge, FsNargWrite};
 use crate::zkvm::bytecode::PreprocessingError;
 use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof::{ProofCommitmentScheme, ProofCurve, ProofField};
@@ -65,7 +65,7 @@ pub fn prove<
     crate::zkvm::proof::VerifierError,
 >
 where
-    ProverState<H, StdRng>: ProverFs<F>,
+    ProverState<H, StdRng>: FsChallenge<F> + FsAbsorb + FsNargWrite,
     <PCS::VerifierPcs as jolt_crypto::Commitment>::Output:
         ark_serialize::CanonicalSerialize + Clone,
 {

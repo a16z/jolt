@@ -15,7 +15,7 @@ use crate::poly::opening_proof::{AbstractVerifierOpeningAccumulator, ProverOpeni
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::transcript_msgs::{ProverFs, VerifierFs};
+use crate::transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead, FsNargWrite};
 use crate::utils::errors::ProofVerifyError;
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
@@ -136,7 +136,7 @@ pub fn build_uniskip_first_round_poly<
 pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
-    transcript: &mut impl ProverFs<F>,
+    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
 ) -> UniSkipFirstRoundProof<F> {
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
@@ -161,7 +161,7 @@ pub fn prove_uniskip_round_zk<
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
-    transcript: &mut impl ProverFs<F>,
+    transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargWrite),
     pedersen_gens: &PedersenGenerators<C>,
     rng: &mut R,
 ) -> ZkUniSkipFirstRoundProof<F, C> {
@@ -174,10 +174,6 @@ pub fn prove_uniskip_round_zk<
     let blinding = F::random(rng);
     let commitment = pedersen_gens.commit(&uni_poly.coeffs, &blinding);
 
-    // Commitment is prover-only, so record it in the prover-side NARG. The modular
-    // verifier bridge still carries the same commitment structurally and replays it
-    // with `absorb`; for a single commitment this is the same sponge message as
-    // `write_slice(&[commitment])`.
     transcript.write_slice(std::slice::from_ref(&commitment));
 
     let r0: F::Challenge = transcript.challenge_optimized();
@@ -250,7 +246,7 @@ impl<F: JoltField> UniSkipFirstRoundProof<F> {
         &self,
         sumcheck_instance: &dyn SumcheckInstanceVerifier<F, A>,
         opening_accumulator: &mut A,
-        transcript: &mut impl VerifierFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
 
@@ -336,7 +332,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> ZkUniSkipFirstRoundProof<F, C> {
         &self,
         sumcheck_instance: &I,
         opening_accumulator: &mut A,
-        transcript: &mut impl VerifierFs<F>,
+        transcript: &mut (impl FsChallenge<F> + FsAbsorb + FsNargRead),
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
         if self.poly_degree > degree_bound {

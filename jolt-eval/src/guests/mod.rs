@@ -6,7 +6,7 @@ use ark_bn254::Fr;
 use jolt_prover_legacy::curve::Bn254Curve;
 use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
-use jolt_transcript::Blake2b512;
+use jolt_transcript::{Blake2b512, DEFAULT_JOLT_SESSION};
 pub use jolt_verifier::VerifierError;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
@@ -58,6 +58,7 @@ pub fn prove(
         None,
         &mut output_bytes,
         prover_pp,
+        DEFAULT_JOLT_SESSION,
     )
     .expect("prover should produce verifier-native proof");
     (proof, io_device)
@@ -74,6 +75,7 @@ pub fn verify(
         &proof,
         None,
         proof.claims.is_zk(),
+        DEFAULT_JOLT_SESSION,
     )
 }
 
@@ -106,6 +108,7 @@ pub fn verify_with_claims(
         &proof,
         None,
         proof.claims.is_zk(),
+        DEFAULT_JOLT_SESSION,
     )
 }
 

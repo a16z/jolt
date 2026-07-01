@@ -26,18 +26,17 @@
 //! exports the prover's NARG to `jolt-verifier`, and prover-only stage/BlindFold
 //! payloads are consumed from that stream.
 //!
-//! Three concerns, three traits:
+//! Three concerns:
 //! - [`FsChallenge`] — squeezed verifier randomness; implemented per sponge type for
 //!   `ProverState`/`VerifierState`, so prover and verifier share it.
-//! - [`ProverFs`] — `absorb` shared values ([`public_message`], not shipped) and
-//!   `write_slice` prover-only payload ([`prover_message`], into the NARG).
-//! - [`VerifierFs`] — `absorb` the same shared values, and `read_slice` the prover
-//!   payload back from the NARG in order.
+//! - [`FsAbsorb`] — shared values ([`public_message`], not shipped).
+//! - [`FsNargWrite`] / [`FsNargRead`] — prover-only payloads
+//!   ([`prover_message`], into the NARG) and verifier reads back in order.
 //!
 //! [`public_message`]: spongefish::ProverState::public_message
 //! [`prover_message`]: spongefish::ProverState::prover_message
 
-use jolt_transcript::{DuplexSpongeInterface, OptimizedChallenge, ProverState, VerifierState};
+use jolt_transcript::{OptimizedChallenge, ProverState, VerifierState};
 
 /// Absorbing shared values is the field-agnostic [`jolt_transcript::FsAbsorb`] surface
 /// (`absorb` = spongefish `public_message`); jolt-core re-exports it so the whole
@@ -230,29 +229,6 @@ impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::Poseido
         let f: F = self.challenge_field();
         wrap_full_field(f)
     }
-}
-
-/// Prover-side message vocabulary over the spongefish transcript.
-pub trait ProverFs<F: JoltField>: FsChallenge<F> + FsAbsorb + FsNargWrite {}
-
-impl<F, H, R> ProverFs<F> for ProverState<H, R>
-where
-    F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
-    R: RngCore + CryptoRng,
-    Self: FsChallenge<F>,
-{
-}
-
-/// Verifier-side message vocabulary over the spongefish transcript.
-pub trait VerifierFs<F: JoltField>: FsChallenge<F> + FsAbsorb + FsNargRead {}
-
-impl<F, H> VerifierFs<F> for VerifierState<'_, H>
-where
-    F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
-    Self: FsChallenge<F>,
-{
 }
 
 #[cfg(test)]

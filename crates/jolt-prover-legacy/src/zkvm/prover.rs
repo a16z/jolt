@@ -65,7 +65,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::UniSkipFirstRoundProofVariant,
     },
-    transcript_msgs::{FsAbsorb, FsChallenge, FsNargWrite, ProverFs},
+    transcript_msgs::{FsAbsorb, FsChallenge, FsNargWrite},
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         bytecode::{
@@ -253,7 +253,7 @@ impl<
         H: DuplexSpongeInterface<U = u8> + Default,
     > JoltCpuProver<'a, F, C, PCS, H>
 where
-    ProverState<H, StdRng>: ProverFs<F>,
+    ProverState<H, StdRng>: FsChallenge<F> + FsAbsorb + FsNargWrite,
 {
     #[expect(
         clippy::too_many_arguments,

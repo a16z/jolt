@@ -19,7 +19,7 @@ use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    transcript_msgs::{FsAbsorb, FsChallenge, ProverFs, VerifierFs},
+    transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead, FsNargWrite},
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
@@ -511,7 +511,7 @@ where
         HyperKZGCommitment(combined_commitment.into_affine())
     }
 
-    fn prove<T: ProverFs<Self::Field>>(
+    fn prove<T: FsChallenge<Self::Field> + FsAbsorb + FsNargWrite>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated
@@ -523,7 +523,7 @@ where
         (proof, None) // HyperKZG doesn't have ZK blinding
     }
 
-    fn verify<T: VerifierFs<Self::Field>>(
+    fn verify<T: FsChallenge<Self::Field> + FsAbsorb + FsNargRead>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
