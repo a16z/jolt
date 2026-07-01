@@ -163,6 +163,25 @@ where
         .map_err(VerifierError::from)
     }
 
+    /// The offset of this instance's point within the batch challenge vector: the
+    /// instance is bound on `batch_point[offset .. offset + rounds]`. Defaults to
+    /// the front-loaded suffix (`batch_num_vars - rounds`); the two-phase address
+    /// relations (stages 6/7) override to `0` (the prefix), and the stage-2 RAM
+    /// relations to their phase-1 offset. Consumed by the generated
+    /// `derive_opening_points` driver when slicing each member's point.
+    fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
+        batch_num_vars.checked_sub(self.rounds()).ok_or_else(|| {
+            VerifierError::StageClaimSumcheckFailed {
+                stage: self.id(),
+                reason: format!(
+                    "batch challenge vector has {batch_num_vars} entries, fewer than the \
+                     instance's {} rounds",
+                    self.rounds()
+                ),
+            }
+        })
+    }
+
     /// Map this instance's sumcheck point and the upstream input points into the
     /// produced openings' points. Value-independent, so it runs in both the clear
     /// and ZK paths; any cross-input consistency required for a well-defined point

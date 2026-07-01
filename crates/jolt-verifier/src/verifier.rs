@@ -1159,11 +1159,8 @@ mod tests {
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
                     },
-                advice_address_phase:
-                    stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
-                        trusted: None,
-                        untrusted: None,
-                    },
+                trusted_advice: None,
+                untrusted_advice: None,
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
             },

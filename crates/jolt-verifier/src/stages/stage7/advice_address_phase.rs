@@ -31,17 +31,21 @@ pub struct AdviceAddressPhase<F: Field> {
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
-    reference_opening_point: Vec<F>,
+    /// The RAM address point of the staged advice opening from RAM value-check
+    /// (stage 4). Consumed only by the clear-only `derive_output_term` (`FinalScale`),
+    /// so it is `None` in ZK — where BlindFold recomputes the scale independently and
+    /// this relation's `derive_output_term` never runs.
+    reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: Field> AdviceAddressPhase<F> {
     /// `reference_opening_point` is the RAM address point of the staged advice
-    /// opening from RAM value-check (stage 4). It and the cycle-phase variables are
-    /// known before the stage-7 sumcheck.
+    /// opening from RAM value-check (stage 4), `None` in ZK (clear-only aux). It and
+    /// the cycle-phase variables are known before the stage-7 sumcheck.
     pub fn new(
         kind: JoltAdviceKind,
         layout: &AdviceClaimReductionLayout,
-        reference_opening_point: Vec<F>,
+        reference_opening_point: Option<Vec<F>>,
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
@@ -87,6 +91,13 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         &self.symbolic
     }
 
+    /// The advice address phase is bound on the offset-0 prefix of the batch
+    /// challenge vector (two-phase reductions front-load the address rounds), not
+    /// the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
@@ -122,9 +133,14 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         if *kind != self.kind {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         }
+        let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
+            advice_public_failed(
+                "advice address phase has no reference opening point (ZK-only construction)",
+            )
+        })?;
         self.layout
             .address_phase_scale_at_opening_point(
-                &self.reference_opening_point,
+                reference_opening_point,
                 self.output_point(output_points)?,
             )
             .map_err(advice_public_failed)

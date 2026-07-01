@@ -530,10 +530,19 @@ fn stage7_claims_from_openings<F: Field>(
             bytecode_ra,
             ram_ra,
         },
-        advice_address_phase: AdviceAddressPhaseOutputClaims {
-            trusted: advice_address_phase_claim_from_openings(claims, JoltAdviceKind::Trusted),
-            untrusted: advice_address_phase_claim_from_openings(claims, JoltAdviceKind::Untrusted),
-        },
+        trusted_advice: advice_address_phase_claim_from_openings(claims, JoltAdviceKind::Trusted)
+            .map(|opening| AdviceAddressPhaseOutputClaims {
+                trusted: Some(opening),
+                untrusted: None,
+            }),
+        untrusted_advice: advice_address_phase_claim_from_openings(
+            claims,
+            JoltAdviceKind::Untrusted,
+        )
+        .map(|opening| AdviceAddressPhaseOutputClaims {
+            trusted: None,
+            untrusted: Some(opening),
+        }),
         bytecode_address_phase: bytecode_address_phase_claims_from_openings(claims),
         program_image_address_phase: program_image_address_phase_claim_from_openings(claims),
     })

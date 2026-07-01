@@ -976,20 +976,36 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         "prover-fixture test offsets every HammingWeight RAM RA output claim",
     ),
     checked_standard(
-        "stage7.claims.advice_address_phase.trusted.opening_claim",
-        "claims.stage7.advice_address_phase.trusted",
+        "stage7.claims.trusted_advice.trusted",
+        "claims.stage7.trusted_advice.trusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice address-phase output claim",
     ),
     checked_standard(
-        "stage7.claims.advice_address_phase.untrusted.opening_claim",
-        "claims.stage7.advice_address_phase.untrusted",
+        "stage7.claims.untrusted_advice.untrusted",
+        "claims.stage7.untrusted_advice.untrusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice address-phase output claim",
+    ),
+    checked_standard(
+        "stage7.claims.trusted_advice.untrusted",
+        "claims.stage7.trusted_advice.untrusted",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "trusted advice address-phase claim carries only the trusted kind; the untrusted field is structurally always absent",
+    ),
+    checked_standard(
+        "stage7.claims.untrusted_advice.trusted",
+        "claims.stage7.untrusted_advice.trusted",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "untrusted advice address-phase claim carries only the untrusted kind; the trusted field is structurally always absent",
     ),
     checked_standard(
         "stage7.claims.bytecode_address_phase.chunks",
@@ -1461,11 +1477,18 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                 },
-            advice_address_phase:
+            trusted_advice: Some(
                 stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
                     trusted: Some(zero),
+                    untrusted: None,
+                },
+            ),
+            untrusted_advice: Some(
+                stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
+                    trusted: None,
                     untrusted: Some(zero),
                 },
+            ),
             bytecode_address_phase: Some(
                 stage7::committed_reduction_address_phase::BytecodeReductionAddressPhaseOutputClaims {
                     chunks: vec![zero],

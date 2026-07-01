@@ -499,7 +499,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                             ::core::option::Option::Some(__member),
                             ::core::option::Option::Some(__input_points),
                         ) => {
-                            let __point = __instance_point(batch_point, __member.rounds(), __member.id())?;
+                            let __point = __instance_point(
+                                batch_point,
+                                __member.instance_point_offset(batch_point.len())?,
+                                __member.rounds(),
+                                __member.id(),
+                            )?;
                             ::core::option::Option::Some(
                                 __member.derive_opening_points(__point, __input_points)?,
                             )
@@ -519,7 +524,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             } else {
                 quote! {
                     let #field = self.#id.derive_opening_points(
-                        __instance_point(batch_point, self.#id.rounds(), self.#id.id())?,
+                        __instance_point(
+                            batch_point,
+                            self.#id.instance_point_offset(batch_point.len())?,
+                            self.#id.rounds(),
+                            self.#id.id(),
+                        )?,
                         &input_points.#id,
                     )?;
                 }
@@ -539,21 +549,25 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
 
-                // An instance with `rounds` variables is bound on the length-`rounds`
-                // suffix of the batch challenge vector (front-loaded batching).
+                // An instance with `rounds` variables is bound on
+                // `batch_point[offset .. offset + rounds]`, where `offset` is the
+                // member's `instance_point_offset` (the front-loaded suffix by
+                // default; the two-phase address relations use the offset-0 prefix,
+                // the stage-2 RAM relations their phase-1 offset).
                 fn __instance_point<__F: ::jolt_field::Field>(
                     batch_point: &[__F],
+                    offset: usize,
                     rounds: usize,
                     stage: ::jolt_claims::protocols::jolt::JoltRelationId,
                 ) -> ::core::result::Result<&[__F], crate::VerifierError> {
-                    batch_point
-                        .len()
-                        .checked_sub(rounds)
-                        .map(|__offset| &batch_point[__offset..])
+                    offset
+                        .checked_add(rounds)
+                        .and_then(|__end| batch_point.get(offset..__end))
                         .ok_or(crate::VerifierError::StageClaimSumcheckFailed {
                             stage,
                             reason: ::std::format!(
-                                "batch challenge vector has {} entries, fewer than the instance's {rounds} rounds",
+                                "instance point [{offset}, {offset} + {rounds}) exceeds the batch \
+                                 challenge vector ({} entries)",
                                 batch_point.len(),
                             ),
                         })
