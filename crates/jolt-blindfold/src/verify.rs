@@ -1,143 +1,150 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
 use jolt_field::{Field, FieldCore, RingAccumulator, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
-use jolt_transcript::{AppendToTranscript, Label, Transcript};
+use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use crate::{
-    BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError,
-    WitnessCoordinate,
+    BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError, WitnessCoordinate,
 };
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
 const INNER_SUMCHECK_DEGREE: usize = 2;
-const INNER_SUMCHECK_LABEL: &[u8] = b"inner_sumcheck_poly";
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
-    Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    F: Field,
+    Com: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    pub fn verify<VC, T>(
+    pub fn verify_from_narg<VC, T>(
         &self,
-        proof: &BlindFoldProof<F, Com>,
         vc_setup: &VC::Setup,
         transcript: &mut T,
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        T: Transcript<Challenge = F>,
+        T: FsNargRead + FsTranscript<F>,
+        Com: CanonicalDeserialize,
     {
-        let folded = self.folded_instance_from_proof(proof, transcript)?;
+        let folded = self.folded_instance_from_narg(transcript)?;
+        let folded_eval_outputs = read_field_vec(transcript, "folded eval outputs")?;
+        let folded_eval_blindings = read_field_vec(transcript, "folded eval blindings")?;
         ensure_len(
             "folded eval outputs",
             folded.eval_commitments.len(),
-            proof.folded_eval_outputs.len(),
+            folded_eval_outputs.len(),
         )?;
         ensure_len(
             "folded eval blindings",
             folded.eval_commitments.len(),
-            proof.folded_eval_blindings.len(),
+            folded_eval_blindings.len(),
         )?;
-        proof.verify_folded_eval_commitments::<VC>(vc_setup, &folded)?;
-        self.verify_folded_eval_witness_bindings::<VC, T>(proof, vc_setup, &folded, transcript)?;
-        let outer = self.verify_outer_folded_r1cs::<VC, T>(proof, vc_setup, &folded, transcript)?;
-        self.verify_inner_folded_r1cs::<VC, T>(proof, vc_setup, &folded, &outer, transcript)?;
+        verify_folded_eval_commitments::<F, VC>(
+            vc_setup,
+            &folded,
+            &folded_eval_outputs,
+            &folded_eval_blindings,
+        )?;
+
+        let coordinates = self.final_opening_witness_coordinates()?;
+        let expected_outputs = coordinates
+            .iter()
+            .filter(|coordinates| coordinates.evaluation.is_some())
+            .count();
+        let expected_blindings = coordinates
+            .iter()
+            .filter(|coordinates| coordinates.blinding.is_some())
+            .count();
+        let folded_eval_output_openings = read_final_openings(
+            transcript,
+            expected_outputs,
+            self.dimensions.witness.row_len,
+        )?;
+        let folded_eval_blinding_openings = read_final_openings(
+            transcript,
+            expected_blindings,
+            self.dimensions.witness.row_len,
+        )?;
+        self.verify_folded_eval_witness_bindings_from_narg::<VC>(
+            vc_setup,
+            &folded,
+            &folded_eval_outputs,
+            &folded_eval_blindings,
+            &folded_eval_output_openings,
+            &folded_eval_blinding_openings,
+        )?;
+
+        let outer =
+            self.verify_outer_folded_r1cs_from_narg::<VC, T>(vc_setup, &folded, transcript)?;
+        self.verify_inner_folded_r1cs_from_narg::<VC, T>(vc_setup, &folded, &outer, transcript)?;
         Ok(())
     }
 }
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
-    Com: Clone + HomomorphicCommitment<F> + AppendToTranscript,
+    F: Field,
+    Com: Clone + HomomorphicCommitment<F> + CanonicalSerialize,
 {
-    fn folded_instance_from_proof<T>(
+    fn folded_instance_from_narg<T>(
         &self,
-        proof: &BlindFoldProof<F, Com>,
         transcript: &mut T,
     ) -> Result<RelaxedInstance<F, Com>, VerificationError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FsNargRead + FsTranscript<F>,
+        Com: CanonicalDeserialize,
     {
-        let committed = self.committed_relaxed_instance(&proof.auxiliary_row_commitments)?;
-        committed.append_to_transcript(
-            transcript,
-            b"bf_committed_u",
-            b"bf_committed_w",
-            b"bf_committed_e",
-            b"bf_committed_eval",
-        );
+        let committed = read_committed_instance_from_narg(self, transcript)?;
 
+        let random_u = read_field_one(transcript, "random u")?;
+        let random_round_commitments = read_narg_slice(transcript, "random round commitments")?;
+        let random_output_claim_row_commitments =
+            read_narg_slice(transcript, "random output claim row commitments")?;
+        let random_auxiliary_row_commitments =
+            read_narg_slice(transcript, "random auxiliary row commitments")?;
+        let random_error_row_commitments =
+            read_narg_slice(transcript, "random error row commitments")?;
+        let random_eval_commitments = read_narg_slice(transcript, "random eval commitments")?;
         let random = self.random_relaxed_instance(
-            &proof.random_round_commitments,
-            &proof.random_output_claim_row_commitments,
-            &proof.random_auxiliary_row_commitments,
-            &proof.random_error_row_commitments,
-            &proof.random_eval_commitments,
-            proof.random_u,
+            &random_round_commitments,
+            &random_output_claim_row_commitments,
+            &random_auxiliary_row_commitments,
+            &random_error_row_commitments,
+            &random_eval_commitments,
+            random_u,
         )?;
-        random.append_to_transcript(
-            transcript,
-            b"bf_random_u",
-            b"bf_random_w",
-            b"bf_random_e",
-            b"bf_random_eval",
-        );
 
-        self.validate_cross_term_error_rows(&proof.cross_term_error_row_commitments)?;
-        transcript.append_values(b"bf_cross_e", &proof.cross_term_error_row_commitments);
+        let cross_term_error_row_commitments =
+            read_narg_slice(transcript, "cross-term error row commitments")?;
+        self.validate_cross_term_error_rows(&cross_term_error_row_commitments)?;
 
         let folding_challenge = transcript.challenge();
         Ok(committed.fold(
             &random,
-            &proof.cross_term_error_row_commitments,
+            &cross_term_error_row_commitments,
             folding_challenge,
         )?)
     }
 }
 
-impl<F, Com> RelaxedInstance<F, Com>
-where
-    F: AppendToTranscript,
-    Com: AppendToTranscript,
-{
-    fn append_to_transcript<T>(
-        &self,
-        transcript: &mut T,
-        u_label: &'static [u8],
-        witness_label: &'static [u8],
-        error_label: &'static [u8],
-        eval_label: &'static [u8],
-    ) where
-        T: Transcript,
-    {
-        transcript.append(&Label(u_label));
-        self.u.append_to_transcript(transcript);
-        transcript.append_values(witness_label, &self.witness_row_commitments);
-        transcript.append_values(error_label, &self.error_row_commitments);
-        transcript.append_values(eval_label, &self.eval_commitments);
-    }
-}
-
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
-    Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    F: Field,
+    Com: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    fn verify_outer_folded_r1cs<VC, T>(
+    fn verify_outer_folded_r1cs_from_narg<VC, T>(
         &self,
-        proof: &BlindFoldProof<F, Com>,
         vc_setup: &VC::Setup,
         folded: &RelaxedInstance<F, Com>,
         transcript: &mut T,
     ) -> Result<OuterCheck<F>, VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        T: Transcript<Challenge = F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         let error_row_count = self.dimensions.error.row_count;
         if error_row_count == 0 || !error_row_count.is_power_of_two() {
@@ -169,18 +176,19 @@ where
             });
         }
 
-        transcript.append(&Label(b"bf_spartan"));
         let tau = transcript.challenge_vector(num_vars);
         let claim = SumcheckClaim::new(num_vars, OUTER_SUMCHECK_DEGREE, F::zero());
-        let outer = proof
-            .outer_sumcheck
-            .verify(
-                &claim,
-                BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-                transcript,
-            )
-            .map_err(|source| VerificationError::OuterSumcheck { source })?;
+        let outer =
+            SumcheckVerifier::verify_compressed_from_narg(&claim, BooleanHypercube, transcript)
+                .map_err(|source| VerificationError::OuterSumcheck { source })?;
+
+        let azbzcz = read_field_vec(transcript, "outer final claims")?;
+        let [az_rx, bz_rx, cz_rx] = <[F; 3]>::try_from(azbzcz.as_slice()).map_err(|_| {
+            VerificationError::MalformedNarg {
+                name: "outer final claims",
+            }
+        })?;
+        let error_opening = read_vector_opening(transcript, error_row_len, "error opening")?;
 
         let (row_point, entry_point) = outer.point.split_at(row_vars);
         let e_rx = VC::verify_committed_rows(
@@ -188,11 +196,11 @@ where
             &folded.error_row_commitments,
             row_point,
             entry_point,
-            &proof.error_opening,
+            &error_opening,
         )?;
 
         let eq_tau_rx = EqPolynomial::<F>::mle(&tau, &outer.point);
-        let expected = eq_tau_rx * (proof.az_rx * proof.bz_rx - folded.u * proof.cz_rx - e_rx);
+        let expected = eq_tau_rx * (az_rx * bz_rx - folded.u * cz_rx - e_rx);
         if outer.value != expected {
             return Err(VerificationError::OuterFinalClaimMismatch {
                 expected,
@@ -200,65 +208,58 @@ where
             });
         }
 
-        transcript.append_values(b"bf_az_bz_cz", &[proof.az_rx, proof.bz_rx, proof.cz_rx]);
-        append_vector_opening(
-            transcript,
-            b"bf_error_opening",
-            b"bf_error_blind",
-            &proof.error_opening,
-        );
-
         Ok(OuterCheck {
             point: outer.point.into_vec(),
+            az_rx,
+            bz_rx,
+            cz_rx,
         })
     }
 }
 
-impl<F, Com> BlindFoldProof<F, Com>
+fn verify_folded_eval_commitments<F, VC>(
+    vc_setup: &VC::Setup,
+    folded: &RelaxedInstance<F, VC::Output>,
+    folded_eval_outputs: &[F],
+    folded_eval_blindings: &[F],
+) -> Result<(), VerificationError<F>>
 where
     F: Field,
-    Com: Copy + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + CanonicalSerialize,
 {
-    fn verify_folded_eval_commitments<VC>(
-        &self,
-        vc_setup: &VC::Setup,
-        folded: &RelaxedInstance<F, Com>,
-    ) -> Result<(), VerificationError<F>>
-    where
-        VC: VectorCommitment<Field = F, Output = Com>,
+    for (index, ((commitment, &output), &blinding)) in folded
+        .eval_commitments
+        .iter()
+        .zip(folded_eval_outputs)
+        .zip(folded_eval_blindings)
+        .enumerate()
     {
-        for (index, ((commitment, &output), &blinding)) in folded
-            .eval_commitments
-            .iter()
-            .zip(&self.folded_eval_outputs)
-            .zip(&self.folded_eval_blindings)
-            .enumerate()
-        {
-            if !VC::verify(vc_setup, commitment, &[output], &blinding) {
-                return Err(VerificationError::EvalCommitmentMismatch { index });
-            }
+        if !VC::verify(vc_setup, commitment, &[output], &blinding) {
+            return Err(VerificationError::EvalCommitmentMismatch { index });
         }
-
-        Ok(())
     }
+
+    Ok(())
 }
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
-    Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    F: Field,
+    Com: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    fn verify_folded_eval_witness_bindings<VC, T>(
+    fn verify_folded_eval_witness_bindings_from_narg<VC>(
         &self,
-        proof: &BlindFoldProof<F, Com>,
         vc_setup: &VC::Setup,
         folded: &RelaxedInstance<F, Com>,
-        transcript: &mut T,
+        folded_eval_outputs: &[F],
+        folded_eval_blindings: &[F],
+        folded_eval_output_openings: &[VectorCommitmentOpening<F>],
+        folded_eval_blinding_openings: &[VectorCommitmentOpening<F>],
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        T: Transcript,
     {
         let coordinates = self.final_opening_witness_coordinates()?;
         ensure_len(
@@ -274,7 +275,7 @@ where
         ensure_len(
             "folded eval output witness openings",
             expected_outputs,
-            proof.folded_eval_output_openings.len(),
+            folded_eval_output_openings.len(),
         )?;
         let expected_blindings = coordinates
             .iter()
@@ -283,32 +284,26 @@ where
         ensure_len(
             "folded eval blinding witness openings",
             expected_blindings,
-            proof.folded_eval_blinding_openings.len(),
+            folded_eval_blinding_openings.len(),
         )?;
 
-        let mut output_openings = proof.folded_eval_output_openings.iter();
-        let mut blinding_openings = proof.folded_eval_blinding_openings.iter();
+        let mut output_openings = folded_eval_output_openings.iter();
+        let mut blinding_openings = folded_eval_blinding_openings.iter();
         for (index, coordinates) in coordinates.iter().enumerate() {
             if let Some(coordinate) = coordinates.evaluation {
                 let opening = output_openings.next().ok_or(RelaxedError::LengthMismatch {
                     name: "folded eval output witness openings",
                     expected: expected_outputs,
-                    actual: proof.folded_eval_output_openings.len(),
+                    actual: folded_eval_output_openings.len(),
                 })?;
                 let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
-                if opened != proof.folded_eval_outputs[index] {
+                if opened != folded_eval_outputs[index] {
                     return Err(VerificationError::EvalWitnessMismatch {
                         kind: "output",
                         index,
                     });
                 }
                 coordinate.require_dedicated_row(opening, "output", index)?;
-                append_vector_opening(
-                    transcript,
-                    b"bf_eval_out_open",
-                    b"bf_eval_out_blind",
-                    opening,
-                );
             }
 
             if let Some(coordinate) = coordinates.blinding {
@@ -317,22 +312,16 @@ where
                     .ok_or(RelaxedError::LengthMismatch {
                         name: "folded eval blinding witness openings",
                         expected: expected_blindings,
-                        actual: proof.folded_eval_blinding_openings.len(),
+                        actual: folded_eval_blinding_openings.len(),
                     })?;
                 let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
-                if opened != proof.folded_eval_blindings[index] {
+                if opened != folded_eval_blindings[index] {
                     return Err(VerificationError::EvalWitnessMismatch {
                         kind: "blinding",
                         index,
                     });
                 }
                 coordinate.require_dedicated_row(opening, "blinding", index)?;
-                append_vector_opening(
-                    transcript,
-                    b"bf_eval_blind_open",
-                    b"bf_eval_blind_bl",
-                    opening,
-                );
             }
         }
 
@@ -398,13 +387,12 @@ impl WitnessCoordinate {
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
-    Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    F: Field,
+    Com: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    fn verify_inner_folded_r1cs<VC, T>(
+    fn verify_inner_folded_r1cs_from_narg<VC, T>(
         &self,
-        proof: &BlindFoldProof<F, Com>,
         vc_setup: &VC::Setup,
         folded: &RelaxedInstance<F, Com>,
         outer: &OuterCheck<F>,
@@ -412,15 +400,15 @@ where
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        T: Transcript<Challenge = F>,
+        T: FsNargRead + FsTranscript<F>,
     {
         let ra = transcript.challenge();
         let rb = transcript.challenge();
         let rc = transcript.challenge();
         let public = public_contributions(&self.r1cs, &outer.point, folded.u)?;
-        let claim = ra * (proof.az_rx - public.a)
-            + rb * (proof.bz_rx - public.b)
-            + rc * (proof.cz_rx - public.c);
+        let claim = ra * (outer.az_rx - public.a)
+            + rb * (outer.bz_rx - public.b)
+            + rc * (outer.cz_rx - public.c);
 
         let witness_row_count = self.dimensions.witness.row_count;
         if witness_row_count == 0 || !witness_row_count.is_power_of_two() {
@@ -452,23 +440,21 @@ where
             });
         }
         let inner_claim = SumcheckClaim::new(num_vars, INNER_SUMCHECK_DEGREE, claim);
-        let inner = proof
-            .inner_sumcheck
-            .verify(
-                &inner_claim,
-                BooleanHypercube,
-                INNER_SUMCHECK_LABEL,
-                transcript,
-            )
-            .map_err(|source| VerificationError::InnerSumcheck { source })?;
+        let inner = SumcheckVerifier::verify_compressed_from_narg(
+            &inner_claim,
+            BooleanHypercube,
+            transcript,
+        )
+        .map_err(|source| VerificationError::InnerSumcheck { source })?;
 
+        let witness_opening = read_vector_opening(transcript, witness_row_len, "witness opening")?;
         let (row_point, entry_point) = inner.point.split_at(row_vars);
         let w_ry = VC::verify_committed_rows(
             vc_setup,
             &folded.witness_row_commitments,
             row_point,
             entry_point,
-            &proof.witness_opening,
+            &witness_opening,
         )?;
 
         let l_w_at_ry = compute_l_w_at_ry(&self.r1cs, &outer.point, &inner.point, ra, rb, rc)?;
@@ -480,13 +466,6 @@ where
             });
         }
 
-        append_vector_opening(
-            transcript,
-            b"bf_witness_opening",
-            b"bf_witness_blind",
-            &proof.witness_opening,
-        );
-
         Ok(())
     }
 }
@@ -494,20 +473,112 @@ where
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OuterCheck<F> {
     point: Vec<F>,
+    az_rx: F,
+    bz_rx: F,
+    cz_rx: F,
 }
 
-fn append_vector_opening<F, T>(
+fn read_committed_instance_from_narg<F, Com, T>(
+    protocol: &BlindFoldProtocol<F, Com>,
     transcript: &mut T,
-    row_label: &'static [u8],
-    blinding_label: &'static [u8],
-    opening: &VectorCommitmentOpening<F>,
-) where
-    F: AppendToTranscript,
-    T: Transcript,
+) -> Result<RelaxedInstance<F, Com>, VerificationError<F>>
+where
+    F: Field,
+    Com: Clone + HomomorphicCommitment<F> + CanonicalSerialize + CanonicalDeserialize,
+    T: FsNargRead + FsTranscript<F>,
 {
-    transcript.append_values(row_label, &opening.combined_vector);
-    transcript.append(&Label(blinding_label));
-    opening.combined_blinding.append_to_transcript(transcript);
+    transcript.absorb_field(&F::one());
+    let round_commitments = protocol
+        .sumcheck_consistency
+        .iter()
+        .flat_map(|consistency| consistency.rounds.iter())
+        .map(|round| round.commitment.clone())
+        .collect::<Vec<_>>();
+    transcript.absorb(&round_commitments);
+    let output_claim_row_commitments = protocol
+        .committed_output_claims
+        .iter()
+        .flat_map(|claims| claims.commitments.iter().cloned())
+        .collect::<Vec<_>>();
+    transcript.absorb(&output_claim_row_commitments);
+    let auxiliary_row_commitments = read_narg_slice(transcript, "auxiliary row commitments")?;
+    let committed = protocol.committed_relaxed_instance(&auxiliary_row_commitments)?;
+    transcript.absorb(&committed.error_row_commitments);
+    transcript.absorb(&committed.eval_commitments);
+    Ok(committed)
+}
+
+fn read_narg_slice<F, T, Value>(
+    transcript: &mut T,
+    name: &'static str,
+) -> Result<Vec<Value>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead + FsTranscript<F>,
+    Value: CanonicalDeserialize,
+{
+    transcript
+        .read_slice()
+        .map_err(|_| VerificationError::MalformedNarg { name })
+}
+
+fn read_field_vec<F, T>(
+    transcript: &mut T,
+    name: &'static str,
+) -> Result<Vec<F>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead + FsTranscript<F>,
+{
+    transcript
+        .read_field_slice()
+        .map_err(|_| VerificationError::MalformedNarg { name })
+}
+
+fn read_field_one<F, T>(transcript: &mut T, name: &'static str) -> Result<F, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead + FsTranscript<F>,
+{
+    let values = read_field_vec(transcript, name)?;
+    match <[F; 1]>::try_from(values.as_slice()) {
+        Ok([value]) => Ok(value),
+        Err(_) => Err(VerificationError::MalformedNarg { name }),
+    }
+}
+
+fn read_final_openings<F, T>(
+    transcript: &mut T,
+    count: usize,
+    row_len: usize,
+) -> Result<Vec<VectorCommitmentOpening<F>>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead + FsTranscript<F>,
+{
+    (0..count)
+        .map(|_| read_vector_opening(transcript, row_len, "folded eval witness opening"))
+        .collect()
+}
+
+fn read_vector_opening<F, T>(
+    transcript: &mut T,
+    expected_len: usize,
+    name: &'static str,
+) -> Result<VectorCommitmentOpening<F>, VerificationError<F>>
+where
+    F: Field,
+    T: FsNargRead + FsTranscript<F>,
+{
+    let combined_vector = read_field_vec(transcript, name)?;
+    if combined_vector.len() != expected_len {
+        return Err(VerificationError::MalformedNarg { name });
+    }
+    let combined_blinding = read_field_one(transcript, name)?;
+    Ok(VectorCommitmentOpening {
+        combined_vector,
+        combined_blinding,
+    })
 }
 
 fn public_contributions<F>(
@@ -584,567 +655,4 @@ fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), 
         });
     }
     Ok(())
-}
-
-#[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests should fail loudly")]
-mod tests {
-    use super::*;
-    use crate::{
-        r1cs::{FinalOpeningLayout, Layout},
-        BlindFoldDimensions, RowDimensions, WitnessRowLayout,
-    };
-    use jolt_crypto::{
-        Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorOpeningError,
-    };
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::CompressedPoly;
-    use jolt_r1cs::ConstraintMatrices;
-    use jolt_sumcheck::CompressedSumcheckProof;
-    use jolt_transcript::Blake2bTranscript;
-
-    fn f(value: u64) -> Fr {
-        Fr::from_u64(value)
-    }
-
-    fn setup() -> PedersenSetup<Bn254G1> {
-        let generator = Bn254::g1_generator();
-        let message_generators = (1..=4).map(|i| generator.scalar_mul(&f(i))).collect();
-        PedersenSetup::new(message_generators, generator.scalar_mul(&f(99)))
-    }
-
-    fn commitment(setup: &PedersenSetup<Bn254G1>, value: u64) -> Bn254G1 {
-        Pedersen::<Bn254G1>::commit(setup, &[f(value)], &f(value + 1000))
-    }
-
-    fn commit_value(setup: &PedersenSetup<Bn254G1>, value: Fr, blinding: Fr) -> Bn254G1 {
-        Pedersen::<Bn254G1>::commit(setup, &[value], &blinding)
-    }
-
-    fn identity() -> Bn254G1 {
-        <Bn254G1 as JoltGroup>::identity()
-    }
-
-    fn protocol(setup: &PedersenSetup<Bn254G1>) -> BlindFoldProtocol<Fr, Bn254G1> {
-        let _ = setup;
-        empty_protocol(Vec::new())
-    }
-
-    fn protocol_with_eval(setup: &PedersenSetup<Bn254G1>) -> BlindFoldProtocol<Fr, Bn254G1> {
-        empty_protocol(vec![commit_value(setup, f(7), f(70))])
-    }
-
-    fn empty_protocol(eval_commitments: Vec<Bn254G1>) -> BlindFoldProtocol<Fr, Bn254G1> {
-        BlindFoldProtocol {
-            sumcheck_consistency: Vec::new(),
-            committed_output_claims: Vec::new(),
-            r1cs: ConstraintMatrices::new(0, 1, Vec::new(), Vec::new(), Vec::new()),
-            layout: Layout {
-                witness_row_len: 1,
-                stages: Vec::new(),
-                final_openings: vec![
-                    FinalOpeningLayout {
-                        evaluation: None,
-                        blinding: None,
-                    };
-                    eval_commitments.len()
-                ],
-            },
-            dimensions: BlindFoldDimensions {
-                witness: RowDimensions {
-                    row_len: 1,
-                    row_count: 1,
-                },
-                error: RowDimensions {
-                    row_len: 1,
-                    row_count: 1,
-                },
-                witness_rows: WitnessRowLayout {
-                    coefficients: 0..0,
-                    auxiliary: 0..0,
-                    output_claims: 0..0,
-                    padding: 0..1,
-                },
-                coefficient_rows: 0,
-                output_claim_rows: 0,
-                auxiliary_rows: 0,
-                coefficient_values: 0,
-                auxiliary_values: 0,
-            },
-            eval_commitments,
-        }
-    }
-
-    fn witness_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
-        BlindFoldProtocol {
-            sumcheck_consistency: Vec::new(),
-            committed_output_claims: Vec::new(),
-            r1cs: ConstraintMatrices::new(
-                1,
-                2,
-                vec![vec![(1, f(1))]],
-                vec![Vec::new()],
-                vec![Vec::new()],
-            ),
-            layout: Layout {
-                witness_row_len: 1,
-                stages: Vec::new(),
-                final_openings: Vec::new(),
-            },
-            dimensions: BlindFoldDimensions {
-                witness: RowDimensions {
-                    row_len: 1,
-                    row_count: 1,
-                },
-                error: RowDimensions {
-                    row_len: 1,
-                    row_count: 1,
-                },
-                witness_rows: WitnessRowLayout {
-                    coefficients: 0..0,
-                    output_claims: 0..0,
-                    auxiliary: 0..1,
-                    padding: 1..1,
-                },
-                coefficient_rows: 0,
-                output_claim_rows: 0,
-                auxiliary_rows: 1,
-                coefficient_values: 0,
-                auxiliary_values: 1,
-            },
-            eval_commitments: Vec::new(),
-        }
-    }
-
-    fn inner_round_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
-        let mut protocol = witness_protocol();
-        protocol.dimensions.witness = RowDimensions {
-            row_len: 1,
-            row_count: 2,
-        };
-        protocol.dimensions.error = RowDimensions {
-            row_len: 1,
-            row_count: 2,
-        };
-        protocol.dimensions.witness_rows.auxiliary = 0..2;
-        protocol.dimensions.witness_rows.padding = 2..2;
-        protocol.dimensions.auxiliary_rows = 2;
-        protocol.dimensions.auxiliary_values = 2;
-        protocol
-    }
-
-    fn add_zero_inner_round(proof: &mut BlindFoldProof<Fr, Bn254G1>) {
-        proof.inner_sumcheck.round_polynomials = vec![CompressedPoly::new(vec![f(0)])];
-    }
-
-    fn outer_round_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
-        let mut protocol = empty_protocol(Vec::new());
-        protocol.dimensions.error = RowDimensions {
-            row_len: 1,
-            row_count: 2,
-        };
-        protocol
-    }
-
-    fn coefficient_row_protocol() -> BlindFoldProtocol<Fr, Bn254G1> {
-        let mut protocol = empty_protocol(Vec::new());
-        protocol.dimensions.witness_rows = WitnessRowLayout {
-            coefficients: 0..1,
-            output_claims: 1..1,
-            auxiliary: 1..1,
-            padding: 1..1,
-        };
-        protocol.dimensions.coefficient_rows = 1;
-        protocol.dimensions.coefficient_values = 1;
-        protocol
-    }
-
-    fn opening(row_len: usize) -> VectorCommitmentOpening<Fr> {
-        VectorCommitmentOpening {
-            combined_vector: vec![f(0); row_len],
-            combined_blinding: f(0),
-        }
-    }
-
-    fn zero_outer_sumcheck(
-        protocol: &BlindFoldProtocol<Fr, Bn254G1>,
-    ) -> CompressedSumcheckProof<Fr> {
-        let num_vars = protocol.dimensions.error.row_count.trailing_zeros() as usize
-            + protocol.dimensions.error.row_len.trailing_zeros() as usize;
-        CompressedSumcheckProof {
-            round_polynomials: vec![CompressedPoly::new(vec![f(0)]); num_vars],
-        }
-    }
-
-    fn proof(
-        setup: &PedersenSetup<Bn254G1>,
-        protocol: &BlindFoldProtocol<Fr, Bn254G1>,
-    ) -> BlindFoldProof<Fr, Bn254G1> {
-        BlindFoldProof {
-            auxiliary_row_commitments: vec![
-                commitment(setup, 41);
-                protocol.dimensions.auxiliary_rows
-            ],
-            random_round_commitments: vec![identity(); protocol.dimensions.coefficient_rows],
-            random_output_claim_row_commitments: vec![
-                identity();
-                protocol.dimensions.output_claim_rows
-            ],
-            random_auxiliary_row_commitments: vec![identity(); protocol.dimensions.auxiliary_rows],
-            random_error_row_commitments: vec![identity(); protocol.dimensions.error.row_count],
-            random_eval_commitments: vec![
-                commit_value(setup, f(11), f(110));
-                protocol.eval_commitments.len()
-            ],
-            random_u: f(3),
-            cross_term_error_row_commitments: vec![identity(); protocol.dimensions.error.row_count],
-            outer_sumcheck: zero_outer_sumcheck(protocol),
-            az_rx: f(0),
-            bz_rx: f(0),
-            cz_rx: f(0),
-            inner_sumcheck: CompressedSumcheckProof::default(),
-            witness_opening: opening(protocol.dimensions.witness.row_len),
-            error_opening: opening(protocol.dimensions.error.row_len),
-            folded_eval_outputs: vec![f(0); protocol.eval_commitments.len()],
-            folded_eval_blindings: vec![f(0); protocol.eval_commitments.len()],
-            folded_eval_output_openings: Vec::new(),
-            folded_eval_blinding_openings: Vec::new(),
-        }
-    }
-
-    fn folding_challenge(
-        protocol: &BlindFoldProtocol<Fr, Bn254G1>,
-        proof: &BlindFoldProof<Fr, Bn254G1>,
-    ) -> Fr {
-        let committed = protocol
-            .committed_relaxed_instance(&proof.auxiliary_row_commitments)
-            .expect("committed instance builds");
-        let random = protocol
-            .random_relaxed_instance(
-                &proof.random_round_commitments,
-                &proof.random_output_claim_row_commitments,
-                &proof.random_auxiliary_row_commitments,
-                &proof.random_error_row_commitments,
-                &proof.random_eval_commitments,
-                proof.random_u,
-            )
-            .expect("random instance builds");
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-        committed.append_to_transcript(
-            &mut transcript,
-            b"bf_committed_u",
-            b"bf_committed_w",
-            b"bf_committed_e",
-            b"bf_committed_eval",
-        );
-        random.append_to_transcript(
-            &mut transcript,
-            b"bf_random_u",
-            b"bf_random_w",
-            b"bf_random_e",
-            b"bf_random_eval",
-        );
-        transcript.append_values(b"bf_cross_e", &proof.cross_term_error_row_commitments);
-        transcript.challenge()
-    }
-
-    fn proof_with_valid_eval_opening(
-        setup: &PedersenSetup<Bn254G1>,
-        protocol: &BlindFoldProtocol<Fr, Bn254G1>,
-    ) -> BlindFoldProof<Fr, Bn254G1> {
-        let mut proof = proof(setup, protocol);
-        let folding_challenge = folding_challenge(protocol, &proof);
-        proof.folded_eval_outputs = vec![f(7) + folding_challenge * f(11)];
-        proof.folded_eval_blindings = vec![f(70) + folding_challenge * f(110)];
-        proof
-    }
-
-    #[test]
-    fn verify_rejects_degenerate_outer_sumcheck() {
-        let setup = setup();
-        let protocol = protocol(&setup);
-        let proof = proof(&setup, &protocol);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("degenerate outer sumcheck is rejected");
-
-        assert!(matches!(
-            error,
-            VerificationError::DegenerateSumcheck {
-                name: "outer folded R1CS sumcheck"
-            }
-        ));
-    }
-
-    #[test]
-    fn folded_instance_uses_transcript_derived_challenge() {
-        let setup = setup();
-        let protocol = protocol(&setup);
-        let proof = proof(&setup, &protocol);
-
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-        let folded = protocol
-            .folded_instance_from_proof(&proof, &mut transcript)
-            .expect("fold inputs are well-shaped");
-
-        let committed = protocol
-            .committed_relaxed_instance(&proof.auxiliary_row_commitments)
-            .expect("committed instance builds");
-        let random = protocol
-            .random_relaxed_instance(
-                &proof.random_round_commitments,
-                &proof.random_output_claim_row_commitments,
-                &proof.random_auxiliary_row_commitments,
-                &proof.random_error_row_commitments,
-                &proof.random_eval_commitments,
-                proof.random_u,
-            )
-            .expect("random instance builds");
-        let mut manual_transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-        committed.append_to_transcript(
-            &mut manual_transcript,
-            b"bf_committed_u",
-            b"bf_committed_w",
-            b"bf_committed_e",
-            b"bf_committed_eval",
-        );
-        random.append_to_transcript(
-            &mut manual_transcript,
-            b"bf_random_u",
-            b"bf_random_w",
-            b"bf_random_e",
-            b"bf_random_eval",
-        );
-        manual_transcript.append_values(b"bf_cross_e", &proof.cross_term_error_row_commitments);
-        let folding_challenge = manual_transcript.challenge();
-        let expected = committed
-            .fold(
-                &random,
-                &proof.cross_term_error_row_commitments,
-                folding_challenge,
-            )
-            .expect("fold dimensions match");
-
-        assert_eq!(folded, expected);
-        assert_eq!(transcript.state(), manual_transcript.state());
-    }
-
-    #[test]
-    fn verify_rejects_random_round_count_mismatch() {
-        let setup = setup();
-        let protocol = coefficient_row_protocol();
-        let mut proof = proof(&setup, &protocol);
-        let _ = proof.random_round_commitments.pop();
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("random rows are missing");
-
-        assert!(matches!(
-            error,
-            VerificationError::Relaxed(RelaxedError::LengthMismatch {
-                name: "random round commitments",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_folded_eval_output_count_mismatch() {
-        let setup = setup();
-        let protocol = protocol(&setup);
-        let mut proof = proof(&setup, &protocol);
-        proof.folded_eval_outputs.push(f(7));
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("folded eval count differs");
-
-        assert_eq!(
-            error.to_string(),
-            "folded eval outputs length mismatch: expected 0, got 1"
-        );
-    }
-
-    #[test]
-    fn verify_accepts_folded_eval_commitment_opening() {
-        let setup = setup();
-        let protocol = protocol_with_eval(&setup);
-        let proof = proof_with_valid_eval_opening(&setup, &protocol);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-        let folded = protocol
-            .folded_instance_from_proof(&proof, &mut transcript)
-            .expect("folded instance builds");
-
-        proof
-            .verify_folded_eval_commitments::<Pedersen<Bn254G1>>(&setup, &folded)
-            .expect("folded eval commitment opens");
-    }
-
-    #[test]
-    fn verify_rejects_bad_folded_eval_commitment_opening() {
-        let setup = setup();
-        let protocol = protocol_with_eval(&setup);
-        let mut proof = proof_with_valid_eval_opening(&setup, &protocol);
-        proof.folded_eval_outputs[0] += f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("folded eval commitment opening is wrong");
-
-        assert!(matches!(
-            error,
-            VerificationError::EvalCommitmentMismatch { index: 0 }
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_outer_sumcheck_round_count_mismatch() {
-        let setup = setup();
-        let protocol = outer_round_protocol();
-        let mut proof = proof(&setup, &protocol);
-        let _ = proof.outer_sumcheck.round_polynomials.pop();
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("outer sumcheck has wrong length");
-
-        assert!(matches!(
-            error,
-            VerificationError::OuterSumcheck {
-                source: jolt_sumcheck::SumcheckError::WrongNumberOfRounds { .. },
-            }
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_outer_sumcheck_degree_bound() {
-        let setup = setup();
-        let protocol = outer_round_protocol();
-        let mut proof = proof(&setup, &protocol);
-        proof.outer_sumcheck.round_polynomials[0] =
-            CompressedPoly::new(vec![f(0), f(0), f(0), f(0)]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("outer sumcheck degree is too high");
-
-        assert!(matches!(
-            error,
-            VerificationError::OuterSumcheck {
-                source: jolt_sumcheck::SumcheckError::DegreeBoundExceeded { got: 4, max: 3 },
-            }
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_bad_error_opening() {
-        let setup = setup();
-        let protocol = outer_round_protocol();
-        let mut proof = proof(&setup, &protocol);
-        proof.error_opening.combined_blinding = f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("error opening is not binding to folded rows");
-
-        assert!(matches!(
-            error,
-            VerificationError::VectorOpening(VectorOpeningError::CommitmentMismatch)
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_outer_final_claim_mismatch() {
-        let setup = setup();
-        let protocol = outer_round_protocol();
-        let mut proof = proof(&setup, &protocol);
-        proof.az_rx = f(1);
-        proof.bz_rx = f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("outer final claim does not match opened error row");
-
-        assert!(matches!(
-            error,
-            VerificationError::OuterFinalClaimMismatch { .. }
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_inner_sumcheck_round_count_mismatch() {
-        let setup = setup();
-        let protocol = inner_round_protocol();
-        let proof = proof(&setup, &protocol);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("inner sumcheck has wrong length");
-
-        assert!(matches!(
-            error,
-            VerificationError::InnerSumcheck {
-                source: jolt_sumcheck::SumcheckError::WrongNumberOfRounds {
-                    expected: 1,
-                    got: 0,
-                },
-            }
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_bad_witness_opening() {
-        let setup = setup();
-        let protocol = inner_round_protocol();
-        let mut proof = proof(&setup, &protocol);
-        add_zero_inner_round(&mut proof);
-        proof.witness_opening.combined_blinding = f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("witness opening is not binding to folded rows");
-
-        assert!(matches!(
-            error,
-            VerificationError::VectorOpening(VectorOpeningError::CommitmentMismatch)
-        ));
-    }
-
-    #[test]
-    fn verify_rejects_inner_final_claim_mismatch() {
-        let setup = setup();
-        let protocol = inner_round_protocol();
-        let mut proof = proof(&setup, &protocol);
-        add_zero_inner_round(&mut proof);
-        proof.auxiliary_row_commitments = vec![
-            commit_value(&setup, f(5), f(50)),
-            commit_value(&setup, f(5), f(50)),
-        ];
-        proof.witness_opening = VectorCommitmentOpening {
-            combined_vector: vec![f(5)],
-            combined_blinding: f(50),
-        };
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("inner final claim does not match opened witness row");
-
-        assert!(matches!(
-            error,
-            VerificationError::InnerFinalClaimMismatch { .. }
-        ));
-    }
 }

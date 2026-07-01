@@ -18,7 +18,6 @@ use jolt_claims::protocols::jolt::{
     },
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
-use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
@@ -585,23 +584,21 @@ impl<F: Field> NativeOpeningClaims<F> {
 }
 
 #[doc(hidden)]
-pub fn attach_opening_claims<PCS, VC, ZkProof>(
-    proof: &mut JoltProof<PCS, VC, ZkProof>,
+pub fn attach_opening_claims<PCS>(
+    proof: &mut JoltProof<PCS>,
     claims: impl IntoIterator<Item = (native::JoltOpeningId, PCS::Field)>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     proof.claims = JoltProofClaims::Clear(clear_claims_from_native(claims, proof.trace_length)?);
     Ok(())
 }
 
 #[doc(hidden)]
-pub fn attach_empty_opening_claims<PCS, VC, ZkProof>(proof: &mut JoltProof<PCS, VC, ZkProof>)
+pub fn attach_empty_opening_claims<PCS>(proof: &mut JoltProof<PCS>)
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     proof.claims = JoltProofClaims::Clear(empty_clear_claims(proof.trace_length));
 }
@@ -791,14 +788,13 @@ fn empty_spartan_outer_claims<F: Field>() -> SpartanOuterClaims<F> {
 
 #[doc(hidden)]
 #[cfg(any(feature = "prover-fixtures", test))]
-pub fn offset_opening_claim<PCS, VC, ZkProof>(
-    proof: &mut JoltProof<PCS, VC, ZkProof>,
+pub fn offset_opening_claim<PCS>(
+    proof: &mut JoltProof<PCS>,
     id: native::JoltOpeningId,
     delta: PCS::Field,
 ) -> bool
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     let Some(opening_claim) = claim_mut(proof, id) else {
         return false;
@@ -809,38 +805,29 @@ where
 
 #[doc(hidden)]
 #[cfg(any(feature = "prover-fixtures", test))]
-pub fn upsert_opening_claim<PCS, VC, ZkProof>(
-    proof: &mut JoltProof<PCS, VC, ZkProof>,
+pub fn upsert_opening_claim<PCS>(
+    proof: &mut JoltProof<PCS>,
     id: native::JoltOpeningId,
     opening_claim: PCS::Field,
 ) where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     let _ = set_claim(proof, id, opening_claim);
 }
 
 #[doc(hidden)]
 #[cfg(any(feature = "prover-fixtures", test))]
-pub fn opening_claim<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    id: native::JoltOpeningId,
-) -> Option<PCS::Field>
+pub fn opening_claim<PCS>(proof: &JoltProof<PCS>, id: native::JoltOpeningId) -> Option<PCS::Field>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     claim(proof, id)
 }
 
 #[cfg(any(feature = "prover-fixtures", test))]
-fn claim<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    id: native::JoltOpeningId,
-) -> Option<PCS::Field>
+fn claim<PCS>(proof: &JoltProof<PCS>, id: native::JoltOpeningId) -> Option<PCS::Field>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     let JoltProofClaims::Clear(claims) = &proof.claims else {
         return None;
@@ -850,13 +837,9 @@ where
 }
 
 #[cfg(any(feature = "prover-fixtures", test))]
-fn claim_mut<PCS, VC, ZkProof>(
-    proof: &mut JoltProof<PCS, VC, ZkProof>,
-    id: native::JoltOpeningId,
-) -> Option<&mut PCS::Field>
+fn claim_mut<PCS>(proof: &mut JoltProof<PCS>, id: native::JoltOpeningId) -> Option<&mut PCS::Field>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
         return None;
@@ -866,14 +849,13 @@ where
 }
 
 #[cfg(any(feature = "prover-fixtures", test))]
-fn set_claim<PCS, VC, ZkProof>(
-    proof: &mut JoltProof<PCS, VC, ZkProof>,
+fn set_claim<PCS>(
+    proof: &mut JoltProof<PCS>,
     id: native::JoltOpeningId,
     opening_claim: PCS::Field,
 ) -> bool
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
         return false;

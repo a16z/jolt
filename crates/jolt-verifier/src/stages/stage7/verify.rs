@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::{
@@ -18,7 +19,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
     SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::advice_address_phase::{
     AdviceAddressPhase, AdviceAddressPhaseInputClaims, AdviceAddressPhaseOutputClaims,
@@ -51,9 +52,9 @@ use crate::{
     VerifierError,
 };
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
@@ -62,7 +63,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
@@ -137,9 +139,8 @@ where
             ));
         }
 
-        let batch_consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let batch_consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage7_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -161,7 +162,7 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage7_sumcheck_proof,
+                output_claims: &batch_consistency.consistency.output_claims,
                 proof_label: "stage7_sumcheck_proof",
                 output_claim_count: committed_output_claims,
                 stage: JoltRelationId::HammingWeightClaimReduction,
@@ -351,15 +352,12 @@ where
     }
 
     let sumcheck_claims = relations.sumcheck_claims(&hamming_claims)?;
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage7_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::HammingWeightClaimReduction,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::HammingWeightClaimReduction,
+                reason: error.to_string(),
+            })?;
 
     let points = relations.instance_points_from_batch(&batch, hamming_claims.sumcheck.rounds)?;
     let parts = relations.clear_output(&points, claims, stage6, &layouts)?;

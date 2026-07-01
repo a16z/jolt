@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage4<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage4<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -79,7 +79,7 @@ where
     )?;
 
     let mut output_ids = Vec::new();
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.checked.untrusted_advice_commitment_present {
         output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
             JoltAdviceKind::Untrusted,
         )));

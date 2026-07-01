@@ -7,11 +7,11 @@ mod tests {
     use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext};
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-    use crate::transcripts::{Blake2bTranscript, Transcript};
     use crate::utils::math::Math;
     use ark_ff::biginteger::S128;
     use ark_std::rand::{thread_rng, Rng};
     use ark_std::{UniformRand, Zero};
+    use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512};
     use serial_test::serial;
     type Fr = ark_bn254::Fr;
 
@@ -35,7 +35,8 @@ mod tests {
             &opening_point,
         );
 
-        let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
+        let mut prove_transcript =
+            prover_transcript(b"dory_test", [0u8; 32], Blake2b512::default());
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
         let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             prover_setup,
@@ -45,7 +46,8 @@ mod tests {
             &mut prove_transcript,
         );
 
-        let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
+        let mut verify_transcript =
+            verifier_transcript(b"dory_test", [0u8; 32], Blake2b512::default(), &[]);
         bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &evaluation);
         let verification_result = DoryCommitmentScheme::verify(
             &proof,
@@ -280,7 +282,11 @@ mod tests {
 
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
 
-        let mut prove_transcript = Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+        let mut prove_transcript = prover_transcript(
+            DoryCommitmentScheme::protocol_name(),
+            [0u8; 32],
+            Blake2b512::default(),
+        );
 
         let correct_evaluation = poly.evaluate(&opening_point);
 
@@ -297,8 +303,12 @@ mod tests {
         {
             let tampered_evaluation = Fr::rand(&mut rng);
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            let mut verify_transcript = verifier_transcript(
+                DoryCommitmentScheme::protocol_name(),
+                [0u8; 32],
+                Blake2b512::default(),
+                &[],
+            );
             bind_opening_inputs::<Fr, _>(
                 &mut verify_transcript,
                 &opening_point,
@@ -331,8 +341,12 @@ mod tests {
                 panic!("ZK proof missing committed evaluation fields");
             }
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            let mut verify_transcript = verifier_transcript(
+                DoryCommitmentScheme::protocol_name(),
+                [0u8; 32],
+                Blake2b512::default(),
+                &[],
+            );
             bind_opening_inputs::<Fr, _>(
                 &mut verify_transcript,
                 &opening_point,
@@ -359,8 +373,12 @@ mod tests {
                 .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
                 .collect();
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            let mut verify_transcript = verifier_transcript(
+                DoryCommitmentScheme::protocol_name(),
+                [0u8; 32],
+                Blake2b512::default(),
+                &[],
+            );
             bind_opening_inputs::<Fr, _>(
                 &mut verify_transcript,
                 &tampered_opening_point,
@@ -389,8 +407,12 @@ mod tests {
                 MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
             let (wrong_commitment, _) = DoryCommitmentScheme::commit(&wrong_poly, &prover_setup);
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            let mut verify_transcript = verifier_transcript(
+                DoryCommitmentScheme::protocol_name(),
+                [0u8; 32],
+                Blake2b512::default(),
+                &[],
+            );
             bind_opening_inputs::<Fr, _>(
                 &mut verify_transcript,
                 &opening_point,
@@ -413,7 +435,8 @@ mod tests {
 
         // Test 4: Use wrong domain in transcript
         {
-            let mut verify_transcript = Blake2bTranscript::new(b"wrong_domain");
+            let mut verify_transcript =
+                verifier_transcript(b"wrong_domain", [0u8; 32], Blake2b512::default(), &[]);
             bind_opening_inputs::<Fr, _>(
                 &mut verify_transcript,
                 &opening_point,
@@ -436,8 +459,12 @@ mod tests {
 
         // Test 5: Verify that correct proof still passes
         {
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            let mut verify_transcript = verifier_transcript(
+                DoryCommitmentScheme::protocol_name(),
+                [0u8; 32],
+                Blake2b512::default(),
+                &[],
+            );
             bind_opening_inputs::<Fr, _>(
                 &mut verify_transcript,
                 &opening_point,
@@ -502,7 +529,8 @@ mod tests {
             &opening_point,
         );
 
-        let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
+        let mut prove_transcript =
+            prover_transcript(b"dory_test", [0u8; 32], Blake2b512::default());
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
         let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -512,7 +540,8 @@ mod tests {
             &mut prove_transcript,
         );
 
-        let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
+        let mut verify_transcript =
+            verifier_transcript(b"dory_test", [0u8; 32], Blake2b512::default(), &[]);
         bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &evaluation);
         let verification_result = DoryCommitmentScheme::verify(
             &proof,
@@ -587,7 +616,8 @@ mod tests {
         let combined_poly = MultilinearPolynomial::from(combined_poly.Z);
 
         // Step 8: Create evaluation proof using combined commitment and hint
-        let mut prove_transcript = Blake2bTranscript::new(b"dory_homomorphic_test");
+        let mut prove_transcript =
+            prover_transcript(b"dory_homomorphic_test", [0u8; 32], Blake2b512::default());
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
         let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -598,7 +628,12 @@ mod tests {
         );
 
         // Step 9: Verify the proof
-        let mut verify_transcript = Blake2bTranscript::new(b"dory_homomorphic_test");
+        let mut verify_transcript = verifier_transcript(
+            b"dory_homomorphic_test",
+            [0u8; 32],
+            Blake2b512::default(),
+            &[],
+        );
         bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &evaluation);
         let result = DoryCommitmentScheme::verify(
             &proof,
@@ -683,7 +718,11 @@ mod tests {
         );
 
         // Step 9: Create evaluation proof using combined hint
-        let mut prove_transcript = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
+        let mut prove_transcript = prover_transcript(
+            b"dory_batch_commit_e2e_test",
+            [0u8; 32],
+            Blake2b512::default(),
+        );
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
         let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -694,7 +733,12 @@ mod tests {
         );
 
         // Step 10: Verify the proof
-        let mut verify_transcript = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
+        let mut verify_transcript = verifier_transcript(
+            b"dory_batch_commit_e2e_test",
+            [0u8; 32],
+            Blake2b512::default(),
+            &[],
+        );
         bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &evaluation);
         let result = DoryCommitmentScheme::verify(
             &proof,
@@ -711,7 +755,11 @@ mod tests {
         );
 
         // Step 11: Also verify that proving with the direct hint works
-        let mut prove_transcript2 = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
+        let mut prove_transcript2 = prover_transcript(
+            b"dory_batch_commit_e2e_test",
+            [0u8; 32],
+            Blake2b512::default(),
+        );
         bind_opening_inputs::<Fr, _>(&mut prove_transcript2, &opening_point, &evaluation);
         let (proof2, _y_blinding2) = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -721,7 +769,12 @@ mod tests {
             &mut prove_transcript2,
         );
 
-        let mut verify_transcript2 = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
+        let mut verify_transcript2 = verifier_transcript(
+            b"dory_batch_commit_e2e_test",
+            [0u8; 32],
+            Blake2b512::default(),
+            &[],
+        );
         bind_opening_inputs::<Fr, _>(&mut verify_transcript2, &opening_point, &evaluation);
         let result2 = DoryCommitmentScheme::verify(
             &proof2,
@@ -928,7 +981,8 @@ mod tests {
         let evaluation =
             <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(&poly, &eval_point);
 
-        let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
+        let mut prove_transcript =
+            prover_transcript(b"dory_test", [0u8; 32], Blake2b512::default());
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
         let (proof, _y_binding) = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -938,7 +992,8 @@ mod tests {
             &mut prove_transcript,
         );
 
-        let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
+        let mut verify_transcript =
+            verifier_transcript(b"dory_test", [0u8; 32], Blake2b512::default(), &[]);
         bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &evaluation);
         let verification_result = DoryCommitmentScheme::verify(
             &proof,

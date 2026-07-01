@@ -3,13 +3,15 @@ use crate::curve::Bn254Curve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::{FsAbsorb, FsChallenge, FsNargWrite};
 use crate::zkvm::bytecode::PreprocessingError;
 use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof::{ProofCommitmentScheme, ProofCurve, ProofField};
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 use common::jolt_device::MemoryLayout;
+use jolt_transcript::{DuplexSpongeInterface, ProverState};
+use rand::rngs::StdRng;
 use tracer::JoltDevice;
 
 #[cfg(feature = "prover")]
@@ -43,7 +45,7 @@ pub fn prove<
     F: ProofField,
     C: ProofCurve<F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C> + ProofCommitmentScheme<F>,
-    FS: Transcript,
+    H: DuplexSpongeInterface<U = u8> + Default,
 >(
     guest: &Program,
     inputs_bytes: &[u8],
@@ -53,20 +55,23 @@ pub fn prove<
     trusted_advice_hint: Option<<PCS as CommitmentScheme>::OpeningProofHint>,
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, C, PCS>,
+    transcript_session: &[u8],
 ) -> Result<
     (
-        jolt_verifier::JoltProof<
-            <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
-            <C as ProofCurve<F>>::VerifierVectorCommitment,
-        >,
+        jolt_verifier::JoltProof<<PCS as ProofCommitmentScheme<F>>::VerifierPcs>,
         JoltDevice,
-        Option<ProverDebugInfo<F, FS, PCS>>,
+        Option<ProverDebugInfo<F, PCS>>,
     ),
     crate::zkvm::proof::VerifierError,
-> {
+>
+where
+    ProverState<H, StdRng>: FsChallenge<F> + FsAbsorb + FsNargWrite,
+    <PCS::VerifierPcs as jolt_crypto::Commitment>::Output:
+        ark_serialize::CanonicalSerialize + Clone,
+{
     use crate::zkvm::prover::JoltCpuProver;
 
-    let prover = JoltCpuProver::<F, C, PCS, FS>::gen_from_elf(
+    let prover = JoltCpuProver::<F, C, PCS, H>::gen_from_elf(
         preprocessing,
         &guest.elf_contents,
         inputs_bytes,
@@ -77,7 +82,7 @@ pub fn prove<
         None,
     );
     let io_device = prover.program_io.clone();
-    let (proof, debug_info) = prover.prove()?;
+    let (proof, debug_info) = prover.prove(transcript_session)?;
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
     Ok((proof, io_device, debug_info))
 }

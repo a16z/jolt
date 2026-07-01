@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::instruction as instruction_claim_reduction,
@@ -16,10 +17,10 @@ use jolt_r1cs::constraints::jolt::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
-    BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
-    UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    BatchedSumcheckVerifier, CenteredIntegerDomain, CommittedSumcheckProof, SumcheckClaim,
+    SumcheckStatement, SumcheckVerifier,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     instruction_claim_reduction::{
@@ -172,16 +173,17 @@ pub fn stage2_expected_final_claim<F: Field>(
         + *ram_output_coefficient * ram_output_check)
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     match (checked.zk, stage1) {
         (true, Stage1Output::Clear(_)) => {
@@ -193,15 +195,9 @@ where
         _ => {}
     }
 
-    let product_uniskip =
-        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
-    let batch = verify_regular_batch::<PCS, VC, T, ZkProof>(
-        checked,
-        proof,
-        transcript,
-        &product_uniskip,
-        stage1,
-    )?;
+    let product_uniskip = verify_product_uniskip::<PCS, VC, T>(checked, proof, transcript, stage1)?;
+    let batch =
+        verify_regular_batch::<PCS, VC, T>(checked, proof, transcript, &product_uniskip, stage1)?;
 
     match (product_uniskip, batch) {
         (
@@ -247,16 +243,17 @@ where
     }
 }
 
-fn verify_product_uniskip<PCS, VC, T, ZkProof>(
+fn verify_product_uniskip<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2ProductUniSkip<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
@@ -311,28 +308,24 @@ where
                 &weights,
             )?;
 
-            let uniskip_reduction = proof
-                .stages
-                .stage2_uni_skip_first_round_proof
-                .verify(
-                    &SumcheckClaim::new(
-                        uniskip_spec.rounds,
-                        uniskip_spec.degree,
-                        uniskip_input_claim,
-                    ),
-                    CenteredIntegerDomain::new(domain_size),
-                    UNISKIP_ROUND_TRANSCRIPT_LABEL,
-                    transcript,
-                )
-                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage,
-                    reason: error.to_string(),
-                })?;
+            let uniskip_reduction = SumcheckVerifier::verify_from_narg(
+                &SumcheckClaim::new(
+                    uniskip_spec.rounds,
+                    uniskip_spec.degree,
+                    uniskip_input_claim,
+                ),
+                CenteredIntegerDomain::new(domain_size),
+                transcript,
+            )
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage,
+                reason: error.to_string(),
+            })?;
             if uniskip_reduction.value != uniskip_claim {
                 return Err(VerifierError::StageClaimOutputMismatch { stage });
             }
 
-            transcript.append_labeled(b"opening_claim", &uniskip_claim);
+            transcript.absorb_field(&uniskip_claim);
 
             Ok(Stage2ProductUniSkip::Clear(VerifiedProductUniSkip {
                 tau_low,
@@ -341,10 +334,8 @@ where
             }))
         }
         Stage1Output::Zk(_) => {
-            let consistency = proof
-                .stages
-                .stage2_uni_skip_first_round_proof
-                .verify_committed_consistency(
+            let consistency =
+                CommittedSumcheckProof::<VC::Output>::verify_committed_consistency_from_narg(
                     SumcheckStatement::new(uniskip_spec.rounds, uniskip_spec.degree),
                     transcript,
                 )
@@ -355,7 +346,7 @@ where
             let output_claims = committed::verify_output_claim_commitments(
                 committed::CommittedOutputClaimInputs {
                     checked,
-                    proof: &proof.stages.stage2_uni_skip_first_round_proof,
+                    output_claims: &consistency.output_claims,
                     proof_label: "stage2_uni_skip_first_round_proof",
                     output_claim_count: PRODUCT_UNISKIP_OUTPUT_CLAIMS,
                     stage,
@@ -380,9 +371,9 @@ where
     }
 }
 
-fn verify_regular_batch<PCS, VC, T, ZkProof>(
+fn verify_regular_batch<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     product_uniskip: &Stage2ProductUniSkip<PCS::Field, VC::Output>,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
@@ -390,7 +381,8 @@ fn verify_regular_batch<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
@@ -516,9 +508,8 @@ where
                     ram_output.input_claim(&ram_output_inputs)?,
                 ),
             ];
-            let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
+            let batch = BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(
                 &sumcheck_claims,
-                &proof.stages.stage2_sumcheck_proof,
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -640,9 +631,8 @@ where
                     ram_output_check_claims.sumcheck.degree,
                 ),
             ];
-            let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+            let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
                 &statements,
-                &proof.stages.stage2_sumcheck_proof,
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -652,7 +642,7 @@ where
             let output_claims = committed::verify_output_claim_commitments(
                 committed::CommittedOutputClaimInputs {
                     checked,
-                    proof: &proof.stages.stage2_sumcheck_proof,
+                    output_claims: &consistency.consistency.output_claims,
                     proof_label: "stage2_sumcheck_proof",
                     output_claim_count: STAGE2_BATCH_OUTPUT_CLAIMS,
                     stage: JoltRelationId::RamReadWriteChecking,

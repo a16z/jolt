@@ -18,7 +18,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::FsChallenge;
 use crate::utils::math::Math;
 use crate::zkvm::bytecode::chunks::{committed_lanes, total_lanes, BYTECODE_LANE_LAYOUT};
 use crate::zkvm::claim_reductions::{
@@ -57,7 +57,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         bytecode_chunk_count: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         assert!(
             bytecode_len.is_multiple_of(bytecode_chunk_count),
@@ -66,7 +66,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         let log_bytecode_chunk_size = (bytecode_len / bytecode_chunk_count).log_2();
         let log_bytecode_len = bytecode_len.log_2();
 
-        let eta: F = transcript.challenge_scalar();
+        let eta: F = transcript.challenge_field();
         let mut eta_powers = [F::one(); NUM_VAL_STAGES];
         for i in 1..NUM_VAL_STAGES {
             eta_powers[i] = eta_powers[i - 1] * eta;
@@ -337,7 +337,7 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaimReductionProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for BytecodeClaimReductionProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         self.core.params()
     }
@@ -411,8 +411,8 @@ impl<F: JoltField> BytecodeClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for BytecodeClaimReductionVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for BytecodeClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

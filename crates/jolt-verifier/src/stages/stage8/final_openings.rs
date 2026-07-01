@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::FsTranscript;
 
 use super::outputs::Stage8OpeningId;
 use crate::{
@@ -196,7 +196,7 @@ pub fn stage8_clear_final_opening_batch<F, T>(
 ) -> Result<Stage8FinalOpeningBatch<F>, VerifierError>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     stage8_final_opening_batch(input, transcript, true)
 }
@@ -207,7 +207,7 @@ pub fn stage8_zk_final_opening_batch<F, T>(
 ) -> Result<Stage8FinalOpeningBatch<F>, VerifierError>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     stage8_final_opening_batch(input, transcript, false)
 }
@@ -219,7 +219,7 @@ fn stage8_final_opening_batch<F, T>(
 ) -> Result<Stage8FinalOpeningBatch<F>, VerifierError>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let hamming_weight_opening_point = input.stage7.hamming_weight_opening_point.clone();
     let inc_claim_reduction_opening_point = input.stage6.output_points.inc_opening_point().to_vec();
@@ -263,12 +263,8 @@ where
     let opening_point = pcs_opening_point.clone();
 
     if append_scaled_claims {
-        transcript.append(&LabelWithCount(
-            b"rlc_claims",
-            scaled_opening_values.len() as u64,
-        ));
         for value in &scaled_opening_values {
-            value.append_to_transcript(transcript);
+            transcript.absorb_field(value);
         }
     }
     let gamma_powers = transcript.challenge_scalar_powers(scaled_opening_values.len());

@@ -1,33 +1,34 @@
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-//! Compatibility test for non-BN254 sumcheck verifier plumbing.
-//!
-//! `Mersenne61` is intentionally small and exists here only to prove that the
-//! transcript and verifier APIs no longer depend on BN254-specific helper
-//! surface. It is not a production proving field. Real sumcheck soundness with
-//! this base field would require an adequately large extension field.
-
 use std::{
-    fmt::{Debug, Display},
+    fmt::Display,
     hash::Hash,
     iter::{Product, Sum},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
 use jolt_field::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize,
-    FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator,
-    RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
+    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
+    FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt,
+    NaiveAccumulator, NaiveSignedProductAccumulator, NaiveSignedScalarAccumulator, RandomSampling,
+    ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator,
+    WithSmallScalarAccumulator,
 };
 use jolt_sumcheck::{
-    BooleanHypercube, ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier,
+    BooleanHypercube, ClearRound, EvaluationClaim, RoundDegree, RoundMessage, SumcheckClaim,
+    SumcheckVerifier,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, KeccakTranscript, Transcript};
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, Blake2b512, FsAbsorb, FsChallenge, FsTranscript,
+};
 use num_traits::{One, Zero};
+use serde::{Deserialize, Serialize};
 
 const MODULUS: u64 = (1u64 << 61) - 1;
+const INSTANCE: [u8; 32] = [0u8; 32];
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct Mersenne61(u64);
 
 impl Mersenne61 {
@@ -52,12 +53,6 @@ impl Mersenne61 {
             exp >>= 1;
         }
         acc
-    }
-}
-
-impl Debug for Mersenne61 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&self.0, f)
     }
 }
 
@@ -212,6 +207,58 @@ impl Invertible for Mersenne61 {
 
 impl FieldCore for Mersenne61 {}
 
+impl FixedByteSize for Mersenne61 {
+    const NUM_BYTES: usize = 32;
+}
+
+impl CanonicalBytes for Mersenne61 {
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), <Self as FixedByteSize>::NUM_BYTES);
+        out.fill(0);
+        out[..8].copy_from_slice(&self.0.to_le_bytes());
+    }
+}
+
+impl ReducingBytes for Mersenne61 {
+    fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
+        let mut acc = Self::zero();
+        let mut factor = Self::one();
+        for chunk in bytes.chunks(8) {
+            let mut limb = [0u8; 8];
+            limb[..chunk.len()].copy_from_slice(chunk);
+            acc += Self::from_u64(u64::from_le_bytes(limb)) * factor;
+            factor *= Self::from_u64(8);
+        }
+        acc
+    }
+}
+
+impl TranscriptChallenge for Mersenne61 {
+    fn from_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_le_bytes_mod_order(bytes)
+    }
+}
+
+impl FixedBytes<32> for Mersenne61 {}
+
+impl CanonicalBitLength for Mersenne61 {
+    fn num_bits(&self) -> u32 {
+        u64::BITS - self.0.leading_zeros()
+    }
+}
+
+impl CanonicalU64 for Mersenne61 {
+    fn to_canonical_u64_checked(&self) -> Option<u64> {
+        Some(self.0)
+    }
+}
+
+impl RandomSampling for Mersenne61 {
+    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
+        Self::from_u64(rng.next_u64())
+    }
+}
+
 impl FromPrimitiveInt for Mersenne61 {
     fn from_u64(v: u64) -> Self {
         Self::reduce_u128(v as u128)
@@ -238,72 +285,36 @@ impl FromPrimitiveInt for Mersenne61 {
     }
 }
 
-impl RandomSampling for Mersenne61 {
-    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
-        Self::from_u64(rng.next_u64())
-    }
-}
-
-impl CanonicalBytes for Mersenne61 {
-    fn to_bytes_le(&self, out: &mut [u8]) {
-        assert_eq!(out.len(), 8);
-        out.copy_from_slice(&self.0.to_le_bytes());
-    }
-}
-
-impl ReducingBytes for Mersenne61 {
-    fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
-        let mut buf = [0u8; 16];
-        let len = bytes.len().min(16);
-        buf[..len].copy_from_slice(&bytes[..len]);
-        Self::from_u128(u128::from_le_bytes(buf))
-    }
-}
-
-impl TranscriptChallenge for Mersenne61 {
-    fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_le_bytes_mod_order(bytes)
-    }
-}
-
-impl FixedByteSize for Mersenne61 {
-    const NUM_BYTES: usize = 8;
-}
-
-impl FixedBytes<8> for Mersenne61 {}
-
-impl CanonicalBitLength for Mersenne61 {
-    fn num_bits(&self) -> u32 {
-        u64::BITS - self.0.leading_zeros()
-    }
-}
-
-impl CanonicalU64 for Mersenne61 {
-    fn to_canonical_u64_checked(&self) -> Option<u64> {
-        Some(self.0)
-    }
-}
-
 impl WithAccumulator for Mersenne61 {
     type Accumulator = NaiveAccumulator<Mersenne61>;
 }
 
+impl WithSmallScalarAccumulator for Mersenne61 {
+    type SmallScalarAccumulator = NaiveSignedScalarAccumulator<Mersenne61>;
+}
+
+impl WithSignedProductAccumulator for Mersenne61 {
+    type SignedProductAccumulator = NaiveSignedProductAccumulator<Mersenne61>;
+}
+
 impl MulPow2 for Mersenne61 {}
 impl MulPrimitiveInt for Mersenne61 {}
+impl Field for Mersenne61 {}
 
 #[derive(Clone, Debug)]
 struct LinearRound {
     coeffs: [Mersenne61; 2],
 }
 
-impl RoundMessage for LinearRound {
+impl RoundDegree for LinearRound {
     fn degree(&self) -> usize {
         1
     }
+}
 
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.coeffs[0].append_to_transcript(transcript);
-        self.coeffs[1].append_to_transcript(transcript);
+impl RoundMessage<Mersenne61> for LinearRound {
+    fn append_to_transcript<T: FsTranscript<Mersenne61>>(&self, transcript: &mut T) {
+        transcript.absorb_field_slice(&self.coeffs);
     }
 }
 
@@ -321,12 +332,13 @@ impl ClearRound<Mersenne61> for LinearRound {
     }
 }
 
-fn build_rounds() -> (
+fn build_rounds<T: FsTranscript<Mersenne61>>(
+    transcript: &mut T,
+) -> (
     SumcheckClaim<Mersenne61>,
     Vec<LinearRound>,
     EvaluationClaim<Mersenne61>,
 ) {
-    let mut transcript = Blake2bTranscript::<Mersenne61>::new(b"mersenne61");
     let mut running_sum = Mersenne61::from_u64(10);
     let mut point = Vec::new();
     let mut rounds = Vec::new();
@@ -335,8 +347,8 @@ fn build_rounds() -> (
         let c0 = running_sum * Mersenne61::from_u64(3);
         let c1 = running_sum - c0 - c0;
         let round = LinearRound { coeffs: [c0, c1] };
-        round.append_to_transcript(&mut transcript);
-        let r = transcript.challenge();
+        round.append_to_transcript(transcript);
+        let r = FsChallenge::<Mersenne61>::challenge(transcript);
         running_sum = round.evaluate(r);
         point.push(r);
         rounds.push(round);
@@ -351,21 +363,26 @@ fn build_rounds() -> (
 
 #[test]
 fn hash_transcripts_accept_mersenne61_without_bn254_field_surface() {
-    let mut blake = Blake2bTranscript::<Mersenne61>::new(b"compat");
-    let mut keccak = KeccakTranscript::<Mersenne61>::new(b"compat");
-    Mersenne61::from_u64(42).append_to_transcript(&mut blake);
-    Mersenne61::from_u64(42).append_to_transcript(&mut keccak);
+    let mut blake = prover_transcript(b"compat", INSTANCE, Blake2b512::default());
+    let value = Mersenne61::from_u64(42);
 
-    let _: Mersenne61 = blake.challenge();
-    let _: Mersenne61 = keccak.challenge();
+    blake.absorb_field(&value);
+
+    let _: Mersenne61 = FsChallenge::<Mersenne61>::challenge(&mut blake);
 }
 
 #[test]
 fn sumcheck_verifier_accepts_mersenne61_round_proof() {
-    let (claim, rounds, expected) = build_rounds();
-    let mut verifier_transcript = Blake2bTranscript::<Mersenne61>::new(b"mersenne61");
+    let mut prover = prover_transcript(b"mersenne61", INSTANCE, Blake2b512::default());
+    let (claim, rounds, expected) = build_rounds(&mut prover);
+
+    let mut verifier = verifier_transcript(b"mersenne61", INSTANCE, Blake2b512::default(), &[]);
     let actual =
-        SumcheckVerifier::verify(&claim, &rounds, BooleanHypercube, &mut verifier_transcript)
-            .unwrap();
+        SumcheckVerifier::verify(&claim, &rounds, BooleanHypercube, &mut verifier).unwrap();
+
     assert_eq!(actual, expected);
+    assert_eq!(
+        FsChallenge::<Mersenne61>::challenge(&mut verifier),
+        FsChallenge::<Mersenne61>::challenge(&mut prover)
+    );
 }

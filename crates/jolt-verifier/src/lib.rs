@@ -7,7 +7,7 @@ pub mod proof;
 pub mod stages;
 pub mod verifier;
 
-pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG};
+pub use config::{validate_proof_config, ZkConfig};
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
@@ -22,6 +22,6 @@ pub use stages::zk::committed::zk_vector_commitment_capacity_requirement;
 // reached as `crate::{OutputClaims, InputClaims}`.
 pub use jolt_verifier_derive::{InputClaims, OutputClaims};
 pub use verifier::{
-    absorb_transcript_commitments, absorb_transcript_preamble, validate_inputs_from_parts, verify,
-    verify_until_stage1, CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,
+    transcript_instance, validate_inputs_from_parts, verify, verify_until_stage1, CheckedInputs,
+    PreStage1VerifierState, ProofTranscriptConfig,
 };

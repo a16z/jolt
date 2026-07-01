@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
@@ -13,7 +14,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::{LabelWithCount, Transcript};
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     outputs::{
@@ -59,10 +60,10 @@ pub fn stage4_expected_final_claim<F: Field>(
     Ok(*registers_coefficient * registers_read_write + *ram_val_coefficient * ram_val_check)
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
     stage3: &Stage3Output<PCS::Field, VC::Output>,
@@ -70,7 +71,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
@@ -117,7 +119,6 @@ where
     let ram_val_check_public_eval =
         public_initial_ram_evaluation(checked, preprocessing, r_address)?;
 
-    append_ram_val_check_gamma_domain_separator(transcript);
     let ram_val_check_gamma = transcript.challenge_scalar();
 
     // Only the sumcheck shape (rounds/degree/domain) is read from these claims, and
@@ -145,9 +146,8 @@ where
                 ram_val_check_claims.sumcheck.degree,
             ),
         ];
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage4_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -157,9 +157,9 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage4_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage4_sumcheck_proof",
-                output_claim_count: stage4_committed_output_claims(checked, proof),
+                output_claim_count: stage4_committed_output_claims(checked),
                 stage: JoltRelationId::RegistersReadWriteChecking,
             })?;
 
@@ -214,13 +214,8 @@ where
     let stage2 = stage2.clear()?;
     let stage3 = stage3.clear()?;
     let claims = &proof.clear_claims()?.stage4;
-    let ram_val_check_init = ram_val_check_initial_evaluation(
-        checked,
-        proof,
-        claims,
-        r_address,
-        ram_val_check_public_eval,
-    )?;
+    let ram_val_check_init =
+        ram_val_check_initial_evaluation(checked, claims, r_address, ram_val_check_public_eval)?;
 
     // The init decomposition (public eval + advice/program-image contributions) is
     // shared with the prover and the BlindFold constraint via `decomposition()`, so
@@ -249,15 +244,12 @@ where
             ram_input_claim,
         ),
     ];
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage4_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::RegistersReadWriteChecking,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::RegistersReadWriteChecking,
+                reason: error.to_string(),
+            })?;
 
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)
@@ -296,7 +288,12 @@ where
         });
     }
 
-    claims.append_to_transcript(transcript);
+    append_stage4_opening_claims(
+        transcript,
+        checked.untrusted_advice_commitment_present,
+        checked.trusted_advice_commitment_present,
+        claims,
+    )?;
 
     Ok(Stage4Output::Clear(Stage4ClearOutput {
         challenges,
@@ -409,28 +406,33 @@ where
     ))
 }
 
-fn stage4_committed_output_claims<PCS, VC, ZkProof>(
-    checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-) -> usize
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
+fn stage4_committed_output_claims(checked: &CheckedInputs) -> usize {
     STAGE4_BATCH_BASE_OUTPUT_CLAIMS
-        + usize::from(proof.untrusted_advice_commitment.is_some())
+        + usize::from(checked.untrusted_advice_commitment_present)
         + usize::from(checked.trusted_advice_commitment_present)
         + usize::from(checked.precommitted.program_image.is_some())
 }
 
-/// Absorb the Fiat-Shamir domain separator for the RAM value-check gamma: an empty
-/// message labeled `b"ram_val_check_gamma"`. The prover appends this empty labeled
-/// chunk before sampling the gamma, so the modular verifier and prover must
-/// reproduce it byte-for-byte (label chunk + empty payload) or every challenge from
-/// here on diverges. Shared by both sides so the transcript can't drift.
-pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
-    transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
-    transcript.append_bytes(&[]);
+fn append_stage4_opening_claims<F, T>(
+    transcript: &mut T,
+    untrusted_advice_commitment_present: bool,
+    trusted_advice_commitment_present: bool,
+    claims: &Stage4OutputClaims<F>,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    T: FsTranscript<F>,
+{
+    if untrusted_advice_commitment_present && claims.advice.untrusted.is_none() {
+        let id = ram::val_check_advice_opening(JoltAdviceKind::Untrusted);
+        return Err(VerifierError::MissingOpeningClaim { id });
+    }
+    if trusted_advice_commitment_present && claims.advice.trusted.is_none() {
+        let id = ram::val_check_advice_opening(JoltAdviceKind::Trusted);
+        return Err(VerifierError::MissingOpeningClaim { id });
+    }
+    claims.append_to_transcript(transcript);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -439,40 +441,16 @@ mod tests {
 
     use crate::stages::stage4::ram_val_check::{RamValCheckAdviceClaims, RamValCheckOutputClaims};
     use crate::stages::stage4::registers_read_write_checking::RegistersReadWriteOutputClaims;
-    use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-        state: [u8; 32],
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            self.state
-        }
-    }
+    use crate::stages::test_support::RecordingTranscript;
+    use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
 
     #[test]
     fn opening_claim_appends_follow_declaration_order_without_advice() {
         let claims = test_claims_without_advice();
-        let mut transcript = RecordingTranscript::new(b"stage4-openings");
+        let mut transcript = RecordingTranscript::default();
 
-        claims.append_to_transcript(&mut transcript);
+        let result = append_stage4_opening_claims(&mut transcript, false, false, &claims);
+        assert!(result.is_ok(), "stage 4 openings should append: {result:?}");
 
         let expected = vec![
             claims.registers_read_write.registers_val,
@@ -490,9 +468,10 @@ mod tests {
     #[test]
     fn opening_claim_appends_order_advice_before_registers() {
         let claims = test_claims_with_advice();
-        let mut transcript = RecordingTranscript::new(b"stage4-openings");
+        let mut transcript = RecordingTranscript::default();
 
-        claims.append_to_transcript(&mut transcript);
+        let result = append_stage4_opening_claims(&mut transcript, true, true, &claims);
+        assert!(result.is_ok(), "stage 4 openings should append: {result:?}");
 
         // Canonical order: advice openings precede the register openings, then the
         // RAM value-check openings come last.
@@ -515,19 +494,6 @@ mod tests {
 
         assert_eq!(claims.opening_values().len(), expected.len());
         assert_opening_claim_payloads(&transcript, &expected);
-    }
-
-    #[test]
-    fn ram_val_check_gamma_domain_separator_matches_core_empty_bytes_append() {
-        let mut transcript = RecordingTranscript::new(b"stage4-gamma");
-
-        append_ram_val_check_gamma_domain_separator(&mut transcript);
-
-        assert_eq!(transcript.chunks.len(), 2);
-        let mut packed = vec![0; 32];
-        packed[..b"ram_val_check_gamma".len()].copy_from_slice(b"ram_val_check_gamma");
-        assert_eq!(transcript.chunks[0], packed);
-        assert!(transcript.chunks[1].is_empty());
     }
 
     fn registers_claims() -> RegistersReadWriteOutputClaims<Fr> {
@@ -572,27 +538,14 @@ mod tests {
     }
 
     fn assert_opening_claim_payloads(transcript: &RecordingTranscript, expected: &[Fr]) {
-        assert_eq!(transcript.chunks.len(), expected.len() * 2);
-        let label = opening_claim_label();
+        // Like jolt-core: each opening claim is absorbed as just its value (no label).
+        assert_eq!(transcript.chunks.len(), expected.len());
         for (index, expected_payload) in expected.iter().copied().enumerate() {
-            assert_eq!(transcript.chunks[2 * index], label);
-            assert_eq!(
-                transcript.chunks[2 * index + 1],
-                scalar_bytes(expected_payload)
-            );
+            assert_eq!(transcript.chunks[index], scalar_bytes(expected_payload));
         }
     }
 
-    fn opening_claim_label() -> Vec<u8> {
-        let mut label = vec![0; 32];
-        label[..b"opening_claim".len()].copy_from_slice(b"opening_claim");
-        label
-    }
-
     fn scalar_bytes(value: Fr) -> Vec<u8> {
-        let mut bytes = vec![0; Fr::NUM_BYTES];
-        value.to_bytes_le(&mut bytes);
-        bytes.reverse();
-        bytes
+        value.to_bytes_le_vec()
     }
 }

@@ -5,8 +5,8 @@ pub mod sha2_chain;
 use ark_bn254::Fr;
 use jolt_prover_legacy::curve::Bn254Curve;
 use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_prover_legacy::transcripts::Blake2bTranscript;
 use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_transcript::{Blake2b512, DEFAULT_JOLT_SESSION};
 pub use jolt_verifier::VerifierError;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
@@ -21,13 +21,13 @@ pub use tracer::JoltDevice;
 pub type F = Fr;
 pub type C = Bn254Curve;
 pub type PCS = DoryCommitmentScheme;
-pub type FS = Blake2bTranscript;
+pub type FS = Blake2b512;
 pub type VerifierField = jolt_field::Fr;
 pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
-pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
+pub type VerifierTranscript = Blake2b512;
 
-pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+pub type Proof = jolt_verifier::JoltProof<VerifierPCS>;
 pub type ProverPreprocessing = jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
 pub type VerifierPreprocessing = jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 
@@ -58,6 +58,7 @@ pub fn prove(
         None,
         &mut output_bytes,
         prover_pp,
+        DEFAULT_JOLT_SESSION,
     )
     .expect("prover should produce verifier-native proof");
     (proof, io_device)
@@ -74,6 +75,7 @@ pub fn verify(
         &proof,
         None,
         proof.claims.is_zk(),
+        DEFAULT_JOLT_SESSION,
     )
 }
 
@@ -106,6 +108,7 @@ pub fn verify_with_claims(
         &proof,
         None,
         proof.claims.is_zk(),
+        DEFAULT_JOLT_SESSION,
     )
 }
 

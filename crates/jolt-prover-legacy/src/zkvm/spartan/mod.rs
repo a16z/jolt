@@ -1,8 +1,8 @@
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::opening_proof::AbstractVerifierOpeningAccumulator;
-use crate::subprotocols::univariate_skip::{UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant};
-use crate::transcripts::Transcript;
+use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
+use crate::transcript_msgs::{FsAbsorb, FsChallenge, FsNargRead};
 use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -20,10 +20,10 @@ pub mod shift;
 pub fn verify_stage1_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
-    T: Transcript,
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
     A: AbstractVerifierOpeningAccumulator<F>,
 >(
-    proof: &UniSkipFirstRoundProofVariant<F, C, T>,
+    proof: &UniSkipFirstRoundProofVariant<F, C>,
     key: &UniformSpartanKey<F>,
     opening_accumulator: &mut A,
     transcript: &mut T,
@@ -31,13 +31,12 @@ pub fn verify_stage1_uni_skip<
     let verifier = OuterUniSkipVerifier::new(key, transcript);
 
     let challenge = match proof {
-        UniSkipFirstRoundProofVariant::Standard(std_proof) => {
-            UniSkipFirstRoundProof::verify::<
-                OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-                OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
-                A,
-            >(std_proof, &verifier, opening_accumulator, transcript)?
-        }
+        UniSkipFirstRoundProofVariant::Standard(std_proof) => std_proof
+            .verify::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_FIRST_ROUND_POLY_NUM_COEFFS, A, T>(
+            &verifier,
+            opening_accumulator,
+            transcript,
+        )?,
         UniSkipFirstRoundProofVariant::Zk(zk_proof) => {
             zk_proof.verify_transcript(&verifier, opening_accumulator, transcript)?
         }
@@ -49,10 +48,10 @@ pub fn verify_stage1_uni_skip<
 pub fn verify_stage2_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
-    T: Transcript,
+    T: FsChallenge<F> + FsAbsorb + FsNargRead,
     A: AbstractVerifierOpeningAccumulator<F>,
 >(
-    proof: &UniSkipFirstRoundProofVariant<F, C, T>,
+    proof: &UniSkipFirstRoundProofVariant<F, C>,
     opening_accumulator: &mut A,
     transcript: &mut T,
 ) -> Result<(ProductVirtualUniSkipParams<F>, F::Challenge), ProofVerifyError> {
@@ -60,11 +59,12 @@ pub fn verify_stage2_uni_skip<
 
     let challenge = match proof {
         UniSkipFirstRoundProofVariant::Standard(std_proof) => {
-            UniSkipFirstRoundProof::verify::<
+            std_proof.verify::<
                 PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
                 A,
-            >(std_proof, &verifier, opening_accumulator, transcript)?
+                T,
+            >(&verifier, opening_accumulator, transcript)?
         }
         UniSkipFirstRoundProofVariant::Zk(zk_proof) => {
             zk_proof.verify_transcript(&verifier, opening_accumulator, transcript)?

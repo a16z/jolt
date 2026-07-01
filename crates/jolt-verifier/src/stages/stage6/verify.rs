@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{self, BooleanityDimensions},
@@ -24,7 +25,7 @@ use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 use num_traits::{One, Zero};
 
 use super::{
@@ -75,10 +76,10 @@ use crate::{
     clippy::too_many_arguments,
     reason = "Stage 6 consumes all five prior clear-stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
@@ -90,7 +91,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = formula_dimensions.trace.log_t();
     let log_k = checked.ram_K.ilog2() as usize;
@@ -217,7 +219,7 @@ where
 
     if checked.zk {
         let stage5 = stage5.zk()?;
-        let stage6a = verify_zk(
+        let stage6a = verify_zk::<PCS, VC, T>(
             checked,
             proof,
             transcript,
@@ -277,9 +279,8 @@ where
                 claim.sumcheck.degree,
             ));
         }
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage6b_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -483,7 +484,7 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage6b_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage6b_sumcheck_proof",
                 output_claim_count: committed_output_claims,
                 stage: JoltRelationId::BytecodeReadRaf,
@@ -614,7 +615,7 @@ where
         });
     }
 
-    let stage6a = verify_clear(
+    let stage6a = verify_clear::<PCS, T>(
         proof,
         transcript,
         claims,
@@ -754,15 +755,12 @@ where
     // through the same bundle method the prover uses, in canonical batch order.
     let sumcheck_claims = relations.sumcheck_claims()?;
 
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage6b_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: error.to_string(),
+            })?;
 
     let bytecode_point = batch
         .try_instance_point(bytecode_claims.sumcheck.rounds)
@@ -1110,7 +1108,6 @@ where
     }))
 }
 
-// ============================================================================
 // Stage 6 prover/verifier shared helpers.
 //
 // The functions and types below are the public, prover-facing Stage 6 API
@@ -1130,7 +1127,6 @@ where
 // non-reduction instances that the public batch shares with `verify()`; the
 // reductions are appended last by `verify()` itself, after every shared
 // instance, preserving the shared prefix order.
-// ============================================================================
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6BatchInputClaims<F: Field> {
@@ -1461,7 +1457,7 @@ fn stage6_booleanity_reference<F, T>(
 ) -> Stage6BooleanityReference<F>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let mut address = instruction_address.to_vec();
     address.reverse();
@@ -1507,7 +1503,7 @@ pub fn stage6_pre_address_transcript_challenges<F, T>(
 ) -> Stage6PreAddressChallenges<F>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let bytecode_gamma_powers = transcript.challenge_scalar_powers(stage6_bytecode_gamma_count());
     let stage1_gammas = transcript.challenge_scalar_powers(stage6_stage1_gamma_count());
@@ -1544,7 +1540,7 @@ pub fn stage6_post_address_transcript_challenges<F, T>(
 ) -> Stage6PostAddressChallenges<F>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let instruction_ra_gamma_powers =
         transcript.challenge_scalar_powers(instruction_ra_dimensions.num_virtual_ra_polys());
@@ -1794,9 +1790,9 @@ pub(super) struct Stage6AClearOutput<F: Field> {
     pub booleanity_r_address: Vec<F>,
 }
 
-pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
+pub(super) fn verify_zk<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    _proof: &JoltProof<PCS>,
     transcript: &mut T,
     bytecode_address_claims: &JoltRelationClaims<PCS::Field>,
     booleanity_address_claims: &JoltRelationClaims<PCS::Field>,
@@ -1804,7 +1800,8 @@ pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let address_statements = vec![
         SumcheckStatement::new(
@@ -1816,15 +1813,15 @@ where
             booleanity_address_claims.sumcheck.degree,
         ),
     ];
-    let address_phase_consistency = BatchedSumcheckVerifier::verify_committed_consistency(
-        &address_statements,
-        &proof.stages.stage6a_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: error.to_string(),
-    })?;
+    let address_phase_consistency =
+        BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
+            &address_statements,
+            transcript,
+        )
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
     let committed_program_claims = if checked.precommitted.bytecode.is_some() {
         jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
     } else {
@@ -1833,7 +1830,7 @@ where
     let address_phase_output_claims =
         committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
             checked,
-            proof: &proof.stages.stage6a_sumcheck_proof,
+            output_claims: &address_phase_consistency.consistency.output_claims,
             proof_label: "stage6a_sumcheck_proof",
             output_claim_count: 2 + committed_program_claims,
             stage: JoltRelationId::BytecodeReadRaf,
@@ -1870,8 +1867,8 @@ where
     })
 }
 
-pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub(super) fn verify_clear<PCS, T>(
+    _proof: &JoltProof<PCS>,
     transcript: &mut T,
     claims: &Stage6OutputClaims<PCS::Field>,
     bytecode_relation: &BytecodeReadRafAddressPhase<PCS::Field>,
@@ -1880,8 +1877,7 @@ pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
 ) -> Result<Stage6AClearOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
 {
     let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
     let bytecode_read_raf_input = bytecode_relation.input_claim(bytecode_inputs)?;
@@ -1900,9 +1896,8 @@ where
             booleanity_input,
         ),
     ];
-    let address_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
+    let address_batch = BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(
         &address_sumcheck_claims,
-        &proof.stages.stage6a_sumcheck_proof,
         transcript,
     )
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -1993,15 +1988,15 @@ pub(super) fn append_address_phase_opening_claims<F, T>(
     claims: &Stage6OutputClaims<F>,
 ) where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.bytecode_read_raf);
+    transcript.absorb_field(&claims.address_phase.bytecode_read_raf);
     if let Some(stage_claims) = &claims.address_phase.bytecode_val_stages {
         for opening_claim in stage_claims {
-            transcript.append_labeled(b"opening_claim", opening_claim);
+            transcript.absorb_field(opening_claim);
         }
     }
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.booleanity);
+    transcript.absorb_field(&claims.address_phase.booleanity);
 }
 pub(super) fn aliased_booleanity_bytecode_openings<F: Field>(
     bytecode_ra_opening_points: &[Vec<F>],
@@ -2273,7 +2268,7 @@ pub(super) fn append_opening_claims<F, T>(
     booleanity_point: &[F],
 ) where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     // Full relations delegate to their derived `append_openings`, single-sourcing
     // the per-field Fiat-Shamir order from the `OutputClaims` derive. `booleanity`
@@ -2281,7 +2276,7 @@ pub(super) fn append_opening_claims<F, T>(
     // against the bytecode-read-RAF points.
     claims.bytecode_read_raf.append_openings(transcript);
     for opening_claim in &claims.booleanity.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
         if bytecode_read_raf_points
@@ -2290,10 +2285,10 @@ pub(super) fn append_opening_claims<F, T>(
         {
             continue;
         }
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims.booleanity.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     claims.ram_hamming_booleanity.append_openings(transcript);
     claims.ram_ra_virtualization.append_openings(transcript);
@@ -2302,56 +2297,37 @@ pub(super) fn append_opening_claims<F, T>(
         .append_openings(transcript);
     claims.inc_claim_reduction.append_openings(transcript);
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
     if let Some(opening_claim) = &claims.advice_cycle_phase.untrusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
     if let Some(output_claims) = &claims.bytecode_claim_reduction {
         match output_claims {
             BytecodeCyclePhaseOutputClaims::Intermediate(opening_claim) => {
-                transcript.append_labeled(b"opening_claim", opening_claim);
+                transcript.absorb_field(opening_claim);
             }
             BytecodeCyclePhaseOutputClaims::Chunks(chunks) => {
                 for opening_claim in chunks {
-                    transcript.append_labeled(b"opening_claim", opening_claim);
+                    transcript.absorb_field(opening_claim);
                 }
             }
         }
     }
     if let Some(output_claim) = &claims.program_image_claim_reduction {
-        transcript.append_labeled(b"opening_claim", &output_claim.opening_claim);
+        transcript.absorb_field(&output_claim.opening_claim);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stages::test_support::RecordingTranscript;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_transcript::FsAbsorb;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
-    }
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
     }
 
     /// Locks the stage-6 cycle-phase Fiat-Shamir append order against silent drift.
@@ -2402,7 +2378,7 @@ mod tests {
 
         let mut want = RecordingTranscript::default();
         for value in (1..=10).map(fr) {
-            want.append_labeled(b"opening_claim", &value);
+            want.absorb_field(&value);
         }
 
         assert_eq!(got.chunks, want.chunks);

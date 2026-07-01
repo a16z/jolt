@@ -10,51 +10,27 @@ use strum::EnumCount;
 
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, Openings};
-#[cfg(feature = "zk")]
-use crate::subprotocols::blindfold::BlindFoldProof;
+use crate::zkvm::{
+    config::{OneHotConfig, ReadWriteConfig},
+    instruction::{CircuitFlags, InstructionFlags},
+    witness::{CommittedPolynomial, VirtualPolynomial},
+};
 use crate::{
-    curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
 };
-use crate::{
-    subprotocols::{
-        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
-    },
-    transcripts::Transcript,
-    zkvm::{
-        config::{OneHotConfig, ReadWriteConfig},
-        instruction::{CircuitFlags, InstructionFlags},
-        witness::{CommittedPolynomial, VirtualPolynomial},
-    },
-};
 
-pub(crate) struct JoltProofParts<
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-    FS: Transcript,
-> {
-    pub commitments: Vec<PCS::Commitment>,
-    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
-    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
-    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage6a_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    #[cfg(feature = "zk")]
-    pub blindfold_proof: BlindFoldProof<F, C>,
+pub(crate) struct JoltProofParts<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub joint_opening_proof: PCS::Proof,
-    pub untrusted_advice_commitment: Option<PCS::Commitment>,
     #[cfg(not(feature = "zk"))]
     pub opening_claims: ProverOpeningClaims<F>,
+    /// Spongefish NARG byte-string produced by the legacy prover. Prover-only
+    /// round payloads are exported through the bridge and consumed by the
+    /// modular verifier at their Fiat-Shamir positions.
+    pub narg: Vec<u8>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: ReadWriteConfig,

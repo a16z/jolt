@@ -13,24 +13,15 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
-transcript-blake2b = ["spongefish/blake2", "dep:blake2"]
+transcript-blake2b = ["spongefish/blake2"]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["dep:light-poseidon"]
 
 [dependencies]
 ark-bn254.workspace = true
 ark-ff.workspace = true
+ark-serialize.workspace = true
 light-poseidon = { workspace = true, optional = true }
-spongefish = { workspace = true, features = ["ark-ff"] }
-blake2 = { workspace = true, optional = true }
-digest = { workspace = true }
+spongefish = { workspace = true, features = ["ark-ff", "ark-ec", "derive"] }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 rand.workspace = true
-
-[dev-dependencies]
-num-traits = { workspace = true }
-criterion = { workspace = true }
-
-[[bench]]
-name = "transcript_ops"
-harness = false

@@ -8,25 +8,23 @@ use crate::poly::opening_proof::SumcheckId;
 use crate::zkvm::config::OneHotParams;
 #[cfg(any(feature = "prover", feature = "zk"))]
 use crate::zkvm::config::ProgramMode;
-use crate::zkvm::config::{OneHotConfig, ReadWriteConfig};
 #[cfg(any(feature = "prover", feature = "zk"))]
 use crate::zkvm::witness::CommittedPolynomial;
 #[cfg(feature = "prover")]
 use crate::{
     curve::Bn254Curve,
-    poly::commitment::dory::DoryCommitmentScheme,
+    poly::commitment::dory::{DoryCommitmentScheme, DoryLayout},
     poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN},
     utils::errors::ProofVerifyError,
     zkvm::claim_reductions::AdviceKind,
 };
 use crate::{
     field::JoltField, poly::commitment::commitment_scheme::CommitmentScheme,
-    poly::commitment::dory::DoryLayout, poly::opening_proof::ProverOpeningAccumulator,
-    transcripts::Transcript,
+    poly::opening_proof::ProverOpeningAccumulator,
 };
 
 // Compile-time error if multiple transcript features are enabled
-// When none of the transcript features are enabled, Jolt defaults to `Blake2bTranscript`
+// When none of the transcript features are enabled, Jolt defaults to the Blake2b512 sponge
 #[cfg(any(
     all(feature = "transcript-poseidon", feature = "transcript-keccak"),
     all(feature = "transcript-poseidon", feature = "transcript-blake2b"),
@@ -39,18 +37,18 @@ use crate::{
 ))]
 compile_error!("Cannot enable multiple transcript features simultaneously. Please choose exactly one of: 'transcript-poseidon', 'transcript-keccak', or 'transcript-blake2b'.");
 
+/// The spongefish sponge RV64IMAC's prover is instantiated over, defaulting to
+/// Blake2b when no transcript feature is selected.
 #[cfg(any(
-    all(feature = "prover", feature = "transcript-blake2b"),
-    all(
-        feature = "prover",
-        not(any(feature = "transcript-poseidon", feature = "transcript-keccak"))
-    )
+    feature = "transcript-blake2b",
+    not(any(feature = "transcript-poseidon", feature = "transcript-keccak"))
 ))]
-use crate::transcripts::Blake2bTranscript;
-#[cfg(all(feature = "prover", feature = "transcript-keccak"))]
-use crate::transcripts::KeccakTranscript;
-#[cfg(all(feature = "prover", feature = "transcript-poseidon"))]
-use crate::transcripts::PoseidonTranscript;
+pub type RV64IMACSponge = jolt_transcript::Blake2b512;
+#[cfg(feature = "transcript-keccak")]
+pub type RV64IMACSponge = jolt_transcript::Keccak;
+#[cfg(feature = "transcript-poseidon")]
+pub type RV64IMACSponge = jolt_transcript::PoseidonSponge;
+
 #[cfg(feature = "prover")]
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -318,89 +316,21 @@ macro_rules! pprof_scope {
     dead_code,
     reason = "test-only prover debug payload is compiled in host builds"
 )]
-pub struct ProverDebugInfo<F, ProofTranscript, PCS>
+pub struct ProverDebugInfo<F, PCS>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
-    pub(crate) transcript: ProofTranscript,
     pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-/// Absorb public instance data into the transcript for Fiat-Shamir.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Fiat-Shamir preamble mirrors protocol inputs"
-)]
-pub fn fiat_shamir_preamble(
-    program_io: &JoltDevice,
-    ram_K: usize,
-    trace_length: usize,
-    entry_address: u64,
-    rw_config: &ReadWriteConfig,
-    one_hot_config: &OneHotConfig,
-    dory_layout: DoryLayout,
-    preprocessing_digest: &[u8; 32],
-    transcript: &mut impl Transcript,
-) {
-    transcript.append_bytes(b"preprocessing_digest", preprocessing_digest);
-    transcript.append_u64(b"max_input_size", program_io.memory_layout.max_input_size);
-    transcript.append_u64(b"max_output_size", program_io.memory_layout.max_output_size);
-    transcript.append_u64(b"heap_size", program_io.memory_layout.heap_size);
-    transcript.append_bytes(b"inputs", &program_io.inputs);
-    transcript.append_bytes(b"outputs", &program_io.outputs);
-    transcript.append_u64(b"panic", program_io.panic as u64);
-    transcript.append_u64(b"ram_K", ram_K as u64);
-    transcript.append_u64(b"trace_length", trace_length as u64);
-    transcript.append_u64(b"entry_address", entry_address);
-    transcript.append_u64(
-        b"ram_rw_phase1_num_rounds",
-        rw_config.ram_rw_phase1_num_rounds as u64,
-    );
-    transcript.append_u64(
-        b"ram_rw_phase2_num_rounds",
-        rw_config.ram_rw_phase2_num_rounds as u64,
-    );
-    transcript.append_u64(
-        b"registers_rw_phase1_num_rounds",
-        rw_config.registers_rw_phase1_num_rounds as u64,
-    );
-    transcript.append_u64(
-        b"registers_rw_phase2_num_rounds",
-        rw_config.registers_rw_phase2_num_rounds as u64,
-    );
-    transcript.append_u64(b"log_k_chunk", one_hot_config.log_k_chunk as u64);
-    transcript.append_u64(
-        b"lookups_ra_virtual_log_k_chunk",
-        one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
-    );
-    transcript.append_u64(b"dory_layout", dory_layout as u64);
-}
-
-#[cfg(all(feature = "prover", feature = "transcript-poseidon"))]
+// The per-sponge variance lives entirely in `RV64IMACSponge` (cfg-gated above), so
+// these aliases are sponge-agnostic. `RV64IMACProver` needs the `prover` feature; the
+// verifier/proof are available in any build.
+#[cfg(feature = "prover")]
 pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
-
-#[cfg(all(feature = "prover", feature = "transcript-keccak"))]
-pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
-
-#[cfg(all(
-    feature = "prover",
-    not(any(
-        feature = "transcript-poseidon",
-        feature = "transcript-keccak",
-        feature = "transcript-blake2b"
-    ))
-))]
-pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
-
-#[cfg(all(feature = "prover", feature = "transcript-blake2b"))]
-pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, RV64IMACSponge>;
 
 #[cfg(feature = "prover")]
 pub type RV64IMACProof = proof::RV64IMACProof;

@@ -34,7 +34,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     utils::{
         expanding_table::ExpandingTable,
         lookup_bits::LookupBits,
@@ -125,9 +125,9 @@ impl<F: JoltField> InstructionReadRafSumcheckParams<F> {
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
-        let gamma = transcript.challenge_scalar::<F>();
+        let gamma = transcript.challenge_field();
         let gamma_sqr = gamma.square();
         let phases = config::get_instruction_sumcheck_phases(n_cycle_vars);
         let (r_reduction, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -841,9 +841,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for InstructionReadRafSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for InstructionReadRafSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -1304,7 +1302,7 @@ impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &A,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params = InstructionReadRafSumcheckParams::new(
             n_cycle_vars,
@@ -1316,8 +1314,8 @@ impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for InstructionReadRafSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for InstructionReadRafSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -1433,9 +1431,10 @@ mod tests {
     use super::*;
     use crate::poly::opening_proof::VerifierOpeningAccumulator;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
-    use crate::transcripts::Blake2bTranscript;
+    use crate::transcript_msgs::FsChallenge;
     use ark_bn254::Fr;
     use ark_std::Zero;
+    use jolt_transcript::Blake2b512;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::instruction::Cycle;
@@ -1524,16 +1523,14 @@ mod tests {
                 .collect(),
         );
 
-        let prover_transcript = &mut Blake2bTranscript::new(&[]);
+        let prover_transcript =
+            &mut jolt_transcript::prover_transcript(&[], [0u8; 32], Blake2b512::default());
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
-        let verifier_transcript = &mut Blake2bTranscript::new(&[]);
         let mut verifier_opening_accumulator =
             VerifierOpeningAccumulator::new(trace.len().log_2(), false);
 
         let r_cycle: Vec<<Fr as JoltField>::Challenge> =
-            prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);
-        let _r_cycle: Vec<<Fr as JoltField>::Challenge> =
-            verifier_transcript.challenge_vector_optimized::<Fr>(LOG_T);
+            FsChallenge::<Fr>::challenge_optimized_vec(prover_transcript, LOG_T);
         let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
         let mut rv_claim = Fr::zero();
@@ -1598,6 +1595,13 @@ mod tests {
             prover_transcript,
         );
 
+        // Build a verifier transcript with the same initial state and re-derive
+        // the same `r_cycle` in order.
+        let mut verifier_transcript =
+            jolt_transcript::verifier_transcript(&[], [0u8; 32], Blake2b512::default(), &[]);
+        let _r_cycle: Vec<<Fr as JoltField>::Challenge> =
+            FsChallenge::<Fr>::challenge_optimized_vec(&mut verifier_transcript, LOG_T);
+
         // Take claims
         for (key, (_, value)) in &prover_opening_accumulator.openings {
             let empty_point = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![]);
@@ -1631,14 +1635,14 @@ mod tests {
             trace.len().log_2(),
             &one_hot_params,
             &verifier_opening_accumulator,
-            verifier_transcript,
+            &mut verifier_transcript,
         );
 
         let r_sumcheck_verif = BatchedSumcheck::verify_standard(
             &proof,
             vec![&verifier_sumcheck],
             &mut verifier_opening_accumulator,
-            verifier_transcript,
+            &mut verifier_transcript,
         )
         .unwrap();
 

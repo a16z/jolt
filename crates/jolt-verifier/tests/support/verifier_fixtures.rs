@@ -19,7 +19,7 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::Blake2b512;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
 use jolt_prover_legacy::{
@@ -133,7 +133,7 @@ fn lock_exclusive(file: &fs::File) {
 type ProverField = jolt_prover_legacy::ark_bn254::Fr;
 type ProverCommitment = <DoryCommitmentScheme as ProverCommitmentScheme>::Commitment;
 type ProverOpeningHint = <DoryCommitmentScheme as ProverCommitmentScheme>::OpeningProofHint;
-type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 type TrustedAdviceCommitter = fn(
     &JoltProverPreprocessing<ProverField, Bn254Curve, DoryCommitmentScheme>,
@@ -152,12 +152,13 @@ pub struct VerifierFixtureCase {
 #[cfg(not(feature = "zk"))]
 impl VerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
             self.trusted_advice_commitment.as_ref(),
             false,
+            jolt_transcript::DEFAULT_JOLT_SESSION,
         )
     }
 }
@@ -173,12 +174,13 @@ pub struct ZkVerifierFixtureCase {
 #[cfg(feature = "zk")]
 impl ZkVerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
             None,
             true,
+            jolt_transcript::DEFAULT_JOLT_SESSION,
         )
     }
 }
@@ -522,12 +524,13 @@ fn assert_verifier_accepts(
     proof: VerifierFixtureProof,
     public_io: JoltDevice,
 ) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
         &fixture.preprocessing,
         &public_io,
         &proof,
         fixture.trusted_advice_commitment.as_ref(),
         cfg!(feature = "zk"),
+        jolt_transcript::DEFAULT_JOLT_SESSION,
     );
     assert!(
         result.is_ok(),
@@ -541,12 +544,13 @@ fn assert_verifier_rejects(
     proof: VerifierFixtureProof,
     public_io: JoltDevice,
 ) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
         &fixture.preprocessing,
         &public_io,
         &proof,
         fixture.trusted_advice_commitment.as_ref(),
         false,
+        jolt_transcript::DEFAULT_JOLT_SESSION,
     );
     assert!(
         result.is_err(),
@@ -666,7 +670,9 @@ fn generate_committed_muldiv() -> GeneratedVerifierFixture {
         None,
     );
     let public_io = prover.program_io.clone();
-    let (proof, _) = prover.prove().expect("prove verifier object fixture");
+    let (proof, _) = prover
+        .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
+        .expect("prove verifier object fixture");
     let preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
 
     GeneratedVerifierFixture {
@@ -720,7 +726,9 @@ fn generate_verifier_fixture(
         None,
     );
     let public_io = prover.program_io.clone();
-    let (proof, _) = prover.prove().expect("prove verifier object fixture");
+    let (proof, _) = prover
+        .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
+        .expect("prove verifier object fixture");
     let preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
 
     GeneratedVerifierFixture {

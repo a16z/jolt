@@ -20,40 +20,16 @@ impl ZkConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JoltProtocolConfig {
-    pub zk: ZkConfig,
-}
-
-impl JoltProtocolConfig {
-    pub const fn for_zk(zk: bool) -> Self {
-        Self {
-            zk: ZkConfig::from_bool(zk),
-        }
-    }
-}
-
-#[cfg(feature = "zk")]
-pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::BlindFold;
-
-#[cfg(not(feature = "zk"))]
-pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::Transparent;
-
-pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
-    zk: SELECTED_ZK_CONFIG,
-};
-
-pub fn validate_proof_config<PCS, VC, ZkProof>(
-    config: &JoltProtocolConfig,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn validate_proof_config<PCS>(
+    config: ZkConfig,
+    proof: &JoltProof<PCS>,
 ) -> Result<(), VerifierError>
 where
     PCS: jolt_openings::CommitmentScheme,
-    VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
 {
-    if proof.protocol != *config {
+    if proof.protocol != config {
         return Err(VerifierError::ProtocolConfigMismatch {
-            expected: *config,
+            expected: config,
             got: proof.protocol,
         });
     }

@@ -26,6 +26,9 @@ use std::ops::*;
     CanonicalDeserialize,
     Allocative,
 )]
+// `repr(transparent)` guarantees identical layout to `F` — relied on by the
+// `transmute_copy` in `transcript_msgs`'s Poseidon `challenge_optimized` (full-field path).
+#[repr(transparent)]
 pub struct Mont254BitChallenge<F: JoltField> {
     value: F,
 }

@@ -1,8 +1,7 @@
-//! Coverage for the native split-trait surface — `ProverTranscript`,
-//! `VerifierTranscript`, `OptimizedChallenge`. The existing per-backend
-//! `transcript_tests!` macro exercises only the `legacy::Transcript`
-//! facade.
+//! Coverage for spongefish-native transcript use and `OptimizedChallenge`.
 
+// Poseidon has no `OptimizedChallenge` (128-bit) tests — it uses full-field
+// `challenge-254-bit` (#1586 reviewer) — so this file only covers the byte sponges.
 #![cfg(any(feature = "transcript-blake2b", feature = "transcript-keccak"))]
 #![expect(clippy::expect_used, reason = "tests")]
 
@@ -30,7 +29,7 @@ mod blake2b {
         let got: BytesMsg = verifier
             .prover_message()
             .expect("prover_message must deserialize");
-        assert_eq!(got.as_slice(), b"private");
+        assert_eq!(got.0.as_slice(), b"private");
         let _c2: Fr = verifier.challenge_128();
         verifier.check_eof().expect("eof");
     }
@@ -91,8 +90,12 @@ mod keccak {
 
         let mut verifier = verifier_transcript(SESSION, INSTANCE, Keccak::default(), &narg);
         let got: BytesMsg = verifier.prover_message().expect("ok");
-        assert_eq!(got.as_slice(), b"a");
+        assert_eq!(got.0.as_slice(), b"a");
         let _c2: Fr = verifier.challenge_128();
         verifier.check_eof().expect("eof");
     }
 }
+
+// No Poseidon `OptimizedChallenge` tests: `challenge_128` is `unimplemented!()` for
+// the Poseidon sponge (#1586 reviewer — `transcript-poseidon` uses full-field
+// `challenge-254-bit`; 128-bit truncation defeats Poseidon's recursion purpose).

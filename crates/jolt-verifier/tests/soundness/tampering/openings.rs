@@ -9,7 +9,7 @@
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::proof_claims::offset_opening_claim;
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use crate::support::{tamper_manifest, verifier_fixtures};
+use crate::support::{narg_frame_has_body, tamper_manifest, verifier_fixtures};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     formulas::{committed_openings::final_opening_ids, dimensions::JoltFormulaDimensions},
@@ -56,7 +56,7 @@ fn stage8_final_opening_ids(base: &verifier_fixtures::VerifierFixtureCase) -> Ve
     final_opening_ids(
         dimensions.ra_layout,
         base.trusted_advice_commitment.is_some(),
-        base.proof.untrusted_advice_commitment.is_some(),
+        narg_frame_has_body(&base.proof.narg, 1),
         base.preprocessing
             .program
             .committed()

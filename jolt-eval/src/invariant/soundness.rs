@@ -515,17 +515,17 @@ diff --git a/Cargo.toml b/Cargo.toml
     // ── patching ────────────────────────────────────────────────────
 
     #[test]
-    fn check_garbage_patch_is_noop() {
+    fn check_garbage_patch_is_invalid_input() {
         let inv = SoundnessInvariant;
         let setup = inv.setup();
         let input = SoundnessInput {
             patch: "this is not a valid unified diff\n+garbage".into(),
             ..default_input()
         };
-        // Garbage with no diff headers passes filter_patch unchanged.
-        // git apply --allow-empty treats it as a no-op (no hunks),
-        // so the unpatched sandbox compiles and the check proceeds normally.
-        assert!(inv.check(&setup, input).is_ok());
+        assert!(matches!(
+            inv.check(&setup, input),
+            Err(CheckError::InvalidInput(_))
+        ));
     }
 
     // ── compilation + prove/verify (slow) ───────────────────────────

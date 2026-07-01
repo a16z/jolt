@@ -378,7 +378,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             count_terms.push(quote!(self.#ident.len()));
             append_stmts.push(quote! {
                 for __cell in &self.#ident {
-                    transcript.append_labeled(b"opening_claim", &#get(__cell));
+                    transcript.absorb_field(&#get(__cell));
                 }
             });
             resolve_arms.push(quote! {
@@ -394,7 +394,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             count_terms.push(quote!(::core::primitive::usize::from(self.#ident.is_some())));
             append_stmts.push(quote! {
                 if let ::core::option::Option::Some(__cell) = &self.#ident {
-                    transcript.append_labeled(b"opening_claim", &#get(__cell));
+                    transcript.absorb_field(&#get(__cell));
                 }
             });
             resolve_arms.push(quote! {
@@ -409,7 +409,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
             count_terms.push(quote!(1usize));
             append_stmts.push(quote! {
-                transcript.append_labeled(b"opening_claim", &#get(&self.#ident));
+                transcript.absorb_field(&#get(&self.#ident));
             });
             resolve_arms.push(quote! {
                 if *id == #id {
@@ -473,7 +473,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #count_body
             }
 
-            fn append_openings<T: ::jolt_transcript::Transcript<Challenge = #value>>(
+            fn append_openings<T: ::jolt_transcript::FsAbsorb>(
                 &self,
                 transcript: &mut T,
             ) {

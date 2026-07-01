@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
+use ark_serialize::CanonicalSerialize;
 use jolt_field::Field;
-use jolt_transcript::AppendToTranscript;
 use serde::{Deserialize, Serialize};
 
 /// Cryptographic group suitable for commitments.
@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 /// All elements are `Copy` and thread-safe. Implementors must provide
 /// scalar multiplication and multi-scalar multiplication (MSM).
 ///
-/// Requires [`AppendToTranscript`] so group elements can be absorbed into
-/// Fiat-Shamir transcripts (e.g., Pedersen commitments in ZK sumcheck).
+/// Requires [`CanonicalSerialize`] so group elements can be absorbed into
+/// Fiat-Shamir transcripts (e.g., Pedersen commitments in ZK sumcheck) via
+/// the split-trait surface's `FsAbsorb::absorb`.
 pub trait JoltGroup:
     Clone
     + Copy
@@ -35,7 +36,7 @@ pub trait JoltGroup:
     + SubAssign
     + Serialize
     + for<'de> Deserialize<'de>
-    + AppendToTranscript
+    + CanonicalSerialize
 {
     /// Group identity element.
     #[must_use]

@@ -406,6 +406,7 @@ fn collect_guest_proofs(
             None,
             &mut output_bytes,
             &guest_prover_preprocessing,
+            jolt_sdk::DEFAULT_JOLT_SESSION,
         )
         .expect("prover should produce verifier-native proof");
         let prove_time = now.elapsed().as_secs_f64();
@@ -430,6 +431,7 @@ fn collect_guest_proofs(
             &proof,
             None,
             proof.claims.is_zk(),
+            jolt_sdk::DEFAULT_JOLT_SESSION,
         )
         .is_ok();
         info!("  Verification result: {is_valid}");
@@ -596,6 +598,7 @@ fn run_recursion_proof(
                     None,
                     &mut output_bytes,
                     &recursion_prover_preprocessing,
+                    jolt_sdk::DEFAULT_JOLT_SESSION,
                 )
                 .expect("prover should produce verifier-native proof");
             let is_valid = jolt_sdk::jolt_verifier::verify::<
@@ -609,6 +612,7 @@ fn run_recursion_proof(
                 &proof,
                 None,
                 proof.claims.is_zk(),
+                jolt_sdk::DEFAULT_JOLT_SESSION,
             )
             .is_ok();
             let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();

@@ -2,6 +2,13 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
+use jolt_transcript::{prover_transcript, DuplexSpongeInterface, ProverState};
+use jolt_verifier::{
+    stages::{CommittedProgramSchedule, PrecommittedSchedule},
+    CheckedInputs,
+};
+use rand::rngs::StdRng;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
@@ -58,7 +65,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::UniSkipFirstRoundProofVariant,
     },
-    transcripts::Transcript,
+    transcript_msgs::{FsAbsorb, FsChallenge, FsNargWrite},
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         bytecode::{
@@ -112,7 +119,7 @@ use crate::{
         bytecode::read_raf_checking::{
             BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
         },
-        compute_final_opening_point, fiat_shamir_preamble,
+        compute_final_opening_point,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::InstructionReadRafSumcheckProver,
@@ -157,9 +164,9 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{
-    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver,
-    BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RelaxedR1CSInstance,
-    RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
+    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProver, BlindFoldWitness,
+    ExtraConstraintWitness, FinalOutputWitness, RelaxedR1CSInstance, RoundWitness, StageConfig,
+    StageWitness, VerifierR1CSBuilder,
 };
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
@@ -181,7 +188,7 @@ pub struct JoltCpuProver<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
+    H: DuplexSpongeInterface,
 > {
     pub preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
     pub program_io: JoltDevice,
@@ -200,7 +207,7 @@ pub struct JoltCpuProver<
     program_image_reduction_prover: Option<ProgramImageClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
-    pub transcript: ProofTranscript,
+    transcript: Option<ProverState<H, StdRng>>,
     pub opening_accumulator: ProverOpeningAccumulator<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub initial_ram_state: Vec<u64>,
@@ -215,13 +222,38 @@ pub struct JoltCpuProver<
     _curve: std::marker::PhantomData<C>,
 }
 
+fn verifier_read_write_config(config: &ReadWriteConfig) -> JoltReadWriteConfig {
+    JoltReadWriteConfig {
+        ram_rw_phase1_num_rounds: config.ram_rw_phase1_num_rounds,
+        ram_rw_phase2_num_rounds: config.ram_rw_phase2_num_rounds,
+        registers_rw_phase1_num_rounds: config.registers_rw_phase1_num_rounds,
+        registers_rw_phase2_num_rounds: config.registers_rw_phase2_num_rounds,
+    }
+}
+
+fn verifier_one_hot_config(config: &crate::zkvm::config::OneHotConfig) -> JoltOneHotConfig {
+    JoltOneHotConfig {
+        log_k_chunk: config.log_k_chunk,
+        lookups_ra_virtual_log_k_chunk: config.lookups_ra_virtual_log_k_chunk,
+    }
+}
+
+fn verifier_trace_polynomial_order(layout: DoryLayout) -> TracePolynomialOrder {
+    match layout {
+        DoryLayout::CycleMajor => TracePolynomialOrder::CycleMajor,
+        DoryLayout::AddressMajor => TracePolynomialOrder::AddressMajor,
+    }
+}
+
 impl<
         'a,
         F: JoltField,
         C: JoltCurve<F = F>,
         PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-        ProofTranscript: Transcript,
-    > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
+        H: DuplexSpongeInterface<U = u8> + Default,
+    > JoltCpuProver<'a, F, C, PCS, H>
+where
+    ProverState<H, StdRng>: FsChallenge<F> + FsAbsorb + FsNargWrite,
 {
     #[expect(
         clippy::too_many_arguments,
@@ -310,6 +342,56 @@ impl<
         )
     }
 
+    fn checked_inputs_for_preamble(
+        &self,
+        trace_polynomial_order: TracePolynomialOrder,
+        one_hot_config: JoltOneHotConfig,
+    ) -> CheckedInputs {
+        let memory_layout = &self.program_io.memory_layout;
+        let committed_program = self.preprocessing.is_committed_mode().then(|| {
+            let program_image_start_index = memory_layout
+                .remapped_word_address(self.preprocessing.shared.program_meta.min_bytecode_address)
+                .expect("committed program image address must fit verifier memory layout");
+            CommittedProgramSchedule {
+                bytecode_len: self.preprocessing.shared.program_meta.bytecode_len,
+                bytecode_chunk_count: self.preprocessing.shared.bytecode_chunk_count,
+                program_image_len_words: self
+                    .preprocessing
+                    .shared
+                    .program_meta
+                    .program_image_len_words,
+                program_image_start_index: program_image_start_index as usize,
+            }
+        });
+        let trusted_advice_commitment_present = self.advice.trusted_advice_commitment.is_some();
+        let untrusted_advice_commitment_present = !self.program_io.untrusted_advice.is_empty();
+        let precommitted = PrecommittedSchedule::new(
+            trace_polynomial_order,
+            self.trace.len().log_2(),
+            one_hot_config.committed_chunk_bits(),
+            trusted_advice_commitment_present
+                .then_some(memory_layout.max_trusted_advice_size as usize),
+            untrusted_advice_commitment_present
+                .then_some(memory_layout.max_untrusted_advice_size as usize),
+            committed_program,
+        )
+        .expect("prover inputs must produce a valid precommitted schedule");
+
+        CheckedInputs {
+            public_io: self.program_io.clone(),
+            zk: cfg!(feature = "zk"),
+            trace_length: self.trace.len(),
+            ram_K: self.one_hot_params.ram_k,
+            entry_address: self.preprocessing.shared.program_meta.entry_address,
+            preprocessing_digest: self.preprocessing.shared.digest(),
+            trusted_advice_commitment_present,
+            untrusted_advice_commitment_present,
+            vc_capacity: cfg!(feature = "zk")
+                .then_some(common::constants::MAX_BLINDFOLD_GENERATORS),
+            precommitted,
+        }
+    }
+
     pub fn gen_from_trace(
         preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         lazy_trace: LazyTraceIterator,
@@ -369,7 +451,6 @@ impl<
             )
             .next_power_of_two() as usize;
 
-        let transcript = ProofTranscript::new(b"Jolt");
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
 
         let spartan_key = UniformSpartanKey::new(trace.len());
@@ -410,7 +491,7 @@ impl<
             program_image_reduction_prover: None,
             unpadded_trace_len,
             padded_trace_len,
-            transcript,
+            transcript: None,
             opening_accumulator,
             spartan_key,
             initial_ram_state,
@@ -426,41 +507,49 @@ impl<
         }
     }
 
-    #[expect(
-        clippy::type_complexity,
-        reason = "internal proof assembly returns prover-native parts plus debug payload"
-    )]
     #[tracing::instrument(skip_all)]
+    #[expect(
+        clippy::expect_used,
+        reason = "prove initializes the transcript before any proof stage can read it"
+    )]
+    fn transcript(transcript: &mut Option<ProverState<H, StdRng>>) -> &mut ProverState<H, StdRng> {
+        transcript
+            .as_mut()
+            .expect("prover transcript must be initialized before proof stages")
+    }
+
     fn prove_parts(
         mut self,
-    ) -> (
-        JoltProofParts<F, C, PCS, ProofTranscript>,
-        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
-    ) {
+        transcript_session: &[u8],
+    ) -> (JoltProofParts<F, PCS>, Option<ProverDebugInfo<F, PCS>>) {
         let _pprof_prove = pprof_scope!("prove");
 
         #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
-        let preprocessing_digest = self.preprocessing.shared.digest();
-        fiat_shamir_preamble(
-            &self.program_io,
-            self.one_hot_params.ram_k,
-            self.trace.len(),
-            self.preprocessing.shared.program_meta.entry_address,
-            &self.rw_config,
-            &self.one_hot_params.to_config(),
-            DoryGlobals::get_layout(),
-            &preprocessing_digest,
-            &mut self.transcript,
-        );
+        let trace_polynomial_order = verifier_trace_polynomial_order(DoryGlobals::get_layout());
+        let rw_config = verifier_read_write_config(&self.rw_config);
+        let one_hot_config = verifier_one_hot_config(&self.one_hot_params.to_config());
+        let checked = self.checked_inputs_for_preamble(trace_polynomial_order, one_hot_config);
+        let transcript_config = jolt_verifier::ProofTranscriptConfig {
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
+        };
+        let instance = jolt_verifier::transcript_instance(&checked, transcript_config);
+        self.transcript = Some(prover_transcript(
+            transcript_session,
+            instance,
+            H::default(),
+        ));
 
         tracing::info!(
             "bytecode size: {}",
             self.preprocessing.shared.bytecode_size()
         );
 
-        let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
-        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
+        let (_commitments, mut opening_proof_hints) =
+            self.generate_and_commit_witness_polynomials();
+        self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
         // Add advice hints for batched Stage 8 opening
@@ -484,29 +573,22 @@ impl<
         if let Some(bytecode_commitments) = self.preprocessing.shared.program.bytecode_commitments()
         {
             for commitment in &bytecode_commitments.commitments {
-                self.transcript
-                    .append_serializable(b"bytecode_chunk_commit", commitment);
+                Self::transcript(&mut self.transcript).absorb(commitment);
             }
         }
         if let Some(program_commitments) = self.preprocessing.shared.program.program_commitments() {
-            self.transcript.append_serializable(
-                b"program_image_commitment",
-                &program_commitments.program_image_commitment,
-            );
+            Self::transcript(&mut self.transcript)
+                .absorb(&program_commitments.program_image_commitment);
         }
 
-        let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, r_stage1) =
-            self.prove_stage1();
-        let (stage2_uni_skip_first_round_proof, stage2_sumcheck_proof, r_stage2) =
-            self.prove_stage2();
-        let (stage3_sumcheck_proof, r_stage3) = self.prove_stage3();
-        let (stage4_sumcheck_proof, r_stage4) = self.prove_stage4();
-        let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5();
-        let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
-            self.prove_stage6a();
-        let (stage6b_sumcheck_proof, r_stage6) =
-            self.prove_stage6b(bytecode_read_raf_params, booleanity_cycle_input);
-        let (stage7_sumcheck_proof, r_stage7) = self.prove_stage7();
+        let (_, _, r_stage1) = self.prove_stage1();
+        let (_, _, r_stage2) = self.prove_stage2();
+        let (_, r_stage3) = self.prove_stage3();
+        let (_, r_stage4) = self.prove_stage4();
+        let (_, r_stage5) = self.prove_stage5();
+        let (_, bytecode_read_raf_params, booleanity_cycle_input) = self.prove_stage6a();
+        let (_, r_stage6) = self.prove_stage6b(bytecode_read_raf_params, booleanity_cycle_input);
+        let (_, r_stage7) = self.prove_stage7();
 
         let _sumcheck_challenges = [
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
@@ -514,7 +596,7 @@ impl<
 
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
         #[cfg(feature = "zk")]
-        let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
+        self.prove_blindfold(&joint_opening_proof);
 
         #[cfg(not(feature = "zk"))]
         let opening_claims = crate::zkvm::proof_parts::ProverOpeningClaims(
@@ -534,9 +616,15 @@ impl<
             );
         }
 
+        // Full prover NARG exported by the proof bridge. The modular verifier
+        // consumes prover-only round payloads from this stream at their
+        // Fiat-Shamir positions.
+        let narg = Self::transcript(&mut self.transcript)
+            .narg_string()
+            .to_vec();
+
         #[cfg(test)]
         let debug_info = Some(ProverDebugInfo {
-            transcript: self.transcript.clone(),
             opening_accumulator: self.opening_accumulator.clone(),
             prover_setup: self.preprocessing.generators.clone(),
         });
@@ -544,20 +632,6 @@ impl<
         let debug_info = None;
 
         let proof = JoltProofParts {
-            commitments,
-            untrusted_advice_commitment,
-            stage1_uni_skip_first_round_proof,
-            stage1_sumcheck_proof,
-            stage2_uni_skip_first_round_proof,
-            stage2_sumcheck_proof,
-            stage3_sumcheck_proof,
-            stage4_sumcheck_proof,
-            stage5_sumcheck_proof,
-            stage6a_sumcheck_proof,
-            stage6b_sumcheck_proof,
-            stage7_sumcheck_proof,
-            #[cfg(feature = "zk")]
-            blindfold_proof,
             joint_opening_proof,
             #[cfg(not(feature = "zk"))]
             opening_claims,
@@ -566,6 +640,7 @@ impl<
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
             dory_layout: DoryGlobals::get_layout(),
+            narg,
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -588,13 +663,13 @@ impl<
     )]
     pub fn prove(
         self,
+        transcript_session: &[u8],
     ) -> Result<
         (
             jolt_verifier::JoltProof<
                 <PCS as crate::zkvm::proof::ProofCommitmentScheme<F>>::VerifierPcs,
-                <C as crate::zkvm::proof::ProofCurve<F>>::VerifierVectorCommitment,
             >,
-            Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+            Option<ProverDebugInfo<F, PCS>>,
         ),
         jolt_verifier::VerifierError,
     >
@@ -602,20 +677,17 @@ impl<
         F: crate::zkvm::proof::ProofField,
         C: crate::zkvm::proof::ProofCurve<F>,
         PCS: crate::zkvm::proof::ProofCommitmentScheme<F>,
+        <PCS::VerifierPcs as jolt_crypto::Commitment>::Output: CanonicalSerialize + Clone,
     {
-        let (proof, debug_info) = self.prove_parts();
+        let (proof, debug_info) = self.prove_parts(transcript_session);
         let proof = crate::zkvm::proof::proof_parts_into_verifier(proof)?;
         Ok((proof, debug_info))
     }
 
     fn prove_batched_sumcheck(
         &mut self,
-        instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
-    ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
-        Vec<F::Challenge>,
-        F,
-    ) {
+        instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
+    ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>, F) {
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
@@ -623,7 +695,7 @@ impl<
                 instances,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
                 &self.pedersen_generators,
                 &mut rng,
             )
@@ -633,7 +705,7 @@ impl<
             let (proof, r, claim) = BatchedSumcheck::prove(
                 instances,
                 &mut self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
             (SumcheckInstanceProof::Clear(proof), r, claim)
         }
@@ -641,8 +713,8 @@ impl<
 
     fn prove_uniskip(
         &mut self,
-        instance: &mut impl SumcheckInstanceProver<F, ProofTranscript>,
-    ) -> UniSkipFirstRoundProofVariant<F, C, ProofTranscript> {
+        instance: &mut impl SumcheckInstanceProver<F>,
+    ) -> UniSkipFirstRoundProofVariant<F, C> {
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
@@ -650,7 +722,7 @@ impl<
                 instance,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
                 &self.pedersen_generators,
                 &mut rng,
             );
@@ -661,7 +733,7 @@ impl<
             let proof = prove_uniskip_round(
                 instance,
                 &mut self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
             UniSkipFirstRoundProofVariant::Standard(proof)
         }
@@ -777,17 +849,18 @@ impl<
             (commitments, hint_map)
         };
 
-        // Append commitments to transcript
-        for commitment in &commitments {
-            self.transcript
-                .append_serializable(b"commitment", commitment);
-        }
+        // Witness commitments are prover-only proof payload. Write them as one
+        // NARG frame; the modular verifier reads the same frame before stage 1.
+        Self::transcript(&mut self.transcript).write_slice(&commitments);
 
         (commitments, hint_map)
     }
 
     fn generate_and_commit_untrusted_advice(&mut self) -> Option<PCS::Commitment> {
         if self.program_io.untrusted_advice.is_empty() {
+            // Always write the advice presence frame so the verifier consumes one
+            // fixed NARG position whether advice is present or absent.
+            Self::transcript(&mut self.transcript).write_slice::<PCS::Commitment>(&[]);
             return None;
         }
 
@@ -811,8 +884,7 @@ impl<
             DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript
-            .append_serializable(b"untrusted_advice", &commitment);
+        Self::transcript(&mut self.transcript).write_slice(std::slice::from_ref(&commitment));
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -837,10 +909,8 @@ impl<
 
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
         self.advice.trusted_advice_polynomial = Some(poly);
-        self.transcript.append_serializable(
-            b"trusted_advice",
-            self.advice.trusted_advice_commitment.as_ref().unwrap(),
-        );
+        Self::transcript(&mut self.transcript)
+            .absorb(self.advice.trusted_advice_commitment.as_ref().unwrap());
     }
 
     /// Returns (uni_skip_proof, sumcheck_proof, challenges).
@@ -852,15 +922,16 @@ impl<
     fn prove_stage1(
         &mut self,
     ) -> (
-        UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        UniSkipFirstRoundProofVariant<F, C>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 1 baseline");
 
         tracing::info!("Stage 1 proving");
-        let uni_skip_params = OuterUniSkipParams::new(&self.spartan_key, &mut self.transcript);
+        let uni_skip_params =
+            OuterUniSkipParams::new(&self.spartan_key, Self::transcript(&mut self.transcript));
         let mut uni_skip = OuterUniSkipProver::initialize(
             uni_skip_params.clone(),
             &self.trace,
@@ -879,7 +950,7 @@ impl<
             OuterRemainingStreamingSumcheck::new(shared, schedule);
 
         let (sumcheck_proof, r_stage1, _initial_claim) = self.prove_batched_sumcheck(vec![
-            &mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>,
+            &mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_>,
         ]);
 
         (first_round_proof, sumcheck_proof, r_stage1)
@@ -894,22 +965,24 @@ impl<
     fn prove_stage2(
         &mut self,
     ) -> (
-        UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        UniSkipFirstRoundProofVariant<F, C>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 2 baseline");
 
-        let uni_skip_params =
-            ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript);
+        let uni_skip_params = ProductVirtualUniSkipParams::new(
+            &self.opening_accumulator,
+            Self::transcript(&mut self.transcript),
+        );
         let mut uni_skip =
             ProductVirtualUniSkipProver::initialize(uni_skip_params.clone(), &self.trace);
         let first_round_proof = self.prove_uniskip(&mut uni_skip);
 
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
             &self.one_hot_params,
             self.trace.len(),
             &self.rw_config,
@@ -923,7 +996,7 @@ impl<
             InstructionLookupsClaimReductionSumcheckParams::new(
                 self.trace.len(),
                 &self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
         let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
@@ -935,7 +1008,7 @@ impl<
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
             &self.program_io,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
             self.trace.len(),
             &self.rw_config,
         );
@@ -982,7 +1055,7 @@ impl<
             print_data_structure_heap_usage("OutputSumcheckProver", &ram_output_check);
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(ram_read_write_checking),
             Box::new(spartan_product_virtual_remainder),
             Box::new(instruction_claim_reduction),
@@ -1005,12 +1078,7 @@ impl<
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage3(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage3(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
 
@@ -1018,14 +1086,16 @@ impl<
         let spartan_shift_params = ShiftSumcheckParams::new(
             self.trace.len().log_2(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
-        let spartan_instruction_input_params =
-            InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript);
+        let spartan_instruction_input_params = InstructionInputParams::new(
+            &self.opening_accumulator,
+            Self::transcript(&mut self.transcript),
+        );
         let spartan_registers_claim_reduction_params = RegistersClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         let spartan_shift = ShiftSumcheckProver::initialize(
@@ -1056,7 +1126,7 @@ impl<
             );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(spartan_shift),
             Box::new(spartan_instruction_input),
             Box::new(spartan_registers_claim_reduction),
@@ -1075,19 +1145,14 @@ impl<
         (sumcheck_proof, r_stage3)
     }
     #[tracing::instrument(skip_all)]
-    fn prove_stage4(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage4(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
         let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
             self.trace.len(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
             &self.rw_config,
         );
         prover_accumulate_advice(
@@ -1106,8 +1171,7 @@ impl<
             );
         }
         // Domain-separate the batching challenge.
-        self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
-        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
+        let ram_val_check_gamma: F = Self::transcript(&mut self.transcript).challenge_field();
         let ram_val_check_params = RamValCheckSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -1142,7 +1206,7 @@ impl<
             print_data_structure_heap_usage("RamValCheckSumcheckProver", &ram_val_check);
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(registers_read_write_checking),
             Box::new(ram_val_check),
         ];
@@ -1161,12 +1225,7 @@ impl<
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage5(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage5(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
         // Initialization params (same order as batch)
@@ -1174,13 +1233,13 @@ impl<
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let ram_ra_reduction_params = RaReductionParams::new(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
@@ -1212,7 +1271,7 @@ impl<
             );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(lookups_read_raf),
             Box::new(ram_ra_reduction),
             Box::new(registers_val_evaluation),
@@ -1235,7 +1294,7 @@ impl<
     fn prove_stage6a(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         BytecodeReadRafSumcheckParams<F>,
         BooleanityCycleInput<F>,
     ) {
@@ -1248,14 +1307,14 @@ impl<
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
             bytecode_read_raf_params,
@@ -1278,7 +1337,7 @@ impl<
             print_data_structure_heap_usage("BooleanityAddressSumcheckProver", &booleanity);
         }
 
-        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> =
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_>> =
             vec![&mut bytecode_read_raf, &mut booleanity];
 
         #[cfg(feature = "allocative")]
@@ -1306,10 +1365,7 @@ impl<
         &mut self,
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
         booleanity_cycle_input: BooleanityCycleInput<F>,
-    ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
-        Vec<F::Challenge>,
-    ) {
+    ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6b baseline");
 
@@ -1324,12 +1380,12 @@ impl<
         let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let inc_reduction_params = IncClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
@@ -1397,7 +1453,7 @@ impl<
                 bytecode_chunk_count,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
-                &mut self.transcript,
+                Self::transcript(&mut self.transcript),
             );
             let bytecode_chunk_coeffs = build_committed_bytecode_chunk_coeffs(
                 &self.preprocessing.materialized_program().bytecode.bytecode,
@@ -1483,7 +1539,7 @@ impl<
         let mut bytecode_reduction = self.bytecode_reduction_prover.take();
         let mut program_image_reduction = self.program_image_reduction_prover.take();
 
-        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> = vec![
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_>> = vec![
             &mut bytecode_read_raf,
             &mut booleanity,
             &mut ram_hamming_booleanity,
@@ -1529,7 +1585,7 @@ impl<
 
     #[tracing::instrument(skip_all)]
     #[cfg(feature = "zk")]
-    fn prove_blindfold(&mut self, joint_opening_proof: &PCS::Proof) -> BlindFoldProof<F, C> {
+    fn prove_blindfold(&mut self, joint_opening_proof: &PCS::Proof) {
         use crate::curve::JoltGroupElement;
         use rayon::prelude::*;
 
@@ -1965,25 +2021,24 @@ impl<
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
         let prover =
             BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        self.transcript.append_label(b"BlindFold");
 
-        prover.prove(&real_instance, &real_witness, &z, &mut self.transcript)
+        prover.prove(
+            &real_instance,
+            &real_witness,
+            &z,
+            Self::transcript(&mut self.transcript),
+        )
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
     #[tracing::instrument(skip_all)]
-    fn prove_stage7(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage7(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         // Create params and prover for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_params = HammingWeightClaimReductionParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
         let hw_prover = HammingWeightClaimReductionProver::initialize(
             hw_params,
@@ -1997,8 +2052,7 @@ impl<
 
         // Run Stage 7 batched sumcheck (address rounds only).
         // Includes HammingWeightClaimReduction plus address phase of advice reduction instances (if needed).
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
-            vec![Box::new(hw_prover)];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F>>> = vec![Box::new(hw_prover)];
 
         if let Some(mut advice_reduction_prover_trusted) =
             self.advice_reduction_prover_trusted.take()
@@ -2255,8 +2309,11 @@ impl<
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
-        self.transcript.append_scalars(b"rlc_claims", &claims);
-        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        for claim in &claims {
+            Self::transcript(&mut self.transcript).absorb(claim);
+        }
+        let gamma_powers: Vec<F> =
+            Self::transcript(&mut self.transcript).challenge_powers(claims.len());
         #[cfg(feature = "zk")]
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
@@ -2322,13 +2379,17 @@ impl<
             &joint_poly,
             &opening_point.r,
             Some(hint),
-            &mut self.transcript,
+            Self::transcript(&mut self.transcript),
         );
 
         #[cfg(feature = "zk")]
         {
             let y_com: C::G1 = PCS::eval_commitment(&proof).expect("ZK proof must have y_com");
-            bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
+            bind_opening_inputs_zk::<F, C, _>(
+                Self::transcript(&mut self.transcript),
+                &opening_point.r,
+                &y_com,
+            );
             self.blindfold_accumulator.set_opening_proof_data(
                 crate::subprotocols::blindfold::OpeningProofData {
                     opening_ids,
@@ -2340,7 +2401,11 @@ impl<
         }
         #[cfg(not(feature = "zk"))]
         {
-            bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
+            bind_opening_inputs::<F, _>(
+                Self::transcript(&mut self.transcript),
+                &opening_point.r,
+                &joint_claim,
+            );
         }
 
         proof
@@ -2359,7 +2424,7 @@ pub struct JoltAdvice<F: JoltField, PCS: CommitmentScheme<Field = F>> {
 
 #[cfg(feature = "allocative")]
 fn write_boxed_instance_flamegraph_svg(
-    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
+    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField>>],
     path: impl AsRef<Path>,
 ) {
     let mut flamegraph = FlameGraphBuilder::default();
@@ -2371,7 +2436,7 @@ fn write_boxed_instance_flamegraph_svg(
 
 #[cfg(feature = "allocative")]
 fn write_instance_flamegraph_svg(
-    instances: &[&mut dyn SumcheckInstanceProver<impl JoltField, impl Transcript>],
+    instances: &[&mut dyn SumcheckInstanceProver<impl JoltField>],
     path: impl AsRef<Path>,
 ) {
     let mut flamegraph = FlameGraphBuilder::default();
@@ -2705,6 +2770,7 @@ mod tests {
         proof: VerifierRV64IMACProof,
         public_io: common::jolt_device::JoltDevice,
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+        transcript_session: &[u8],
     ) -> Result<(), jolt_verifier::VerifierError> {
         let preprocessing = verifier_preprocessing_from_prover(preprocessing);
         let trusted_advice_commitment = trusted_advice_commitment
@@ -2714,13 +2780,14 @@ mod tests {
             jolt_field::Fr,
             jolt_dory::DoryScheme,
             jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-            jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+            jolt_transcript::Blake2b512,
         >(
             &preprocessing,
             &public_io,
             &proof,
             trusted_advice_commitment.as_ref(),
             cfg!(feature = "zk"),
+            transcript_session,
         )
     }
 
@@ -2730,8 +2797,14 @@ mod tests {
         public_io: common::jolt_device::JoltDevice,
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
     ) {
-        canonical_verify_result(preprocessing, proof, public_io, trusted_advice_commitment)
-            .expect("canonical verifier rejected prover-native proof");
+        canonical_verify_result(
+            preprocessing,
+            proof,
+            public_io,
+            trusted_advice_commitment,
+            jolt_transcript::DEFAULT_JOLT_SESSION,
+        )
+        .expect("canonical verifier rejected prover-native proof");
     }
 
     #[cfg(feature = "zk")]
@@ -2808,7 +2881,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -2853,9 +2926,65 @@ mod tests {
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
+    }
+
+    #[test]
+    #[serial]
+    #[cfg(not(feature = "zk"))]
+    fn custom_transcript_session_e2e_dory() {
+        const SESSION: &[u8] = b"jolt-test/custom-session";
+
+        DoryGlobals::reset();
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&5u32).unwrap();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            8192,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, _debug_info) = prover
+            .prove(SESSION)
+            .expect("prover should produce verifier-native proof");
+
+        canonical_verify_result(
+            &prover_preprocessing,
+            jolt_proof.clone(),
+            io_device.clone(),
+            None,
+            SESSION,
+        )
+        .expect("custom transcript session should verify");
+
+        assert!(canonical_verify_result(
+            &prover_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            b"jolt-test/wrong-session",
+        )
+        .is_err());
     }
 
     #[test]
@@ -2891,7 +3020,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device.clone(), None);
         assert_eq!(
@@ -2940,7 +3069,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device.clone(), None);
         let expected_output = &[
@@ -2998,7 +3127,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,
@@ -3065,7 +3194,7 @@ mod tests {
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,
@@ -3117,7 +3246,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,
@@ -3179,7 +3308,7 @@ mod tests {
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         let debug_info = debug_info.expect("expected debug_info in tests");
 
@@ -3264,7 +3393,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3301,7 +3430,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3338,7 +3467,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3380,7 +3509,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3438,7 +3567,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
@@ -3479,121 +3608,17 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
 
-    /// Test BlindFold R1CS satisfaction using real sumcheck data from muldiv proof.
-    ///
-    /// This test extracts sumcheck polynomials from all 6 stages of a real Jolt proof
-    /// and verifies that they satisfy the BlindFold verifier R1CS. This validates that:
-    /// 1. The coefficient extraction from CompressedUniPoly works correctly
-    /// 2. The BlindFold R1CS correctly encodes sumcheck verification
-    /// 3. Real proof data from all stages satisfies the R1CS constraints
+    /// Test BlindFold verification using the NARG-backed muldiv proof.
     #[cfg(feature = "zk")]
     #[test]
     #[serial]
     fn blindfold_r1cs_satisfaction() {
         DoryGlobals::reset();
-
-        use crate::curve::Bn254Curve;
-        use crate::subprotocols::blindfold::{
-            BakedPublicInputs, BlindFoldWitness, RoundWitness, StageConfig, StageWitness,
-            VerifierR1CSBuilder,
-        };
-        use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-        use crate::transcripts::{KeccakTranscript, Transcript};
-        /// Helper to process a single stage's sumcheck proof.
-        /// Returns a list of (RoundWitness, degree) for each round.
-        /// For ZK proofs, creates synthetic witnesses with correct degrees to test R1CS structure.
-        fn process_stage<ProofTranscript: Transcript>(
-            _stage_name: &str,
-            proof: &SumcheckInstanceProof<Fr, Bn254Curve, ProofTranscript>,
-            transcript: &mut KeccakTranscript,
-        ) -> Vec<(RoundWitness<Fr>, usize)> {
-            match proof {
-                SumcheckInstanceProof::Clear(std_proof) => {
-                    // For Standard proofs, use actual polynomial coefficients
-                    let compressed_polys = &std_proof.compressed_polys;
-                    let num_rounds = compressed_polys.len();
-
-                    if num_rounds == 0 {
-                        return vec![];
-                    }
-
-                    let mut rounds = Vec::with_capacity(num_rounds);
-
-                    for compressed_poly in compressed_polys.iter() {
-                        transcript.append_scalars(
-                            b"sumcheck_poly",
-                            &compressed_poly.coeffs_except_linear_term,
-                        );
-                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
-
-                        let compressed = &compressed_poly.coeffs_except_linear_term;
-                        let degree = compressed.len();
-
-                        let c0 = compressed[0];
-                        let sum_higher_coeffs: Fr = compressed[1..].iter().copied().sum();
-
-                        let claimed_sum = Fr::from(12345u64);
-                        let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
-
-                        let mut coeffs = vec![c0, c1];
-                        coeffs.extend_from_slice(&compressed[1..]);
-
-                        let round_witness =
-                            RoundWitness::with_claimed_sum(coeffs, challenge, claimed_sum);
-
-                        rounds.push((round_witness, degree));
-                    }
-
-                    rounds
-                }
-                SumcheckInstanceProof::Zk(zk_proof) => {
-                    // For ZK proofs, create synthetic witnesses with correct degrees.
-                    // This tests the R1CS structure without needing actual coefficients.
-                    let num_rounds = zk_proof.round_commitments.len();
-
-                    if num_rounds == 0 {
-                        return vec![];
-                    }
-
-                    let mut rounds = Vec::with_capacity(num_rounds);
-
-                    for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
-                        transcript.append_commitment(b"sumcheck_commitment", commitment);
-                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
-
-                        let degree = zk_proof.poly_degrees[round_idx];
-
-                        // Create synthetic coefficients that satisfy sumcheck relation
-                        // g(x) = c0 + c1*x + c2*x^2 + ... has degree+1 coefficients
-                        // claimed_sum = 2*c0 + c1 + c2 + ...
-                        let claimed_sum = Fr::from(12345u64);
-
-                        // Use simple synthetic values: c0 = 1, c2..cd = 1, compute c1
-                        let c0 = Fr::from(1u64);
-                        let num_higher_coeffs = degree.saturating_sub(1);
-                        let sum_higher_coeffs = Fr::from(num_higher_coeffs as u64);
-                        let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
-
-                        let mut coeffs = vec![c0, c1];
-                        for _ in 0..num_higher_coeffs {
-                            coeffs.push(Fr::from(1u64));
-                        }
-
-                        let round_witness =
-                            RoundWitness::with_claimed_sum(coeffs, challenge, claimed_sum);
-
-                        rounds.push((round_witness, degree));
-                    }
-
-                    rounds
-                }
-            }
-        }
 
         // Run muldiv prover to get a real proof
         let mut program = host::Program::new("muldiv-guest");
@@ -3621,95 +3646,16 @@ mod tests {
             None,
             None,
         );
-        let (jolt_proof, _) = prover.prove_parts();
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, _) = prover
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
+            .expect("prover should produce verifier-native ZK proof");
 
-        println!("\n=== BlindFold R1CS Satisfaction Test (All 7 Stages) ===\n");
-
-        // Process all 7 stages and verify each one
-        let stage_proofs: Vec<(&str, &SumcheckInstanceProof<Fr, Bn254Curve, _>)> = vec![
-            ("Stage 1 (Spartan Outer)", &jolt_proof.stage1_sumcheck_proof),
-            (
-                "Stage 2 (Product Virtual)",
-                &jolt_proof.stage2_sumcheck_proof,
-            ),
-            ("Stage 3 (Instruction)", &jolt_proof.stage3_sumcheck_proof),
-            ("Stage 4 (Registers+RAM)", &jolt_proof.stage4_sumcheck_proof),
-            ("Stage 5 (Value+Lookup)", &jolt_proof.stage5_sumcheck_proof),
-            (
-                "Stage 6 (OneHot+Hamming)",
-                &jolt_proof.stage6b_sumcheck_proof,
-            ),
-            (
-                "Stage 7 (HammingWeight+ClaimReduction)",
-                &jolt_proof.stage7_sumcheck_proof,
-            ),
-        ];
-
-        let mut total_rounds = 0;
-        let mut total_constraints = 0;
-
-        for (stage_name, proof) in &stage_proofs {
-            // Create a fresh transcript for each stage (independent verification)
-            let mut stage_transcript = KeccakTranscript::new(b"BlindFoldStageTest");
-
-            let rounds = process_stage(stage_name, proof, &mut stage_transcript);
-
-            if rounds.is_empty() {
-                println!("  {stage_name} - 0 rounds, skipping");
-                continue;
-            }
-
-            // Process each round individually
-            let mut stage_rounds = 0;
-            let mut stage_constraints = 0;
-
-            for (round_witness, degree) in rounds {
-                // Build R1CS for a single round
-                let config = StageConfig::new(1, degree);
-                let initial_claim = round_witness.claimed_sum;
-                let baked = BakedPublicInputs {
-                    challenges: vec![round_witness.challenge],
-                    initial_claims: vec![initial_claim],
-                    ..Default::default()
-                };
-                let builder = VerifierR1CSBuilder::<Fr>::new(std::slice::from_ref(&config), &baked);
-                let r1cs = builder.build();
-                let stage_witness = StageWitness::new(vec![round_witness]);
-                let witness = BlindFoldWitness::new(initial_claim, vec![stage_witness]);
-
-                let z = witness.assign(&r1cs);
-                match r1cs.check_satisfaction(&z) {
-                    Ok(()) => {
-                        stage_rounds += 1;
-                        stage_constraints += r1cs.num_constraints;
-                    }
-                    Err(row) => {
-                        panic!(
-                            "{} (degree {}) - constraint {} failed (out of {})",
-                            stage_name, degree, row, r1cs.num_constraints
-                        );
-                    }
-                }
-            }
-
-            println!(
-                "  {stage_name} - {stage_rounds} rounds, {stage_constraints} constraints - SATISFIED"
-            );
-            total_rounds += stage_rounds;
-            total_constraints += stage_constraints;
-        }
-
-        println!("\n=== Summary ===");
-        println!("Total rounds across all stages: {total_rounds}");
-        println!("Total constraints across all stages: {total_constraints}");
-        println!("All 6 stages satisfied!\n");
-
-        // Ensure we processed a meaningful amount
-        assert!(total_rounds > 0, "Expected at least some sumcheck rounds");
         assert!(
-            total_constraints > 0,
-            "Expected at least some R1CS constraints"
+            !jolt_proof.narg.is_empty(),
+            "ZK proof must carry BlindFold and sumcheck data in the NARG"
         );
+        verify_verifier_proof(&preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -3745,7 +3691,7 @@ mod tests {
         );
 
         let (proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
 
         verify_verifier_proof(&prover_preprocessing, proof, program_io, None);
@@ -3788,7 +3734,7 @@ mod tests {
             final_memory_state,
         );
         let (proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
 
         verify_verifier_proof(&prover_preprocessing, proof, program_io, None);
@@ -3827,7 +3773,7 @@ mod tests {
             final_memory_state,
         );
         let (proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
 
         let original_entry_index = original_program.entry_bytecode_index();
@@ -3850,8 +3796,14 @@ mod tests {
         );
         let tampered_prover_preprocessing = JoltProverPreprocessing::new(tampered_shared);
         assert!(
-            canonical_verify_result(&tampered_prover_preprocessing, proof, program_io, None)
-                .is_err(),
+            canonical_verify_result(
+                &tampered_prover_preprocessing,
+                proof,
+                program_io,
+                None,
+                jolt_transcript::DEFAULT_JOLT_SESSION,
+            )
+            .is_err(),
             "verifier accepted proof: prover used entry_bytecode_index {original_entry_index}, \
              verifier expected {tampered_entry_index} — entry constraint not enforced"
         );
@@ -3867,7 +3819,7 @@ mod tests {
             BlindFoldWitness, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness,
             VerifierR1CSBuilder,
         };
-        use crate::transcripts::{KeccakTranscript, Transcript};
+        use jolt_transcript::Blake2b512;
         use rand::thread_rng;
 
         let mut rng = thread_rng();
@@ -3949,8 +3901,10 @@ mod tests {
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
-        let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        let mut prover_transcript =
+            jolt_transcript::prover_transcript(b"BlindFold_E2E", [0u8; 32], Blake2b512::default());
+        prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        let narg = prover_transcript.narg_string().to_vec();
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
@@ -3958,8 +3912,13 @@ mod tests {
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_E2E");
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        let mut verifier_transcript = jolt_transcript::verifier_transcript(
+            b"BlindFold_E2E",
+            [0u8; 32],
+            Blake2b512::default(),
+            &narg,
+        );
+        let result = verifier.verify(verifier_input, &mut verifier_transcript);
 
         assert!(
             result.is_ok(),
@@ -3972,7 +3931,7 @@ mod tests {
             r1cs.num_constraints, r1cs.num_vars
         );
         println!("Witness size: {} field elements", witness.len());
-        println!("Spartan sumcheck rounds: {}", proof.spartan_proof.len());
+        println!("BlindFold NARG size: {} bytes", narg.len());
         println!("Protocol verification: SUCCESS");
     }
 
@@ -4009,7 +3968,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, proof, io_device, None);
     }
@@ -4057,7 +4016,7 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(
             &prover_preprocessing,

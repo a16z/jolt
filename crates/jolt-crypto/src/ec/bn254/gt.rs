@@ -3,9 +3,8 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use jolt_field::Field;
-
-use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::JoltGroup;
 
@@ -135,21 +134,46 @@ impl MulAssign for Bn254GT {
     }
 }
 
-#[expect(clippy::expect_used)]
-impl AppendToTranscript for Bn254GT {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        use ark_serialize::CanonicalSerialize;
-        let mut buf = Vec::with_capacity(self.0.uncompressed_size());
-        self.0
-            .serialize_uncompressed(&mut buf)
-            .expect("GT serialization cannot fail");
-        buf.reverse();
-        transcript.append_bytes(&buf);
+impl CanonicalSerialize for Bn254GT {
+    #[inline]
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
     }
 
-    fn transcript_payload_len(&self) -> Option<u64> {
-        use ark_serialize::CanonicalSerialize;
-        Some(self.0.uncompressed_size() as u64)
+    #[inline]
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.0.serialized_size(compress)
+    }
+}
+
+impl Valid for Bn254GT {
+    fn check(&self) -> Result<(), SerializationError> {
+        if self.0 == Fq12::ZERO {
+            return Err(SerializationError::InvalidData);
+        }
+        if self.0.pow(Fr::MODULUS) != Fq12::ONE {
+            return Err(SerializationError::InvalidData);
+        }
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for Bn254GT {
+    #[inline]
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = Self(Fq12::deserialize_with_mode(reader, compress, validate)?);
+        if matches!(validate, ark_serialize::Validate::Yes) {
+            value.check()?;
+        }
+        Ok(value)
     }
 }
 

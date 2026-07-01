@@ -4,15 +4,15 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 
-use crate::config::JoltProtocolConfig;
+use crate::config::ZkConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
     #[error("proof protocol config {got:?} does not match verifier config {expected:?}")]
-    ProtocolConfigMismatch {
-        expected: JoltProtocolConfig,
-        got: JoltProtocolConfig,
-    },
+    ProtocolConfigMismatch { expected: ZkConfig, got: ZkConfig },
+
+    #[error("proof NARG is malformed or inconsistent with structured compatibility fields")]
+    MalformedNarg,
 
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
@@ -25,9 +25,6 @@ pub enum VerifierError {
 
     #[error("clear proof unexpectedly includes a BlindFold proof")]
     UnexpectedBlindFoldProof,
-
-    #[error("committed proof is missing a BlindFold proof")]
-    MissingBlindFoldProof,
 
     #[error("committed proof unexpectedly includes opening claims")]
     UnexpectedOpeningClaims,

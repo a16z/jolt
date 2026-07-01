@@ -85,6 +85,11 @@ pub enum SumcheckError<F: FieldCore> {
         got: &'static str,
     },
 
+    /// A prover-only NARG frame was malformed or appeared at the wrong
+    /// transcript position.
+    #[error("malformed sumcheck NARG frame")]
+    MalformedNarg,
+
     /// Batched verification received an empty claims slice.
     #[error("batched verification requires at least one claim")]
     EmptyClaims,

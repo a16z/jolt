@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::JoltFormulaDimensions, instruction, ram, registers},
     JoltRelationId,
@@ -6,7 +7,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::Transcript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     instruction_read_raf::{InstructionReadRaf, InstructionReadRafInputClaims},
@@ -74,9 +75,9 @@ pub fn stage5_output_claims_with_points<F: Field>(
     }
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
@@ -85,7 +86,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = formula_dimensions.trace;
@@ -130,9 +132,8 @@ where
                 registers_claims.sumcheck.degree,
             ),
         ];
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage5_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -142,7 +143,7 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage5_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage5_sumcheck_proof",
                 output_claim_count: committed_output_claims,
                 stage: JoltRelationId::InstructionReadRaf,
@@ -256,15 +257,12 @@ where
             registers_relation.input_claim(&registers_inputs)?,
         ),
     ];
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage5_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::InstructionReadRaf,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::InstructionReadRaf,
+                reason: error.to_string(),
+            })?;
 
     let instruction_point = batch
         .try_instance_point(instruction_claims.sumcheck.rounds)
@@ -313,7 +311,7 @@ where
         });
     }
 
-    claims.append_to_transcript(transcript);
+    append_stage5_opening_claims(transcript, claims);
 
     let instruction_r_address = output_claims.instruction_r_address();
     Ok(Stage5Output::Clear(Stage5ClearOutput {
@@ -321,4 +319,14 @@ where
         output_claims,
         instruction_r_address,
     }))
+}
+
+fn append_stage5_opening_claims<F, T>(transcript: &mut T, claims: &Stage5OutputClaims<F>)
+where
+    F: Field,
+    T: FsTranscript<F>,
+{
+    for opening_claim in claims.opening_values() {
+        transcript.absorb_field(&opening_claim);
+    }
 }

@@ -161,6 +161,8 @@ pub enum VerificationError<F: FieldCore> {
     Relaxed(#[from] RelaxedError),
     #[error(transparent)]
     VectorOpening(#[from] VectorOpeningError),
+    #[error("malformed BlindFold NARG frame: {name}")]
+    MalformedNarg { name: &'static str },
     #[error("{name} must be a non-zero power of two, got {value}")]
     InvalidPowerOfTwo { name: &'static str, value: usize },
     #[error("{name} must have at least one sumcheck round")]

@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::{
     JoltSumcheckDomain,
 };
 use jolt_field::Field;
-use jolt_transcript::Transcript;
+use jolt_transcript::FsAbsorb;
 
 use crate::VerifierError;
 
@@ -52,10 +52,10 @@ pub trait OutputClaims<F: Field> {
     /// computed without allocating.
     fn opening_count(&self) -> usize;
 
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label. This is the Fiat-Shamir order and
-    /// MUST match the order in which the prover commits the openings.
-    fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T);
+    /// Append every produced opening to the transcript in canonical order. This
+    /// is the Fiat-Shamir order and MUST match the order in which the prover
+    /// commits the openings.
+    fn append_openings<T: FsAbsorb>(&self, transcript: &mut T);
 
     /// Resolve a produced opening's value by id, for evaluating the relation's
     /// output `Expr`. Returns `None` for ids this struct does not carry (callers
@@ -238,11 +238,13 @@ where
 mod tests {
     use super::*;
 
+    use crate::stages::test_support::RecordingTranscript;
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_riscv::{CircuitFlags, CIRCUIT_FLAGS};
+    use jolt_transcript::FsAbsorb;
     use jolt_verifier_derive::{InputClaims, OutputClaims};
 
     fn fr(value: u64) -> Fr {
@@ -257,33 +259,6 @@ mod tests {
         JoltOpeningId::committed(polynomial, relation)
     }
 
-    /// A minimal `Transcript` double that records each appended byte chunk, so
-    /// that append order can be compared without depending on the digest.
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
-    }
-
     /// The chunk stream produced by appending `opening_values()` one-by-one is
     /// the reference Fiat-Shamir order; `append_openings` must reproduce it.
     fn assert_append_matches_values<C: OutputClaims<Fr>>(claims: &C) {
@@ -292,7 +267,7 @@ mod tests {
 
         let mut via_values = RecordingTranscript::default();
         for value in claims.opening_values() {
-            via_values.append_labeled(b"opening_claim", &value);
+            via_values.absorb_field(&value);
         }
 
         assert_eq!(via_append.chunks, via_values.chunks);

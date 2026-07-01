@@ -3,7 +3,7 @@
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
-use jolt_transcript::Transcript;
+use jolt_transcript::FsAbsorb;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{OpeningClaim, OutputClaims};
@@ -54,11 +54,11 @@ impl<F: Field> Stage7OutputClaims<F> {
         values
     }
 
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label, matching the prover's commitment order.
-    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
+    /// Append every produced opening to the transcript in canonical order,
+    /// matching the prover's commitment order.
+    pub fn append_to_transcript<T: FsAbsorb>(&self, transcript: &mut T) {
         for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
+            transcript.absorb_field(&value);
         }
     }
 }

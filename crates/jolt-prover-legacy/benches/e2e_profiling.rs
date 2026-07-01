@@ -231,7 +231,7 @@ fn prove_example(
         );
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover
-            .prove()
+            .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
             .expect("prover should produce verifier-native proof");
 
         let verifier_preprocessing = verifier_preprocessing_from_prover(&preprocessing);
@@ -239,13 +239,14 @@ fn prove_example(
             jolt_field::Fr,
             jolt_dory::DoryScheme,
             jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-            jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+            jolt_transcript::Blake2b512,
         >(
             &verifier_preprocessing,
             &program_io,
             &jolt_proof,
             None,
             cfg!(feature = "zk"),
+            jolt_transcript::DEFAULT_JOLT_SESSION,
         )
         .unwrap();
     };
@@ -299,7 +300,7 @@ fn prove_example_with_trace(
     );
     let now = Instant::now();
     let (proof, _) = prover
-        .prove()
+        .prove(jolt_transcript::DEFAULT_JOLT_SESSION)
         .expect("prover should produce verifier-native proof");
     let prove_duration = now.elapsed();
     drop(span);
@@ -312,13 +313,14 @@ fn prove_example_with_trace(
         jolt_field::Fr,
         jolt_dory::DoryScheme,
         jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-        jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+        jolt_transcript::Blake2b512,
     >(
         &verifier_preprocessing,
         &program_io,
         &proof,
         None,
         cfg!(feature = "zk"),
+        jolt_transcript::DEFAULT_JOLT_SESSION,
     )
     .unwrap();
 

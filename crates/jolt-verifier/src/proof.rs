@@ -1,16 +1,14 @@
 //! Verifier-owned proof model types.
 
-use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::Field;
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::JoltProtocolConfig,
+    config::ZkConfig,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
@@ -20,21 +18,15 @@ use crate::{
     reason = "Matches current jolt-prover-legacy proof field name."
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
-pub struct JoltProof<
-    PCS,
-    VC,
-    ZkProof = BlindFoldProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
-> where
+#[serde(bound = "")]
+pub struct JoltProof<PCS>
+where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
-    pub protocol: JoltProtocolConfig,
-    pub commitments: JoltCommitments<PCS::Output>,
-    pub stages: JoltStageProofs<PCS::Field, VC>,
+    pub protocol: ZkConfig,
+    pub narg: Vec<u8>,
     pub joint_opening_proof: PCS::Proof,
-    pub untrusted_advice_commitment: Option<PCS::Output>,
-    pub claims: JoltProofClaims<PCS::Field, ZkProof>,
+    pub claims: JoltProofClaims<PCS::Field>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
@@ -42,34 +34,29 @@ pub struct JoltProof<
     pub trace_polynomial_order: TracePolynomialOrder,
 }
 
-impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+impl<PCS> JoltProof<PCS>
 where
     PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
 {
     #[expect(
         clippy::too_many_arguments,
         reason = "Constructor mirrors the proof payload while keeping internal verifier claims private."
     )]
     pub fn new(
-        commitments: JoltCommitments<PCS::Output>,
-        stages: JoltStageProofs<PCS::Field, VC>,
+        narg: Vec<u8>,
         joint_opening_proof: PCS::Proof,
-        untrusted_advice_commitment: Option<PCS::Output>,
-        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        claims: JoltProofClaims<PCS::Field>,
         trace_length: usize,
         ram_k: usize,
         rw_config: JoltReadWriteConfig,
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
     ) -> Self {
-        let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
+        let protocol = ZkConfig::from_bool(claims.is_zk());
         Self {
             protocol,
-            commitments,
-            stages,
+            narg,
             joint_opening_proof,
-            untrusted_advice_commitment,
             claims,
             trace_length,
             ram_K: ram_k,
@@ -82,14 +69,7 @@ where
     pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(claims) => Ok(claims),
-            JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
-        }
-    }
-
-    pub(crate) fn blindfold_proof(&self) -> Result<&ZkProof, VerifierError> {
-        match &self.claims {
-            JoltProofClaims::Clear(_) => Err(VerifierError::MissingBlindFoldProof),
-            JoltProofClaims::Zk { blindfold_proof } => Ok(blindfold_proof),
+            JoltProofClaims::Zk => Err(VerifierError::UnexpectedBlindFoldProof),
         }
     }
 }
@@ -108,24 +88,10 @@ pub struct JoltRaCommitments<C> {
     pub bytecode: Vec<C>,
 }
 
-impl<C> JoltRaCommitments<C> {
-    pub fn new(instruction: Vec<C>, ram: Vec<C>, bytecode: Vec<C>) -> Self {
-        Self {
-            instruction,
-            ram,
-            bytecode,
-        }
-    }
-}
-
-impl<C> JoltCommitments<C> {
-    pub fn new(rd_inc: C, ram_inc: C, ra: JoltRaCommitments<C>) -> Self {
-        Self {
-            rd_inc,
-            ram_inc,
-            ra,
-        }
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NargProofCommitments<C> {
+    pub commitments: JoltCommitments<C>,
+    pub untrusted_advice_commitment: Option<C>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,21 +99,21 @@ impl<C> JoltCommitments<C> {
     clippy::large_enum_variant,
     reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
 )]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
-pub enum JoltProofClaims<F, ZkProof>
+#[serde(bound = "")]
+pub enum JoltProofClaims<F>
 where
     F: Field,
 {
     Clear(ClearProofClaims<F>),
-    Zk { blindfold_proof: ZkProof },
+    Zk,
 }
 
-impl<F, ZkProof> JoltProofClaims<F, ZkProof>
+impl<F> JoltProofClaims<F>
 where
     F: Field,
 {
     pub const fn is_zk(&self) -> bool {
-        matches!(self, Self::Zk { .. })
+        matches!(self, Self::Zk)
     }
 }
 
@@ -163,21 +129,70 @@ pub struct ClearProofClaims<F: Field> {
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct JoltStageProofs<F, VC>
-where
-    F: Field,
-    VC: VectorCommitment<Field = F>,
-{
-    pub stage1_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
-    pub stage1_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage2_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
-    pub stage2_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+pub(crate) fn proof_commitment_counts(
+    one_hot_config: JoltOneHotConfig,
+    ram_k: usize,
+) -> Result<(usize, usize), VerifierError> {
+    let committed_chunk_bits = one_hot_config.committed_chunk_bits();
+    if committed_chunk_bits == 0 {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: 2,
+            got: 0,
+        });
+    }
+    let instruction_ra_count = (2 * RISCV_XLEN).div_ceil(committed_chunk_bits);
+    let ram_ra_count = ceil_log_2(ram_k).div_ceil(committed_chunk_bits);
+    Ok((instruction_ra_count, ram_ra_count))
+}
+
+pub(crate) fn commitments_from_proof_payload_order<C>(
+    commitments: Vec<C>,
+    instruction_ra_count: usize,
+    ram_ra_count: usize,
+) -> Result<JoltCommitments<C>, VerifierError> {
+    let minimum = 2 + instruction_ra_count + ram_ra_count;
+    if commitments.len() < minimum {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: commitments.len(),
+        });
+    }
+
+    let mut commitments = commitments.into_iter();
+    let Some(rd_inc) = commitments.next() else {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: 0,
+        });
+    };
+    let Some(ram_inc) = commitments.next() else {
+        return Err(VerifierError::InvalidCommitmentCount {
+            expected: minimum,
+            got: 1,
+        });
+    };
+    let instruction_ra = commitments
+        .by_ref()
+        .take(instruction_ra_count)
+        .collect::<Vec<_>>();
+    let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
+    let bytecode_ra = commitments.collect::<Vec<_>>();
+
+    Ok(JoltCommitments {
+        rd_inc,
+        ram_inc,
+        ra: JoltRaCommitments {
+            instruction: instruction_ra,
+            ram: ram_ra,
+            bytecode: bytecode_ra,
+        },
+    })
+}
+
+fn ceil_log_2(value: usize) -> usize {
+    if value <= 1 {
+        0
+    } else {
+        usize::BITS as usize - (value - 1).leading_zeros() as usize
+    }
 }

@@ -23,14 +23,11 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
     RamValCheckChallenge, RamValCheckPublic,
 };
-use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::proof::JoltProof;
 use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
 use crate::stages::stage2::outputs::Stage2ClearOutput;
 use crate::verifier::CheckedInputs;
@@ -275,16 +272,14 @@ pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
 /// program-image openings: record each present contribution's staged opening
 /// alongside the public initial-RAM `public_eval`. Mirrors the prover's own init
 /// reconstruction so both decompose `Val_init` identically.
-pub(crate) fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
+pub(crate) fn ram_val_check_initial_evaluation<F>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    claims: &Stage4OutputClaims<PCS::Field>,
-    r_address: &[PCS::Field],
-    public_eval: PCS::Field,
-) -> Result<RamValCheckInitialEvaluation<PCS::Field>, VerifierError>
+    claims: &Stage4OutputClaims<F>,
+    r_address: &[F],
+    public_eval: F,
+) -> Result<RamValCheckInitialEvaluation<F>, VerifierError>
 where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
+    F: Field,
 {
     let program_image_contribution = collect_program_image_contribution(
         checked.precommitted.program_image.is_some(),
@@ -292,7 +287,7 @@ where
         r_address,
     )?;
     let mut advice_contributions = Vec::new();
-    let untrusted_present = proof.untrusted_advice_commitment.is_some();
+    let untrusted_present = checked.untrusted_advice_commitment_present;
     collect_advice_contribution(
         JoltAdviceKind::Untrusted,
         untrusted_present,

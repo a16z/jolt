@@ -9,6 +9,7 @@ description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 workspace = true
 
 [dependencies]
+ark-serialize.workspace = true
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
@@ -18,7 +19,6 @@ jolt-sumcheck = { workspace = true, features = ["r1cs"] }
 jolt-transcript.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
-serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]

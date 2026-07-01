@@ -1,5 +1,6 @@
 //! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::registers as registers_claim_reduction, dimensions::TraceDimensions,
@@ -11,7 +12,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::Transcript;
+use jolt_transcript::{FsNargRead, FsTranscript};
 
 use super::{
     instruction_input::{InstructionInput, InstructionInputInputClaims},
@@ -74,9 +75,9 @@ pub fn stage3_output_claims_with_points<F: Field>(
     }
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
@@ -84,7 +85,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsNargRead + FsTranscript<PCS::Field>,
+    VC::Output: Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = TraceDimensions::new(log_t);
@@ -119,9 +121,8 @@ where
                 registers_spec.sumcheck.degree,
             ),
         ];
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
+        let consistency = BatchedSumcheckVerifier::verify_committed_consistency_from_narg(
             &statements,
-            &proof.stages.stage3_sumcheck_proof,
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -131,7 +132,7 @@ where
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
-                proof: &proof.stages.stage3_sumcheck_proof,
+                output_claims: &consistency.consistency.output_claims,
                 proof_label: "stage3_sumcheck_proof",
                 output_claim_count: STAGE3_BATCH_OUTPUT_CLAIMS,
                 stage: JoltRelationId::SpartanShift,
@@ -186,15 +187,12 @@ where
             registers_relation.input_claim(&registers_inputs)?,
         ),
     ];
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
-        &proof.stages.stage3_sumcheck_proof,
-        transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::SpartanShift,
-        reason: error.to_string(),
-    })?;
+    let batch =
+        BatchedSumcheckVerifier::verify_compressed_boolean_from_narg(&sumcheck_claims, transcript)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::SpartanShift,
+                reason: error.to_string(),
+            })?;
 
     let shift_point = batch
         .try_instance_point(shift_spec.sumcheck.rounds)
@@ -256,39 +254,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::stages::stage3::instruction_input::InstructionInputOutputClaims;
     use crate::stages::stage3::outputs::Stage3OutputClaims;
     use crate::stages::stage3::registers_claim_reduction::RegistersClaimReductionOutputClaims;
     use crate::stages::stage3::spartan_shift::SpartanShiftOutputClaims;
-    use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-        state: [u8; 32],
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            self.state
-        }
-    }
+    use crate::stages::test_support::RecordingTranscript;
+    use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
 
     #[test]
     fn opening_claim_appends_follow_core_alias_order() {
@@ -316,7 +287,7 @@ mod tests {
                 rs2_value: Fr::from_u64(16),
             },
         };
-        let mut transcript = RecordingTranscript::new(b"stage3-openings");
+        let mut transcript = RecordingTranscript::default();
 
         claims.append_to_transcript(&mut transcript);
 
@@ -339,28 +310,15 @@ mod tests {
             claims.registers_claim_reduction.rd_write_value,
         ];
         assert_eq!(claims.opening_values().len(), expected_payloads.len());
-        assert_eq!(transcript.chunks.len(), expected_payloads.len() * 2);
+        // Like jolt-core: each opening claim is absorbed as just its value (no label).
+        assert_eq!(transcript.chunks.len(), expected_payloads.len());
 
-        let label = opening_claim_label();
         for (index, expected_payload) in expected_payloads.into_iter().enumerate() {
-            assert_eq!(transcript.chunks[2 * index], label);
-            assert_eq!(
-                transcript.chunks[2 * index + 1],
-                scalar_bytes(expected_payload)
-            );
+            assert_eq!(transcript.chunks[index], scalar_bytes(expected_payload));
         }
     }
 
-    fn opening_claim_label() -> Vec<u8> {
-        let mut label = vec![0; 32];
-        label[..b"opening_claim".len()].copy_from_slice(b"opening_claim");
-        label
-    }
-
     fn scalar_bytes(value: Fr) -> Vec<u8> {
-        let mut bytes = vec![0; Fr::NUM_BYTES];
-        value.to_bytes_le(&mut bytes);
-        bytes.reverse();
-        bytes
+        value.to_bytes_le_vec()
     }
 }

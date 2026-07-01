@@ -24,7 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
-zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
+zk = ["dory/zk", "jolt-verifier/zk"]
 host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
 prover = [
   "minimal",
@@ -40,9 +40,6 @@ prover = [
   "dep:jolt-field",
   "dep:jolt-lookup-tables",
   "dep:jolt-openings",
-  "dep:jolt-poly",
-  "dep:jolt-sumcheck",
-  "dep:jolt-transcript",
   "dep:jolt-verifier",
 ]
 # This is for building jolt-prover-legacy without prover capabilities, e.g. for recursion
@@ -59,9 +56,13 @@ field-inline = [
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
-transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
-transcript-keccak = []
-transcript-blake2b = []
+
+transcript-poseidon = [
+  "jolt-transcript/transcript-poseidon",
+  "challenge-254-bit",
+]
+transcript-keccak = ["jolt-transcript/transcript-keccak"]
+transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 
 [dependencies]
 ark-bn254.workspace = true
@@ -84,7 +85,6 @@ rayon = { workspace = true, optional = true }
 serde = { workspace = true, default-features = false }
 sha3.workspace = true
 blake2.workspace = true
-light-poseidon = { version = "0.4.0", optional = true }
 chrono.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
@@ -102,16 +102,13 @@ allocative.workspace = true
 inferno = { workspace = true, optional = true }
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
-jolt-blindfold = { workspace = true, optional = true }
 jolt-claims = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
 jolt-field = { workspace = true, optional = true }
 jolt-lookup-tables = { workspace = true, optional = true }
 jolt-openings = { workspace = true, optional = true }
-jolt-poly = { workspace = true, optional = true }
-jolt-sumcheck = { workspace = true, optional = true }
-jolt-transcript = { workspace = true, optional = true }
+jolt-transcript.workspace = true
 jolt-verifier = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [

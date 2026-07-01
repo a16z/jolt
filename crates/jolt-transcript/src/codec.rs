@@ -12,47 +12,32 @@
 
 use spongefish::{Encoding, NargDeserialize, VerificationError, VerificationResult};
 
+pub(crate) fn encode_bytes_frame(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + bytes.len());
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+    out
+}
+
 /// Length-prefixed byte string. 8-byte LE length keeps `BytesMsg(a) ; BytesMsg(b)`
 /// distinguishable from `BytesMsg(a||b)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytesMsg(pub Vec<u8>);
 
-impl BytesMsg {
-    /// Returns the inner bytes.
-    pub fn as_slice(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<Vec<u8>> for BytesMsg {
-    fn from(v: Vec<u8>) -> Self {
-        Self(v)
-    }
-}
-
 impl Encoding<[u8]> for BytesMsg {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = Vec::with_capacity(8 + self.0.len());
-        out.extend_from_slice(&(self.0.len() as u64).to_le_bytes());
-        out.extend_from_slice(&self.0);
-        out
+        encode_bytes_frame(&self.0)
     }
 }
 
 impl NargDeserialize for BytesMsg {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        if buf.len() < 8 {
+        let Some((len_bytes, rest)) = buf.split_first_chunk::<8>() else {
             return Err(VerificationError);
-        }
-        let mut len_bytes = [0u8; 8];
-        len_bytes.copy_from_slice(&buf[..8]);
-        let len = usize::try_from(u64::from_le_bytes(len_bytes)).map_err(|_| VerificationError)?;
-        let total = 8usize.checked_add(len).ok_or(VerificationError)?;
-        if buf.len() < total {
-            return Err(VerificationError);
-        }
-        let body = buf[8..total].to_vec();
-        *buf = &buf[total..];
+        };
+        let len = usize::try_from(u64::from_le_bytes(*len_bytes)).map_err(|_| VerificationError)?;
+        let body = rest.get(..len).ok_or(VerificationError)?.to_vec();
+        *buf = &rest[len..];
         Ok(BytesMsg(body))
     }
 }
