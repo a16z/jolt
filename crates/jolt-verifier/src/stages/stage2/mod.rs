@@ -3,6 +3,7 @@
 pub mod instruction_claim_reduction;
 pub mod outputs;
 pub mod product_remainder;
+pub mod product_uniskip;
 pub mod ram_output_check;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write_checking;
@@ -13,12 +14,13 @@ pub use instruction_claim_reduction::{
     InstructionClaimReductionOutputClaims,
 };
 pub use outputs::{
-    product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output,
-    Stage2ProductUniSkipInputValues, Stage2PublicOutput, Stage2ZkOutput, VerifiedProductUniSkip,
+    Stage2BatchOutputClaims, Stage2Challenges, Stage2ClearOutput, Stage2Output, Stage2ZkOutput,
+    VerifiedProductUniSkip,
 };
 pub use product_remainder::{
     ProductRemainder, ProductRemainderInputClaims, ProductRemainderOutputClaims,
 };
+pub use product_uniskip::{ProductUniskip, ProductUniskipInputClaims, ProductUniskipOutputClaims};
 pub use ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims, RamOutputCheckOutputClaims};
 pub use ram_raf_evaluation::{
     RamRafEvaluation, RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,

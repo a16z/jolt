@@ -1,23 +1,19 @@
-pub mod formulas;
+pub mod geometry;
+pub mod relations;
 
 mod config;
 mod ids;
-mod relation;
 
 pub use config::{FieldInlineConfig, FieldInlineRepresentation, FIELD_REGISTERS_LOG_K};
-pub use formulas::dimensions::{
-    FieldInlineSumcheckSpec, FieldRegistersReadWriteDimensions,
-    FieldRegistersReadWriteOpeningPoint, FieldRegistersTraceDimensions,
+pub use geometry::dimensions::{
+    FieldRegistersReadWriteDimensions, FieldRegistersReadWriteOpeningPoint,
+    FieldRegistersTraceDimensions,
 };
 pub use ids::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineOpFlag,
-    FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlinePublicId, FieldInlineRelationId,
+    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlineExpr,
+    FieldInlineOpFlag, FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlineRelationId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic, FieldRegistersReadWriteChallenge,
     FieldRegistersReadWritePublic, FieldRegistersValEvaluationPublic,
-};
-pub use relation::{
-    FieldInlineConsistencyClaim, FieldInlineExpr, FieldInlineInputClaimExpression,
-    FieldInlineOutputClaimExpression, FieldInlineProtocolClaims, FieldInlineRelationClaims,
 };

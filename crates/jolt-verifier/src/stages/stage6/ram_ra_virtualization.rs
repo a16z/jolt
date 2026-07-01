@@ -7,47 +7,35 @@
 //! reduced opening point. Its only public, `EqCycle`, ties the produced cycle to
 //! the reduced cycle.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::committed_address_chunks, ram, ram::RamRaVirtualizationDimensions},
-    JoltPublicId, JoltRelationClaims, JoltRelationId, RamRaVirtualizationPublic,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::{dimensions::committed_address_chunks, ram::RamRaVirtualizationDimensions},
+    JoltDerivedId, JoltRelationId, RamRaVirtualizationPublic,
+};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage5::Stage5ClearOutput;
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamRaVirtualization)]
-pub struct RamRaVirtualizationOutputClaims<C> {
-    #[opening(committed = RamRa)]
-    pub ram_ra: Vec<C>,
-}
-
-/// The single reduced `RamRa` opening from the stage-5 RAM RA claim reduction.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamRaVirtualizationInputClaims<C> {
-    #[opening(RamRa, from = RamRaClaimReduction)]
-    pub ram_ra_reduced: C,
-}
-
-impl<F: Field> RamRaVirtualizationInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage5: &Stage5ClearOutput<F>) -> Self {
-        Self {
-            ram_ra_reduced: stage5.output_claims.ram_ra_claim_reduction.ram_ra.clone(),
-        }
+/// Wire the single reduced `RamRa` opening from the stage-5 RAM RA claim
+/// reduction. (Verifier-side constructor for the moved
+/// [`RamRaVirtualizationInputClaims`].)
+pub fn ram_ra_virtualization_inputs_from_upstream<F: Field>(
+    stage5: &Stage5ClearOutput<F>,
+) -> RamRaVirtualizationInputClaims<OpeningClaim<F>> {
+    RamRaVirtualizationInputClaims {
+        ram_ra_reduced: stage5.output_claims.ram_ra_claim_reduction.ram_ra.clone(),
     }
 }
 
 pub struct RamRaVirtualization<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::ram::RaVirtualization,
     dimensions: RamRaVirtualizationDimensions,
     /// The stage-5 reduced address prefix, chunked into the per-chunk committed
     /// opening points.
@@ -66,7 +54,7 @@ impl<F: Field> RamRaVirtualization<F> {
         committed_chunk_bits: usize,
     ) -> Self {
         Self {
-            claims: ram::ra_virtualization(dimensions),
+            symbolic: relations::ram::RaVirtualization::new(dimensions),
             dimensions,
             ram_reduced_address,
             ram_reduced_cycle,
@@ -82,12 +70,11 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamRaVirtualization<F> {
-    type Inputs<C> = RamRaVirtualizationInputClaims<C>;
-    type Outputs<C> = RamRaVirtualizationOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
+    type Symbolic = relations::ram::RaVirtualization;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -103,14 +90,15 @@ impl<F: Field> SumcheckInstance<F> for RamRaVirtualization<F> {
         Ok(RamRaVirtualizationOutputClaims { ram_ra })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RamRaVirtualizationInputClaims<C>,
         outputs: &RamRaVirtualizationOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let log_t = self.dimensions.log_t();
         let point = outputs

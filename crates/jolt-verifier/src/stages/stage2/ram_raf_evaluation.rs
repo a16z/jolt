@@ -11,58 +11,37 @@
 //! The produced `ram_ra` opening point is `[r_address(log_k) ‖ tau_low(log_t)]`;
 //! `UnmapAddress` reads only the address prefix.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::ReadWriteDimensions,
-        ram::{self, RamRafEvaluationDimensions},
-    },
-    JoltPublicId, JoltRelationClaims, JoltRelationId, RamRafEvaluationPublic,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::{dimensions::ReadWriteDimensions, ram::RamRafEvaluationDimensions},
+    JoltDerivedId, JoltRelationId, RamRafEvaluationPublic,
+};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// The produced RAM RAF `ram_ra` opening, sharing the single RAF opening point.
-/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
-/// on the clear path).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamRafEvaluation)]
-pub struct RamRafEvaluationOutputClaims<C> {
-    #[opening(RamRa)]
-    pub ram_ra: C,
-}
-
-/// The consumed RAM address opening from stage 1's outer sumcheck. The relation
-/// reads only this value (its output point comes from its own sumcheck point), so
-/// the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamRafEvaluationInputClaims<C> {
-    #[opening(RamAddress, from = SpartanOuter)]
-    pub ram_address: C,
-}
-
-impl<F: Field> RamRafEvaluationInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage1: &Stage1ClearOutput<F>) -> Self {
-        Self {
-            ram_address: OpeningClaim {
-                point: Vec::new(),
-                value: stage1.outer.ram_address,
-            },
-        }
+/// Wire the consumed RAM address opening from stage 1's outer sumcheck.
+/// (Verifier-side constructor for the moved [`RamRafEvaluationInputClaims`].)
+pub fn ram_raf_evaluation_inputs_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+) -> RamRafEvaluationInputClaims<OpeningClaim<F>> {
+    RamRafEvaluationInputClaims {
+        ram_address: OpeningClaim {
+            point: Vec::new(),
+            value: stage1.outer.ram_address,
+        },
     }
 }
 
 pub struct RamRafEvaluation<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::ram::RafEvaluation,
     read_write_dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     lowest_address: u64,
@@ -78,7 +57,7 @@ impl<F: Field> RamRafEvaluation<F> {
         tau_low: Vec<F>,
     ) -> Self {
         Self {
-            claims: ram::raf_evaluation(raf_dimensions),
+            symbolic: relations::ram::RafEvaluation::new(raf_dimensions),
             read_write_dimensions,
             ram_log_k,
             lowest_address,
@@ -94,12 +73,11 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamRafEvaluation<F> {
-    type Inputs<C> = RamRafEvaluationInputClaims<C>;
-    type Outputs<C> = RamRafEvaluationOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
+    type Symbolic = relations::ram::RafEvaluation;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -124,14 +102,15 @@ impl<F: Field> SumcheckInstance<F> for RamRafEvaluation<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &RamRafEvaluationInputClaims<C>,
         outputs: &RamRafEvaluationOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::RamRafEvaluation(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::RamRafEvaluation(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The produced opening point is `[r_address(log_k) ‖ tau_low]`; the

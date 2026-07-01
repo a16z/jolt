@@ -1,9 +1,9 @@
-pub mod formulas;
+pub mod geometry;
+pub mod relations;
 
 mod ids;
-mod relation;
 
-pub use formulas::{
+pub use geometry::{
     claim_reductions::advice::AdviceClaimReductionLayout,
     claim_reductions::bytecode::BytecodeClaimReductionLayout,
     claim_reductions::precommitted::{
@@ -13,8 +13,8 @@ pub use formulas::{
     claim_reductions::program_image::ProgramImageClaimReductionLayout,
     dimensions::{
         CommitmentMatrixShape, JoltFormulaDimensions, JoltOneHotConfig, JoltOneHotDimensions,
-        JoltReadWriteConfig, JoltSumcheckDomain, JoltSumcheckSpec, ReadWriteDimensions,
-        TraceDimensions, TracePolynomialOrder,
+        JoltReadWriteConfig, JoltSumcheckDomain, ReadWriteDimensions, TraceDimensions,
+        TracePolynomialOrder,
     },
     error::{JoltFormulaDimensionsError, JoltFormulaPointError},
 };
@@ -26,16 +26,12 @@ pub use ids::{
     InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-    JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltRelationId,
-    JoltVirtualPolynomial, ProgramImageClaimReductionPublic, RamHammingBooleanityPublic,
-    RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
-    RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic,
-    RamValCheckChallenge, RamValCheckPublic, RegistersClaimReductionChallenge,
-    RegistersClaimReductionPublic, RegistersReadWriteChallenge, RegistersReadWritePublic,
-    RegistersValEvaluationPublic, SpartanOuterPublic, SpartanProductVirtualizationPublic,
-    SpartanShiftChallenge, SpartanShiftPublic,
-};
-pub use relation::{
-    JoltConsistencyClaim, JoltExpr, JoltInputClaimExpression, JoltOutputClaimExpression,
-    JoltProtocolClaims, JoltRelationClaims,
+    JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId,
+    JoltRelationId, JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
+    RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
+    RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
+    RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+    RegistersClaimReductionChallenge, RegistersClaimReductionPublic, RegistersReadWriteChallenge,
+    RegistersReadWritePublic, RegistersValEvaluationPublic, SpartanOuterPublic,
+    SpartanProductVirtualizationPublic, SpartanShiftChallenge, SpartanShiftPublic,
 };

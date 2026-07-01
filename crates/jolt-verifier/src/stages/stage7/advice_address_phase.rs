@@ -9,46 +9,25 @@
 //! claim structs stay fully derive-driven.
 //!
 //! As with the committed-program address phases, the `FinalScale` public is a
-//! function of the reduction's final opening point, which `resolve_public`
+//! function of the reduction's final opening point, which `derive_output_term`
 //! recovers from the output claims.
 
-use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::advice, AdviceClaimReductionLayout, AdviceClaimReductionPublic,
-    JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId, PrecommittedReductionLayout,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
+    AdviceAddressPhaseInputClaims, AdviceAddressPhaseOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    AdviceClaimReductionLayout, AdviceClaimReductionPublic, JoltAdviceKind, JoltDerivedId,
+    JoltRelationId, PrecommittedReductionLayout,
+};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
-/// Produced final advice openings, keyed by kind; present only when that kind's
-/// address phase ran. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(AdviceClaimReduction)]
-pub struct AdviceAddressPhaseOutputClaims<C> {
-    #[opening(trusted_advice)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice)]
-    pub untrusted: Option<C>,
-}
-
-/// Consumed cycle-phase advice openings, keyed by kind.
-#[derive(Clone, Debug, InputClaims)]
-pub struct AdviceAddressPhaseInputClaims<C> {
-    #[opening(trusted_advice, from = AdviceClaimReductionCyclePhase)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice, from = AdviceClaimReductionCyclePhase)]
-    pub untrusted: Option<C>,
-}
-
 pub struct AdviceAddressPhase<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::claim_reductions::advice::AddressPhase,
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -66,7 +45,10 @@ impl<F: Field> AdviceAddressPhase<F> {
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
-            claims: advice::address_phase(kind, layout.dimensions()),
+            symbolic: relations::claim_reductions::advice::AddressPhase::new((
+                kind,
+                layout.dimensions(),
+            )),
             kind,
             layout: layout.clone(),
             cycle_phase_variables,
@@ -100,12 +82,11 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for AdviceAddressPhase<F> {
-    type Inputs<C> = AdviceAddressPhaseInputClaims<C>;
-    type Outputs<C> = AdviceAddressPhaseOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
+    type Symbolic = relations::claim_reductions::advice::AddressPhase;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -129,18 +110,19 @@ impl<F: Field> SumcheckInstance<F> for AdviceAddressPhase<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &AdviceAddressPhaseInputClaims<C>,
         outputs: &AdviceAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
+        let JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
         else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         if *kind != self.kind {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         }
         self.layout
             .address_phase_scale_at_opening_point(

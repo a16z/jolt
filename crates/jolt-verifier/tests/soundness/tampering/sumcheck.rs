@@ -13,7 +13,7 @@ use crate::support::{tamper_manifest, verifier_fixtures::VerifierFixtureCase};
 use crate::support::proof_claims::{offset_opening_claim, opening_claim, upsert_opening_claim};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         booleanity, bytecode,
         claim_reductions::{
             advice, hamming_weight, increments, instruction as instruction_claim_reduction,
@@ -23,14 +23,15 @@ use jolt_claims::protocols::jolt::{
         instruction, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_outer_opening,
-            product_remainder_output_openings, product_should_branch_outer_opening,
-            product_should_jump_outer_opening, product_uniskip_opening, shift_output_openings,
-            SpartanOuterDimensions,
+            product_should_branch_outer_opening, product_should_jump_outer_opening,
+            product_uniskip_opening, SpartanOuterDimensions,
         },
     },
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
     JoltVirtualPolynomial, PrecommittedReductionLayout,
 };
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use jolt_claims::{protocols::jolt::geometry::spartan, protocols::jolt::relations, OutputClaims};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -41,6 +42,8 @@ use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_verifier::stages::PrecommittedSchedule;
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use num_traits::Zero;
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
@@ -106,16 +109,14 @@ fn tampered_stage2_output_claims_reject() {
         );
     }
 
-    let [_, _, _, product_write_lookup_output_to_rd, _, _, _, product_virtual_instruction] =
-        product_remainder_output_openings();
     for (target_name, id) in [
         (
             "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
-            product_write_lookup_output_to_rd,
+            spartan::write_lookup_output_to_rd_product(),
         ),
         (
             "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
-            product_virtual_instruction,
+            spartan::virtual_instruction_product(),
         ),
     ] {
         offset_claim_rejects(&base, target_name, id);
@@ -826,58 +827,47 @@ fn stage2_batch_input_openings() -> Vec<(&'static str, JoltOpeningId)> {
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn stage2_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
-    let [product_left_instruction_input, product_right_instruction_input, product_jump, _product_write_lookup_output_to_rd, product_lookup_output, product_branch, product_next_is_noop, _product_virtual_instruction] =
-        product_remainder_output_openings();
-
     let mut openings = Vec::new();
     openings.extend(
-        ram::read_write_checking_output_openings()
+        [ram::ram_val(), ram::ram_ra(), ram::ram_inc()]
             .into_iter()
             .map(|id| ("stage2.claims.batch_outputs.ram_read_write", id)),
     );
-    openings.extend([
-        (
-            "stage2.claims.batch_outputs.product_remainder.checked",
-            product_left_instruction_input,
-        ),
-        (
-            "stage2.claims.batch_outputs.product_remainder.checked",
-            product_right_instruction_input,
-        ),
-        (
-            "stage2.claims.batch_outputs.product_remainder.checked",
-            product_jump,
-        ),
-        (
-            "stage2.claims.batch_outputs.product_remainder.checked",
-            product_lookup_output,
-        ),
-        (
-            "stage2.claims.batch_outputs.product_remainder.checked",
-            product_branch,
-        ),
-        (
-            "stage2.claims.batch_outputs.product_remainder.checked",
-            product_next_is_noop,
-        ),
-    ]);
     openings.extend(
-        instruction_claim_reduction::claim_reduction_output_openings()
-            .into_iter()
-            .map(|id| {
-                (
-                    "stage2.claims.batch_outputs.instruction_claim_reduction",
-                    id,
-                )
-            }),
+        [
+            spartan::left_instruction_input_product(),
+            spartan::right_instruction_input_product(),
+            spartan::jump_flag_product(),
+            spartan::lookup_output_product(),
+            spartan::branch_flag_product(),
+            spartan::next_is_noop_product(),
+        ]
+        .into_iter()
+        .map(|id| ("stage2.claims.batch_outputs.product_remainder.checked", id)),
     );
     openings.extend(
-        ram::raf_evaluation_output_openings()
+        [
+            instruction_claim_reduction::lookup_output_reduced(),
+            instruction_claim_reduction::left_lookup_operand_reduced(),
+            instruction_claim_reduction::right_lookup_operand_reduced(),
+            instruction_claim_reduction::left_instruction_input_reduced(),
+            instruction_claim_reduction::right_instruction_input_reduced(),
+        ]
+        .into_iter()
+        .map(|id| {
+            (
+                "stage2.claims.batch_outputs.instruction_claim_reduction",
+                id,
+            )
+        }),
+    );
+    openings.extend(
+        [ram::ram_ra_raf_evaluation()]
             .into_iter()
             .map(|id| ("stage2.claims.batch_outputs.ram_raf_evaluation", id)),
     );
     openings.extend(
-        ram::output_check_output_openings()
+        [ram::ram_val_final()]
             .into_iter()
             .map(|id| ("stage2.claims.batch_outputs.ram_output_check", id)),
     );
@@ -888,19 +878,38 @@ fn stage2_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
 fn stage3_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
     let mut openings = Vec::new();
     openings.extend(
-        shift_output_openings()
-            .into_iter()
-            .map(|id| ("stage3.claims.shift", id)),
+        [
+            spartan::unexpanded_pc_shift(),
+            spartan::pc_shift(),
+            spartan::is_virtual_shift(),
+            spartan::is_first_in_sequence_shift(),
+            spartan::is_noop_shift(),
+        ]
+        .into_iter()
+        .map(|id| ("stage3.claims.shift", id)),
     );
     openings.extend(
-        instruction::input_virtualization_output_openings()
-            .into_iter()
-            .map(|id| ("stage3.claims.instruction_input", id)),
+        [
+            instruction::right_operand_is_rs2(),
+            instruction::rs2_value(),
+            instruction::right_operand_is_imm(),
+            instruction::imm(),
+            instruction::left_operand_is_rs1(),
+            instruction::rs1_value(),
+            instruction::left_operand_is_pc(),
+            instruction::unexpanded_pc(),
+        ]
+        .into_iter()
+        .map(|id| ("stage3.claims.instruction_input", id)),
     );
     openings.extend(
-        registers_claim_reduction::claim_reduction_output_openings()
-            .into_iter()
-            .map(|id| ("stage3.claims.registers_claim_reduction", id)),
+        [
+            registers_claim_reduction::rd_write_value_reduced(),
+            registers_claim_reduction::rs1_value_reduced(),
+            registers_claim_reduction::rs2_value_reduced(),
+        ]
+        .into_iter()
+        .map(|id| ("stage3.claims.registers_claim_reduction", id)),
     );
     openings
 }
@@ -909,12 +918,18 @@ fn stage3_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
 fn stage4_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
     let mut openings = Vec::new();
     openings.extend(
-        registers::read_write_checking_output_openings()
-            .into_iter()
-            .map(|id| ("stage4.claims.registers_read_write", id)),
+        [
+            registers::registers_val_read_write(),
+            registers::rs1_ra_read_write(),
+            registers::rs2_ra_read_write(),
+            registers::rd_wa_read_write(),
+            registers::rd_inc_read_write(),
+        ]
+        .into_iter()
+        .map(|id| ("stage4.claims.registers_read_write", id)),
     );
     openings.extend(
-        ram::val_check_output_openings()
+        [ram::ram_ra_val_check(), ram::ram_inc_val_check()]
             .into_iter()
             .map(|id| ("stage4.claims.ram_val_check", id)),
     );
@@ -958,14 +973,17 @@ fn stage5_formula_output_openings(
         instruction::read_raf_instruction_raf_flag_opening(),
     ));
     openings.extend(
-        ram::ra_claim_reduction_output_openings()
+        [ram::ram_ra_claim_reduction()]
             .into_iter()
             .map(|id| ("stage5.claims.ram_ra_claim_reduction", id)),
     );
     openings.extend(
-        registers::val_evaluation_output_openings()
-            .into_iter()
-            .map(|id| ("stage5.claims.registers_val_evaluation", id)),
+        [
+            registers::rd_inc_val_evaluation(),
+            registers::rd_wa_val_evaluation(),
+        ]
+        .into_iter()
+        .map(|id| ("stage5.claims.registers_val_evaluation", id)),
     );
     openings
 }
@@ -1020,20 +1038,19 @@ fn stage6_formula_output_openings(
             ),
         ));
     }
+    openings.extend([ram::ram_hamming_weight()].into_iter().map(|id| {
+        (
+            "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
+            id,
+        )
+    }));
     openings.extend(
-        ram::hamming_booleanity_output_openings()
-            .into_iter()
-            .map(|id| {
-                (
-                    "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
-                    id,
-                )
-            }),
-    );
-    openings.extend(
-        ram::ra_virtualization_output_openings(dimensions.ram_ra_virtualization)
-            .into_iter()
-            .map(|id| ("stage6.claims.ram_ra_virtualization.ram_ra", id)),
+        relations::ram::RamRaVirtualizationOutputClaims::<Fr> {
+            ram_ra: vec![Fr::zero(); dimensions.ram_ra_virtualization.num_committed_ra_polys()],
+        }
+        .canonical_order()
+        .into_iter()
+        .map(|id| ("stage6.claims.ram_ra_virtualization.ram_ra", id)),
     );
     openings.extend(
         instruction::ra_virtualization_output_openings(dimensions.instruction_ra_virtualization)
@@ -1046,7 +1063,7 @@ fn stage6_formula_output_openings(
                 )
             }),
     );
-    let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
+    let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
     openings.extend([
         ("stage6.claims.inc_claim_reduction.ram_inc", ram_inc),
         ("stage6.claims.inc_claim_reduction.rd_inc", rd_inc),
@@ -1194,17 +1211,12 @@ fn stage2_output_alias_claim(base: &VerifierFixtureCase, id: JoltOpeningId) -> O
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn stage2_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
-    let [product_left_instruction_input, product_right_instruction_input, _product_jump, _product_write_lookup_output_to_rd, product_lookup_output, _product_branch, _product_next_is_noop, _product_virtual_instruction] =
-        product_remainder_output_openings();
-    let [instruction_lookup_output, _instruction_left_lookup_operand, _instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
-        instruction_claim_reduction::claim_reduction_output_openings();
-
-    if id == instruction_lookup_output {
-        Some(product_lookup_output)
-    } else if id == instruction_left_instruction_input {
-        Some(product_left_instruction_input)
-    } else if id == instruction_right_instruction_input {
-        Some(product_right_instruction_input)
+    if id == instruction_claim_reduction::lookup_output_reduced() {
+        Some(spartan::lookup_output_product())
+    } else if id == instruction_claim_reduction::left_instruction_input_reduced() {
+        Some(spartan::left_instruction_input_product())
+    } else if id == instruction_claim_reduction::right_instruction_input_reduced() {
+        Some(spartan::right_instruction_input_product())
     } else {
         None
     }
@@ -1212,19 +1224,12 @@ fn stage2_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn stage3_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
-    let [unexpanded_pc_shift, _pc_shift, _is_virtual_shift, _is_first_in_sequence_shift, _is_noop_shift] =
-        shift_output_openings();
-    let [_right_operand_is_rs2, rs2_value_input, _right_operand_is_imm, _imm_input, _left_operand_is_rs1, rs1_value_input, _left_operand_is_pc, unexpanded_pc_input] =
-        instruction::input_virtualization_output_openings();
-    let [_rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
-        registers_claim_reduction::claim_reduction_output_openings();
-
-    if id == unexpanded_pc_input {
-        Some(unexpanded_pc_shift)
-    } else if id == rs1_value_reduced {
-        Some(rs1_value_input)
-    } else if id == rs2_value_reduced {
-        Some(rs2_value_input)
+    if id == instruction::unexpanded_pc() {
+        Some(spartan::unexpanded_pc_shift())
+    } else if id == registers_claim_reduction::rs1_value_reduced() {
+        Some(instruction::rs1_value())
+    } else if id == registers_claim_reduction::rs2_value_reduced() {
+        Some(instruction::rs2_value())
     } else {
         None
     }

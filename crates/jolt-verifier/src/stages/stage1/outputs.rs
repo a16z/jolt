@@ -3,7 +3,7 @@
 use std::collections::{btree_map::Entry, BTreeMap};
 
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::{outer_opening, SpartanOuterDimensions},
+    geometry::spartan::{outer_opening, SpartanOuterDimensions},
     JoltRelationId, JoltVirtualPolynomial,
 };
 use jolt_field::Field;
@@ -289,17 +289,23 @@ fn stage1_public_input_failed(reason: String) -> VerifierError {
     }
 }
 
+/// The Fiat-Shamir values the verifier draws during stage 1: the irreducible
+/// Spartan outer `tau` point and the uni-skip reduction challenge. Drawn
+/// path-agnostically before the ZK/clear branch; carried in [`Stage1ZkOutput`]
+/// so BlindFold can source `tau`/`uniskip` from `challenges.<field>` (matching
+/// the `input.stageN.challenges.<field>` idiom used by the sibling stages). The
+/// remainder sumcheck point is opening-derived, so it lives on the produced
+/// reduction (clear: `remainder.sumcheck_point`; ZK: `remainder_consistency`)
+/// rather than here; the singleton remainder batching coefficient is likewise
+/// read from `remainder_consistency` on the ZK path.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage1PublicOutput<F: Field> {
+pub struct Stage1Challenges<F: Field> {
     pub tau: Vec<F>,
     pub uniskip_challenge: F,
-    pub remainder_batching_coefficient: F,
-    pub remainder_challenges: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1ClearOutput<F: Field> {
-    pub public: Stage1PublicOutput<F>,
     pub uniskip: VerifiedSpartanOuterSumcheck<F>,
     pub remainder: VerifiedSpartanOuterSumcheck<F>,
     pub outer: SpartanOuterClaims<F>,
@@ -307,7 +313,7 @@ pub struct Stage1ClearOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1ZkOutput<F: Field, C> {
-    pub public: Stage1PublicOutput<F>,
+    pub challenges: Stage1Challenges<F>,
     pub uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub remainder_consistency: BatchedCommittedSumcheckConsistency<F, C>,
@@ -321,11 +327,16 @@ pub enum Stage1Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage1Output<F, C> {
-    /// The shared public output, available regardless of proving mode.
-    pub fn public(&self) -> &Stage1PublicOutput<F> {
+    /// The raw Spartan outer remainder sumcheck point, available regardless of
+    /// proving mode. The remainder is a singleton batch, so the clear-path bound
+    /// point (`remainder.sumcheck_point`) and the ZK committed round challenges
+    /// (`remainder_consistency.challenges()`) are the same vector. Downstream
+    /// consumers (stage 2's `tau_low`, BlindFold's stage-1 cycle bindings) slice
+    /// and reverse this point themselves.
+    pub fn remainder_point(&self) -> Vec<F> {
         match self {
-            Self::Clear(output) => &output.public,
-            Self::Zk(output) => &output.public,
+            Self::Clear(output) => output.remainder.sumcheck_point.as_slice().to_vec(),
+            Self::Zk(output) => output.remainder_consistency.challenges(),
         }
     }
 
@@ -352,12 +363,7 @@ pub struct VerifiedSpartanOuterSumcheck<F: Field> {
     pub expected_output_claim: F,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Mirrors Stage1ClearOutput, which decomposes the uni-skip/remainder reductions into distinct Fiat-Shamir values."
-)]
 pub fn stage1_clear_output<F: Field>(
-    tau: Vec<F>,
     uniskip_challenge: F,
     uniskip_output_claim: F,
     remainder_batching_coefficient: F,
@@ -374,14 +380,7 @@ pub fn stage1_clear_output<F: Field>(
         remainder_output_claim,
         expected_remainder_output_claim,
     );
-    let public = stage1_public_output(
-        tau,
-        uniskip_challenge,
-        remainder_batching_coefficient,
-        &remainder,
-    );
     Ok(Stage1ClearOutput {
-        public,
         uniskip,
         remainder,
         outer: spartan_outer_claims_from_r1cs_inputs(r1cs_input_claims)?,
@@ -415,16 +414,9 @@ fn stage1_remainder_output<F: Field>(
     }
 }
 
-fn stage1_public_output<F: Field>(
-    tau: Vec<F>,
-    uniskip_challenge: F,
-    remainder_batching_coefficient: F,
-    remainder: &VerifiedSpartanOuterSumcheck<F>,
-) -> Stage1PublicOutput<F> {
-    Stage1PublicOutput {
+pub fn stage1_challenges<F: Field>(tau: Vec<F>, uniskip_challenge: F) -> Stage1Challenges<F> {
+    Stage1Challenges {
         tau,
         uniskip_challenge,
-        remainder_batching_coefficient,
-        remainder_challenges: remainder.sumcheck_point.as_slice().to_vec(),
     }
 }
