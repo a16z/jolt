@@ -39,7 +39,8 @@ where
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
     // Stage 1's remainder cycle point, recomputed from `stage1.remainder_consistency`
-    // (the stage-2 carrier no longer stores it as a `product_tau_low` field).
+    // rather than read off the stage-2 carrier's `product_tau_low`, so the
+    // BakedPublicInputs derivation stays independent of the carrier field.
     let product_tau_low = stage1_remainder_cycle(input);
     let eq_plus_one_outer =
         EqPlusOnePolynomial::new(product_tau_low.clone()).evaluate(&shift_opening_point);

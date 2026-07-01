@@ -31,8 +31,19 @@ pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 /// the register-reduction `rs1`/`rs2` = the instruction-input ones) that are
 /// absorbed once via their canonical source, so the canonical order is curated by
 /// hand below (and enforced by `validate`).
+///
+/// `output_shape` is intentionally NOT enabled for the same reason: the generated
+/// `output_claim_count` would sum the members' expression-referenced openings (16),
+/// but the batch commits/absorbs only 13 (the three aliases are absorbed once), so
+/// the committed-output-claim count stays hand-written in `verify`.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values)]
+#[sumcheck_batch(
+    custom_opening_values,
+    verify_clear,
+    verify_zk,
+    derive_opening_points,
+    expected_final_claim
+)]
 pub struct Stage3Sumchecks<F: Field> {
     pub shift: SpartanShift<F>,
     pub instruction_input: InstructionInput<F>,
@@ -143,16 +154,11 @@ pub struct Stage3ZkOutput<F: Field, C> {
     pub challenges: Stage3Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    /// The produced opening points, the ZK counterpart of the clear path's
+    /// `output_points`. Read through the same `*_point()` accessors.
+    pub output_points: Stage3OutputPoints<F>,
 }
 
-// The clear variant carries the produced opening values + points read on the hot
-// path; the ZK variant carries committed consistency. Boxing the common clear
-// variant to shrink the rarer ZK one would add indirection to every clear-path
-// access.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "clear variant holds the opening values + points read on the hot path; boxing it would penalize the common case"
-)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage3Output<F: Field, C> {
     Clear(Stage3ClearOutput<F>),

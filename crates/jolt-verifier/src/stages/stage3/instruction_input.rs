@@ -24,27 +24,25 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage2::Stage2ClearOutput;
+use crate::stages::stage2::Stage2BatchOutputClaims;
 use crate::VerifierError;
 
 /// Wire the consumed opening *values* from stage 2's product-remainder left/right
-/// instruction inputs. (Verifier-side constructor for the moved
-/// [`InstructionInputInputClaims`].)
+/// instruction inputs. Takes the ZK-agnostic stage-2 output-claims aggregate.
 pub fn instruction_input_input_values_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
+    stage2: &Stage2BatchOutputClaims<F>,
 ) -> InstructionInputInputClaims<F> {
-    let product_remainder = &stage2.output_values.product_remainder;
+    let product_remainder = &stage2.product_remainder;
     InstructionInputInputClaims {
         right_instruction_input: product_remainder.right_instruction_input,
         left_instruction_input: product_remainder.left_instruction_input,
     }
 }
 
-/// Wire the consumed opening *points* from stage 2. Only the values feed the input
-/// claim (the output points come from this relation's own sumcheck point), so the
-/// input points are left empty.
+/// Wire the consumed opening *points*. Only the values feed the input claim (the
+/// output points come from this relation's own sumcheck point), so the input
+/// points are left empty.
 pub fn instruction_input_input_points_from_upstream<F: Field>(
-    _stage2: &Stage2ClearOutput<F>,
 ) -> InstructionInputInputClaims<Vec<F>> {
     InstructionInputInputClaims {
         right_instruction_input: Vec::new(),

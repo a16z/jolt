@@ -20,16 +20,15 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage1::Stage1ClearOutput;
+use crate::stages::stage1::Stage1BatchOutputClaims;
 use crate::VerifierError;
 
 /// Wire the consumed opening *values* from stage 1's outer sumcheck register
-/// values. (Verifier-side constructor for the moved
-/// [`RegistersClaimReductionInputClaims`].)
+/// values. Takes the ZK-agnostic stage-1 output-claims aggregate.
 pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
-    stage1: &Stage1ClearOutput<F>,
+    stage1: &Stage1BatchOutputClaims<F>,
 ) -> RegistersClaimReductionInputClaims<F> {
-    let outer = &stage1.output_values.outer_remainder;
+    let outer = &stage1.outer_remainder;
     RegistersClaimReductionInputClaims {
         rd_write_value: outer.rd_write_value,
         rs1_value: outer.rs1_value,
@@ -37,11 +36,10 @@ pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
     }
 }
 
-/// Wire the consumed opening *points* from stage 1. Only the values feed the input
-/// claim (the output points come from this relation's own sumcheck point), so the
-/// input points are left empty.
+/// Wire the consumed opening *points*. Only the values feed the input claim (the
+/// output points come from this relation's own sumcheck point), so the input
+/// points are left empty.
 pub fn registers_claim_reduction_input_points_from_upstream<F: Field>(
-    _stage1: &Stage1ClearOutput<F>,
 ) -> RegistersClaimReductionInputClaims<Vec<F>> {
     RegistersClaimReductionInputClaims {
         rd_write_value: Vec::new(),
