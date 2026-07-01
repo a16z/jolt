@@ -532,10 +532,16 @@ fn stage7_claims_from_native<F: Field>(
             bytecode_ra,
             ram_ra,
         },
-        advice_address_phase: AdviceAddressPhaseOutputClaims {
-            trusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
-            untrusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
-        },
+        trusted_advice: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Trusted)
+            .map(|opening| AdviceAddressPhaseOutputClaims {
+                trusted: Some(opening),
+                untrusted: None,
+            }),
+        untrusted_advice: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Untrusted)
+            .map(|opening| AdviceAddressPhaseOutputClaims {
+                trusted: None,
+                untrusted: Some(opening),
+            }),
         bytecode_address_phase: bytecode_address_phase_claims_from_native(claims),
         program_image_address_phase: program_image_address_phase_claim_from_native(claims),
     })
@@ -739,10 +745,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            advice_address_phase: AdviceAddressPhaseOutputClaims {
-                trusted: None,
-                untrusted: None,
-            },
+            trusted_advice: None,
+            untrusted_advice: None,
             bytecode_address_phase: None,
             program_image_address_phase: None,
         },
@@ -1816,12 +1820,14 @@ fn claim_from_stage7_outputs<F: Field>(
     }
 
     match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => {
-            claims.advice_address_phase.trusted
-        }
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => {
-            claims.advice_address_phase.untrusted
-        }
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
+            .trusted_advice
+            .as_ref()
+            .and_then(|claims| claims.trusted),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
+            .untrusted_advice
+            .as_ref()
+            .and_then(|claims| claims.untrusted),
         _ => None,
     }
 }
@@ -1878,12 +1884,14 @@ fn claim_mut_from_stage7_outputs<F: Field>(
     }
 
     match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => {
-            claims.advice_address_phase.trusted.as_mut()
-        }
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => {
-            claims.advice_address_phase.untrusted.as_mut()
-        }
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
+            .trusted_advice
+            .as_mut()
+            .and_then(|claims| claims.trusted.as_mut()),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
+            .untrusted_advice
+            .as_mut()
+            .and_then(|claims| claims.untrusted.as_mut()),
         _ => None,
     }
 }
