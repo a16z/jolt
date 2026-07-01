@@ -20,34 +20,34 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage2::Stage2ClearOutput;
-use crate::stages::stage4::Stage4ClearOutput;
+use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
+use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::VerifierError;
 
-/// Wire this relation's consumed opening *values* from the upstream clear outputs:
-/// the RAF-evaluation and read-write openings (stage 2) and the val-check opening
-/// (stage 4). (Verifier-side constructor for the moved
-/// [`RamRaClaimReductionInputClaims`].)
+/// Wire this relation's consumed opening *values* from the upstream outputs: the
+/// RAF-evaluation and read-write openings (stage 2) and the val-check opening
+/// (stage 4). Takes the ZK-agnostic output-claims aggregates.
 pub fn ram_ra_claim_reduction_input_values_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
+    stage2: &Stage2BatchOutputClaims<F>,
+    stage4: &Stage4OutputClaims<F>,
 ) -> RamRaClaimReductionInputClaims<F> {
     RamRaClaimReductionInputClaims {
-        raf: stage2.output_values.ram_raf_evaluation.ram_ra,
-        read_write: stage2.output_values.ram_read_write.ra,
-        val_check: stage4.output_values.ram_val_check.ram_ra,
+        raf: stage2.ram_raf_evaluation.ram_ra,
+        read_write: stage2.ram_read_write.ra,
+        val_check: stage4.ram_val_check.ram_ra,
     }
 }
 
-/// Wire this relation's consumed opening *points* from the upstream clear outputs.
+/// Wire this relation's consumed opening *points* from the upstream output-points
+/// aggregates.
 pub fn ram_ra_claim_reduction_input_points_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
+    stage2: &Stage2BatchOutputPoints<F>,
+    stage4: &Stage4OutputPoints<F>,
 ) -> RamRaClaimReductionInputClaims<Vec<F>> {
     RamRaClaimReductionInputClaims {
-        raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
-        read_write: stage2.output_points.ram_read_write_point().to_vec(),
-        val_check: stage4.output_points.ram_val_check.ram_ra().to_vec(),
+        raf: stage2.ram_raf_evaluation_point().to_vec(),
+        read_write: stage2.ram_read_write_point().to_vec(),
+        val_check: stage4.ram_val_check_point().to_vec(),
     }
 }
 

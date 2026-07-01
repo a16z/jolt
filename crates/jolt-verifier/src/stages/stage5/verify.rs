@@ -12,29 +12,26 @@ use super::{
     instruction_read_raf::{
         instruction_read_raf_input_points_from_upstream,
         instruction_read_raf_input_values_from_upstream, InstructionReadRaf,
-        InstructionReadRafInputClaims,
     },
     outputs::{
-        Stage5ClearOutput, Stage5InputClaims, Stage5InputPoints, Stage5Output, Stage5OutputPoints,
-        Stage5Sumchecks, Stage5ZkOutput,
+        Stage5ClearOutput, Stage5InputClaims, Stage5InputPoints, Stage5Output, Stage5Sumchecks,
+        Stage5ZkOutput,
     },
     ram_ra_claim_reduction::{
         ram_ra_claim_reduction_input_points_from_upstream,
         ram_ra_claim_reduction_input_values_from_upstream, RamRaClaimReduction,
-        RamRaClaimReductionInputClaims,
     },
     registers_val_evaluation::{
         registers_val_evaluation_input_points_from_upstream,
         registers_val_evaluation_input_values_from_upstream, RegistersValEvaluation,
-        RegistersValEvaluationInputClaims,
     },
 };
 use crate::{
     proof::JoltProof,
     stages::{
         relations::{ConcreteSumcheck, OutputClaims},
-        stage2::{Stage2ClearOutput, Stage2Output},
-        stage4::{Stage4ClearOutput, Stage4Output},
+        stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
+        stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -46,8 +43,8 @@ use crate::{
 /// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
 /// wires which upstream opening feeds which downstream input.
 fn stage5_input_values_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
+    stage2: &Stage2BatchOutputClaims<F>,
+    stage4: &Stage4OutputClaims<F>,
 ) -> Stage5InputClaims<F> {
     Stage5InputClaims {
         instruction_read_raf: instruction_read_raf_input_values_from_upstream(stage2),
@@ -56,10 +53,12 @@ fn stage5_input_values_from_upstream<F: Field>(
     }
 }
 
-/// Assemble the stage-5 consumed opening *points* from the upstream clear outputs.
+/// Assemble the stage-5 consumed opening *points* from the upstream output-points
+/// aggregates. ZK-agnostic: both the clear and ZK stage-2/stage-4 outputs expose
+/// these, so the same wiring builds the input points in either mode.
 fn stage5_input_points_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
+    stage2: &Stage2BatchOutputPoints<F>,
+    stage4: &Stage4OutputPoints<F>,
 ) -> Stage5InputPoints<F> {
     Stage5InputPoints {
         instruction_read_raf: instruction_read_raf_input_points_from_upstream(stage2),
@@ -144,56 +143,13 @@ where
                 stage: JoltRelationId::InstructionReadRaf,
             })?;
 
-        let instruction_point = consistency
-            .try_instance_point(sumchecks.instruction_read_raf.rounds())
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::InstructionReadRaf,
-                reason: error.to_string(),
-            })?;
-        let ram_point = consistency
-            .try_instance_point(sumchecks.ram_ra_claim_reduction.rounds())
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: error.to_string(),
-            })?;
-        let registers_point = consistency
-            .try_instance_point(sumchecks.registers_val_evaluation.rounds())
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RegistersValEvaluation,
-                reason: error.to_string(),
-            })?;
-
-        // Map each relation's committed sumcheck point to its produced opening
-        // points, the point-only counterpart of the clear `output_points`. The
-        // instruction relation ignores its inputs (empty point cells suffice); RAM
-        // and registers splice the fixed address/cycle prefixes from upstream points.
-        let empty = Vec::<PCS::Field>::new;
-        let input_points = Stage5InputPoints::<PCS::Field> {
-            instruction_read_raf: InstructionReadRafInputClaims {
-                lookup_output: empty(),
-                left_lookup_operand: empty(),
-                right_lookup_operand: empty(),
-            },
-            ram_ra_claim_reduction: RamRaClaimReductionInputClaims {
-                raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
-                read_write: stage2.output_points.ram_read_write_point().to_vec(),
-                val_check: stage4.output_points.ram_val_check_point().to_vec(),
-            },
-            registers_val_evaluation: RegistersValEvaluationInputClaims {
-                registers_val: stage4.output_points.registers_read_write_point().to_vec(),
-            },
-        };
-        let output_points = Stage5OutputPoints {
-            instruction_read_raf: sumchecks
-                .instruction_read_raf
-                .derive_opening_points(&instruction_point, &input_points.instruction_read_raf)?,
-            ram_ra_claim_reduction: sumchecks
-                .ram_ra_claim_reduction
-                .derive_opening_points(&ram_point, &input_points.ram_ra_claim_reduction)?,
-            registers_val_evaluation: sumchecks
-                .registers_val_evaluation
-                .derive_opening_points(&registers_point, &input_points.registers_val_evaluation)?,
-        };
+        // Built via the same wiring as the clear path, off the ZK-agnostic upstream
+        // output points; `derive_opening_points` ignores the instruction relation's
+        // input points, so carrying the real claim-reduction point here is harmless.
+        let input_points =
+            stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
+        let output_points =
+            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
         let instruction_r_address = output_points.instruction_r_address();
 
         return Ok(Stage5Output::Zk(Stage5ZkOutput {
@@ -237,8 +193,10 @@ where
     // (same opening point and value); stage 2 validates that alias, which the
     // instruction read-RAF input wiring relies on when it falls back to the
     // product remainder.
-    let input_values = stage5_input_values_from_upstream(stage2, stage4);
-    let input_points = stage5_input_points_from_upstream(stage2, stage4);
+    let input_values =
+        stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
+    let input_points =
+        stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
 
     let batch = sumchecks.verify_clear(
         &input_values,
@@ -247,36 +205,8 @@ where
         transcript,
     )?;
 
-    let instruction_point = batch
-        .try_instance_point(sumchecks.instruction_read_raf.rounds())
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: error.to_string(),
-        })?;
-    let ram_point = batch
-        .try_instance_point(sumchecks.ram_ra_claim_reduction.rounds())
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::RamRaClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let registers_point = batch
-        .try_instance_point(sumchecks.registers_val_evaluation.rounds())
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::RegistersValEvaluation,
-            reason: error.to_string(),
-        })?;
-
-    let output_points = Stage5OutputPoints {
-        instruction_read_raf: sumchecks
-            .instruction_read_raf
-            .derive_opening_points(instruction_point, &input_points.instruction_read_raf)?,
-        ram_ra_claim_reduction: sumchecks
-            .ram_ra_claim_reduction
-            .derive_opening_points(ram_point, &input_points.ram_ra_claim_reduction)?,
-        registers_val_evaluation: sumchecks
-            .registers_val_evaluation
-            .derive_opening_points(registers_point, &input_points.registers_val_evaluation)?,
-    };
+    let output_points =
+        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
 
     let instruction_output = sumchecks.instruction_read_raf.expected_output(
         &input_points.instruction_read_raf,

@@ -15,31 +15,26 @@ use jolt_field::Field;
 use jolt_poly::LtPolynomial;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage4::Stage4ClearOutput;
+use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::VerifierError;
 
 /// Wire the consumed `RegistersVal` opening *value* from the upstream register
-/// read-write checking (stage 4). (Verifier-side constructor for the moved
-/// [`RegistersValEvaluationInputClaims`].)
+/// read-write checking (stage 4). Takes the ZK-agnostic output-claims aggregate.
 pub fn registers_val_evaluation_input_values_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
+    stage4: &Stage4OutputClaims<F>,
 ) -> RegistersValEvaluationInputClaims<F> {
     RegistersValEvaluationInputClaims {
-        registers_val: stage4.output_values.registers_read_write.registers_val,
+        registers_val: stage4.registers_read_write.registers_val,
     }
 }
 
 /// Wire the consumed `RegistersVal` opening *point* from the upstream register
 /// read-write checking (stage 4).
 pub fn registers_val_evaluation_input_points_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
+    stage4: &Stage4OutputPoints<F>,
 ) -> RegistersValEvaluationInputClaims<Vec<F>> {
     RegistersValEvaluationInputClaims {
-        registers_val: stage4
-            .output_points
-            .registers_read_write
-            .registers_val()
-            .to_vec(),
+        registers_val: stage4.registers_read_write_point().to_vec(),
     }
 }
 

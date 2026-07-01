@@ -23,20 +23,20 @@ use jolt_poly::{
 };
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage2::Stage2ClearOutput;
+use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::VerifierError;
 
 /// Wire the consumed opening *values* from the upstream instruction claim-reduction
-/// (stage 2), applying the lookup-output fallback to the product remainder.
-/// (Verifier-side constructor for the moved [`InstructionReadRafInputClaims`].)
+/// (stage 2), applying the lookup-output fallback to the product remainder. Takes the
+/// ZK-agnostic stage-2 output-claims aggregate (both the clear and ZK stage-2 outputs
+/// expose it).
 pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
+    stage2: &Stage2BatchOutputClaims<F>,
 ) -> InstructionReadRafInputClaims<F> {
-    let reduction = &stage2.output_values.instruction_claim_reduction;
-    let lookup_output = reduction.lookup_output.map_or(
-        stage2.output_values.product_remainder.lookup_output,
-        |value| value,
-    );
+    let reduction = &stage2.instruction_claim_reduction;
+    let lookup_output = reduction
+        .lookup_output
+        .map_or(stage2.product_remainder.lookup_output, |value| value);
     InstructionReadRafInputClaims {
         lookup_output,
         left_lookup_operand: reduction.left_lookup_operand,
@@ -47,12 +47,9 @@ pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
 /// Wire the consumed opening *points* from the upstream instruction claim-reduction
 /// (stage 2). All three share the claim-reduction opening point.
 pub fn instruction_read_raf_input_points_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
+    stage2: &Stage2BatchOutputPoints<F>,
 ) -> InstructionReadRafInputClaims<Vec<F>> {
-    let point = stage2
-        .output_points
-        .instruction_claim_reduction_point()
-        .to_vec();
+    let point = stage2.instruction_claim_reduction_point().to_vec();
     InstructionReadRafInputClaims {
         lookup_output: point.clone(),
         left_lookup_operand: point.clone(),

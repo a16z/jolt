@@ -55,9 +55,14 @@
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
 //!   `SumcheckProof::verify_committed_consistency_dims`.
+//! - `derive_opening_points` — slice each member's opening point from the batch
+//!   challenge vector (its length-`rounds` suffix, per the front-loaded batching
+//!   layout) and map it through the member's `ConcreteSumcheck::derive_opening_points`
+//!   into the stage's `OutputPoints` aggregate. Takes the challenge vector as `&[F]`,
+//!   so the clear and ZK paths each pass their own.
 //!
-//! Neither driver names `SumcheckClaim` / `SumcheckStatement`; those stay internal to
-//! `jolt-sumcheck`.
+//! The `verify_*` drivers never name `SumcheckClaim` / `SumcheckStatement`; those
+//! stay internal to `jolt-sumcheck`.
 //!
 //! See `specs/sumcheck-batch-derive.md`.
 //!
@@ -450,6 +455,94 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote!()
     };
 
+    // Map each member's opening point through its
+    // `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
+    // aggregate. Takes the batch challenge vector directly: under the front-loaded
+    // batching layout an instance's point is the length-`rounds` suffix of that
+    // vector, so no batch-result abstraction is needed and one method serves both the
+    // clear and ZK paths (each supplies its own challenge vector). Opt-in via
+    // `#[sumcheck_batch(derive_opening_points)]`.
+    let derive_points_method = if options.derive_opening_points {
+        let field_bindings = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            let field = format_ident!("__points_{}", id);
+            let binding = if plan.is_option {
+                quote! {
+                    let #field = match (self.#id.as_ref(), input_points.#id.as_ref()) {
+                        (
+                            ::core::option::Option::Some(__member),
+                            ::core::option::Option::Some(__input_points),
+                        ) => {
+                            let __point = __instance_point(batch_point, __member.rounds(), __member.id())?;
+                            ::core::option::Option::Some(
+                                __member.derive_opening_points(__point, __input_points)?,
+                            )
+                        }
+                        (::core::option::Option::None, _) => ::core::option::Option::None,
+                        (::core::option::Option::Some(__member), ::core::option::Option::None) => {
+                            return ::core::result::Result::Err(
+                                crate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: __member.id(),
+                                    reason: "present instance is missing its input opening points"
+                                        .to_string(),
+                                },
+                            );
+                        }
+                    };
+                }
+            } else {
+                quote! {
+                    let #field = self.#id.derive_opening_points(
+                        __instance_point(batch_point, self.#id.rounds(), self.#id.id())?,
+                        &input_points.#id,
+                    )?;
+                }
+            };
+            (binding, id, field)
+        }).collect::<Vec<_>>();
+        let point_bindings = field_bindings.iter().map(|(binding, _, _)| binding);
+        let point_fields = field_bindings
+            .iter()
+            .map(|(_, id, field)| quote!(#id: #field));
+
+        quote! {
+            pub fn derive_opening_points(
+                &self,
+                batch_point: &[#f],
+                input_points: &#input_points_name<#f>,
+            ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError> {
+                use #relations::ConcreteSumcheck as _;
+
+                // An instance with `rounds` variables is bound on the length-`rounds`
+                // suffix of the batch challenge vector (front-loaded batching).
+                fn __instance_point<__F: ::jolt_field::Field>(
+                    batch_point: &[__F],
+                    rounds: usize,
+                    stage: ::jolt_claims::protocols::jolt::JoltRelationId,
+                ) -> ::core::result::Result<&[__F], crate::VerifierError> {
+                    batch_point
+                        .len()
+                        .checked_sub(rounds)
+                        .map(|__offset| &batch_point[__offset..])
+                        .ok_or(crate::VerifierError::StageClaimSumcheckFailed {
+                            stage,
+                            reason: ::std::format!(
+                                "batch challenge vector has {} entries, fewer than the instance's {rounds} rounds",
+                                batch_point.len(),
+                            ),
+                        })
+                }
+
+                #(#point_bindings)*
+                ::core::result::Result::Ok(#output_points_name {
+                    #(#point_fields,)*
+                })
+            }
+        }
+    } else {
+        quote!()
+    };
+
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
             /// Draw each instance's Fiat-Shamir challenges in declaration order,
@@ -469,6 +562,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             #verify_clear_method
             #verify_zk_method
+            #derive_points_method
         }
     };
 
@@ -561,6 +655,12 @@ struct StageOptions {
     /// (`verify_zk`) that folds the members' dimensions and checks committed
     /// consistency through the single-instance verifier.
     verify_zk: bool,
+    /// `#[sumcheck_batch(derive_opening_points)]`: emit `derive_opening_points`,
+    /// which slices each member's opening point from the batch challenge vector (its
+    /// length-`rounds` suffix) and maps it through the member's
+    /// `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
+    /// aggregate.
+    derive_opening_points: bool,
 }
 
 impl StageOptions {
@@ -589,11 +689,13 @@ impl StageOptions {
                     options.verify_clear = true;
                 } else if path.is_ident("verify_zk") {
                     options.verify_zk = true;
+                } else if path.is_ident("derive_opening_points") {
+                    options.derive_opening_points = true;
                 } else {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
-                         `verify_clear`, `verify_zk`)",
+                         `verify_clear`, `verify_zk`, `derive_opening_points`)",
                     ));
                 }
             }
