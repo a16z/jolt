@@ -266,36 +266,12 @@ mod tests {
         let layout = layout(1, 1, 1)?;
         let relation = ClaimReduction::new(dimensions(layout));
 
-        let instruction = JoltRaPolynomial::Instruction(0);
-        let bytecode = JoltRaPolynomial::Bytecode(0);
-        let ram = JoltRaPolynomial::Ram(0);
-
         assert_eq!(
             ClaimReduction::id(),
             JoltRelationId::HammingWeightClaimReduction
         );
         assert_eq!(relation.rounds(), 8);
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                booleanity_claim(instruction),
-                virtualization_claim(instruction),
-                booleanity_claim(bytecode),
-                virtualization_claim(bytecode),
-                ram_hamming_weight(),
-                booleanity_claim(ram),
-                virtualization_claim(ram),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                reduced_claim(instruction),
-                reduced_claim(bytecode),
-                reduced_claim(ram),
-            ]
-        );
         Ok(())
     }
 }

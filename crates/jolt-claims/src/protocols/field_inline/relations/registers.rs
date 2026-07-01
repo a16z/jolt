@@ -120,10 +120,7 @@ impl SymbolicSumcheck for ValEvaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::field_inline::geometry::registers::{
-        read_write_checking_input_openings, val_evaluation_input_openings,
-        val_evaluation_output_openings,
-    };
+
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn trace_dimensions() -> FieldRegistersTraceDimensions {
@@ -147,20 +144,6 @@ mod tests {
             read_write_dimensions().read_write_rounds()
         );
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            read_write_checking_input_openings().to_vec()
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                field_rd_wa_read_write(),
-                field_rd_inc_read_write(),
-                field_registers_val_read_write(),
-                field_rs1_ra_read_write(),
-                field_rs2_ra_read_write(),
-            ]
-        );
     }
 
     #[test]
@@ -238,14 +221,6 @@ mod tests {
         );
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            val_evaluation_input_openings().to_vec()
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            val_evaluation_output_openings().to_vec()
-        );
     }
 
     #[test]

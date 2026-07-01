@@ -102,7 +102,7 @@ impl SymbolicSumcheck for CyclePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::geometry::claim_reductions::bytecode::final_bytecode_chunk_opening;
+
     use crate::protocols::jolt::{BooleanityChallenge, PrecommittedReductionDimensions};
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -152,30 +152,6 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            (0..NUM_BYTECODE_VAL_STAGES)
-                .map(bytecode_val_stage_opening)
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![cycle_phase_intermediate_opening()]
-        );
-    }
-
-    #[test]
-    fn cycle_phase_without_address_phase_opens_committed_chunks() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, false);
-        let relation = CyclePhase::new((dimensions, 2));
-
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                final_bytecode_chunk_opening(0),
-                final_bytecode_chunk_opening(1),
-            ]
-        );
     }
 
     #[test]

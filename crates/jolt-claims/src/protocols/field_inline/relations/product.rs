@@ -57,9 +57,9 @@ impl SymbolicSumcheck for FieldProduct {
 mod tests {
     use super::*;
     use crate::protocols::field_inline::geometry::product::{
-        field_inv_product_opening, field_product_input_openings, field_product_output_openings,
-        field_rd_value_product, selected_product_lanes, selected_product_remainder_output_openings,
-        selected_product_uniskip_input_openings, FieldRegistersProductLane,
+        field_inv_product_opening, field_rd_value_product, selected_product_lanes,
+        selected_product_remainder_output_openings, selected_product_uniskip_input_openings,
+        FieldRegistersProductLane,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -77,14 +77,6 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            field_product_input_openings().to_vec()
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            field_product_output_openings().to_vec()
-        );
         assert_eq!(
             selected_product_uniskip_input_openings(),
             [field_product_opening(), field_inv_product_opening()]

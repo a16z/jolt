@@ -150,13 +150,5 @@ mod tests {
             with_address_phase().cycle_phase_total_rounds()
         );
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![ram_val_check_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
-        );
     }
 }

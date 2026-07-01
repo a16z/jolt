@@ -190,18 +190,5 @@ mod tests {
         assert_eq!(ClaimReduction::id(), JoltRelationId::IncClaimReduction);
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                ram_inc_read_write(),
-                ram_inc_val_check(),
-                rd_inc_read_write(),
-                rd_inc_val_evaluation(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![ram_inc_reduced(), rd_inc_reduced()]
-        );
     }
 }

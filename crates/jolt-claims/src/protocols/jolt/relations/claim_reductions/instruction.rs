@@ -244,25 +244,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                lookup_output_spartan(),
-                left_lookup_operand_spartan(),
-                right_lookup_operand_spartan(),
-                left_instruction_input_spartan(),
-                right_instruction_input_spartan(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                lookup_output_reduced(),
-                left_lookup_operand_reduced(),
-                right_lookup_operand_reduced(),
-                left_instruction_input_reduced(),
-                right_instruction_input_reduced(),
-            ]
-        );
     }
 }

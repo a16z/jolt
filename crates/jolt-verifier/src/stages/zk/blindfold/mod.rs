@@ -403,11 +403,13 @@ fn require_expr_sources<F: Field>(
     expr: &VerifierExpr<F>,
     values: &SourceValues<F>,
 ) -> Result<(), VerifierError> {
-    for id in expr.required_deriveds() {
-        if !values.has_public(id) {
-            return Err(VerifierError::BlindFoldConstructionFailed {
-                reason: format!("{stage} {expression} is missing public source {id:?}"),
-            });
+    for factor in expr.terms.iter().flat_map(|term| term.factors.iter()) {
+        if let Source::Derived(id) = factor {
+            if !values.has_public(*id) {
+                return Err(VerifierError::BlindFoldConstructionFailed {
+                    reason: format!("{stage} {expression} is missing public source {id:?}"),
+                });
+            }
         }
     }
     Ok(())
