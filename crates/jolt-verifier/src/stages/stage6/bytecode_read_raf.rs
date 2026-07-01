@@ -45,82 +45,100 @@ use jolt_riscv::{JoltInstructionRow, CIRCUIT_FLAGS};
 use super::verify::{
     stage6_bytecode_read_raf_expected_output, Stage6BytecodeReadRafExpectedOutputInputs,
 };
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, GetValue, OpeningClaim, OutputClaims};
+use crate::stages::relations::{ConcreteSumcheck, OutputClaims};
 use crate::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
     stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
 };
 use crate::VerifierError;
 
-/// The input claim reads only opening *values* (the points are unused), so wrap
-/// each upstream value in a point-free clear cell.
-fn input_opening<F: Field>(value: F) -> OpeningClaim<F> {
-    OpeningClaim {
-        point: Vec::new(),
-        value,
-    }
-}
-
-/// Wire the prior-proof openings the address-phase input claim binds (every
-/// stage-1..5 opening folded by the `read_raf_address_phase` input `Expr`, plus
-/// the two PC claims). (Verifier-side constructor for the moved
+/// Wire the prior-proof opening *values* the address-phase input claim binds
+/// (every stage-1..5 opening folded by the `read_raf_address_phase` input `Expr`,
+/// plus the two PC claims). (Verifier-side constructor for the moved
 /// [`BytecodeReadRafAddressPhaseInputClaims`].)
-pub fn bytecode_read_raf_address_phase_inputs_from_upstream<F: Field>(
+pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
     stage2: &Stage2ClearOutput<F>,
     stage3: &Stage3ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
-) -> Result<BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
-    let outer = &stage1.output_claims.outer_remainder;
+) -> Result<BytecodeReadRafAddressPhaseInputClaims<F>, VerifierError> {
+    let outer = &stage1.output_values.outer_remainder;
     let outer_op_flags = CIRCUIT_FLAGS
         .iter()
         .map(|flag| {
             let id = outer_opening(JoltVirtualPolynomial::OpFlags(*flag));
             outer
                 .resolve_output(&id)
-                .map(input_opening)
                 .ok_or(VerifierError::MissingOpeningClaim { id })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let product = &stage2.output_claims.product_remainder;
-    let instruction_input = &stage3.output_claims.instruction_input;
-    let shift = &stage3.output_claims.shift;
-    let registers_read_write = &stage4.output_claims.registers_read_write;
-    let instruction_read_raf = &stage5.output_claims.instruction_read_raf;
-    let lookup_table_flags = instruction_read_raf
-        .lookup_table_flags
-        .iter()
-        .map(|claim| input_opening(claim.value))
-        .collect();
+    let product = &stage2.output_values.product_remainder;
+    let instruction_input = &stage3.output_values.instruction_input;
+    let shift = &stage3.output_values.shift;
+    let registers_read_write = &stage4.output_values.registers_read_write;
+    let instruction_read_raf = &stage5.output_values.instruction_read_raf;
+    let lookup_table_flags = instruction_read_raf.lookup_table_flags.clone();
     Ok(BytecodeReadRafAddressPhaseInputClaims {
-        outer_unexpanded_pc: input_opening(outer.unexpanded_pc.value),
-        outer_imm: input_opening(outer.imm.value),
+        outer_unexpanded_pc: outer.unexpanded_pc,
+        outer_imm: outer.imm,
         outer_op_flags,
-        outer_pc: input_opening(outer.pc.value),
-        product_jump: input_opening(product.jump_flag.value),
-        product_branch: input_opening(product.branch_flag.value),
-        product_write_lookup_output_to_rd: input_opening(product.write_lookup_output_to_rd.value),
-        product_virtual_instruction: input_opening(product.virtual_instruction.value),
-        instruction_input_imm: input_opening(instruction_input.imm.value),
-        shift_unexpanded_pc: input_opening(shift.unexpanded_pc.value),
-        left_operand_is_rs1_value: input_opening(instruction_input.left_operand_is_rs1.value),
-        left_operand_is_pc: input_opening(instruction_input.left_operand_is_pc.value),
-        right_operand_is_rs2_value: input_opening(instruction_input.right_operand_is_rs2.value),
-        right_operand_is_imm: input_opening(instruction_input.right_operand_is_imm.value),
-        is_noop: input_opening(shift.is_noop.value),
-        shift_virtual_instruction: input_opening(shift.is_virtual.value),
-        shift_is_first_in_sequence: input_opening(shift.is_first_in_sequence.value),
-        shift_pc: input_opening(shift.pc.value),
-        rd_wa_read_write: input_opening(registers_read_write.rd_wa.value),
-        rs1_ra: input_opening(registers_read_write.rs1_ra.value),
-        rs2_ra: input_opening(registers_read_write.rs2_ra.value),
-        rd_wa_val_evaluation: input_opening(
-            stage5.output_claims.registers_val_evaluation.rd_wa.value,
-        ),
-        instruction_raf_flag: input_opening(instruction_read_raf.instruction_raf_flag.value),
+        outer_pc: outer.pc,
+        product_jump: product.jump_flag,
+        product_branch: product.branch_flag,
+        product_write_lookup_output_to_rd: product.write_lookup_output_to_rd,
+        product_virtual_instruction: product.virtual_instruction,
+        instruction_input_imm: instruction_input.imm,
+        shift_unexpanded_pc: shift.unexpanded_pc,
+        left_operand_is_rs1_value: instruction_input.left_operand_is_rs1,
+        left_operand_is_pc: instruction_input.left_operand_is_pc,
+        right_operand_is_rs2_value: instruction_input.right_operand_is_rs2,
+        right_operand_is_imm: instruction_input.right_operand_is_imm,
+        is_noop: shift.is_noop,
+        shift_virtual_instruction: shift.is_virtual,
+        shift_is_first_in_sequence: shift.is_first_in_sequence,
+        shift_pc: shift.pc,
+        rd_wa_read_write: registers_read_write.rd_wa,
+        rs1_ra: registers_read_write.rs1_ra,
+        rs2_ra: registers_read_write.rs2_ra,
+        rd_wa_val_evaluation: stage5.output_values.registers_val_evaluation.rd_wa,
+        instruction_raf_flag: instruction_read_raf.instruction_raf_flag,
         lookup_table_flags,
     })
+}
+
+/// Wire the prior-proof opening *points* the address-phase input claim binds. The
+/// input claim reads only opening *values*, so the points are unused; every field
+/// is an empty point. (Verifier-side constructor for the moved
+/// [`BytecodeReadRafAddressPhaseInputClaims<Vec<F>>`].)
+pub fn bytecode_read_raf_address_phase_input_points_from_upstream<F: Field>(
+) -> BytecodeReadRafAddressPhaseInputClaims<Vec<F>> {
+    BytecodeReadRafAddressPhaseInputClaims {
+        outer_unexpanded_pc: Vec::new(),
+        outer_imm: Vec::new(),
+        outer_op_flags: vec![Vec::new(); CIRCUIT_FLAGS.len()],
+        outer_pc: Vec::new(),
+        product_jump: Vec::new(),
+        product_branch: Vec::new(),
+        product_write_lookup_output_to_rd: Vec::new(),
+        product_virtual_instruction: Vec::new(),
+        instruction_input_imm: Vec::new(),
+        shift_unexpanded_pc: Vec::new(),
+        left_operand_is_rs1_value: Vec::new(),
+        left_operand_is_pc: Vec::new(),
+        right_operand_is_rs2_value: Vec::new(),
+        right_operand_is_imm: Vec::new(),
+        is_noop: Vec::new(),
+        shift_virtual_instruction: Vec::new(),
+        shift_is_first_in_sequence: Vec::new(),
+        shift_pc: Vec::new(),
+        rd_wa_read_write: Vec::new(),
+        rs1_ra: Vec::new(),
+        rs2_ra: Vec::new(),
+        rd_wa_val_evaluation: Vec::new(),
+        instruction_raf_flag: Vec::new(),
+        lookup_table_flags: Vec::new(),
+    }
 }
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
@@ -147,10 +165,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &BytecodeReadRafAddressPhaseInputClaims<C>,
+        _input_points: &BytecodeReadRafAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         // `bytecode_r_address` is the reversed address sumcheck point; the
         // intermediate and every staged Val column open there.
@@ -162,12 +180,24 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     }
 }
 
-/// The `BytecodeReadRafAddrClaim` intermediate consumed from the address phase.
-/// (Verifier-side constructor for the moved [`BytecodeReadRafInputClaims`].)
-pub fn bytecode_read_raf_inputs_from_upstream<F: Field>(
-    address_phase: OpeningClaim<F>,
-) -> BytecodeReadRafInputClaims<OpeningClaim<F>> {
-    BytecodeReadRafInputClaims { address_phase }
+/// The `BytecodeReadRafAddrClaim` intermediate *value* consumed from the address
+/// phase. (Verifier-side constructor for the moved [`BytecodeReadRafInputClaims`].)
+pub fn bytecode_read_raf_input_values_from_upstream<F: Field>(
+    address_phase_value: F,
+) -> BytecodeReadRafInputClaims<F> {
+    BytecodeReadRafInputClaims {
+        address_phase: address_phase_value,
+    }
+}
+
+/// The `BytecodeReadRafAddrClaim` intermediate *point* consumed from the address
+/// phase.
+pub fn bytecode_read_raf_input_points_from_upstream<F: Field>(
+    address_phase_point: Vec<F>,
+) -> BytecodeReadRafInputClaims<Vec<F>> {
+    BytecodeReadRafInputClaims {
+        address_phase: address_phase_point,
+    }
 }
 
 /// Construction inputs for the full-program bytecode cycle relation. The bytecode
@@ -236,10 +266,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &BytecodeReadRafInputClaims<C>,
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
     ) -> Result<BytecodeReadRafOutputClaims<Vec<F>>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         let bytecode_ra =
@@ -250,10 +280,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
         Ok(BytecodeReadRafOutputClaims { bytecode_ra })
     }
 
-    fn expected_output<C: GetPoint<F>>(
+    fn expected_output(
         &self,
-        _inputs: &BytecodeReadRafInputClaims<C>,
-        outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
+        output_values: &BytecodeReadRafOutputClaims<F>,
+        output_points: &BytecodeReadRafOutputClaims<Vec<F>>,
         challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         let gamma = challenges
@@ -261,10 +292,9 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
             .ok_or(VerifierError::MissingStageClaimChallenge {
                 id: JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
             })?;
-        let opening_point = outputs
-            .bytecode_ra
+        let opening_point = output_points
+            .bytecode_ra()
             .first()
-            .map(GetPoint::point)
             .ok_or_else(|| public_input_failed("bytecode cycle produced no openings"))?;
         let r_cycle = self.r_cycle(opening_point)?;
         let public_values =
@@ -289,15 +319,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
                 stage5_gammas: &self.inputs.stage_gammas[4],
             })
             .map_err(public_input_failed)?;
-        let bytecode_ra = outputs
-            .bytecode_ra
-            .iter()
-            .map(GetValue::value)
-            .collect::<Vec<_>>();
         stage6_bytecode_read_raf_expected_output(Stage6BytecodeReadRafExpectedOutputInputs {
             dimensions: self.inputs.dimensions,
             public_values: &public_values,
-            bytecode_ra: &bytecode_ra,
+            bytecode_ra: &output_values.bytecode_ra,
             gamma,
         })
     }
@@ -360,10 +385,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &BytecodeReadRafInputClaims<C>,
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
     ) -> Result<BytecodeReadRafOutputClaims<Vec<F>>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         let bytecode_ra = committed_address_chunks(&self.r_address, self.committed_chunk_bits)
@@ -373,16 +398,17 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         Ok(BytecodeReadRafOutputClaims { bytecode_ra })
     }
 
-    fn expected_output<C: GetPoint<F>>(
+    fn expected_output(
         &self,
-        _inputs: &BytecodeReadRafInputClaims<C>,
-        outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
+        output_values: &BytecodeReadRafOutputClaims<F>,
+        output_points: &BytecodeReadRafOutputClaims<Vec<F>>,
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let opening_point = outputs
-            .bytecode_ra
+        let opening_point = output_points
+            .bytecode_ra()
             .first()
-            .map(GetPoint::point)
+            .map(Vec::as_slice)
             .ok_or_else(|| public_input_failed("bytecode cycle produced no openings"))?;
         let r_cycle = self.r_cycle(opening_point)?;
         let public_values = bytecode::read_raf_committed_public_values::<F>(
@@ -409,10 +435,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                 }
                 for (index, opening_id) in output_openings.bytecode_ra.iter().enumerate() {
                     if *id == *opening_id {
-                        return outputs
+                        return output_values
                             .bytecode_ra
                             .get(index)
-                            .map(|claim| claim.value)
+                            .copied()
                             .ok_or(VerifierError::MissingOpeningClaim { id: *id });
                     }
                 }

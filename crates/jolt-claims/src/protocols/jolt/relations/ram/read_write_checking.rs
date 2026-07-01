@@ -13,8 +13,8 @@ use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
-/// the single read-write opening point. Generic over the cell (`F` on the wire /
-/// serialized proof form, `OpeningClaim<F>` on the clear path).
+/// the single read-write opening point. Generic over the opening cell (`F` for the
+/// serialized wire value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

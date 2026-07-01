@@ -14,8 +14,9 @@ pub use instruction_claim_reduction::{
     InstructionClaimReductionOutputClaims,
 };
 pub use outputs::{
-    Stage2BatchChallenges, Stage2BatchInputClaims, Stage2BatchOutputClaims, Stage2BatchSumchecks,
-    Stage2ClearOutput, Stage2Output, Stage2ZkOutput, VerifiedProductUniSkip,
+    Stage2BatchChallenges, Stage2BatchInputClaims, Stage2BatchInputPoints, Stage2BatchOutputClaims,
+    Stage2BatchOutputPoints, Stage2BatchSumchecks, Stage2ClearOutput, Stage2Output, Stage2ZkOutput,
+    VerifiedProductUniSkip,
 };
 pub use product_remainder::{
     ProductRemainder, ProductRemainderInputClaims, ProductRemainderOutputClaims,
@@ -28,4 +29,4 @@ pub use ram_raf_evaluation::{
 pub use ram_read_write_checking::{
     RamReadWriteChecking, RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
-pub use verify::{stage2_batch_output_claims_with_points, stage2_expected_final_claim, verify};
+pub use verify::{stage2_expected_final_claim, verify};

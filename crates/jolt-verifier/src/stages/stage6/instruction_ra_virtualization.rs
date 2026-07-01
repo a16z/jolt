@@ -22,22 +22,36 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage5::Stage5ClearOutput;
 use crate::VerifierError;
 
-/// Wire the per-virtual reduced `InstructionRa` openings from the stage-5
+/// Wire the per-virtual reduced `InstructionRa` opening *values* from the stage-5
 /// instruction read-RAF. (Verifier-side constructor for the moved
 /// [`InstructionRaVirtualizationInputClaims`].)
-pub fn instruction_ra_virtualization_inputs_from_upstream<F: Field>(
+pub fn instruction_ra_virtualization_input_values_from_upstream<F: Field>(
     stage5: &Stage5ClearOutput<F>,
-) -> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
+) -> InstructionRaVirtualizationInputClaims<F> {
     InstructionRaVirtualizationInputClaims {
         instruction_ra: stage5
-            .output_claims
+            .output_values
             .instruction_read_raf
             .instruction_ra
             .clone(),
+    }
+}
+
+/// Wire the per-virtual reduced `InstructionRa` opening *points* from the stage-5
+/// instruction read-RAF.
+pub fn instruction_ra_virtualization_input_points_from_upstream<F: Field>(
+    stage5: &Stage5ClearOutput<F>,
+) -> InstructionRaVirtualizationInputClaims<Vec<F>> {
+    InstructionRaVirtualizationInputClaims {
+        instruction_ra: stage5
+            .output_points
+            .instruction_read_raf
+            .instruction_ra()
+            .to_vec(),
     }
 }
 
@@ -83,10 +97,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionRaVirtualizationInputClaims<C>,
+        _input_points: &InstructionRaVirtualizationInputClaims<Vec<F>>,
     ) -> Result<InstructionRaVirtualizationOutputClaims<Vec<F>>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         let committed_instruction_ra =
@@ -99,11 +113,11 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &InstructionRaVirtualizationInputClaims<C>,
-        outputs: &InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>,
+        _input_points: &InstructionRaVirtualizationInputClaims<Vec<F>>,
+        output_points: &InstructionRaVirtualizationOutputClaims<Vec<F>>,
         _challenges: &InstructionRaVirtualizationChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
@@ -112,10 +126,9 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let log_t = self.dimensions.log_t();
-        let point = outputs
-            .committed_instruction_ra
+        let point = output_points
+            .committed_instruction_ra()
             .first()
-            .map(GetPoint::point)
             .ok_or_else(|| {
                 public_input_failed("instruction RA virtualization produced no openings")
             })?;

@@ -23,12 +23,13 @@ pub trait SymbolicSumcheck {
     /// [`NoChallenges`](crate::NoChallenges).
     type Challenges<F>;
 
-    /// The relation's consumed-claim struct, generic over the opening *cell*
-    /// (`OpeningClaim<F>` | `Vec<F>` | `F`). A symbolic-only relation uses
-    /// [`NoInputs`](crate::NoInputs).
+    /// The relation's consumed-claim struct, generic over the opening *cell*,
+    /// instantiated at `F` (the serialized wire value) or `Vec<F>` (the derived
+    /// opening point). A symbolic-only relation uses [`NoInputs`](crate::NoInputs).
     type Inputs<C>;
-    /// The relation's produced-claim struct, generic over the opening *cell*. A
-    /// symbolic-only relation uses [`NoOutputs`](crate::NoOutputs).
+    /// The relation's produced-claim struct, generic over the opening *cell*
+    /// (`F` value | `Vec<F>` point). A symbolic-only relation uses
+    /// [`NoOutputs`](crate::NoOutputs).
     type Outputs<C>;
 
     fn new(shape: Self::Shape) -> Self;

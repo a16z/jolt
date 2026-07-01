@@ -13,9 +13,7 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-pub use stages::relations::{
-    ConcreteSumcheck, GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims,
-};
+pub use stages::relations::{ConcreteSumcheck, InputClaims, OutputClaims};
 pub use stages::zk::committed::zk_vector_commitment_capacity_requirement;
 // The `stages::relations` re-export above carries both the `InputClaims` /
 // `OutputClaims` traits and the same-named derive macros (jolt-claims re-exports

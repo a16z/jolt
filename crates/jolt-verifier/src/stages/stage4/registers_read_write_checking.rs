@@ -18,23 +18,34 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage3::outputs::Stage3ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed openings from stage 3's registers claim-reduction output,
-/// all sharing that relation's opening point. (Verifier-side constructor for the
-/// moved [`RegistersReadWriteInputClaims`].)
-pub fn registers_read_write_inputs_from_upstream<F: Field>(
+/// Wire the consumed opening *values* from stage 3's registers claim-reduction
+/// output. (Verifier-side constructor for the moved
+/// [`RegistersReadWriteInputClaims`].)
+pub fn registers_read_write_input_values_from_upstream<F: Field>(
     stage3: &Stage3ClearOutput<F>,
-) -> RegistersReadWriteInputClaims<OpeningClaim<F>> {
-    // The stage-3 register-reduction openings already carry their shared
-    // opening point (point + value), so the consumed claims are just clones.
-    let reduction = &stage3.output_claims.registers_claim_reduction;
+) -> RegistersReadWriteInputClaims<F> {
+    let reduction = &stage3.output_values.registers_claim_reduction;
     RegistersReadWriteInputClaims {
-        rd_write_value: reduction.rd_write_value.clone(),
-        rs1_value: reduction.rs1_value.clone(),
-        rs2_value: reduction.rs2_value.clone(),
+        rd_write_value: reduction.rd_write_value,
+        rs1_value: reduction.rs1_value,
+        rs2_value: reduction.rs2_value,
+    }
+}
+
+/// Wire the consumed opening *points* from stage 3's registers claim-reduction
+/// output, all sharing that relation's opening point.
+pub fn registers_read_write_input_points_from_upstream<F: Field>(
+    stage3: &Stage3ClearOutput<F>,
+) -> RegistersReadWriteInputClaims<Vec<F>> {
+    let reduction = &stage3.output_points.registers_claim_reduction;
+    RegistersReadWriteInputClaims {
+        rd_write_value: reduction.rd_write_value().to_vec(),
+        rs1_value: reduction.rs1_value().to_vec(),
+        rs2_value: reduction.rs2_value().to_vec(),
     }
 }
 
@@ -68,10 +79,10 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RegistersReadWriteInputClaims<C>,
+        _input_points: &RegistersReadWriteInputClaims<Vec<F>>,
     ) -> Result<RegistersReadWriteOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .register_dimensions
@@ -87,11 +98,11 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        inputs: &RegistersReadWriteInputClaims<C>,
-        outputs: &RegistersReadWriteOutputClaims<OpeningClaim<F>>,
+        input_points: &RegistersReadWriteInputClaims<Vec<F>>,
+        output_points: &RegistersReadWriteOutputClaims<Vec<F>>,
         _challenges: &RegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RegistersReadWrite(public_id) = id else {
@@ -99,8 +110,8 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         };
         match public_id {
             RegistersReadWritePublic::EqCycle => {
-                let fixed_cycle = inputs.rd_write_value.point();
-                let registers_cycle = &outputs.registers_val.point()[REGISTER_ADDRESS_BITS..];
+                let fixed_cycle = input_points.rd_write_value();
+                let registers_cycle = &output_points.registers_val()[REGISTER_ADDRESS_BITS..];
                 try_eq_mle(fixed_cycle, registers_cycle).map_err(public_input_failed)
             }
         }

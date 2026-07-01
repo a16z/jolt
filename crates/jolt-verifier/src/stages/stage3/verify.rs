@@ -12,24 +12,27 @@ use jolt_transcript::Transcript;
 
 use super::{
     instruction_input::{
-        instruction_input_inputs_from_upstream, InstructionInput, InstructionInputChallenges,
+        instruction_input_input_points_from_upstream, instruction_input_input_values_from_upstream,
+        InstructionInput, InstructionInputChallenges,
     },
     outputs::{
-        Stage3Challenges, Stage3ClearOutput, Stage3InputClaims, Stage3Output, Stage3OutputClaims,
-        Stage3Sumchecks, Stage3ZkOutput,
+        Stage3Challenges, Stage3ClearOutput, Stage3InputClaims, Stage3InputPoints, Stage3Output,
+        Stage3OutputPoints, Stage3Sumchecks, Stage3ZkOutput,
     },
     registers_claim_reduction::{
-        registers_claim_reduction_inputs_from_upstream, RegistersClaimReduction,
+        registers_claim_reduction_input_points_from_upstream,
+        registers_claim_reduction_input_values_from_upstream, RegistersClaimReduction,
         RegistersClaimReductionChallenges,
     },
-    spartan_shift::{spartan_shift_inputs_from_upstream, SpartanShift, SpartanShiftChallenges},
+    spartan_shift::{
+        spartan_shift_input_points_from_upstream, spartan_shift_input_values_from_upstream,
+        SpartanShift, SpartanShiftChallenges,
+    },
 };
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{
-            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-        },
+        relations::{check_relation_boolean_hypercube, ConcreteSumcheck},
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},
         zk::committed,
@@ -60,35 +63,30 @@ pub fn stage3_expected_final_claim<F: Field>(
         + *registers_coefficient * registers_claim_reduction)
 }
 
-/// Assemble the stage-3 consumed openings from the upstream clear outputs into the
-/// generated `Stage3InputClaims` aggregate. This is the single place the stage's
-/// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
-/// wires which upstream opening feeds which downstream input.
-fn stage3_inputs_from_upstream<F: Field>(
+/// Assemble the stage-3 consumed opening *values* from the upstream clear outputs
+/// into the generated `Stage3InputClaims` aggregate. This is the single place the
+/// stage's Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream`
+/// helper wires which upstream opening feeds which downstream input.
+fn stage3_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
     stage2: &Stage2ClearOutput<F>,
-) -> Stage3InputClaims<F, OpeningClaim<F>> {
+) -> Stage3InputClaims<F> {
     Stage3InputClaims {
-        shift: spartan_shift_inputs_from_upstream(stage1, stage2),
-        instruction_input: instruction_input_inputs_from_upstream(stage2),
-        registers_claim_reduction: registers_claim_reduction_inputs_from_upstream(stage1),
+        shift: spartan_shift_input_values_from_upstream(stage1, stage2),
+        instruction_input: instruction_input_input_values_from_upstream(stage2),
+        registers_claim_reduction: registers_claim_reduction_input_values_from_upstream(stage1),
     }
 }
 
-/// Pair the produced stage-3 openings with their derived points (point + value
-/// together) from the wire claim values and each relation's shared opening point.
-/// Shared by the verifier and the prover so this located form is built once.
-pub fn stage3_output_claims_with_points<F: Field>(
-    claims: &Stage3OutputClaims<F, F>,
-    points: &Stage3OutputClaims<F, Vec<F>>,
-) -> Stage3OutputClaims<F, OpeningClaim<F>> {
-    Stage3OutputClaims {
-        shift: zip_openings(&claims.shift, &points.shift),
-        instruction_input: zip_openings(&claims.instruction_input, &points.instruction_input),
-        registers_claim_reduction: zip_openings(
-            &claims.registers_claim_reduction,
-            &points.registers_claim_reduction,
-        ),
+/// Assemble the stage-3 consumed opening *points* from the upstream clear outputs.
+fn stage3_input_points_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+    stage2: &Stage2ClearOutput<F>,
+) -> Stage3InputPoints<F> {
+    Stage3InputPoints {
+        shift: spartan_shift_input_points_from_upstream(stage1, stage2),
+        instruction_input: instruction_input_input_points_from_upstream(stage2),
+        registers_claim_reduction: registers_claim_reduction_input_points_from_upstream(stage1),
     }
 }
 
@@ -191,11 +189,11 @@ where
         shift: SpartanShift::new(
             dimensions,
             stage2.product_uniskip.tau_low.clone(),
-            stage2.output_claims.product_remainder_point().to_vec(),
+            stage2.output_points.product_remainder_point().to_vec(),
         ),
         instruction_input: InstructionInput::new(
             dimensions,
-            stage2.output_claims.product_remainder_point().to_vec(),
+            stage2.output_points.product_remainder_point().to_vec(),
         ),
         registers_claim_reduction: RegistersClaimReduction::new(
             dimensions,
@@ -203,7 +201,8 @@ where
         ),
     };
 
-    let inputs = stage3_inputs_from_upstream(stage1, stage2);
+    let input_values = stage3_input_values_from_upstream(stage1, stage2);
+    let input_points = stage3_input_points_from_upstream(stage1, stage2);
 
     let sumcheck_claims = [
         SumcheckClaim::new(
@@ -211,20 +210,21 @@ where
             shift_rel.degree(),
             sumchecks
                 .shift
-                .input_claim(&inputs.shift, &challenges.shift)?,
+                .input_claim(&input_values.shift, &challenges.shift)?,
         ),
         SumcheckClaim::new(
             instruction_rel.rounds(),
             instruction_rel.degree(),
-            sumchecks
-                .instruction_input
-                .input_claim(&inputs.instruction_input, &challenges.instruction_input)?,
+            sumchecks.instruction_input.input_claim(
+                &input_values.instruction_input,
+                &challenges.instruction_input,
+            )?,
         ),
         SumcheckClaim::new(
             registers_rel.rounds(),
             registers_rel.degree(),
             sumchecks.registers_claim_reduction.input_claim(
-                &inputs.registers_claim_reduction,
+                &input_values.registers_claim_reduction,
                 &challenges.registers_claim_reduction,
             )?,
         ),
@@ -259,31 +259,34 @@ where
             reason: error.to_string(),
         })?;
 
-    let points = Stage3OutputClaims {
+    let output_points = Stage3OutputPoints {
         shift: sumchecks
             .shift
-            .derive_opening_points(shift_point, &inputs.shift)?,
+            .derive_opening_points(shift_point, &input_points.shift)?,
         instruction_input: sumchecks
             .instruction_input
-            .derive_opening_points(instruction_point, &inputs.instruction_input)?,
+            .derive_opening_points(instruction_point, &input_points.instruction_input)?,
         registers_claim_reduction: sumchecks
             .registers_claim_reduction
-            .derive_opening_points(registers_point, &inputs.registers_claim_reduction)?,
+            .derive_opening_points(registers_point, &input_points.registers_claim_reduction)?,
     };
-    let output_claims = stage3_output_claims_with_points(claims, &points);
 
-    let shift_output =
-        sumchecks
-            .shift
-            .expected_output(&inputs.shift, &output_claims.shift, &challenges.shift)?;
+    let shift_output = sumchecks.shift.expected_output(
+        &input_points.shift,
+        &claims.shift,
+        &output_points.shift,
+        &challenges.shift,
+    )?;
     let instruction_output = sumchecks.instruction_input.expected_output(
-        &inputs.instruction_input,
-        &output_claims.instruction_input,
+        &input_points.instruction_input,
+        &claims.instruction_input,
+        &output_points.instruction_input,
         &challenges.instruction_input,
     )?;
     let registers_output = sumchecks.registers_claim_reduction.expected_output(
-        &inputs.registers_claim_reduction,
-        &output_claims.registers_claim_reduction,
+        &input_points.registers_claim_reduction,
+        &claims.registers_claim_reduction,
+        &output_points.registers_claim_reduction,
         &challenges.registers_claim_reduction,
     )?;
 
@@ -307,7 +310,8 @@ where
 
     Ok(Stage3Output::Clear(Stage3ClearOutput {
         challenges,
-        output_claims,
+        output_values: claims.clone(),
+        output_points,
     }))
 }
 
@@ -349,7 +353,7 @@ mod tests {
 
     #[test]
     fn opening_claim_appends_follow_core_alias_order() {
-        let claims = Stage3OutputClaims::<Fr, Fr> {
+        let claims = Stage3OutputClaims::<Fr> {
             shift: SpartanShiftOutputClaims {
                 unexpanded_pc: Fr::from_u64(1),
                 pc: Fr::from_u64(2),

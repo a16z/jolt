@@ -86,7 +86,7 @@ pub(crate) fn clear_claims_from_native<F: Field>(
 
 fn spartan_outer_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage1BatchOutputClaims<F, F>, VerifierError> {
+) -> Result<Stage1BatchOutputClaims<F>, VerifierError> {
     let outer_claim = |variable| claims.require(outer_opening(variable));
     let flag_claim = |flag| outer_claim(JoltVirtualPolynomial::OpFlags(flag));
 
@@ -178,7 +178,7 @@ fn stage2_claims_from_native<F: Field>(
 
 fn stage3_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage3OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage3OutputClaims<F>, VerifierError> {
     let shift = SpartanShiftOutputClaims {
         unexpanded_pc: claims.require(spartan::unexpanded_pc_shift())?,
         pc: claims.require(spartan::pc_shift())?,
@@ -217,7 +217,7 @@ fn stage3_claims_from_native<F: Field>(
 
 fn stage4_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage4OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage4OutputClaims<F>, VerifierError> {
     Ok(Stage4OutputClaims {
         registers_read_write: RegistersReadWriteOutputClaims {
             registers_val: claims.require(registers::registers_val_read_write())?,
@@ -238,7 +238,7 @@ fn stage4_claims_from_native<F: Field>(
 
 fn stage5_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage5OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage5OutputClaims<F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
         .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
         .collect::<Result<Vec<_>, _>>()?;
@@ -274,7 +274,7 @@ fn stage5_claims_from_native<F: Field>(
 
 fn stage6_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage6OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage6OutputClaims<F>, VerifierError> {
     let mut bytecode_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -483,7 +483,7 @@ fn final_bytecode_chunk_claims_from_native<F: Field>(claims: &NativeOpeningClaim
 
 fn stage7_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage7OutputClaims<F, F>, VerifierError> {
+) -> Result<Stage7OutputClaims<F>, VerifierError> {
     let mut instruction_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -749,7 +749,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
     }
 }
 
-fn empty_spartan_outer_claims<F: Field>() -> Stage1BatchOutputClaims<F, F> {
+fn empty_spartan_outer_claims<F: Field>() -> Stage1BatchOutputClaims<F> {
     let zero = F::zero();
 
     Stage1BatchOutputClaims {
@@ -912,7 +912,7 @@ fn claim_from_clear<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_spartan_outer<F: Field>(
-    claims: &Stage1BatchOutputClaims<F, F>,
+    claims: &Stage1BatchOutputClaims<F>,
     variable: JoltVirtualPolynomial,
 ) -> Option<F> {
     let claims = &claims.outer_remainder;
@@ -984,7 +984,7 @@ fn claim_mut_from_clear<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_spartan_outer<F: Field>(
-    claims: &mut Stage1BatchOutputClaims<F, F>,
+    claims: &mut Stage1BatchOutputClaims<F>,
     variable: JoltVirtualPolynomial,
 ) -> Option<&mut F> {
     let claims = &mut claims.outer_remainder;
@@ -1062,7 +1062,7 @@ fn stage1_outer_variable(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage2_batch_outputs<F: Field>(
-    claims: &Stage2BatchOutputClaims<F, F>,
+    claims: &Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [ram_val, ram_ra, ram_inc] = [ram::ram_val(), ram::ram_ra(), ram::ram_inc()];
@@ -1127,7 +1127,7 @@ fn claim_from_stage2_batch_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage2_batch_outputs<F: Field>(
-    claims: &mut Stage2BatchOutputClaims<F, F>,
+    claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [ram_val, ram_ra, ram_inc] = [ram::ram_val(), ram::ram_ra(), ram::ram_inc()];
@@ -1196,7 +1196,7 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn set_optional_stage2_batch_output<F: Field>(
-    claims: &mut Stage2BatchOutputClaims<F, F>,
+    claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1225,7 +1225,7 @@ fn set_optional_stage2_batch_output<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn set_optional_stage4_output<F: Field>(
-    claims: &mut Stage4OutputClaims<F, F>,
+    claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1244,7 +1244,7 @@ fn set_optional_stage4_output<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn set_optional_stage6_output<F: Field>(
-    claims: &mut Stage6OutputClaims<F, F>,
+    claims: &mut Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1281,7 +1281,7 @@ fn set_optional_stage6_output<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage3_outputs<F: Field>(
-    claims: &Stage3OutputClaims<F, F>,
+    claims: &Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] = [
@@ -1330,7 +1330,7 @@ fn claim_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage3_outputs<F: Field>(
-    claims: &mut Stage3OutputClaims<F, F>,
+    claims: &mut Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] = [
@@ -1385,7 +1385,7 @@ fn claim_mut_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage4_outputs<F: Field>(
-    claims: &Stage4OutputClaims<F, F>,
+    claims: &Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] = [
@@ -1417,7 +1417,7 @@ fn claim_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage4_outputs<F: Field>(
-    claims: &mut Stage4OutputClaims<F, F>,
+    claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] = [
@@ -1449,7 +1449,7 @@ fn claim_mut_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage5_outputs<F: Field>(
-    claims: &Stage5OutputClaims<F, F>,
+    claims: &Stage5OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
@@ -1490,7 +1490,7 @@ fn claim_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage5_outputs<F: Field>(
-    claims: &mut Stage5OutputClaims<F, F>,
+    claims: &mut Stage5OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
@@ -1530,7 +1530,7 @@ fn claim_mut_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage6_outputs<F: Field>(
-    claims: &Stage6OutputClaims<F, F>,
+    claims: &Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening_claim) in claims
@@ -1645,7 +1645,7 @@ fn claim_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage6_outputs<F: Field>(
-    claims: &mut Stage6OutputClaims<F, F>,
+    claims: &mut Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening_claim) in claims
@@ -1766,7 +1766,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage7_outputs<F: Field>(
-    claims: &Stage7OutputClaims<F, F>,
+    claims: &Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening) in claims
@@ -1828,7 +1828,7 @@ fn claim_from_stage7_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage7_outputs<F: Field>(
-    claims: &mut Stage7OutputClaims<F, F>,
+    claims: &mut Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening) in claims

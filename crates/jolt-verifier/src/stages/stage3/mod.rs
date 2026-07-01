@@ -10,12 +10,12 @@ pub use instruction_input::{
     InstructionInput, InstructionInputInputClaims, InstructionInputOutputClaims,
 };
 pub use outputs::{
-    Stage3Challenges, Stage3ClearOutput, Stage3InputClaims, Stage3Output, Stage3OutputClaims,
-    Stage3Sumchecks, Stage3ZkOutput,
+    Stage3Challenges, Stage3ClearOutput, Stage3InputClaims, Stage3InputPoints, Stage3Output,
+    Stage3OutputClaims, Stage3OutputPoints, Stage3Sumchecks, Stage3ZkOutput,
 };
 pub use registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionInputClaims,
     RegistersClaimReductionOutputClaims,
 };
 pub use spartan_shift::{SpartanShift, SpartanShiftInputClaims, SpartanShiftOutputClaims};
-pub use verify::{stage3_expected_final_claim, stage3_output_claims_with_points, verify};
+pub use verify::{stage3_expected_final_claim, verify};

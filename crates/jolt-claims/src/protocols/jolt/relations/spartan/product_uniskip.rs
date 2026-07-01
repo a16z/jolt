@@ -31,8 +31,8 @@ pub struct ProductUniskipInputClaims<C> {
 }
 
 /// Produced product uni-skip opening (the single reduced univariate-skip value).
-/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
-/// on the clear path).
+/// Generic over the opening cell (`F` for the serialized wire value, `Vec<F>` for
+/// the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

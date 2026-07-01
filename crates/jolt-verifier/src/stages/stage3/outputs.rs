@@ -8,7 +8,7 @@ use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
 
-use crate::stages::relations::{OpeningClaim, OutputClaims, SumcheckBatch};
+use crate::stages::relations::{OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
@@ -21,8 +21,9 @@ pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 /// Source-of-truth for stage 3's sumcheck batch: the three instances in
 /// Fiat-Shamir batch order (Spartan shift, instruction-input virtualization,
 /// register claim-reduction). `#[derive(SumcheckBatch)]` generates the
-/// `Stage3InputClaims<F, C>`, `Stage3OutputClaims<F, C>`, and `Stage3Challenges<F>`
-/// aggregates — one field per instance, in this declaration order.
+/// `Stage3InputClaims<F>`, `Stage3InputPoints<F>`, `Stage3OutputClaims<F>`,
+/// `Stage3OutputPoints<F>`, and `Stage3Challenges<F>` aggregates — one field per
+/// instance, in this declaration order.
 ///
 /// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
 /// `opening_values` / `append_to_transcript`: stage 3 has three cross-relation
@@ -38,15 +39,7 @@ pub struct Stage3Sumchecks<F: Field> {
     pub registers_claim_reduction: RegistersClaimReduction<F>,
 }
 
-// The wire form pins the generated cell param `C` to the field `F` (value-only
-// openings), so the impl's second type argument is `F`. Both arguments naming `F`
-// is intentional and mirrors the `Stage3OutputClaims<F, F>` the derive emits its
-// own opening plumbing on; the lint's reordering hint does not apply.
-#[expect(
-    clippy::mismatching_type_param_order,
-    reason = "the cell param C is pinned to F for the value-only wire form; the second `F` is the cell, not a reordered field param"
-)]
-impl<F: Field> Stage3OutputClaims<F, F> {
+impl<F: Field> Stage3OutputClaims<F> {
     /// The produced opening claims absorbed into the transcript, in canonical
     /// (Fiat-Shamir) order. Three of the sixteen produced openings are aliases —
     /// `instruction_input.unexpanded_pc` equals `shift.unexpanded_pc`, and the
@@ -122,27 +115,27 @@ impl<F: Field> Stage3OutputClaims<F, F> {
     }
 }
 
-impl<F: Field> Stage3OutputClaims<F, OpeningClaim<F>> {
+impl<F: Field> Stage3OutputPoints<F> {
     /// The shift relation's shared opening point (every shift output carries it).
     pub fn shift_opening_point(&self) -> &[F] {
-        &self.shift.unexpanded_pc.point
+        self.shift.unexpanded_pc()
     }
 
     /// The register claim-reduction relation's shared opening point.
     pub fn registers_opening_point(&self) -> &[F] {
-        &self.registers_claim_reduction.rd_write_value.point
+        self.registers_claim_reduction.rd_write_value()
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3ClearOutput<F: Field> {
     pub challenges: Stage3Challenges<F>,
-    /// The produced stage-3 openings paired with their points (point + value) via
-    /// the `OpeningClaim` cell. The opening points are derived from each relation's
-    /// sumcheck point; pairing them with the values here lets later stages consume a
-    /// ready `OpeningClaim` instead of re-joining a value with a separately-tracked
-    /// point.
-    pub output_claims: Stage3OutputClaims<F, OpeningClaim<F>>,
+    /// The produced stage-3 opening *values* (wire form); read by later stages and
+    /// the Fiat-Shamir opening-claim encoder.
+    pub output_values: Stage3OutputClaims<F>,
+    /// The produced stage-3 opening *points*, paired field-for-field with
+    /// `output_values`. Later stages read each opening's point off these cells.
+    pub output_points: Stage3OutputPoints<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +145,14 @@ pub struct Stage3ZkOutput<F: Field, C> {
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
 }
 
+// The clear variant carries the produced opening values + points read on the hot
+// path; the ZK variant carries committed consistency. Boxing the common clear
+// variant to shrink the rarer ZK one would add indirection to every clear-path
+// access.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "clear variant holds the opening values + points read on the hot path; boxing it would penalize the common case"
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage3Output<F: Field, C> {
     Clear(Stage3ClearOutput<F>),
@@ -190,7 +191,7 @@ mod tests {
     /// distinct sentinels here to prove they are skipped.
     #[test]
     fn opening_values_follow_canonical_order() {
-        let claims = Stage3OutputClaims::<Fr, Fr> {
+        let claims = Stage3OutputClaims::<Fr> {
             shift: SpartanShiftOutputClaims {
                 unexpanded_pc: fr(1),
                 pc: fr(2),
@@ -223,10 +224,10 @@ mod tests {
 
     /// A stage-3 output with the three cross-relation aliases satisfied: shift and
     /// instruction-input `unexpanded_pc` equal, and register-reduction `rs1`/`rs2`
-    /// equal the instruction-input ones. `validate` (value-cell `<F>`) accepts it;
-    /// the tests below perturb one alias each to assert rejection.
-    fn consistent() -> Stage3OutputClaims<Fr, Fr> {
-        Stage3OutputClaims::<Fr, Fr> {
+    /// equal the instruction-input ones. `validate` accepts it; the tests below
+    /// perturb one alias each to assert rejection.
+    fn consistent() -> Stage3OutputClaims<Fr> {
+        Stage3OutputClaims::<Fr> {
             shift: SpartanShiftOutputClaims {
                 unexpanded_pc: fr(1),
                 pc: fr(2),

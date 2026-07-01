@@ -37,7 +37,7 @@ impl<C> Default for RamHammingBooleanityInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }

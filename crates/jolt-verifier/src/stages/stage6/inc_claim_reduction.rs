@@ -17,25 +17,44 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::{
     stage2::Stage2ClearOutput, stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
 };
 use crate::VerifierError;
 
-/// Wire the four reduced `Inc` openings from the read-write / value relations of
-/// RAM and registers. (Verifier-side constructor for the moved
+/// Wire the four reduced `Inc` opening *values* from the read-write / value
+/// relations of RAM and registers. (Verifier-side constructor for the moved
 /// [`IncClaimReductionInputClaims`].)
-pub fn inc_claim_reduction_inputs_from_upstream<F: Field>(
+pub fn inc_claim_reduction_input_values_from_upstream<F: Field>(
     stage2: &Stage2ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
-) -> IncClaimReductionInputClaims<OpeningClaim<F>> {
+) -> IncClaimReductionInputClaims<F> {
     IncClaimReductionInputClaims {
-        ram_inc_read_write: stage2.output_claims.ram_read_write.inc.clone(),
-        ram_inc_val_check: stage4.output_claims.ram_val_check.ram_inc.clone(),
-        rd_inc_read_write: stage4.output_claims.registers_read_write.rd_inc.clone(),
-        rd_inc_val_evaluation: stage5.output_claims.registers_val_evaluation.rd_inc.clone(),
+        ram_inc_read_write: stage2.output_values.ram_read_write.inc,
+        ram_inc_val_check: stage4.output_values.ram_val_check.ram_inc,
+        rd_inc_read_write: stage4.output_values.registers_read_write.rd_inc,
+        rd_inc_val_evaluation: stage5.output_values.registers_val_evaluation.rd_inc,
+    }
+}
+
+/// Wire the four reduced `Inc` opening *points* from the read-write / value
+/// relations of RAM and registers.
+pub fn inc_claim_reduction_input_points_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+    stage5: &Stage5ClearOutput<F>,
+) -> IncClaimReductionInputClaims<Vec<F>> {
+    IncClaimReductionInputClaims {
+        ram_inc_read_write: stage2.output_points.ram_read_write.inc().to_vec(),
+        ram_inc_val_check: stage4.output_points.ram_val_check.ram_inc().to_vec(),
+        rd_inc_read_write: stage4.output_points.registers_read_write.rd_inc().to_vec(),
+        rd_inc_val_evaluation: stage5
+            .output_points
+            .registers_val_evaluation
+            .rd_inc()
+            .to_vec(),
     }
 }
 
@@ -81,10 +100,10 @@ impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &IncClaimReductionInputClaims<C>,
+        _input_points: &IncClaimReductionInputClaims<Vec<F>>,
     ) -> Result<IncClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         // Both reduced openings share the cycle opening point (the reversed
         // sumcheck point).
@@ -95,17 +114,17 @@ impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &IncClaimReductionInputClaims<C>,
-        outputs: &IncClaimReductionOutputClaims<OpeningClaim<F>>,
+        _input_points: &IncClaimReductionInputClaims<Vec<F>>,
+        output_points: &IncClaimReductionOutputClaims<Vec<F>>,
         _challenges: &IncClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::IncClaimReduction(public) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let opening_point = outputs.ram_inc.point();
+        let opening_point = output_points.ram_inc();
         let cycle = match public {
             IncClaimReductionPublic::EqRamReadWrite => &self.ram_read_write_cycle,
             IncClaimReductionPublic::EqRamValCheck => &self.ram_val_check_cycle,

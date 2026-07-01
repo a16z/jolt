@@ -13,8 +13,8 @@ use crate::SymbolicSumcheck;
 use crate::{derived, opening, InputClaims, OutputClaims};
 
 /// The produced RAM `val_final` opening, sharing the single output-check opening
-/// point. Generic over the cell (`F` on the wire / serialized proof form,
-/// `OpeningClaim<F>` on the clear path).
+/// point. Generic over the opening cell (`F` for the serialized wire value,
+/// `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -40,7 +40,7 @@ impl<C> Default for RamOutputCheckInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }

@@ -19,29 +19,35 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
-/// Wire this relation's consumed openings from the upstream clear outputs:
-/// the RAF-evaluation and read-write openings (stage 2) and the val-check
-/// opening (stage 4), each as an `OpeningClaim` (point + value). (Verifier-side
-/// constructor for the moved [`RamRaClaimReductionInputClaims`].)
-pub fn ram_ra_claim_reduction_inputs_from_upstream<F: Field>(
+/// Wire this relation's consumed opening *values* from the upstream clear outputs:
+/// the RAF-evaluation and read-write openings (stage 2) and the val-check opening
+/// (stage 4). (Verifier-side constructor for the moved
+/// [`RamRaClaimReductionInputClaims`].)
+pub fn ram_ra_claim_reduction_input_values_from_upstream<F: Field>(
     stage2: &Stage2ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
-) -> RamRaClaimReductionInputClaims<OpeningClaim<F>> {
+) -> RamRaClaimReductionInputClaims<F> {
     RamRaClaimReductionInputClaims {
-        raf: OpeningClaim {
-            point: stage2.output_claims.ram_raf_evaluation_point().to_vec(),
-            value: stage2.output_claims.ram_raf_evaluation.ram_ra.value,
-        },
-        read_write: OpeningClaim {
-            point: stage2.output_claims.ram_read_write_point().to_vec(),
-            value: stage2.output_claims.ram_read_write.ra.value,
-        },
-        val_check: stage4.output_claims.ram_val_check.ram_ra.clone(),
+        raf: stage2.output_values.ram_raf_evaluation.ram_ra,
+        read_write: stage2.output_values.ram_read_write.ra,
+        val_check: stage4.output_values.ram_val_check.ram_ra,
+    }
+}
+
+/// Wire this relation's consumed opening *points* from the upstream clear outputs.
+pub fn ram_ra_claim_reduction_input_points_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+) -> RamRaClaimReductionInputClaims<Vec<F>> {
+    RamRaClaimReductionInputClaims {
+        raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
+        read_write: stage2.output_points.ram_read_write_point().to_vec(),
+        val_check: stage4.output_points.ram_val_check.ram_ra().to_vec(),
     }
 }
 
@@ -77,17 +83,17 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        inputs: &RamRaClaimReductionInputClaims<C>,
+        input_points: &RamRaClaimReductionInputClaims<Vec<F>>,
     ) -> Result<RamRaClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let log_t = self.trace_dimensions.log_t();
         let expected_len = self.ram_log_k + log_t;
         for (label, point) in [
-            ("RAF", inputs.raf.point()),
-            ("read-write", inputs.read_write.point()),
-            ("val-check", inputs.val_check.point()),
+            ("RAF", input_points.raf()),
+            ("read-write", input_points.read_write()),
+            ("val-check", input_points.val_check()),
         ] {
             if point.len() != expected_len {
                 return Err(public_input_failed(format!(
@@ -96,9 +102,9 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
                 )));
             }
         }
-        let address = &inputs.read_write.point()[..self.ram_log_k];
-        if &inputs.raf.point()[..self.ram_log_k] != address
-            || &inputs.val_check.point()[..self.ram_log_k] != address
+        let address = &input_points.read_write()[..self.ram_log_k];
+        if &input_points.raf()[..self.ram_log_k] != address
+            || &input_points.val_check()[..self.ram_log_k] != address
         {
             return Err(public_input_failed(
                 "RAM input openings disagree on the address prefix",
@@ -114,24 +120,24 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        inputs: &RamRaClaimReductionInputClaims<C>,
-        outputs: &RamRaClaimReductionOutputClaims<OpeningClaim<F>>,
+        input_points: &RamRaClaimReductionInputClaims<Vec<F>>,
+        output_points: &RamRaClaimReductionOutputClaims<Vec<F>>,
         _challenges: &RamRaClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRaClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let output_cycle = &outputs.ram_ra.point()[self.ram_log_k..];
+        let output_cycle = &output_points.ram_ra()[self.ram_log_k..];
         let fixed_cycle = match public_id {
-            RamRaClaimReductionPublic::EqCycleRaf => &inputs.raf.point()[self.ram_log_k..],
+            RamRaClaimReductionPublic::EqCycleRaf => &input_points.raf()[self.ram_log_k..],
             RamRaClaimReductionPublic::EqCycleReadWrite => {
-                &inputs.read_write.point()[self.ram_log_k..]
+                &input_points.read_write()[self.ram_log_k..]
             }
             RamRaClaimReductionPublic::EqCycleValCheck => {
-                &inputs.val_check.point()[self.ram_log_k..]
+                &input_points.val_check()[self.ram_log_k..]
             }
         };
         try_eq_mle(fixed_cycle, output_cycle).map_err(public_input_failed)

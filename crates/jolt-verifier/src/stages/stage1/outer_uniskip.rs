@@ -20,7 +20,7 @@ pub use jolt_claims::protocols::jolt::relations::spartan::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 pub struct OuterUniskip<F: Field> {
@@ -44,10 +44,10 @@ impl<F: Field> ConcreteSumcheck<F> for OuterUniskip<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &OuterUniskipInputClaims<C>,
+        _input_points: &OuterUniskipInputClaims<Vec<F>>,
     ) -> Result<OuterUniskipOutputClaims<Vec<F>>, VerifierError> {
         Ok(OuterUniskipOutputClaims {
             univariate_skip: sumcheck_point.to_vec(),

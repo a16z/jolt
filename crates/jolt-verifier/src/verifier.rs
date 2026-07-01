@@ -1175,7 +1175,7 @@ mod tests {
         })
     }
 
-    fn empty_spartan_outer_claims() -> stage1::outputs::Stage1BatchOutputClaims<Fr, Fr> {
+    fn empty_spartan_outer_claims() -> stage1::outputs::Stage1BatchOutputClaims<Fr> {
         let zero = Fr::zero();
 
         stage1::outputs::Stage1BatchOutputClaims {

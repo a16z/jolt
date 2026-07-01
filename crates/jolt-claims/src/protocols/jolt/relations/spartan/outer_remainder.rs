@@ -22,9 +22,9 @@ pub struct OuterRemainderInputClaims<C> {
 }
 
 /// Produced Spartan outer remainder openings: one per R1CS-input variable, all
-/// sharing the single remainder opening point. Generic over the cell (`F` on the
-/// wire / serialized proof form, `OpeningClaim<F>` on the clear path). Field order
-/// is the canonical Fiat-Shamir / append order and MUST equal
+/// sharing the single remainder opening point. Generic over the opening cell (`F`
+/// for the serialized wire value, `Vec<F>` for the derived opening point). Field
+/// order is the canonical Fiat-Shamir / append order and MUST equal
 /// [`SpartanOuterDimensions::variables`] /
 /// [`SPARTAN_OUTER_R1CS_INPUTS`](crate::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]

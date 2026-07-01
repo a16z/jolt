@@ -22,9 +22,7 @@ use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use super::outputs::Stage8OpeningId;
 use crate::{
-    stages::{
-        relations::OpeningClaim, stage6::Stage6ClearOutput, stage7::outputs::Stage7ClearOutput,
-    },
+    stages::{stage6::Stage6ClearOutput, stage7::outputs::Stage7ClearOutput},
     VerifierError,
 };
 
@@ -306,18 +304,18 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
 ) -> Result<(F, F), VerifierError> {
     match polynomial {
         JoltCommittedPolynomial::RamInc => Ok((
-            stage6.output_claims.cycle_phase.inc_claim_reduction.ram_inc,
+            stage6.output_values.cycle_phase.inc_claim_reduction.ram_inc,
             commitment_embedding_scale(opening_point, inc_claim_reduction_opening_point),
         )),
         JoltCommittedPolynomial::RdInc => Ok((
-            stage6.output_claims.cycle_phase.inc_claim_reduction.rd_inc,
+            stage6.output_values.cycle_phase.inc_claim_reduction.rd_inc,
             commitment_embedding_scale(opening_point, inc_claim_reduction_opening_point),
         )),
         JoltCommittedPolynomial::InstructionRa(index) => hamming_weight_opening_claim(
             polynomial,
             index,
             &stage7
-                .output_claims
+                .output_values
                 .hamming_weight_claim_reduction
                 .instruction_ra,
             opening_point,
@@ -327,7 +325,7 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
             polynomial,
             index,
             &stage7
-                .output_claims
+                .output_values
                 .hamming_weight_claim_reduction
                 .bytecode_ra,
             opening_point,
@@ -336,7 +334,7 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
         JoltCommittedPolynomial::RamRa(index) => hamming_weight_opening_claim(
             polynomial,
             index,
-            &stage7.output_claims.hamming_weight_claim_reduction.ram_ra,
+            &stage7.output_values.hamming_weight_claim_reduction.ram_ra,
             opening_point,
             hamming_weight_opening_point,
         ),
@@ -362,15 +360,16 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
 fn hamming_weight_opening_claim<F: Field>(
     polynomial: JoltCommittedPolynomial,
     index: usize,
-    claims: &[OpeningClaim<F>],
+    values: &[F],
     opening_point: &[F],
     hamming_weight_opening_point: &[F],
 ) -> Result<(F, F), VerifierError> {
-    let claim = claims.get(index).map(|claim| claim.value).ok_or_else(|| {
-        VerifierError::MissingOpeningClaim {
+    let claim = values
+        .get(index)
+        .copied()
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: committed_openings::final_opening_id(polynomial),
-        }
-    })?;
+        })?;
     Ok((
         claim,
         commitment_embedding_scale(opening_point, hamming_weight_opening_point),

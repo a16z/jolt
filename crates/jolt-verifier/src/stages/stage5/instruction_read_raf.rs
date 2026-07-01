@@ -22,39 +22,41 @@ use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed openings from the upstream instruction claim-reduction
+/// Wire the consumed opening *values* from the upstream instruction claim-reduction
 /// (stage 2), applying the lookup-output fallback to the product remainder.
-/// All three share the claim-reduction opening point. (Verifier-side constructor
-/// for the moved [`InstructionReadRafInputClaims`].)
-pub fn instruction_read_raf_inputs_from_upstream<F: Field>(
+/// (Verifier-side constructor for the moved [`InstructionReadRafInputClaims`].)
+pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
     stage2: &Stage2ClearOutput<F>,
-) -> InstructionReadRafInputClaims<OpeningClaim<F>> {
-    let reduction = &stage2.output_claims.instruction_claim_reduction;
-    let lookup_output = reduction.lookup_output.as_ref().map_or(
-        stage2.output_claims.product_remainder.lookup_output.value,
-        |claim| claim.value,
+) -> InstructionReadRafInputClaims<F> {
+    let reduction = &stage2.output_values.instruction_claim_reduction;
+    let lookup_output = reduction.lookup_output.map_or(
+        stage2.output_values.product_remainder.lookup_output,
+        |value| value,
     );
+    InstructionReadRafInputClaims {
+        lookup_output,
+        left_lookup_operand: reduction.left_lookup_operand,
+        right_lookup_operand: reduction.right_lookup_operand,
+    }
+}
+
+/// Wire the consumed opening *points* from the upstream instruction claim-reduction
+/// (stage 2). All three share the claim-reduction opening point.
+pub fn instruction_read_raf_input_points_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+) -> InstructionReadRafInputClaims<Vec<F>> {
     let point = stage2
-        .output_claims
+        .output_points
         .instruction_claim_reduction_point()
         .to_vec();
     InstructionReadRafInputClaims {
-        lookup_output: OpeningClaim {
-            point: point.clone(),
-            value: lookup_output,
-        },
-        left_lookup_operand: OpeningClaim {
-            point: point.clone(),
-            value: reduction.left_lookup_operand.value,
-        },
-        right_lookup_operand: OpeningClaim {
-            point,
-            value: reduction.right_lookup_operand.value,
-        },
+        lookup_output: point.clone(),
+        left_lookup_operand: point.clone(),
+        right_lookup_operand: point,
     }
 }
 
@@ -81,20 +83,17 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-/// Reconstruct the instruction address point from the virtual-RA opening cells:
+/// Reconstruct the instruction address point from the virtual-RA opening points:
 /// each RA opening point is `chunk ++ r_cycle`, and the chunks tile the address
 /// in order, so stripping the trailing cycle and concatenating recovers it.
-pub(crate) fn reconstruct_r_address<F: Field, C: GetPoint<F>>(
-    outputs: &InstructionReadRafOutputClaims<C>,
+pub(crate) fn reconstruct_r_address<F: Field>(
+    output_points: &InstructionReadRafOutputClaims<Vec<F>>,
     cycle_len: usize,
 ) -> Vec<F> {
-    outputs
-        .instruction_ra
+    output_points
+        .instruction_ra()
         .iter()
-        .flat_map(|cell| {
-            let point = cell.point();
-            point[..point.len() - cycle_len].iter().copied()
-        })
+        .flat_map(|point| point[..point.len() - cycle_len].iter().copied())
         .collect()
 }
 
@@ -105,10 +104,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionReadRafInputClaims<C>,
+        _input_points: &InstructionReadRafInputClaims<Vec<F>>,
     ) -> Result<InstructionReadRafOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .dimensions
@@ -140,22 +139,22 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        inputs: &InstructionReadRafInputClaims<C>,
-        outputs: &InstructionReadRafOutputClaims<OpeningClaim<F>>,
+        input_points: &InstructionReadRafInputClaims<Vec<F>>,
+        output_points: &InstructionReadRafOutputClaims<Vec<F>>,
         challenges: &InstructionReadRafChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionReadRaf(public) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let r_cycle = outputs.instruction_raf_flag.point();
-        let r_address = reconstruct_r_address(outputs, r_cycle.len());
+        let r_cycle = output_points.instruction_raf_flag();
+        let r_address = reconstruct_r_address(output_points, r_cycle.len());
         // eq over the upstream instruction claim-reduction cycle point; all three
         // consumed openings share that point, so the lookup-output input carries it.
         let eq_reduction =
-            try_eq_mle(inputs.lookup_output.point(), r_cycle).map_err(public_input_failed)?;
+            try_eq_mle(input_points.lookup_output(), r_cycle).map_err(public_input_failed)?;
         let address_bits = self.dimensions.instruction_address_bits();
         let left = || OperandPolynomial::new(address_bits, OperandSide::Left).evaluate(&r_address);
         let right =

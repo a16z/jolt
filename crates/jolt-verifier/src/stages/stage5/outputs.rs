@@ -3,7 +3,7 @@
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckBatch};
+use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 use super::instruction_read_raf::{reconstruct_r_address, InstructionReadRaf};
@@ -13,7 +13,7 @@ use super::registers_val_evaluation::RegistersValEvaluation;
 /// Source-of-truth for stage 5's sumcheck batch: the three instances in
 /// Fiat-Shamir batch order (instruction read-RAF, RAM-RA reduction, register
 /// value-evaluation). `#[derive(SumcheckBatch)]` generates the
-/// `Stage5InputClaims<F, C>`, `Stage5OutputClaims<F, C>`, and `Stage5Challenges<F>`
+/// `Stage5{Input,Output}{Claims,Points}<F>` and `Stage5Challenges<F>`
 /// aggregates — one field per instance, in this declaration order — plus the
 /// `Stage5OutputClaims` Fiat-Shamir opening plumbing (`opening_values` /
 /// `append_to_transcript`). The field order is load-bearing: it fixes the canonical
@@ -26,50 +26,42 @@ pub struct Stage5Sumchecks<F: Field> {
     pub registers_val_evaluation: RegistersValEvaluation<F>,
 }
 
-/// The shared opening-point accessors, generated for each concrete cell
-/// (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form) so
-/// both expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>`
-/// can't express this — `F` would be unconstrained by the self type.
-macro_rules! stage5_point_accessors {
-    ($cell:ident) => {
-        impl<F: Field> Stage5OutputClaims<F, $cell<F>> {
-            /// The instruction read-RAF cycle point (shared by the lookup-table-flag
-            /// and RAF-flag openings).
-            pub fn instruction_r_cycle(&self) -> &[F] {
-                self.instruction_read_raf.instruction_raf_flag.point()
-            }
+/// The shared opening-point accessors over the point-only stage-5 aggregate.
+impl<F: Field> Stage5OutputPoints<F> {
+    /// The instruction read-RAF cycle point (shared by the lookup-table-flag
+    /// and RAF-flag openings).
+    pub fn instruction_r_cycle(&self) -> &[F] {
+        self.instruction_read_raf.instruction_raf_flag()
+    }
 
-            /// The contiguous instruction address point, reconstructed from the
-            /// virtual-RA opening cells (each is `chunk ++ r_cycle`).
-            pub fn instruction_r_address(&self) -> Vec<F> {
-                reconstruct_r_address(&self.instruction_read_raf, self.instruction_r_cycle().len())
-            }
+    /// The contiguous instruction address point, reconstructed from the
+    /// virtual-RA opening points (each is `chunk ++ r_cycle`).
+    pub fn instruction_r_address(&self) -> Vec<F> {
+        reconstruct_r_address(&self.instruction_read_raf, self.instruction_r_cycle().len())
+    }
 
-            /// The reduced RAM-RA opening point (`address ++ cycle`).
-            pub fn ram_reduced_opening_point(&self) -> &[F] {
-                self.ram_ra_claim_reduction.ram_ra.point()
-            }
+    /// The reduced RAM-RA opening point (`address ++ cycle`).
+    pub fn ram_reduced_opening_point(&self) -> &[F] {
+        self.ram_ra_claim_reduction.ram_ra()
+    }
 
-            /// The register value-evaluation opening point (shared by `rd_inc`/`rd_wa`).
-            pub fn registers_opening_point(&self) -> &[F] {
-                self.registers_val_evaluation.rd_inc.point()
-            }
-        }
-    };
+    /// The register value-evaluation opening point (shared by `rd_inc`/`rd_wa`).
+    pub fn registers_opening_point(&self) -> &[F] {
+        self.registers_val_evaluation.rd_inc()
+    }
 }
-
-stage5_point_accessors!(OpeningClaim);
-stage5_point_accessors!(Vec);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5ClearOutput<F: Field> {
     pub challenges: Stage5Challenges<F>,
-    /// The produced stage-5 openings paired with their points (point + value) via
-    /// the `OpeningClaim` cell. Later stages read each opening's value and point
-    /// directly off these opening claims.
-    pub output_claims: Stage5OutputClaims<F, OpeningClaim<F>>,
+    /// The produced stage-5 opening *values* (wire form); read by later stages and
+    /// the Fiat-Shamir opening-claim encoder.
+    pub output_values: Stage5OutputClaims<F>,
+    /// The produced stage-5 opening *points*, paired field-for-field with
+    /// `output_values`. Later stages read each opening's point off these cells.
+    pub output_points: Stage5OutputPoints<F>,
     /// The instruction read-RAF address point, materialized contiguously from the
-    /// virtual-RA opening cells (which tile it as `chunk ++ r_cycle`). Stored
+    /// virtual-RA opening points (which tile it as `chunk ++ r_cycle`). Stored
     /// because stage 6 re-chunks it by the committed-chunk width — a different
     /// split than the virtual-RA cells carry — so it needs a contiguous copy that
     /// downstream code can borrow.
@@ -80,18 +72,18 @@ impl<F: Field> Stage5ClearOutput<F> {
     /// The instruction read-RAF cycle point, shared by the lookup-table-flag and
     /// RAF-flag openings.
     pub fn instruction_r_cycle(&self) -> &[F] {
-        self.output_claims.instruction_r_cycle()
+        self.output_points.instruction_r_cycle()
     }
 
     /// The reduced RAM-RA opening point (`address ++ cycle`, `log_k + log_t` vars).
     pub fn ram_reduced_opening_point(&self) -> &[F] {
-        self.output_claims.ram_reduced_opening_point()
+        self.output_points.ram_reduced_opening_point()
     }
 
     /// The register value-evaluation opening point (`REGISTER_ADDRESS_BITS + log_t`
     /// vars), shared by the `rd_inc` and `rd_wa` openings.
     pub fn registers_opening_point(&self) -> &[F] {
-        self.output_claims.registers_opening_point()
+        self.output_points.registers_opening_point()
     }
 }
 
@@ -100,9 +92,9 @@ pub struct Stage5ZkOutput<F: Field, C> {
     pub challenges: Stage5Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    /// The produced opening points (point-only cell), the ZK counterpart of the
-    /// clear path's `output_claims`. Read through the same `*_point()` accessors.
-    pub output_points: Stage5OutputClaims<F, Vec<F>>,
+    /// The produced opening points, the ZK counterpart of the clear path's
+    /// `output_points`. Read through the same `*_point()` accessors.
+    pub output_points: Stage5OutputPoints<F>,
     /// The contiguous instruction address point, stored (rather than reconstructed
     /// from `output_points` on demand) so stage 6 can borrow it — the per-chunk
     /// virtual-RA cells don't hold it contiguously. Mirrors `Stage5ClearOutput`.
@@ -113,10 +105,6 @@ pub struct Stage5ZkOutput<F: Field, C> {
 // later stages read on the hot path; the ZK variant carries the committed
 // consistency and output-claim commitments. Boxing the common clear variant to
 // shrink the rarer ZK one would add indirection to every clear-path access.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
-)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage5Output<F: Field, C> {
     Clear(Stage5ClearOutput<F>),
@@ -158,7 +146,7 @@ mod tests {
     /// silently breaks soundness, so it is pinned with distinct sentinels.
     #[test]
     fn opening_values_follow_canonical_order() {
-        let claims = Stage5OutputClaims::<Fr, Fr> {
+        let claims = Stage5OutputClaims::<Fr> {
             instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![fr(1), fr(2)],
                 instruction_ra: vec![fr(3), fr(4)],
