@@ -270,6 +270,7 @@ where
             Ok(Stage2Output::Zk(Stage2ZkOutput {
                 challenges: batch.batch_challenges,
                 product_uniskip_challenge: product_uniskip.product_uniskip_challenge,
+                product_tau_low: product_uniskip.tau_low,
                 product_tau_high: product_uniskip.tau_high,
                 output_address_challenges: batch.output_address_challenges,
                 product_uniskip_consistency: product_uniskip.consistency,

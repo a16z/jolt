@@ -18,4 +18,4 @@ pub use registers_claim_reduction::{
     RegistersClaimReductionOutputClaims,
 };
 pub use spartan_shift::{SpartanShift, SpartanShiftInputClaims, SpartanShiftOutputClaims};
-pub use verify::{stage3_expected_final_claim, verify};
+pub use verify::verify;

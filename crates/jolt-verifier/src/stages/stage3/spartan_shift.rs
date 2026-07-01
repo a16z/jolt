@@ -18,34 +18,31 @@ use jolt_field::Field;
 use jolt_poly::EqPlusOnePolynomial;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage1::Stage1ClearOutput;
-use crate::stages::stage2::Stage2ClearOutput;
+use crate::stages::stage1::Stage1BatchOutputClaims;
+use crate::stages::stage2::Stage2BatchOutputClaims;
 use crate::VerifierError;
 
 /// Wire shift's consumed opening *values* from stage 1's outer sumcheck (`Next*`
-/// PC/flag values) and stage 2's product-remainder `next_is_noop`. (Verifier-side
-/// constructor for the moved [`SpartanShiftInputClaims`].)
+/// PC/flag values) and stage 2's product-remainder `next_is_noop`. Takes the
+/// ZK-agnostic upstream output-claims aggregates.
 pub fn spartan_shift_input_values_from_upstream<F: Field>(
-    stage1: &Stage1ClearOutput<F>,
-    stage2: &Stage2ClearOutput<F>,
+    stage1: &Stage1BatchOutputClaims<F>,
+    stage2: &Stage2BatchOutputClaims<F>,
 ) -> SpartanShiftInputClaims<F> {
-    let outer = &stage1.output_values.outer_remainder;
+    let outer = &stage1.outer_remainder;
     SpartanShiftInputClaims {
         next_unexpanded_pc: outer.next_unexpanded_pc,
         next_pc: outer.next_pc,
         next_is_virtual: outer.next_is_virtual,
         next_is_first_in_sequence: outer.next_is_first_in_sequence,
-        next_is_noop: stage2.output_values.product_remainder.next_is_noop,
+        next_is_noop: stage2.product_remainder.next_is_noop,
     }
 }
 
 /// Wire shift's consumed opening *points*. Shift reads only the input values — its
 /// output points come from its own sumcheck point and the stage-2 eq tables — so
 /// the input opening points are left empty.
-pub fn spartan_shift_input_points_from_upstream<F: Field>(
-    _stage1: &Stage1ClearOutput<F>,
-    _stage2: &Stage2ClearOutput<F>,
-) -> SpartanShiftInputClaims<Vec<F>> {
+pub fn spartan_shift_input_points_from_upstream<F: Field>() -> SpartanShiftInputClaims<Vec<F>> {
     SpartanShiftInputClaims {
         next_unexpanded_pc: Vec::new(),
         next_pc: Vec::new(),

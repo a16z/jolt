@@ -446,9 +446,9 @@ where
 
 /// Recompute stage 1's remainder cycle point — the low half of the Spartan outer
 /// remainder sumcheck point — from the singleton remainder batch's committed
-/// challenges. This is the value the stage-2 carrier previously stored as its
-/// `product_tau_low` field; it is opening-derived (identical to the clear path's
-/// `product_uniskip.tau_low`), so BlindFold reconstructs it here. Orientation matches
+/// challenges. The stage-2 carrier stores the same value as `product_tau_low` (for
+/// downstream relation construction), but BlindFold reconstructs it here so the
+/// BakedPublicInputs derivation stays independent. Orientation matches
 /// `stage2/verify.rs::verify_product_uniskip`: drop the leading challenge, then
 /// reverse (`reverse(challenges()[1..])`). Used as `product_tau_low` by stages 2 and
 /// 3 and as the stage-1 cycle binding within `add_stage6_publics_and_challenges`.

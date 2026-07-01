@@ -207,13 +207,15 @@ pub struct Stage2ClearOutput<F: Field> {
 /// scalar (a separate sub-sumcheck), and the RAM output-check address reference
 /// point (folded in like stage 6's booleanity reference points) — so they are not
 /// part of the per-instance aggregate. `product_tau_low` is opening-derived (stage
-/// 1's remainder sumcheck point low half), so it is not stored: the clear path
-/// reads it off the produced `product_uniskip.tau_low`, and BlindFold recomputes it
-/// from `stage1.remainder_consistency`.
+/// 1's remainder sumcheck point low half), stored so downstream stage-3 relation
+/// construction can read it mode-agnostically via
+/// [`Stage2Output::product_tau_low`]; BlindFold independently recomputes it from
+/// `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ZkOutput<F: Field, C> {
     pub challenges: Stage2BatchChallenges<F>,
     pub product_uniskip_challenge: F,
+    pub product_tau_low: Vec<F>,
     pub product_tau_high: F,
     pub output_address_challenges: Vec<F>,
     pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
@@ -232,6 +234,24 @@ pub enum Stage2Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage2Output<F, C> {
+    /// The product uni-skip `tau_low` (stage 1's remainder point low half,
+    /// reversed), available regardless of proving mode. Stage 3's relation
+    /// construction evaluates its `EqPlusOne`/`EqSpartan` publics against it.
+    pub fn product_tau_low(&self) -> &[F] {
+        match self {
+            Self::Clear(output) => &output.product_uniskip.tau_low,
+            Self::Zk(output) => &output.product_tau_low,
+        }
+    }
+
+    /// The produced batch opening points, available regardless of proving mode.
+    pub fn batch_output_points(&self) -> &Stage2BatchOutputPoints<F> {
+        match self {
+            Self::Clear(output) => &output.output_points,
+            Self::Zk(output) => &output.output_points,
+        }
+    }
+
     pub fn clear(&self) -> Result<&Stage2ClearOutput<F>, crate::VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
