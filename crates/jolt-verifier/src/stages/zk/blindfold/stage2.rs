@@ -23,14 +23,18 @@ where
             }
         })?;
 
-    let product_uniskip = JoltSumcheckSpec::centered_integer(
-        SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        1,
-        SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-    );
+    // `product_tau_low` is opening-derived (stage 1's remainder cycle point); the
+    // carrier no longer stores it, so recompute it from `stage1.remainder_consistency`
+    // with the same orientation the clear path uses for `product_uniskip.tau_low`.
+    let product_tau_low = stage1_remainder_cycle(input);
+
+    let product_uniskip_rounds = 1;
+    let product_uniskip_degree = SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
+    let product_uniskip_domain =
+        JoltSumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE);
     let product_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.public.product_tau_high,
+        input.stage2.challenges.product_tau_high,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::SpartanProductVirtualization,
@@ -41,8 +45,8 @@ where
     builder = add_stage(
         builder,
         "stage2.product_uniskip",
-        SumcheckStatement::new(product_uniskip.rounds, product_uniskip.degree),
-        domain_spec(product_uniskip),
+        SumcheckStatement::new(product_uniskip_rounds, product_uniskip_degree),
+        domain_spec(product_uniskip_domain),
         input.stage2.product_uniskip_consistency.clone(),
         &input.stage2.product_uniskip_output_claims,
         values,
@@ -62,42 +66,38 @@ where
     let ram_read_write_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(ram_read_write.spec().rounds)
+        .try_instance_point(ram_read_write.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamReadWriteChecking, error))?;
     let ram_read_write_opening = read_write_dimensions
         .read_write_opening_point(&ram_read_write_point)
         .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
-    let eq_cycle = try_eq_mle(
-        &input.stage2.public.product_tau_low,
-        &ram_read_write_opening.r_cycle,
-    )
-    .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
+    let eq_cycle = try_eq_mle(&product_tau_low, &ram_read_write_opening.r_cycle)
+        .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
-        input.stage2.public.ram_read_write_gamma,
+        input.stage2.challenges.ram_read_write_gamma,
     )?;
-    values.public(JoltPublicId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
+    values.public(JoltDerivedId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
 
     let product_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(product_remainder.spec().rounds)
+        .try_instance_point(product_remainder.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
         })?;
     let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
     let product_tau_high_bound = centered_lagrange_kernel(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.public.product_tau_high,
-        input.stage2.public.product_uniskip_challenge,
+        input.stage2.challenges.product_tau_high,
+        input.stage2.challenges.product_uniskip_challenge,
     )
     .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
-    let product_tau_low_eq =
-        try_eq_mle(&input.stage2.public.product_tau_low, &product_opening_point)
-            .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
+    let product_tau_low_eq = try_eq_mle(&product_tau_low, &product_opening_point)
+        .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_lagrange_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.public.product_uniskip_challenge,
+        input.stage2.challenges.product_uniskip_challenge,
     )
     .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_tau_kernel = product_tau_high_bound * product_tau_low_eq;
@@ -109,22 +109,19 @@ where
     let instruction_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(instruction_reduction.spec().rounds)
+        .try_instance_point(instruction_reduction.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_spartan = try_eq_mle(
-        &instruction_opening_point,
-        &input.stage2.public.product_tau_low,
-    )
-    .map_err(|error| public_error(JoltRelationId::InstructionClaimReduction, error))?;
+    let eq_spartan = try_eq_mle(&instruction_opening_point, &product_tau_low)
+        .map_err(|error| public_error(JoltRelationId::InstructionClaimReduction, error))?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(
             InstructionClaimReductionChallenge::Gamma,
         )),
-        input.stage2.public.instruction_gamma,
+        input.stage2.challenges.instruction_gamma,
     )?;
     values.public(
-        JoltPublicId::from(InstructionClaimReductionPublic::EqSpartan),
+        JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan),
         eq_spartan,
     )?;
 
@@ -138,7 +135,7 @@ where
     let ram_raf_point = input
         .stage2
         .batch_consistency
-        .try_instance_point_at(phase1_offset, ram_raf.spec().rounds)
+        .try_instance_point_at(phase1_offset, ram_raf.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?;
     let ram_raf_address = read_write_dimensions
         .address_opening_point(&ram_raf_point)
@@ -147,89 +144,119 @@ where
         * PCS::Field::from_u64(8)
         + PCS::Field::from_u64(input.checked.public_io.memory_layout.get_lowest_address());
     values.public(
-        JoltPublicId::from(RamRafEvaluationPublic::UnmapAddress),
+        JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress),
         ram_raf_unmap_address,
     )?;
 
     let ram_output_point = input
         .stage2
         .batch_consistency
-        .try_instance_point_at(phase1_offset, ram_output.spec().rounds)
+        .try_instance_point_at(phase1_offset, ram_output.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamOutputCheck, error))?;
     let ram_output_address = read_write_dimensions
         .address_opening_point(&ram_output_point)
         .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let output_publics = ram_output_publics(
         input,
-        &input.stage2.public.output_address_challenges,
+        &input.stage2.challenges.output_address_challenges,
         &ram_output_address,
     )?;
     values.public(
-        JoltPublicId::from(RamOutputCheckPublic::EqIoMask),
+        JoltDerivedId::from(RamOutputCheckPublic::EqIoMask),
         output_publics.0,
     )?;
     values.public(
-        JoltPublicId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
+        JoltDerivedId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
         output_publics.1,
     )?;
 
+    let product_order = relations::spartan::ProductRemainderOutputClaims::<PCS::Field> {
+        left_instruction_input: PCS::Field::zero(),
+        right_instruction_input: PCS::Field::zero(),
+        jump_flag: PCS::Field::zero(),
+        write_lookup_output_to_rd: PCS::Field::zero(),
+        lookup_output: PCS::Field::zero(),
+        branch_flag: PCS::Field::zero(),
+        next_is_noop: PCS::Field::zero(),
+        virtual_instruction: PCS::Field::zero(),
+    }
+    .canonical_order();
+    let instruction_outputs =
+        relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims::<
+            PCS::Field,
+        > {
+            lookup_output: Some(PCS::Field::zero()),
+            left_lookup_operand: PCS::Field::zero(),
+            right_lookup_operand: PCS::Field::zero(),
+            left_instruction_input: Some(PCS::Field::zero()),
+            right_instruction_input: Some(PCS::Field::zero()),
+        }
+        .canonical_order();
+
     let mut output_ids = Vec::new();
     output_ids.extend(map_jolt_opening_ids(
-        ram::read_write_checking_output_openings().to_vec(),
+        relations::ram::RamReadWriteOutputClaims::<PCS::Field> {
+            val: PCS::Field::zero(),
+            ra: PCS::Field::zero(),
+            inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
-    output_ids.extend(map_jolt_opening_ids(
-        product_remainder_output_openings().to_vec(),
-    ));
-    let instruction_outputs =
-        jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::claim_reduction_output_openings();
+    output_ids.extend(map_jolt_opening_ids(product_order.clone()));
     output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[1]));
     output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[2]));
     output_ids.extend(map_jolt_opening_ids(
-        ram::raf_evaluation_output_openings().to_vec(),
+        relations::ram::RamRafEvaluationOutputClaims::<PCS::Field> {
+            ram_ra: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::output_check_output_openings().to_vec(),
+        relations::ram::RamOutputCheckOutputClaims::<PCS::Field> {
+            val_final: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     let aliases = vec![
         OpeningAlias::new(
             VerifierOpeningId::Jolt(instruction_outputs[0]),
-            VerifierOpeningId::Jolt(product_remainder_output_openings()[4]),
+            VerifierOpeningId::Jolt(product_order[4]),
         ),
         OpeningAlias::new(
             VerifierOpeningId::Jolt(instruction_outputs[3]),
-            VerifierOpeningId::Jolt(product_remainder_output_openings()[0]),
+            VerifierOpeningId::Jolt(product_order[0]),
         ),
         OpeningAlias::new(
             VerifierOpeningId::Jolt(instruction_outputs[4]),
-            VerifierOpeningId::Jolt(product_remainder_output_openings()[1]),
+            VerifierOpeningId::Jolt(product_order[1]),
         ),
     ];
 
     let mut batch_claims = vec![
         (
-            ram_read_write.spec().rounds,
+            ram_read_write.rounds(),
             map_jolt_expr(ram_read_write.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_read_write.output_expression::<PCS::Field>()),
         ),
         (
-            product_remainder.spec().rounds,
+            product_remainder.rounds(),
             map_jolt_expr(product_remainder.input_expression::<PCS::Field>()),
             product_remainder_output,
         ),
         (
-            instruction_reduction.spec().rounds,
+            instruction_reduction.rounds(),
             map_jolt_expr(instruction_reduction.input_expression::<PCS::Field>()),
             map_jolt_expr(instruction_reduction.output_expression::<PCS::Field>()),
         ),
     ];
     batch_claims.extend([
         (
-            ram_raf.spec().rounds,
+            ram_raf.rounds(),
             map_jolt_expr(ram_raf.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_raf.output_expression::<PCS::Field>()),
         ),
         (
-            ram_output.spec().rounds,
+            ram_output.rounds(),
             map_jolt_expr(ram_output.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_output.output_expression::<PCS::Field>()),
         ),
@@ -266,7 +293,7 @@ where
             input.stage2.batch_consistency.max_num_vars,
             input.stage2.batch_consistency.max_degree,
         ),
-        domain_spec(ram_read_write.spec()),
+        domain_spec(ram_read_write.domain()),
         input.stage2.batch_consistency.consistency.clone(),
         &input.stage2.batch_output_claims,
         values,
@@ -327,28 +354,25 @@ fn selected_product_remainder_output_expr<F: Field>(
             ),
         });
     };
-    let [left_instruction_input, right_instruction_input, jump_flag, _write_lookup_output_to_rd, lookup_output, branch_flag, next_is_noop, _virtual_instruction] =
-        product_remainder_output_openings();
-
     let left_base = scale_expr(
-        opening(VerifierOpeningId::Jolt(left_instruction_input)),
+        opening(VerifierOpeningId::Jolt(left_instruction_input_product())),
         *instruction_product_weight,
     ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(lookup_output)),
+        opening(VerifierOpeningId::Jolt(lookup_output_product())),
         *should_branch_weight,
     ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(jump_flag)),
+        opening(VerifierOpeningId::Jolt(jump_flag_product())),
         *should_jump_weight,
     );
     let right_base = scale_expr(
-        opening(VerifierOpeningId::Jolt(right_instruction_input)),
+        opening(VerifierOpeningId::Jolt(right_instruction_input_product())),
         *instruction_product_weight,
     ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(branch_flag)),
+        opening(VerifierOpeningId::Jolt(branch_flag_product())),
         *should_branch_weight,
     ) + scale_expr(VerifierExpr::one(), *should_jump_weight)
         + scale_expr(
-            opening(VerifierOpeningId::Jolt(next_is_noop)),
+            opening(VerifierOpeningId::Jolt(next_is_noop_product())),
             -*should_jump_weight,
         );
 

@@ -7,8 +7,8 @@ use crate::protocols::field_inline::geometry::product::{
     field_product_opening, field_rs1_value_product, field_rs2_value_product,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
-    FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersTraceDimensions,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
+    FieldInlineRelationId, FieldRegistersTraceDimensions,
 };
 use crate::SymbolicSumcheck;
 
@@ -21,9 +21,12 @@ pub struct FieldProduct {
 impl SymbolicSumcheck for FieldProduct {
     type RelationId = FieldInlineRelationId;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
+    type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: FieldRegistersTraceDimensions) -> Self {
         Self { shape }
@@ -33,8 +36,12 @@ impl SymbolicSumcheck for FieldProduct {
         FieldInlineRelationId::FieldRegistersProduct
     }
 
-    fn spec(&self) -> FieldInlineSumcheckSpec {
-        self.shape.sumcheck(2)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -68,7 +75,8 @@ mod tests {
             FieldProduct::id(),
             FieldInlineRelationId::FieldRegistersProduct
         );
-        assert_eq!(relation.spec(), dimensions().sumcheck(2));
+        assert_eq!(relation.rounds(), dimensions().log_t());
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             field_product_input_openings().to_vec()
@@ -78,7 +86,7 @@ mod tests {
             field_product_output_openings().to_vec()
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_publics::<Fr>().is_empty());
+        assert!(relation.required_deriveds::<Fr>().is_empty());
         assert_eq!(
             selected_product_uniskip_input_openings(),
             [field_product_opening(), field_inv_product_opening()]

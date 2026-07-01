@@ -8,7 +8,6 @@ use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims};
-use crate::stages::stage1::Stage1ClearOutput;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
@@ -17,58 +16,6 @@ pub use super::product_remainder::ProductRemainderOutputClaims;
 pub use super::ram_output_check::RamOutputCheckOutputClaims;
 pub use super::ram_raf_evaluation::RamRafEvaluationOutputClaims;
 pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
-
-/// Stage 1 outputs that feed the stage 2 product uni-skip input claim. Extracted
-/// into a typed value so the prover and verifier derive the same input claim from
-/// the shared [`product_uniskip_input_claim`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2ProductUniSkipInputValues<F: Field> {
-    pub product: F,
-    pub should_branch: F,
-    pub should_jump: F,
-}
-
-impl<F: Field> Stage2ProductUniSkipInputValues<F> {
-    pub fn from_stage1(stage1: &Stage1ClearOutput<F>) -> Self {
-        Self {
-            product: stage1.outer.product,
-            should_branch: stage1.outer.should_branch,
-            should_jump: stage1.outer.should_jump,
-        }
-    }
-}
-
-/// Combines the stage 1 product values against the uni-skip Lagrange `weights`
-/// (derived from `tau_high`) into the stage 2 product uni-skip input claim.
-pub fn product_uniskip_input_claim<F: Field>(
-    values: Stage2ProductUniSkipInputValues<F>,
-    weights: &[F],
-) -> Result<F, VerifierError> {
-    let [product, should_branch, should_jump, rest @ ..] = weights else {
-        return Err(stage2_product_public_input_failed(format!(
-            "Stage 2 product uni-skip expected at least 3 weights, got {}",
-            weights.len()
-        )));
-    };
-    let claim = *product * values.product
-        + *should_branch * values.should_branch
-        + *should_jump * values.should_jump;
-
-    if !rest.is_empty() {
-        return Err(stage2_product_public_input_failed(format!(
-            "Stage 2 product uni-skip expected 3 weights, got {}",
-            weights.len()
-        )));
-    }
-    Ok(claim)
-}
-
-fn stage2_product_public_input_failed(reason: String) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::SpartanProductVirtualization,
-        reason,
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -243,10 +190,19 @@ impl<F: Field> Stage2BatchOutputClaims<OpeningClaim<F>> {
     }
 }
 
+/// The Fiat-Shamir values the verifier draws during stage 2: the product uni-skip
+/// reduction challenge, the freshly-drawn `product_tau_high` scalar, the RAM
+/// read-write and instruction-reduction batching gammas, and the RAM output-check
+/// address reference point (folded in like stage 6's booleanity reference points).
+/// Carried on [`Stage2ZkOutput`] so BlindFold sources them from
+/// `challenges.<field>` (matching the `input.stageN.challenges.<field>` idiom used
+/// by the sibling stages). `product_tau_low` is opening-derived — it is stage 1's
+/// remainder sumcheck point low half — so it is not stored here: the clear path
+/// reads it off the produced `product_uniskip.tau_low`, and BlindFold recomputes it
+/// from `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2PublicOutput<F: Field> {
+pub struct Stage2Challenges<F: Field> {
     pub product_uniskip_challenge: F,
-    pub product_tau_low: Vec<F>,
     pub product_tau_high: F,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
@@ -255,7 +211,6 @@ pub struct Stage2PublicOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ClearOutput<F: Field> {
-    pub public: Stage2PublicOutput<F>,
     /// The produced batch openings paired with their points (point + value) via the
     /// `OpeningClaim` cell. The opening points are derived from each relation's
     /// sumcheck point; later stages read them through the
@@ -267,7 +222,7 @@ pub struct Stage2ClearOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ZkOutput<F: Field, C> {
-    pub public: Stage2PublicOutput<F>,
+    pub challenges: Stage2Challenges<F>,
     pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,

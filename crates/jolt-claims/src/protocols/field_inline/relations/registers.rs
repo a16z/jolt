@@ -8,13 +8,13 @@ use crate::protocols::field_inline::geometry::registers::{
     field_rs1_ra_read_write, field_rs1_value_claim, field_rs2_ra_read_write, field_rs2_value_claim,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
-    FieldInlineRelationId, FieldInlineSumcheckSpec, FieldRegistersReadWriteChallenge,
-    FieldRegistersReadWriteDimensions, FieldRegistersReadWritePublic,
-    FieldRegistersTraceDimensions, FieldRegistersValEvaluationPublic,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
+    FieldInlineRelationId, FieldRegistersReadWriteChallenge, FieldRegistersReadWriteDimensions,
+    FieldRegistersReadWritePublic, FieldRegistersTraceDimensions,
+    FieldRegistersValEvaluationPublic,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, opening, public};
+use crate::{challenge, derived, opening};
 
 /// The native field-register read/write checking sumcheck: relates the read-value
 /// claims (`FieldRdValue`, `FieldRs1Value`, `FieldRs2Value`) folded by `gamma` to
@@ -26,9 +26,12 @@ pub struct ReadWriteChecking {
 impl SymbolicSumcheck for ReadWriteChecking {
     type RelationId = FieldInlineRelationId;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
+    type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersReadWriteDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: FieldRegistersReadWriteDimensions) -> Self {
         Self { shape }
@@ -38,8 +41,12 @@ impl SymbolicSumcheck for ReadWriteChecking {
         FieldInlineRelationId::FieldRegistersReadWriteChecking
     }
 
-    fn spec(&self) -> FieldInlineSumcheckSpec {
-        self.shape.read_write_sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.read_write_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -51,7 +58,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
         let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
-        let eq_cycle = public(FieldRegistersReadWritePublic::EqCycle);
+        let eq_cycle = derived(FieldRegistersReadWritePublic::EqCycle);
         eq_cycle.clone() * opening(field_rd_wa_read_write()) * opening(field_rd_inc_read_write())
             + eq_cycle.clone()
                 * opening(field_rd_wa_read_write())
@@ -76,9 +83,12 @@ pub struct ValEvaluation {
 impl SymbolicSumcheck for ValEvaluation {
     type RelationId = FieldInlineRelationId;
     type OpeningId = FieldInlineOpeningId;
-    type PublicId = FieldInlinePublicId;
+    type DerivedId = FieldInlineDerivedId;
     type ChallengeId = FieldInlineChallengeId;
     type Shape = FieldRegistersTraceDimensions;
+    type Challenges<F> = crate::NoChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: FieldRegistersTraceDimensions) -> Self {
         Self { shape }
@@ -88,8 +98,12 @@ impl SymbolicSumcheck for ValEvaluation {
         FieldInlineRelationId::FieldRegistersValEvaluation
     }
 
-    fn spec(&self) -> FieldInlineSumcheckSpec {
-        self.shape.sumcheck(3)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        3
     }
 
     fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
@@ -97,7 +111,7 @@ impl SymbolicSumcheck for ValEvaluation {
     }
 
     fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        public(FieldRegistersValEvaluationPublic::LtCycle)
+        derived(FieldRegistersValEvaluationPublic::LtCycle)
             * opening(field_rd_inc_val_evaluation())
             * opening(field_rd_wa_val_evaluation())
     }
@@ -129,9 +143,10 @@ mod tests {
             FieldInlineRelationId::FieldRegistersReadWriteChecking
         );
         assert_eq!(
-            relation.spec(),
-            read_write_dimensions().read_write_sumcheck()
+            relation.rounds(),
+            read_write_dimensions().read_write_rounds()
         );
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             read_write_checking_input_openings().to_vec()
@@ -154,8 +169,8 @@ mod tests {
         );
         assert_eq!(relation.required_challenges::<Fr>().len(), 1);
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![FieldInlinePublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![FieldInlineDerivedId::from(
                 FieldRegistersReadWritePublic::EqCycle
             )]
         );
@@ -209,7 +224,7 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                FieldInlinePublicId::FieldRegistersReadWrite(
+                FieldInlineDerivedId::FieldRegistersReadWrite(
                     FieldRegistersReadWritePublic::EqCycle,
                 ) => eq_cycle,
                 _ => zero,
@@ -234,7 +249,8 @@ mod tests {
             ValEvaluation::id(),
             FieldInlineRelationId::FieldRegistersValEvaluation
         );
-        assert_eq!(relation.spec(), trace_dimensions().sumcheck(3));
+        assert_eq!(relation.rounds(), trace_dimensions().log_t());
+        assert_eq!(relation.degree(), 3);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             val_evaluation_input_openings().to_vec()
@@ -245,8 +261,8 @@ mod tests {
         );
         assert!(relation.required_challenges::<Fr>().is_empty());
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![FieldInlinePublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![FieldInlineDerivedId::from(
                 FieldRegistersValEvaluationPublic::LtCycle
             )]
         );
@@ -279,7 +295,7 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                FieldInlinePublicId::FieldRegistersValEvaluation(
+                FieldInlineDerivedId::FieldRegistersValEvaluation(
                     FieldRegistersValEvaluationPublic::LtCycle,
                 ) => lt_cycle,
                 _ => zero,

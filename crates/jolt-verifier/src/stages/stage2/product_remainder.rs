@@ -12,74 +12,35 @@
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::spartan::{
+    ProductRemainderInputClaims, ProductRemainderOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
-    geometry::spartan::SpartanProductDimensions, JoltPublicId, JoltRelationId,
+    geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltRelationId,
     SpartanProductVirtualizationPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     try_eq_mle,
 };
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
-use jolt_riscv::{CircuitFlags, InstructionFlags};
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
-/// Produced product-remainder openings (the eight virtualized instruction-product
-/// operands and flags), all sharing the single product opening point. Generic over
-/// the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>` on the
-/// clear path). Field order is the canonical Fiat-Shamir order and must match
-/// [`spartan::product_remainder_output_openings`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(SpartanProductVirtualization)]
-pub struct ProductRemainderOutputClaims<C> {
-    #[opening(LeftInstructionInput)]
-    pub left_instruction_input: C,
-    #[opening(RightInstructionInput)]
-    pub right_instruction_input: C,
-    #[opening(OpFlags(CircuitFlags::Jump))]
-    pub jump_flag: C,
-    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
-    pub write_lookup_output_to_rd: C,
-    #[opening(LookupOutput)]
-    pub lookup_output: C,
-    #[opening(InstructionFlags(InstructionFlags::Branch))]
-    pub branch_flag: C,
-    #[opening(NextIsNoop)]
-    pub next_is_noop: C,
-    #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
-    pub virtual_instruction: C,
-}
-
-/// Consumed product-remainder input: the product uni-skip's reduced opening. The
-/// relation reads only this value (its output point comes from its own sumcheck
-/// point), so the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct ProductRemainderInputClaims<C> {
-    #[opening(UnivariateSkip, from = SpartanProductVirtualization)]
-    pub product_uniskip: C,
-}
-
-impl<F: Field> ProductRemainderInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed opening from the product uni-skip's reduced output claim.
-    /// Only the value feeds the input claim (the output point comes from this
-    /// relation's own sumcheck point), so the input point is left empty.
-    pub fn from_uniskip_output(product_uniskip_output_claim: F) -> Self {
-        Self {
-            product_uniskip: OpeningClaim {
-                point: Vec::new(),
-                value: product_uniskip_output_claim,
-            },
-        }
+/// Wire the consumed opening from the product uni-skip's reduced output claim.
+/// Only the value feeds the input claim (the output point comes from this
+/// relation's own sumcheck point), so the input point is left empty.
+pub fn product_remainder_inputs_from_uniskip_output<F: Field>(
+    product_uniskip_output_claim: F,
+) -> ProductRemainderInputClaims<OpeningClaim<F>> {
+    ProductRemainderInputClaims {
+        product_uniskip: OpeningClaim {
+            point: Vec::new(),
+            value: product_uniskip_output_claim,
+        },
     }
 }
 
@@ -115,8 +76,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
     type Symbolic = relations::spartan::ProductRemainder;
-    type Inputs<C> = ProductRemainderInputClaims<C>;
-    type Outputs<C> = ProductRemainderOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -140,15 +99,15 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &ProductRemainderInputClaims<C>,
-        outputs: Option<&ProductRemainderOutputClaims<OpeningClaim<F>>>,
+        outputs: &ProductRemainderOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::SpartanProductVirtualization(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The uni-skip first-round Lagrange weights, evaluated at the product
@@ -172,7 +131,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
             // `LagrangeWeight` only (plus `TauKernel`). Reject rather than silently
             // aliasing it onto the Lagrange-weight path, so a misrouted public surfaces.
             SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
-                Err(VerifierError::MissingStageClaimPublic { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: *id })
             }
             // The product opening point binds the uni-skip kernel (against
             // `tau_high`) and the equality of the low remainder challenges

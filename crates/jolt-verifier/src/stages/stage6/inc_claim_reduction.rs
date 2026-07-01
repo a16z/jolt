@@ -7,15 +7,15 @@
 //! coefficients comparing this sumcheck's cycle to each source's cycle.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::increments::{
+    IncClaimReductionChallenges, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, IncClaimReductionChallenge, IncClaimReductionPublic,
-    JoltChallengeId, JoltPublicId, JoltRelationId,
+    geometry::dimensions::TraceDimensions, IncClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::{
@@ -23,51 +23,24 @@ use crate::stages::{
 };
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(IncClaimReduction)]
-pub struct IncClaimReductionOutputClaims<C> {
-    #[opening(committed = RamInc)]
-    pub ram_inc: C,
-    #[opening(committed = RdInc)]
-    pub rd_inc: C,
-}
-
-/// The four reduced `Inc` openings consumed from the read-write / value
-/// relations of RAM and registers.
-#[derive(Clone, Debug, InputClaims)]
-pub struct IncClaimReductionInputClaims<C> {
-    #[opening(committed = RamInc, from = RamReadWriteChecking)]
-    pub ram_inc_read_write: C,
-    #[opening(committed = RamInc, from = RamValCheck)]
-    pub ram_inc_val_check: C,
-    #[opening(committed = RdInc, from = RegistersReadWriteChecking)]
-    pub rd_inc_read_write: C,
-    #[opening(committed = RdInc, from = RegistersValEvaluation)]
-    pub rd_inc_val_evaluation: C,
-}
-
-impl<F: Field> IncClaimReductionInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(
-        stage2: &Stage2ClearOutput<F>,
-        stage4: &Stage4ClearOutput<F>,
-        stage5: &Stage5ClearOutput<F>,
-    ) -> Self {
-        Self {
-            ram_inc_read_write: stage2.output_claims.ram_read_write.inc.clone(),
-            ram_inc_val_check: stage4.output_claims.ram_val_check.ram_inc.clone(),
-            rd_inc_read_write: stage4.output_claims.registers_read_write.rd_inc.clone(),
-            rd_inc_val_evaluation: stage5.output_claims.registers_val_evaluation.rd_inc.clone(),
-        }
+/// Wire the four reduced `Inc` openings from the read-write / value relations of
+/// RAM and registers. (Verifier-side constructor for the moved
+/// [`IncClaimReductionInputClaims`].)
+pub fn inc_claim_reduction_inputs_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+    stage5: &Stage5ClearOutput<F>,
+) -> IncClaimReductionInputClaims<OpeningClaim<F>> {
+    IncClaimReductionInputClaims {
+        ram_inc_read_write: stage2.output_claims.ram_read_write.inc.clone(),
+        ram_inc_val_check: stage4.output_claims.ram_val_check.ram_inc.clone(),
+        rd_inc_read_write: stage4.output_claims.registers_read_write.rd_inc.clone(),
+        rd_inc_val_evaluation: stage5.output_claims.registers_val_evaluation.rd_inc.clone(),
     }
 }
 
 pub struct IncClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::increments::ClaimReduction,
-    gamma: F,
     ram_read_write_cycle: Vec<F>,
     ram_val_check_cycle: Vec<F>,
     registers_read_write_cycle: Vec<F>,
@@ -77,7 +50,6 @@ pub struct IncClaimReduction<F: Field> {
 impl<F: Field> IncClaimReduction<F> {
     pub fn new(
         trace_dimensions: TraceDimensions,
-        gamma: F,
         ram_read_write_cycle: Vec<F>,
         ram_val_check_cycle: Vec<F>,
         registers_read_write_cycle: Vec<F>,
@@ -87,7 +59,6 @@ impl<F: Field> IncClaimReduction<F> {
             symbolic: relations::claim_reductions::increments::ClaimReduction::new(
                 trace_dimensions,
             ),
-            gamma,
             ram_read_write_cycle,
             ram_val_check_cycle,
             registers_read_write_cycle,
@@ -105,8 +76,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
     type Symbolic = relations::claim_reductions::increments::ClaimReduction;
-    type Inputs<C> = IncClaimReductionInputClaims<C>;
-    type Outputs<C> = IncClaimReductionOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -126,22 +95,15 @@ impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &IncClaimReductionInputClaims<C>,
-        outputs: Option<&IncClaimReductionOutputClaims<OpeningClaim<F>>>,
+        outputs: &IncClaimReductionOutputClaims<OpeningClaim<F>>,
+        _challenges: &IncClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::IncClaimReduction(public) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::IncClaimReduction(public) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let opening_point = outputs.ram_inc.point();
         let cycle = match public {

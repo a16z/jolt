@@ -19,6 +19,12 @@
 //! [`stage6_bytecode_read_raf_address_input`]: super::verify::stage6_bytecode_read_raf_address_input
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::bytecode::{
+    BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafAddressPhaseInputClaims,
+    BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCyclePhaseChallenges,
+    BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
+    BytecodeReadRafOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
     geometry::{
         bytecode::{
@@ -28,14 +34,12 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::bytecode::bytecode_val_stage_opening,
         dimensions::committed_address_chunks,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
-use jolt_riscv::{CircuitFlags, InstructionFlags, JoltInstructionRow, CIRCUIT_FLAGS};
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
+use jolt_riscv::{JoltInstructionRow, CIRCUIT_FLAGS};
 
 use super::verify::{
     stage6_bytecode_read_raf_expected_output, Stage6BytecodeReadRafExpectedOutputInputs,
@@ -47,81 +51,6 @@ use crate::stages::{
 };
 use crate::VerifierError;
 
-/// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
-/// intermediate, plus (committed-program mode only) the staged `BytecodeValStage`
-/// openings. In full-program mode `val_stages` is empty.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(BytecodeReadRaf)]
-pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
-    #[opening(BytecodeReadRafAddrClaim)]
-    pub intermediate: C,
-    #[opening(BytecodeValStage)]
-    pub val_stages: Vec<C>,
-}
-
-/// The prior-proof openings the address-phase input claim binds: every stage-1..5
-/// opening the `read_raf_address_phase` input `Expr` folds (plus the two PC
-/// claims). The generic `input_claim` evaluates the bind from these via that
-/// `Expr`, so the gamma-folding formula lives in one place rather than a
-/// hand-written 25-opening resolver. The `op_flags` / `lookup_table_flags`
-/// families are indexed openings (`OpFlags(CIRCUIT_FLAGS[i])` /
-/// `LookupTableFlag(i)`).
-#[derive(Clone, Debug, InputClaims)]
-pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
-    #[opening(UnexpandedPC, from = SpartanOuter)]
-    pub outer_unexpanded_pc: C,
-    #[opening(Imm, from = SpartanOuter)]
-    pub outer_imm: C,
-    #[opening(OpFlags(CIRCUIT_FLAGS), from = SpartanOuter)]
-    pub outer_op_flags: Vec<C>,
-    #[opening(PC, from = SpartanOuter)]
-    pub outer_pc: C,
-    #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
-    pub product_jump: C,
-    #[opening(InstructionFlags(InstructionFlags::Branch), from = SpartanProductVirtualization)]
-    pub product_branch: C,
-    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD), from = SpartanProductVirtualization)]
-    pub product_write_lookup_output_to_rd: C,
-    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanProductVirtualization)]
-    pub product_virtual_instruction: C,
-    #[opening(Imm, from = InstructionInputVirtualization)]
-    pub instruction_input_imm: C,
-    #[opening(UnexpandedPC, from = SpartanShift)]
-    pub shift_unexpanded_pc: C,
-    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value), from = InstructionInputVirtualization)]
-    pub left_operand_is_rs1_value: C,
-    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsPC), from = InstructionInputVirtualization)]
-    pub left_operand_is_pc: C,
-    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRs2Value), from = InstructionInputVirtualization)]
-    pub right_operand_is_rs2_value: C,
-    #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm), from = InstructionInputVirtualization)]
-    pub right_operand_is_imm: C,
-    #[opening(InstructionFlags(InstructionFlags::IsNoop), from = SpartanShift)]
-    pub is_noop: C,
-    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanShift)]
-    pub shift_virtual_instruction: C,
-    #[opening(OpFlags(CircuitFlags::IsFirstInSequence), from = SpartanShift)]
-    pub shift_is_first_in_sequence: C,
-    #[opening(PC, from = SpartanShift)]
-    pub shift_pc: C,
-    #[opening(RdWa, from = RegistersReadWriteChecking)]
-    pub rd_wa_read_write: C,
-    #[opening(Rs1Ra, from = RegistersReadWriteChecking)]
-    pub rs1_ra: C,
-    #[opening(Rs2Ra, from = RegistersReadWriteChecking)]
-    pub rs2_ra: C,
-    #[opening(RdWa, from = RegistersValEvaluation)]
-    pub rd_wa_val_evaluation: C,
-    #[opening(InstructionRafFlag, from = InstructionReadRaf)]
-    pub instruction_raf_flag: C,
-    #[opening(LookupTableFlag, from = InstructionReadRaf)]
-    pub lookup_table_flags: Vec<C>,
-}
-
 /// The input claim reads only opening *values* (the points are unused), so wrap
 /// each upstream value in a point-free clear cell.
 fn input_opening<F: Field>(value: F) -> OpeningClaim<F> {
@@ -131,120 +60,94 @@ fn input_opening<F: Field>(value: F) -> OpeningClaim<F> {
     }
 }
 
-impl<F: Field> BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(
-        stage1: &Stage1ClearOutput<F>,
-        stage2: &Stage2ClearOutput<F>,
-        stage3: &Stage3ClearOutput<F>,
-        stage4: &Stage4ClearOutput<F>,
-        stage5: &Stage5ClearOutput<F>,
-    ) -> Result<Self, VerifierError> {
-        let outer_op_flags = CIRCUIT_FLAGS
-            .iter()
-            .map(|flag| {
-                stage1
-                    .outer
-                    .claim(JoltVirtualPolynomial::OpFlags(*flag))
-                    .map(input_opening)
-                    .ok_or(VerifierError::MissingOpeningClaim {
-                        id: JoltOpeningId::virtual_polynomial(
-                            JoltVirtualPolynomial::OpFlags(*flag),
-                            JoltRelationId::SpartanOuter,
-                        ),
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let product = &stage2.output_claims.product_remainder;
-        let instruction_input = &stage3.output_claims.instruction_input;
-        let shift = &stage3.output_claims.shift;
-        let registers_read_write = &stage4.output_claims.registers_read_write;
-        let instruction_read_raf = &stage5.output_claims.instruction_read_raf;
-        let lookup_table_flags = instruction_read_raf
-            .lookup_table_flags
-            .iter()
-            .map(|claim| input_opening(claim.value))
-            .collect();
-        Ok(Self {
-            outer_unexpanded_pc: input_opening(stage1.outer.unexpanded_pc),
-            outer_imm: input_opening(stage1.outer.imm),
-            outer_op_flags,
-            outer_pc: input_opening(stage1.outer.pc),
-            product_jump: input_opening(product.jump_flag.value),
-            product_branch: input_opening(product.branch_flag.value),
-            product_write_lookup_output_to_rd: input_opening(
-                product.write_lookup_output_to_rd.value,
-            ),
-            product_virtual_instruction: input_opening(product.virtual_instruction.value),
-            instruction_input_imm: input_opening(instruction_input.imm.value),
-            shift_unexpanded_pc: input_opening(shift.unexpanded_pc.value),
-            left_operand_is_rs1_value: input_opening(instruction_input.left_operand_is_rs1.value),
-            left_operand_is_pc: input_opening(instruction_input.left_operand_is_pc.value),
-            right_operand_is_rs2_value: input_opening(instruction_input.right_operand_is_rs2.value),
-            right_operand_is_imm: input_opening(instruction_input.right_operand_is_imm.value),
-            is_noop: input_opening(shift.is_noop.value),
-            shift_virtual_instruction: input_opening(shift.is_virtual.value),
-            shift_is_first_in_sequence: input_opening(shift.is_first_in_sequence.value),
-            shift_pc: input_opening(shift.pc.value),
-            rd_wa_read_write: input_opening(registers_read_write.rd_wa.value),
-            rs1_ra: input_opening(registers_read_write.rs1_ra.value),
-            rs2_ra: input_opening(registers_read_write.rs2_ra.value),
-            rd_wa_val_evaluation: input_opening(
-                stage5.output_claims.registers_val_evaluation.rd_wa.value,
-            ),
-            instruction_raf_flag: input_opening(instruction_read_raf.instruction_raf_flag.value),
-            lookup_table_flags,
+/// Wire the prior-proof openings the address-phase input claim binds (every
+/// stage-1..5 opening folded by the `read_raf_address_phase` input `Expr`, plus
+/// the two PC claims). (Verifier-side constructor for the moved
+/// [`BytecodeReadRafAddressPhaseInputClaims`].)
+pub fn bytecode_read_raf_address_phase_inputs_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+    stage2: &Stage2ClearOutput<F>,
+    stage3: &Stage3ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+    stage5: &Stage5ClearOutput<F>,
+) -> Result<BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
+    let outer_op_flags = CIRCUIT_FLAGS
+        .iter()
+        .map(|flag| {
+            stage1
+                .outer
+                .claim(JoltVirtualPolynomial::OpFlags(*flag))
+                .map(input_opening)
+                .ok_or(VerifierError::MissingOpeningClaim {
+                    id: JoltOpeningId::virtual_polynomial(
+                        JoltVirtualPolynomial::OpFlags(*flag),
+                        JoltRelationId::SpartanOuter,
+                    ),
+                })
         })
-    }
+        .collect::<Result<Vec<_>, _>>()?;
+    let product = &stage2.output_claims.product_remainder;
+    let instruction_input = &stage3.output_claims.instruction_input;
+    let shift = &stage3.output_claims.shift;
+    let registers_read_write = &stage4.output_claims.registers_read_write;
+    let instruction_read_raf = &stage5.output_claims.instruction_read_raf;
+    let lookup_table_flags = instruction_read_raf
+        .lookup_table_flags
+        .iter()
+        .map(|claim| input_opening(claim.value))
+        .collect();
+    Ok(BytecodeReadRafAddressPhaseInputClaims {
+        outer_unexpanded_pc: input_opening(stage1.outer.unexpanded_pc),
+        outer_imm: input_opening(stage1.outer.imm),
+        outer_op_flags,
+        outer_pc: input_opening(stage1.outer.pc),
+        product_jump: input_opening(product.jump_flag.value),
+        product_branch: input_opening(product.branch_flag.value),
+        product_write_lookup_output_to_rd: input_opening(product.write_lookup_output_to_rd.value),
+        product_virtual_instruction: input_opening(product.virtual_instruction.value),
+        instruction_input_imm: input_opening(instruction_input.imm.value),
+        shift_unexpanded_pc: input_opening(shift.unexpanded_pc.value),
+        left_operand_is_rs1_value: input_opening(instruction_input.left_operand_is_rs1.value),
+        left_operand_is_pc: input_opening(instruction_input.left_operand_is_pc.value),
+        right_operand_is_rs2_value: input_opening(instruction_input.right_operand_is_rs2.value),
+        right_operand_is_imm: input_opening(instruction_input.right_operand_is_imm.value),
+        is_noop: input_opening(shift.is_noop.value),
+        shift_virtual_instruction: input_opening(shift.is_virtual.value),
+        shift_is_first_in_sequence: input_opening(shift.is_first_in_sequence.value),
+        shift_pc: input_opening(shift.pc.value),
+        rd_wa_read_write: input_opening(registers_read_write.rd_wa.value),
+        rs1_ra: input_opening(registers_read_write.rs1_ra.value),
+        rs2_ra: input_opening(registers_read_write.rs2_ra.value),
+        rd_wa_val_evaluation: input_opening(
+            stage5.output_claims.registers_val_evaluation.rd_wa.value,
+        ),
+        instruction_raf_flag: input_opening(instruction_read_raf.instruction_raf_flag.value),
+        lookup_table_flags,
+    })
 }
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     symbolic: relations::bytecode::ReadRafAddressPhase,
-    /// The bytecode read-RAF gamma and the five per-stage folding gammas
-    /// (`stageN_gammas[1]`) the input bind multiplies the stage sub-claims by; the
-    /// generic `input_claim` resolves them through [`Self::resolve_challenge`].
-    gamma: F,
-    stage_gammas: [F; 5],
     /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, else 0.
     num_val_stages: usize,
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
-    pub fn new(
-        dimensions: BytecodeReadRafDimensions,
-        gamma: F,
-        stage_gammas: [F; 5],
-        num_val_stages: usize,
-    ) -> Self {
+    pub fn new(dimensions: BytecodeReadRafDimensions, num_val_stages: usize) -> Self {
         Self {
             symbolic: relations::bytecode::ReadRafAddressPhase::new(dimensions),
-            gamma,
-            stage_gammas,
             num_val_stages,
+            _field: core::marker::PhantomData,
         }
     }
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     type Symbolic = relations::bytecode::ReadRafAddressPhase;
-    type Inputs<C> = BytecodeReadRafAddressPhaseInputClaims<C>;
-    type Outputs<C> = BytecodeReadRafAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        let JoltChallengeId::BytecodeReadRaf(challenge) = id else {
-            return Err(VerifierError::MissingStageClaimChallenge { id: *id });
-        };
-        Ok(match challenge {
-            BytecodeReadRafChallenge::Gamma => self.gamma,
-            BytecodeReadRafChallenge::Stage1Gamma => self.stage_gammas[0],
-            BytecodeReadRafChallenge::Stage2Gamma => self.stage_gammas[1],
-            BytecodeReadRafChallenge::Stage3Gamma => self.stage_gammas[2],
-            BytecodeReadRafChallenge::Stage4Gamma => self.stage_gammas[3],
-            BytecodeReadRafChallenge::Stage5Gamma => self.stage_gammas[4],
-        })
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -262,34 +165,12 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cycle phase (stage 6b) — full-program mode
-// ---------------------------------------------------------------------------
-
-/// The cycle-phase produced openings: the per-chunk committed `BytecodeRa` claims,
-/// all sharing the `r_address ++ r_cycle` opening point.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(BytecodeReadRaf)]
-pub struct BytecodeReadRafOutputClaims<C> {
-    #[opening(committed = BytecodeRa)]
-    pub bytecode_ra: Vec<C>,
-}
-
 /// The `BytecodeReadRafAddrClaim` intermediate consumed from the address phase.
-#[derive(Clone, Debug, InputClaims)]
-pub struct BytecodeReadRafInputClaims<C> {
-    #[opening(BytecodeReadRafAddrClaim, from = BytecodeReadRaf)]
-    pub address_phase: C,
-}
-
-impl<F: Field> BytecodeReadRafInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(address_phase: OpeningClaim<F>) -> Self {
-        Self { address_phase }
-    }
+/// (Verifier-side constructor for the moved [`BytecodeReadRafInputClaims`].)
+pub fn bytecode_read_raf_inputs_from_upstream<F: Field>(
+    address_phase: OpeningClaim<F>,
+) -> BytecodeReadRafInputClaims<OpeningClaim<F>> {
+    BytecodeReadRafInputClaims { address_phase }
 }
 
 /// Construction inputs for the full-program bytecode cycle relation. The bytecode
@@ -298,7 +179,6 @@ impl<F: Field> BytecodeReadRafInputClaims<OpeningClaim<F>> {
 /// `stage_gammas` are indexed by stage (1..=5) in order.
 pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
     pub dimensions: BytecodeReadRafDimensions,
-    pub gamma: F,
     pub bytecode: &'a [JoltInstructionRow],
     pub r_address: Vec<F>,
     pub stage_cycle_points: [Vec<F>; 5],
@@ -354,8 +234,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
     type Symbolic = relations::bytecode::ReadRafCyclePhase;
-    type Inputs<C> = BytecodeReadRafInputClaims<C>;
-    type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -375,20 +253,17 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
         Ok(BytecodeReadRafOutputClaims { bytecode_ra })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
-                Ok(self.inputs.gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn expected_output<C: GetPoint<F>>(
         &self,
         _inputs: &BytecodeReadRafInputClaims<C>,
         outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
+        let gamma = challenges
+            .resolve_challenge(&JoltChallengeId::from(BytecodeReadRafChallenge::Gamma))
+            .ok_or(VerifierError::MissingStageClaimChallenge {
+                id: JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
+            })?;
         let opening_point = outputs
             .bytecode_ra
             .first()
@@ -426,7 +301,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
             dimensions: self.inputs.dimensions,
             public_values: &public_values,
             bytecode_ra: &bytecode_ra,
-            gamma: self.inputs.gamma,
+            gamma,
         })
     }
 }
@@ -434,7 +309,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
 /// Construction inputs for the committed-program bytecode cycle relation.
 pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
     pub dimensions: BytecodeReadRafDimensions,
-    pub gamma: F,
     pub r_address: Vec<F>,
     pub stage_cycle_points: [Vec<F>; 5],
     pub entry_bytecode_index: usize,
@@ -454,7 +328,6 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 pub struct BytecodeReadRafCommitted<F: Field> {
     symbolic: relations::bytecode::ReadRafCyclePhaseCommitted,
     dimensions: BytecodeReadRafDimensions,
-    gamma: F,
     r_address: Vec<F>,
     stage_cycle_points: [Vec<F>; 5],
     entry_bytecode_index: usize,
@@ -467,7 +340,6 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
         Self {
             symbolic: relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
             dimensions: inputs.dimensions,
-            gamma: inputs.gamma,
             r_address: inputs.r_address,
             stage_cycle_points: inputs.stage_cycle_points,
             entry_bytecode_index: inputs.entry_bytecode_index,
@@ -486,8 +358,6 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
     type Symbolic = relations::bytecode::ReadRafCyclePhaseCommitted;
-    type Inputs<C> = BytecodeReadRafInputClaims<C>;
-    type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -506,17 +376,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         Ok(BytecodeReadRafOutputClaims { bytecode_ra })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn expected_output<C: GetPoint<F>>(
         &self,
         _inputs: &BytecodeReadRafInputClaims<C>,
         outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening_point = outputs
             .bytecode_ra
@@ -557,13 +421,74 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                 }
                 Err(VerifierError::MissingOpeningClaim { id: *id })
             },
-            |id| self.resolve_challenge(id),
+            |id| {
+                challenges
+                    .resolve_challenge(id)
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+            },
             |id| match id {
-                JoltPublicId::BytecodeReadRaf(public_id) => public_values
+                JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                     .value(*public_id)
-                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-                _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
             },
         )
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+    use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+    use jolt_riscv::NUM_CIRCUIT_FLAGS;
+    use jolt_transcript::Transcript;
+
+    // The address phase has the only multi-field `Challenges` (gamma + five stage
+    // gammas), so it exercises that the default draws one `challenge_scalar` per
+    // field in declaration order. Each inline draw is a `challenge_scalar_powers(..)`
+    // whose single squeeze's degree-1 power equals that squeezed scalar, so the
+    // default's six `challenge_scalar` squeezes reproduce the inline byte stream
+    // (six squeezes) and the six stored values. The cycle and committed variants are
+    // single-field and use the same default path.
+    #[test]
+    fn default_draw_challenges_matches_inline_bytecode_address_gammas() {
+        let relation =
+            BytecodeReadRafAddressPhase::<Fr>::new(BytecodeReadRafDimensions::new(3, 4, 2), 0);
+
+        // Inline (stage6/verify.rs L214-221): six `challenge_scalar_powers(..)`,
+        // each contributing its degree-1 power.
+        let (inline_events, inline_gammas) = record(|t| {
+            [
+                t.challenge_scalar_powers(8)[1],
+                t.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS)[1],
+                t.challenge_scalar_powers(4)[1],
+                t.challenge_scalar_powers(9)[1],
+                t.challenge_scalar_powers(3)[1],
+                t.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT)[1],
+            ]
+        });
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        // Six squeezes in the same order, byte-for-byte.
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(
+            draw_events,
+            (1..=6).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+        );
+        // Each field stores the corresponding inline degree-1 power.
+        assert_eq!(
+            [
+                challenges.gamma,
+                challenges.stage1_gamma,
+                challenges.stage2_gamma,
+                challenges.stage3_gamma,
+                challenges.stage4_gamma,
+                challenges.stage5_gamma,
+            ],
+            inline_gammas,
+        );
     }
 }

@@ -10,7 +10,7 @@
 
 use jolt_field::Field;
 
-use super::super::dimensions::{CommitmentMatrixShape, JoltSumcheckSpec, TracePolynomialOrder};
+use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
 
 /// Degree bound shared by all two-phase precommitted reduction sumchecks.
@@ -55,14 +55,6 @@ impl PrecommittedReductionDimensions {
     /// cycle-phase handoff.
     pub const fn has_address_phase(self) -> bool {
         self.has_address_phase
-    }
-
-    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.cycle_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
-    }
-
-    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.address_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
     }
 }
 

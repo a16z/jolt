@@ -9,10 +9,10 @@
 
 use jolt_field::{Field, RingCore};
 
-use crate::{opening, public};
+use crate::{derived, opening};
 
 use super::super::super::{
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
+    JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
 };
 use super::super::dimensions::{log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder};
@@ -152,7 +152,7 @@ pub(crate) fn final_output_expr<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
-    public(JoltPublicId::from(
+    derived(JoltDerivedId::from(
         ProgramImageClaimReductionPublic::FinalScale,
     )) * opening(final_program_image_opening())
 }

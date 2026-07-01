@@ -28,7 +28,7 @@ where
     let instruction_point = input
         .stage5
         .batch_consistency
-        .try_instance_point(instruction_claims.spec().rounds)
+        .try_instance_point(instruction_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionReadRaf, error))?;
     let instruction_opening = formula_dimensions
         .instruction_read_raf
@@ -37,11 +37,7 @@ where
     let stage2_instruction_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(
-            jolt_claims::protocols::jolt::TraceDimensions::new(log_t)
-                .sumcheck(2)
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let stage2_instruction_opening = stage2_instruction_point
         .iter()
@@ -60,19 +56,19 @@ where
         input.stage5.challenges.instruction_gamma * input.stage5.challenges.instruction_gamma;
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
         values.public(
-            JoltPublicId::from(InstructionReadRafPublic::EqTableValue(table.index())),
+            JoltDerivedId::from(InstructionReadRafPublic::EqTableValue(table.index())),
             eq_reduction
                 * table.evaluate_mle::<PCS::Field, PCS::Field>(&instruction_opening.r_address),
         )?;
     }
     values.public(
-        JoltPublicId::from(InstructionReadRafPublic::EqRafConstant),
+        JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
         eq_reduction
             * (input.stage5.challenges.instruction_gamma * left_operand_eval
                 + instruction_gamma_squared * right_operand_eval),
     )?;
     values.public(
-        JoltPublicId::from(InstructionReadRafPublic::EqRafFlag),
+        JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
         eq_reduction
             * (instruction_gamma_squared * identity_eval
                 - input.stage5.challenges.instruction_gamma * left_operand_eval
@@ -86,7 +82,7 @@ where
     let ram_point = input
         .stage5
         .batch_consistency
-        .try_instance_point(ram_claims.spec().rounds)
+        .try_instance_point(ram_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaClaimReduction, error))?;
     let ram_cycle = trace_dimensions
         .cycle_opening_point(&ram_point)
@@ -95,17 +91,17 @@ where
     let ram_read_write_cycle = &input.stage2.output_points.ram_read_write_point()[log_k..];
     let ram_val_cycle = &input.stage4.output_points.ram_val_check_point()[log_k..];
     values.public(
-        JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
+        JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleRaf),
         try_eq_mle(&ram_cycle, ram_raf_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
     values.public(
-        JoltPublicId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
+        JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
         try_eq_mle(&ram_cycle, ram_read_write_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
     values.public(
-        JoltPublicId::from(RamRaClaimReductionPublic::EqCycleValCheck),
+        JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleValCheck),
         try_eq_mle(&ram_cycle, ram_val_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?,
     )?;
@@ -113,7 +109,7 @@ where
     let registers_point = input
         .stage5
         .batch_consistency
-        .try_instance_point(registers_claims.spec().rounds)
+        .try_instance_point(registers_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_cycle = trace_dimensions
         .cycle_opening_point(&registers_point)
@@ -121,7 +117,7 @@ where
     let registers_read_write_cycle =
         &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
     values.public(
-        JoltPublicId::from(RegistersValEvaluationPublic::LtCycle),
+        JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle),
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 
@@ -136,25 +132,32 @@ where
         instruction_output_openings.instruction_raf_flag,
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::ra_claim_reduction_output_openings().to_vec(),
+        relations::ram::RamRaClaimReductionOutputClaims::<PCS::Field> {
+            ram_ra: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        registers::val_evaluation_output_openings().to_vec(),
+        relations::registers::RegistersValEvaluationOutputClaims::<PCS::Field> {
+            rd_inc: PCS::Field::zero(),
+            rd_wa: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
 
     let batch_claims = [
         (
-            instruction_claims.spec().rounds,
+            instruction_claims.rounds(),
             map_jolt_expr(instruction_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(instruction_claims.output_expression::<PCS::Field>()),
         ),
         (
-            ram_claims.spec().rounds,
+            ram_claims.rounds(),
             map_jolt_expr(ram_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(ram_claims.output_expression::<PCS::Field>()),
         ),
         (
-            registers_claims.spec().rounds,
+            registers_claims.rounds(),
             map_jolt_expr(registers_claims.input_expression::<PCS::Field>()),
             map_jolt_expr(registers_claims.output_expression::<PCS::Field>()),
         ),
@@ -191,7 +194,7 @@ where
             input.stage5.batch_consistency.max_num_vars,
             input.stage5.batch_consistency.max_degree,
         ),
-        domain_spec(instruction_claims.spec()),
+        domain_spec(instruction_claims.domain()),
         input.stage5.batch_consistency.consistency.clone(),
         &input.stage5.batch_output_claims,
         values,

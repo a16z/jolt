@@ -1,17 +1,34 @@
-//! Bytecode read-RAF symbolic sumcheck relations.
+//! The full bytecode read-RAF symbolic sumcheck (monolith).
 
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::geometry::bytecode::{
-    bytecode_read_raf_address_phase_opening, pc_spartan_outer, pc_spartan_shift,
-    read_raf_cycle_output, read_raf_cycle_output_committed, stage1_claim, stage2_claim,
+    pc_spartan_outer, pc_spartan_shift, read_raf_cycle_output, stage1_claim, stage2_claim,
     stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
 };
 use crate::protocols::jolt::{
-    BytecodeReadRafChallenge, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltRelationId, JoltSumcheckSpec,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
+    JoltRelationId,
 };
-use crate::{challenge, opening, SymbolicSumcheck};
+use crate::{challenge, opening, SumcheckChallenges, SymbolicSumcheck};
+
+/// Fiat-Shamir challenges drawn by the full bytecode read-RAF sumcheck: the
+/// batching `gamma` plus the five per-stage gammas folding the staged claims.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct BytecodeReadRafChallenges<F> {
+    #[challenge(BytecodeReadRafChallenge::Gamma)]
+    pub gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage1Gamma)]
+    pub stage1_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage2Gamma)]
+    pub stage2_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage3Gamma)]
+    pub stage3_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage4Gamma)]
+    pub stage4_gamma: F,
+    #[challenge(BytecodeReadRafChallenge::Stage5Gamma)]
+    pub stage5_gamma: F,
+}
 
 /// The full bytecode read-RAF sumcheck: folds the five staged claims plus the
 /// Spartan outer/shift PC openings against the bytecode-table cycle output.
@@ -22,9 +39,12 @@ pub struct ReadRaf {
 impl SymbolicSumcheck for ReadRaf {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
+    type Challenges<F> = BytecodeReadRafChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = crate::NoOutputs<C>;
 
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }
@@ -34,8 +54,12 @@ impl SymbolicSumcheck for ReadRaf {
         JoltRelationId::BytecodeReadRaf
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.sumcheck_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        self.shape.num_committed_ra_polys() + 1
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -53,118 +77,6 @@ impl SymbolicSumcheck for ReadRaf {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         read_raf_cycle_output(self.shape)
-    }
-}
-
-/// The address phase of the bytecode read-RAF sumcheck: the same folded input
-/// claim, reduced to the staged address-phase opening.
-pub struct ReadRafAddressPhase {
-    shape: BytecodeReadRafDimensions,
-}
-
-impl SymbolicSumcheck for ReadRafAddressPhase {
-    type RelationId = JoltRelationId;
-    type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
-    type ChallengeId = JoltChallengeId;
-    type Shape = BytecodeReadRafDimensions;
-
-    fn new(shape: BytecodeReadRafDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::BytecodeReadRaf
-    }
-
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.address_sumcheck()
-    }
-
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(BytecodeReadRafChallenge::Gamma);
-
-        gamma.clone().pow(7)
-            + stage1_claim()
-            + gamma.clone() * stage2_claim()
-            + gamma.clone().pow(2) * stage3_claim()
-            + gamma.clone().pow(3) * stage4_claim()
-            + gamma.clone().pow(4) * stage5_claim::<F>()
-            + gamma.clone().pow(5) * opening(pc_spartan_outer())
-            + gamma.pow(6) * opening(pc_spartan_shift())
-    }
-
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        opening(bytecode_read_raf_address_phase_opening())
-    }
-}
-
-/// The cycle phase of the bytecode read-RAF sumcheck: starts from the staged
-/// address-phase opening and reduces to the bytecode-table cycle output.
-pub struct ReadRafCyclePhase {
-    shape: BytecodeReadRafDimensions,
-}
-
-impl SymbolicSumcheck for ReadRafCyclePhase {
-    type RelationId = JoltRelationId;
-    type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
-    type ChallengeId = JoltChallengeId;
-    type Shape = BytecodeReadRafDimensions;
-
-    fn new(shape: BytecodeReadRafDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::BytecodeReadRaf
-    }
-
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.cycle_sumcheck()
-    }
-
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        opening(bytecode_read_raf_address_phase_opening())
-    }
-
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        read_raf_cycle_output(self.shape)
-    }
-}
-
-/// Committed-program cycle phase: the per-stage Val factors come from the
-/// `BytecodeValStage(s)` openings staged at the end of the address phase
-/// instead of public bytecode-table evaluations.
-pub struct ReadRafCyclePhaseCommitted {
-    shape: BytecodeReadRafDimensions,
-}
-
-impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
-    type RelationId = JoltRelationId;
-    type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
-    type ChallengeId = JoltChallengeId;
-    type Shape = BytecodeReadRafDimensions;
-
-    fn new(shape: BytecodeReadRafDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::BytecodeReadRaf
-    }
-
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.cycle_sumcheck()
-    }
-
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        opening(bytecode_read_raf_address_phase_opening())
-    }
-
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        read_raf_cycle_output_committed(self.shape)
     }
 }
 
@@ -348,16 +260,16 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::StageValue(index)) => {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::StageValue(index)) => {
                     stage_values[index]
                 }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => {
                     spartan_outer_raf
                 }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => {
                     spartan_shift_raf
                 }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
                 _ => zero,
             },
         );
@@ -381,65 +293,58 @@ mod tests {
     fn read_raf_symbolic_matches_dependencies() {
         let relation = ReadRaf::new(dimensions(2));
         assert_eq!(ReadRaf::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.spec(), dimensions(2).sumcheck());
+        assert_eq!(relation.rounds(), dimensions(2).sumcheck_rounds());
+        assert_eq!(
+            relation.degree(),
+            dimensions(2).num_committed_ra_polys() + 1
+        );
         assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(0)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(1)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(2)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(3)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(4)),
-                JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-                JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-                JoltPublicId::from(BytecodeReadRafPublic::Entry),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(0)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(1)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(2)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(3)),
+                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(4)),
+                JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
+                JoltDerivedId::from(BytecodeReadRafPublic::SpartanShiftRaf),
+                JoltDerivedId::from(BytecodeReadRafPublic::Entry),
             ]
         );
     }
 
+    /// Every staged gamma the relation draws (`stage_gammas`) must resolve to a
+    /// distinct field of the `Challenges` struct. A missing or mismatched
+    /// `#[challenge(..)]` among the six fields would surface here as a `None` or a
+    /// wrong value.
     #[test]
-    fn read_raf_address_phase_symbolic_matches_dependencies() {
-        let relation = ReadRafAddressPhase::new(dimensions(2));
-        assert_eq!(ReadRafAddressPhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.spec(), dimensions(2).address_sumcheck());
-        assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![bytecode_read_raf_address_phase_opening()]
-        );
-    }
-
-    #[test]
-    fn read_raf_cycle_phase_symbolic_matches_dependencies() {
-        let relation = ReadRafCyclePhase::new(dimensions(2));
-        assert_eq!(ReadRafCyclePhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.spec(), dimensions(2).cycle_sumcheck());
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![bytecode_read_raf_address_phase_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BytecodeReadRafChallenge::Gamma)]
-        );
-    }
-
-    #[test]
-    fn read_raf_cycle_phase_committed_symbolic_matches_dependencies() {
-        let relation = ReadRafCyclePhaseCommitted::new(dimensions(2));
-        assert_eq!(
-            ReadRafCyclePhaseCommitted::id(),
-            JoltRelationId::BytecodeReadRaf
-        );
-        assert_eq!(relation.spec(), dimensions(2).cycle_sumcheck());
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![bytecode_read_raf_address_phase_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BytecodeReadRafChallenge::Gamma)]
-        );
+    fn challenges_resolve_every_stage_gamma() {
+        let challenges = BytecodeReadRafChallenges {
+            gamma: Fr::from_u64(2),
+            stage1_gamma: Fr::from_u64(3),
+            stage2_gamma: Fr::from_u64(5),
+            stage3_gamma: Fr::from_u64(7),
+            stage4_gamma: Fr::from_u64(11),
+            stage5_gamma: Fr::from_u64(13),
+        };
+        let expected = [
+            (BytecodeReadRafChallenge::Gamma, Fr::from_u64(2)),
+            (BytecodeReadRafChallenge::Stage1Gamma, Fr::from_u64(3)),
+            (BytecodeReadRafChallenge::Stage2Gamma, Fr::from_u64(5)),
+            (BytecodeReadRafChallenge::Stage3Gamma, Fr::from_u64(7)),
+            (BytecodeReadRafChallenge::Stage4Gamma, Fr::from_u64(11)),
+            (BytecodeReadRafChallenge::Stage5Gamma, Fr::from_u64(13)),
+        ];
+        for (id, value) in expected {
+            assert_eq!(
+                challenges.resolve_challenge(&JoltChallengeId::from(id)),
+                Some(value),
+            );
+        }
+        // Each id the relation declares it draws resolves under the struct.
+        for id in stage_gammas() {
+            assert!(challenges.resolve_challenge(&id).is_some());
+        }
     }
 }

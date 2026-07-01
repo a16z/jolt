@@ -12,16 +12,14 @@ where
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
-    let uniskip_sumcheck = JoltSumcheckSpec::centered_integer(
-        SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
-        1,
-        SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-    );
+    let uniskip_rounds = 1;
+    let uniskip_degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
+    let uniskip_domain = JoltSumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
     builder = add_stage(
         builder,
         "stage1.outer_uniskip",
-        SumcheckStatement::new(uniskip_sumcheck.rounds, uniskip_sumcheck.degree),
-        domain_spec(uniskip_sumcheck),
+        SumcheckStatement::new(uniskip_rounds, uniskip_degree),
+        domain_spec(uniskip_domain),
         input.stage1.uniskip_consistency.clone(),
         &input.stage1.uniskip_output_claims,
         values,
@@ -32,10 +30,14 @@ where
     )?;
 
     let opening_order = spartan_outer_opening_order(&dimensions);
+    // The remainder sumcheck point is opening-derived: for the singleton remainder
+    // batch the committed round challenges are the raw (un-reversed) point that the
+    // clear path obtains from the bound remainder reduction.
+    let remainder_challenges = input.stage1.remainder_consistency.challenges();
     let remainder_formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-        tau: &input.stage1.public.tau,
-        uniskip: input.stage1.public.uniskip_challenge,
-        remainder: &input.stage1.public.remainder_challenges,
+        tau: &input.stage1.challenges.tau,
+        uniskip: input.stage1.challenges.uniskip_challenge,
+        remainder: &remainder_challenges,
     })
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::SpartanOuter,
@@ -45,7 +47,8 @@ where
         values.public(VerifierPublicId::SpartanOuter(id), value)?;
     }
 
-    let remainder_spec = JoltSumcheckSpec::boolean(1 + log_t, SPARTAN_OUTER_REMAINDER_DEGREE);
+    let remainder_rounds = 1 + log_t;
+    let remainder_domain = JoltSumcheckDomain::BooleanHypercube;
     let [remainder_batching_coefficient] = input
         .stage1
         .remainder_consistency
@@ -59,9 +62,7 @@ where
     let input_claim = scale_expr(
         opening(VerifierOpeningId::Jolt(outer_uniskip_opening())),
         *remainder_batching_coefficient
-            * PCS::Field::pow2(
-                input.stage1.remainder_consistency.max_num_vars - remainder_spec.rounds,
-            ),
+            * PCS::Field::pow2(input.stage1.remainder_consistency.max_num_vars - remainder_rounds),
     );
     let output_claim = scale_expr(
         stage1_spartan_outer_output_expr(&opening_order),
@@ -74,7 +75,7 @@ where
             input.stage1.remainder_consistency.max_num_vars,
             input.stage1.remainder_consistency.max_degree,
         ),
-        domain_spec(remainder_spec),
+        domain_spec(remainder_domain),
         input.stage1.remainder_consistency.consistency.clone(),
         &input.stage1.remainder_output_claims,
         values,
@@ -95,7 +96,7 @@ fn stage1_spartan_outer_output_expr<F: Field>(
     for left in 0..openings.len() {
         for right in 0..openings.len() {
             output = output
-                + public(VerifierPublicId::SpartanOuter(
+                + derived(VerifierPublicId::SpartanOuter(
                     JoltSpartanOuterPublic::QuadraticCoefficient { left, right },
                 )) * opening(stage1_spartan_outer_opening_id(openings[left]))
                     * opening(stage1_spartan_outer_opening_id(openings[right]));
@@ -103,12 +104,12 @@ fn stage1_spartan_outer_output_expr<F: Field>(
     }
     for (index, opening_id) in openings.iter().copied().enumerate() {
         output = output
-            + public(VerifierPublicId::SpartanOuter(
+            + derived(VerifierPublicId::SpartanOuter(
                 JoltSpartanOuterPublic::LinearCoefficient(index),
             )) * opening(stage1_spartan_outer_opening_id(opening_id));
     }
     output
-        + public(VerifierPublicId::SpartanOuter(
+        + derived(VerifierPublicId::SpartanOuter(
             JoltSpartanOuterPublic::ConstantCoefficient,
         ))
 }

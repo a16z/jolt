@@ -23,12 +23,12 @@ where
     // baked as `Term` constants in the expression); the advice / program-image
     // openings they weight remain hidden witnesses.
     values.public(
-        JoltPublicId::from(RamValCheckPublic::InitEval),
+        JoltDerivedId::from(RamValCheckPublic::InitEval),
         ram_init.public_eval,
     )?;
     for contribution in &ram_init.contributions {
         values.public(
-            JoltPublicId::from(contribution.selector),
+            JoltDerivedId::from(contribution.selector),
             contribution.neg_selector,
         )?;
     }
@@ -51,7 +51,7 @@ where
     let registers_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(registers_claims.spec().rounds)
+        .try_instance_point(registers_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_opening = register_dimensions
         .read_write_opening_point(&registers_point)
@@ -59,11 +59,7 @@ where
     let registers_reduction_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(
-            jolt_claims::protocols::jolt::TraceDimensions::new(log_t)
-                .sumcheck(3)
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_reduction_opening = registers_reduction_point
         .iter()
@@ -71,7 +67,7 @@ where
         .copied()
         .collect::<Vec<_>>();
     values.public(
-        JoltPublicId::from(RegistersReadWritePublic::EqCycle),
+        JoltDerivedId::from(RegistersReadWritePublic::EqCycle),
         try_eq_mle(&registers_reduction_opening, &registers_opening.r_cycle)
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
@@ -83,7 +79,7 @@ where
     let ram_val_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(ram_val_claims.spec().rounds)
+        .try_instance_point(ram_val_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamValCheck, error))?;
     let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
     let r_cycle = input
@@ -96,7 +92,7 @@ where
             reason: "RAM read-write opening point is shorter than the RAM address".to_string(),
         })?;
     values.public(
-        JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
+        JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
         LtPolynomial::evaluate(&ram_val_cycle, r_cycle)
             + input.stage4.challenges.ram_val_check_gamma,
     )?;
@@ -118,19 +114,30 @@ where
         ));
     }
     output_ids.extend(map_jolt_opening_ids(
-        registers::read_write_checking_output_openings().to_vec(),
+        relations::registers::RegistersReadWriteOutputClaims::<PCS::Field> {
+            registers_val: PCS::Field::zero(),
+            rs1_ra: PCS::Field::zero(),
+            rs2_ra: PCS::Field::zero(),
+            rd_wa: PCS::Field::zero(),
+            rd_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::val_check_output_openings().to_vec(),
+        relations::ram::RamValCheckOutputClaims::<PCS::Field> {
+            ram_ra: PCS::Field::zero(),
+            ram_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
 
     let mut batch_claims = vec![(
-        registers_claims.spec().rounds,
+        registers_claims.rounds(),
         map_jolt_expr(registers_claims.input_expression::<PCS::Field>()),
         map_jolt_expr(registers_claims.output_expression::<PCS::Field>()),
     )];
     batch_claims.push((
-        ram_val_claims.spec().rounds,
+        ram_val_claims.rounds(),
         map_jolt_expr(ram_val_claims.input_expression::<PCS::Field>()),
         map_jolt_expr(ram_val_claims.output_expression::<PCS::Field>()),
     ));
@@ -167,7 +174,7 @@ where
             input.stage4.batch_consistency.max_num_vars,
             input.stage4.batch_consistency.max_degree,
         ),
-        domain_spec(registers_claims.spec()),
+        domain_spec(registers_claims.domain()),
         input.stage4.batch_consistency.consistency.clone(),
         &input.stage4.batch_output_claims,
         values,

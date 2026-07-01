@@ -11,59 +11,25 @@
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::booleanity::{
+    BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims,
+    BooleanityCyclePhaseChallenges, BooleanityInputClaims, BooleanityOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
-    geometry::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
-    JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId,
+    geometry::booleanity::BooleanityDimensions, BooleanityPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
 
-// ---------------------------------------------------------------------------
-// Address phase (stage 6a)
-// ---------------------------------------------------------------------------
-
-/// The staged `BooleanityAddrClaim` intermediate produced by the address phase
-/// and consumed by the cycle phase.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(Booleanity)]
-pub struct BooleanityAddressPhaseOutputClaims<C> {
-    #[opening(BooleanityAddrClaim)]
-    pub intermediate: C,
-}
-
 /// The address phase consumes no openings (its input claim is the constant zero).
-pub struct BooleanityAddressPhaseInputClaims<C> {
-    _cell: PhantomData<C>,
-}
-
-impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
-    fn default() -> Self {
-        Self { _cell: PhantomData }
-    }
-}
-
-impl<F: Field> BooleanityAddressPhaseInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream() -> Self {
-        Self::default()
-    }
-}
-
-impl<F: Field> crate::stages::relations::InputClaims<F>
-    for BooleanityAddressPhaseInputClaims<OpeningClaim<F>>
-{
-    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
-        None
-    }
+/// (Verifier-side constructor for the moved [`BooleanityAddressPhaseInputClaims`].)
+pub fn booleanity_address_phase_inputs_from_upstream<F: Field>(
+) -> BooleanityAddressPhaseInputClaims<OpeningClaim<F>> {
+    BooleanityAddressPhaseInputClaims::default()
 }
 
 pub struct BooleanityAddressPhase<F: Field> {
@@ -82,8 +48,6 @@ impl<F: Field> BooleanityAddressPhase<F> {
 
 impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     type Symbolic = relations::booleanity::BooleanityAddressPhase;
-    type Inputs<C> = BooleanityAddressPhaseInputClaims<C>;
-    type Outputs<C> = BooleanityAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -102,44 +66,17 @@ impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cycle phase (stage 6b)
-// ---------------------------------------------------------------------------
-
-/// The committed per-family `Ra` openings produced by the cycle phase; every
-/// opening shares the single booleanity opening point (`r_address ++ r_cycle`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(Booleanity)]
-pub struct BooleanityOutputClaims<C> {
-    #[opening(committed = InstructionRa)]
-    pub instruction_ra: Vec<C>,
-    #[opening(committed = BytecodeRa)]
-    pub bytecode_ra: Vec<C>,
-    #[opening(committed = RamRa)]
-    pub ram_ra: Vec<C>,
-}
-
 /// The `BooleanityAddrClaim` intermediate consumed from the address phase.
-#[derive(Clone, Debug, InputClaims)]
-pub struct BooleanityInputClaims<C> {
-    #[opening(BooleanityAddrClaim, from = Booleanity)]
-    pub address_phase: C,
-}
-
-impl<F: Field> BooleanityInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(address_phase: OpeningClaim<F>) -> Self {
-        Self { address_phase }
-    }
+/// (Verifier-side constructor for the moved [`BooleanityInputClaims`].)
+pub fn booleanity_inputs_from_upstream<F: Field>(
+    address_phase: OpeningClaim<F>,
+) -> BooleanityInputClaims<OpeningClaim<F>> {
+    BooleanityInputClaims { address_phase }
 }
 
 pub struct Booleanity<F: Field> {
     symbolic: relations::booleanity::BooleanityCyclePhase,
     dimensions: BooleanityDimensions,
-    gamma: F,
     /// The address opening prefix from the stage-6a phase.
     r_address: Vec<F>,
     /// The reference address/cycle the `EqAddressCycle` public compares against.
@@ -150,7 +87,6 @@ pub struct Booleanity<F: Field> {
 impl<F: Field> Booleanity<F> {
     pub fn new(
         dimensions: BooleanityDimensions,
-        gamma: F,
         r_address: Vec<F>,
         reference_address: Vec<F>,
         reference_cycle: Vec<F>,
@@ -158,7 +94,6 @@ impl<F: Field> Booleanity<F> {
         Self {
             symbolic: relations::booleanity::BooleanityCyclePhase::new(dimensions),
             dimensions,
-            gamma,
             r_address,
             reference_address,
             reference_cycle,
@@ -175,8 +110,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
     type Symbolic = relations::booleanity::BooleanityCyclePhase;
-    type Inputs<C> = BooleanityInputClaims<C>;
-    type Outputs<C> = BooleanityOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -197,22 +130,15 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::Booleanity(BooleanityChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &BooleanityInputClaims<C>,
-        outputs: Option<&BooleanityOutputClaims<OpeningClaim<F>>>,
+        outputs: &BooleanityOutputClaims<OpeningClaim<F>>,
+        _challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         // Recover the raw two-phase sumcheck point from a produced opening point
         // (`r_address ++ r_cycle`): each half is the reverse of its phase's
@@ -241,5 +167,37 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
             .copied()
             .collect::<Vec<_>>();
         try_eq_mle(&full_sumcheck_point, &reference_eq_point).map_err(public_input_failed)
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+    use jolt_field::Fr;
+    use jolt_transcript::Transcript;
+
+    // Booleanity inherits the default `draw_challenges` (one `challenge_scalar`): the
+    // inline draw is a single `challenge()`. The historical zero-gamma re-roll was
+    // dropped — a real Fiat-Shamir transcript never yields zero, and nothing else
+    // checks for it.
+    #[test]
+    fn default_draw_challenges_matches_inline_booleanity_gamma() {
+        let layout = JoltRaPolynomialLayout::new(1, 1, 1).unwrap();
+        let relation = Booleanity::<Fr>::new(
+            BooleanityDimensions::new(layout, 3, 2),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let (inline_events, inline_gamma) = record(|t| t.challenge());
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
+        assert_eq!(challenges.gamma, inline_gamma);
     }
 }

@@ -10,11 +10,8 @@ use jolt_claims::protocols::jolt::{
             advice, bytecode as bytecode_claim_reduction, increments,
             instruction as instruction_claim_reduction, program_image,
         },
-        instruction, ram, registers,
-        spartan::{
-            outer_opening, outer_uniskip_opening, product_remainder_output_openings,
-            product_uniskip_opening, shift_output_openings,
-        },
+        instruction, ram, registers, spartan,
+        spartan::{outer_opening, outer_uniskip_opening, product_uniskip_opening},
     },
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
@@ -135,44 +132,43 @@ fn spartan_outer_claims_from_native<F: Field>(
 fn stage2_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
 ) -> Result<Stage2OutputClaims<F>, VerifierError> {
-    let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
-    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
-        product_remainder_output_openings();
-    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
-        instruction_claim_reduction::claim_reduction_output_openings();
-    let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
-    let [ram_val_final] = ram::output_check_output_openings();
-
     Ok(Stage2OutputClaims {
         product_uniskip_output_claim: claims.require(product_uniskip_opening())?,
         batch_outputs: Stage2BatchOutputClaims {
             ram_read_write: RamReadWriteOutputClaims {
-                val: claims.get_or_zero(ram_val),
-                ra: claims.get_or_zero(ram_ra),
-                inc: claims.get_or_zero(ram_inc),
+                val: claims.get_or_zero(ram::ram_val()),
+                ra: claims.get_or_zero(ram::ram_ra()),
+                inc: claims.get_or_zero(ram::ram_inc()),
             },
             product_remainder: ProductRemainderOutputClaims {
-                left_instruction_input: claims.get_or_zero(product_left_instruction_input),
-                right_instruction_input: claims.get_or_zero(product_right_instruction_input),
-                jump_flag: claims.get_or_zero(product_jump_flag),
-                write_lookup_output_to_rd: claims.get_or_zero(product_write_lookup_output_to_rd),
-                lookup_output: claims.get_or_zero(product_lookup_output),
-                branch_flag: claims.get_or_zero(product_branch_flag),
-                next_is_noop: claims.get_or_zero(product_next_is_noop),
-                virtual_instruction: claims.get_or_zero(product_virtual_instruction),
+                left_instruction_input: claims
+                    .get_or_zero(spartan::left_instruction_input_product()),
+                right_instruction_input: claims
+                    .get_or_zero(spartan::right_instruction_input_product()),
+                jump_flag: claims.get_or_zero(spartan::jump_flag_product()),
+                write_lookup_output_to_rd: claims
+                    .get_or_zero(spartan::write_lookup_output_to_rd_product()),
+                lookup_output: claims.get_or_zero(spartan::lookup_output_product()),
+                branch_flag: claims.get_or_zero(spartan::branch_flag_product()),
+                next_is_noop: claims.get_or_zero(spartan::next_is_noop_product()),
+                virtual_instruction: claims.get_or_zero(spartan::virtual_instruction_product()),
             },
             instruction_claim_reduction: InstructionClaimReductionOutputClaims {
-                lookup_output: claims.get(instruction_lookup_output),
-                left_lookup_operand: claims.get_or_zero(instruction_left_lookup_operand),
-                right_lookup_operand: claims.get_or_zero(instruction_right_lookup_operand),
-                left_instruction_input: claims.get(instruction_left_instruction_input),
-                right_instruction_input: claims.get(instruction_right_instruction_input),
+                lookup_output: claims.get(instruction_claim_reduction::lookup_output_reduced()),
+                left_lookup_operand: claims
+                    .get_or_zero(instruction_claim_reduction::left_lookup_operand_reduced()),
+                right_lookup_operand: claims
+                    .get_or_zero(instruction_claim_reduction::right_lookup_operand_reduced()),
+                left_instruction_input: claims
+                    .get(instruction_claim_reduction::left_instruction_input_reduced()),
+                right_instruction_input: claims
+                    .get(instruction_claim_reduction::right_instruction_input_reduced()),
             },
             ram_raf_evaluation: RamRafEvaluationOutputClaims {
-                ram_ra: claims.get_or_zero(ram_ra_raf_evaluation),
+                ram_ra: claims.get_or_zero(ram::ram_ra_raf_evaluation()),
             },
             ram_output_check: RamOutputCheckOutputClaims {
-                val_final: claims.get_or_zero(ram_val_final),
+                val_final: claims.get_or_zero(ram::ram_val_final()),
             },
         },
     })
@@ -181,39 +177,32 @@ fn stage2_claims_from_native<F: Field>(
 fn stage3_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
 ) -> Result<Stage3OutputClaims<F>, VerifierError> {
-    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
-        shift_output_openings();
-    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
-        instruction::input_virtualization_output_openings();
-    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
-        registers_claim_reduction::claim_reduction_output_openings();
-
     let shift = SpartanShiftOutputClaims {
-        unexpanded_pc: claims.require(unexpanded_pc_shift)?,
-        pc: claims.require(pc_shift)?,
-        is_virtual: claims.require(is_virtual_shift)?,
-        is_first_in_sequence: claims.require(is_first_in_sequence_shift)?,
-        is_noop: claims.require(is_noop_shift)?,
+        unexpanded_pc: claims.require(spartan::unexpanded_pc_shift())?,
+        pc: claims.require(spartan::pc_shift())?,
+        is_virtual: claims.require(spartan::is_virtual_shift())?,
+        is_first_in_sequence: claims.require(spartan::is_first_in_sequence_shift())?,
+        is_noop: claims.require(spartan::is_noop_shift())?,
     };
     let instruction_input = InstructionInputOutputClaims {
-        left_operand_is_rs1: claims.require(left_operand_is_rs1)?,
-        rs1_value: claims.require(rs1_value_input)?,
-        left_operand_is_pc: claims.require(left_operand_is_pc)?,
+        left_operand_is_rs1: claims.require(instruction::left_operand_is_rs1())?,
+        rs1_value: claims.require(instruction::rs1_value())?,
+        left_operand_is_pc: claims.require(instruction::left_operand_is_pc())?,
         unexpanded_pc: claims
-            .get(unexpanded_pc_input)
+            .get(instruction::unexpanded_pc())
             .unwrap_or(shift.unexpanded_pc),
-        right_operand_is_rs2: claims.require(right_operand_is_rs2)?,
-        rs2_value: claims.require(rs2_value_input)?,
-        right_operand_is_imm: claims.require(right_operand_is_imm)?,
-        imm: claims.require(imm_input)?,
+        right_operand_is_rs2: claims.require(instruction::right_operand_is_rs2())?,
+        rs2_value: claims.require(instruction::rs2_value())?,
+        right_operand_is_imm: claims.require(instruction::right_operand_is_imm())?,
+        imm: claims.require(instruction::imm())?,
     };
     let registers_claim_reduction = RegistersClaimReductionOutputClaims {
-        rd_write_value: claims.require(rd_write_value_reduced)?,
+        rd_write_value: claims.require(registers_claim_reduction::rd_write_value_reduced())?,
         rs1_value: claims
-            .get(rs1_value_reduced)
+            .get(registers_claim_reduction::rs1_value_reduced())
             .unwrap_or(instruction_input.rs1_value),
         rs2_value: claims
-            .get(rs2_value_reduced)
+            .get(registers_claim_reduction::rs2_value_reduced())
             .unwrap_or(instruction_input.rs2_value),
     };
 
@@ -227,10 +216,6 @@ fn stage3_claims_from_native<F: Field>(
 fn stage4_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
 ) -> Result<Stage4OutputClaims<F>, VerifierError> {
-    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
-        registers::read_write_checking_output_openings();
-    let [ram_ra, ram_inc] = ram::val_check_output_openings();
-
     Ok(Stage4OutputClaims {
         advice: RamValCheckAdviceClaims {
             untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
@@ -238,15 +223,15 @@ fn stage4_claims_from_native<F: Field>(
         },
         program_image_contribution: claims.get(program_image::ram_val_check_contribution_opening()),
         registers_read_write: RegistersReadWriteOutputClaims {
-            registers_val: claims.require(registers_val)?,
-            rs1_ra: claims.require(rs1_ra)?,
-            rs2_ra: claims.require(rs2_ra)?,
-            rd_wa: claims.require(rd_wa)?,
-            rd_inc: claims.require(rd_inc)?,
+            registers_val: claims.require(registers::registers_val_read_write())?,
+            rs1_ra: claims.require(registers::rs1_ra_read_write())?,
+            rs2_ra: claims.require(registers::rs2_ra_read_write())?,
+            rd_wa: claims.require(registers::rd_wa_read_write())?,
+            rd_inc: claims.require(registers::rd_inc_read_write())?,
         },
         ram_val_check: RamValCheckOutputClaims {
-            ram_ra: claims.require(ram_ra)?,
-            ram_inc: claims.require(ram_inc)?,
+            ram_ra: claims.require(ram::ram_ra_val_check())?,
+            ram_inc: claims.require(ram::ram_inc_val_check())?,
         },
     })
 }
@@ -270,9 +255,6 @@ fn stage5_claims_from_native<F: Field>(
             id: instruction::read_raf_instruction_ra_opening(0),
         });
     }
-    let [ram_ra] = ram::ra_claim_reduction_output_openings();
-    let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
-
     Ok(Stage5OutputClaims {
         instruction_read_raf: InstructionReadRafOutputClaims {
             lookup_table_flags,
@@ -281,11 +263,11 @@ fn stage5_claims_from_native<F: Field>(
                 .require(instruction::read_raf_instruction_raf_flag_opening())?,
         },
         ram_ra_claim_reduction: RamRaClaimReductionOutputClaims {
-            ram_ra: claims.require(ram_ra)?,
+            ram_ra: claims.require(ram::ram_ra_claim_reduction())?,
         },
         registers_val_evaluation: RegistersValEvaluationOutputClaims {
-            rd_inc: claims.require(rd_inc)?,
-            rd_wa: claims.require(rd_wa)?,
+            rd_inc: claims.require(registers::rd_inc_val_evaluation())?,
+            rd_wa: claims.require(registers::rd_wa_val_evaluation())?,
         },
     })
 }
@@ -385,8 +367,8 @@ fn stage6_claims_from_native<F: Field>(
         });
     }
 
-    let [ram_hamming_weight] = ram::hamming_booleanity_output_openings();
-    let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
+    let ram_hamming_weight = ram::ram_hamming_weight();
+    let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
     let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
     let booleanity_address = booleanity::booleanity_address_phase_opening();
 
@@ -1077,13 +1059,26 @@ fn claim_from_stage2_batch_outputs<F: Field>(
     claims: &Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
-    let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
-    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
-        product_remainder_output_openings();
-    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
-        instruction_claim_reduction::claim_reduction_output_openings();
-    let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
-    let [ram_val_final] = ram::output_check_output_openings();
+    let [ram_val, ram_ra, ram_inc] = [ram::ram_val(), ram::ram_ra(), ram::ram_inc()];
+    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] = [
+        spartan::left_instruction_input_product(),
+        spartan::right_instruction_input_product(),
+        spartan::jump_flag_product(),
+        spartan::write_lookup_output_to_rd_product(),
+        spartan::lookup_output_product(),
+        spartan::branch_flag_product(),
+        spartan::next_is_noop_product(),
+        spartan::virtual_instruction_product(),
+    ];
+    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] = [
+        instruction_claim_reduction::lookup_output_reduced(),
+        instruction_claim_reduction::left_lookup_operand_reduced(),
+        instruction_claim_reduction::right_lookup_operand_reduced(),
+        instruction_claim_reduction::left_instruction_input_reduced(),
+        instruction_claim_reduction::right_instruction_input_reduced(),
+    ];
+    let ram_ra_raf_evaluation = ram::ram_ra_raf_evaluation();
+    let ram_val_final = ram::ram_val_final();
 
     match id {
         id if id == ram_val => Some(claims.ram_read_write.val),
@@ -1129,13 +1124,26 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
     claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
-    let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
-    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
-        product_remainder_output_openings();
-    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] =
-        instruction_claim_reduction::claim_reduction_output_openings();
-    let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
-    let [ram_val_final] = ram::output_check_output_openings();
+    let [ram_val, ram_ra, ram_inc] = [ram::ram_val(), ram::ram_ra(), ram::ram_inc()];
+    let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] = [
+        spartan::left_instruction_input_product(),
+        spartan::right_instruction_input_product(),
+        spartan::jump_flag_product(),
+        spartan::write_lookup_output_to_rd_product(),
+        spartan::lookup_output_product(),
+        spartan::branch_flag_product(),
+        spartan::next_is_noop_product(),
+        spartan::virtual_instruction_product(),
+    ];
+    let [instruction_lookup_output, instruction_left_lookup_operand, instruction_right_lookup_operand, instruction_left_instruction_input, instruction_right_instruction_input] = [
+        instruction_claim_reduction::lookup_output_reduced(),
+        instruction_claim_reduction::left_lookup_operand_reduced(),
+        instruction_claim_reduction::right_lookup_operand_reduced(),
+        instruction_claim_reduction::left_instruction_input_reduced(),
+        instruction_claim_reduction::right_instruction_input_reduced(),
+    ];
+    let ram_ra_raf_evaluation = ram::ram_ra_raf_evaluation();
+    let ram_val_final = ram::ram_val_final();
 
     match id {
         id if id == ram_val => Some(&mut claims.ram_read_write.val),
@@ -1186,8 +1194,11 @@ fn set_optional_stage2_batch_output<F: Field>(
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
-    let [instruction_lookup_output, _, _, instruction_left_instruction_input, instruction_right_instruction_input] =
-        instruction_claim_reduction::claim_reduction_output_openings();
+    let instruction_lookup_output = instruction_claim_reduction::lookup_output_reduced();
+    let instruction_left_instruction_input =
+        instruction_claim_reduction::left_instruction_input_reduced();
+    let instruction_right_instruction_input =
+        instruction_claim_reduction::right_instruction_input_reduced();
 
     match id {
         id if id == instruction_lookup_output => {
@@ -1262,12 +1273,28 @@ fn claim_from_stage3_outputs<F: Field>(
     claims: &Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
-    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
-        shift_output_openings();
-    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
-        instruction::input_virtualization_output_openings();
-    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
-        registers_claim_reduction::claim_reduction_output_openings();
+    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] = [
+        spartan::unexpanded_pc_shift(),
+        spartan::pc_shift(),
+        spartan::is_virtual_shift(),
+        spartan::is_first_in_sequence_shift(),
+        spartan::is_noop_shift(),
+    ];
+    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] = [
+        instruction::right_operand_is_rs2(),
+        instruction::rs2_value(),
+        instruction::right_operand_is_imm(),
+        instruction::imm(),
+        instruction::left_operand_is_rs1(),
+        instruction::rs1_value(),
+        instruction::left_operand_is_pc(),
+        instruction::unexpanded_pc(),
+    ];
+    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] = [
+        registers_claim_reduction::rd_write_value_reduced(),
+        registers_claim_reduction::rs1_value_reduced(),
+        registers_claim_reduction::rs2_value_reduced(),
+    ];
 
     match id {
         id if id == unexpanded_pc_shift => Some(claims.shift.unexpanded_pc),
@@ -1295,12 +1322,28 @@ fn claim_mut_from_stage3_outputs<F: Field>(
     claims: &mut Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
-    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
-        shift_output_openings();
-    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
-        instruction::input_virtualization_output_openings();
-    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
-        registers_claim_reduction::claim_reduction_output_openings();
+    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] = [
+        spartan::unexpanded_pc_shift(),
+        spartan::pc_shift(),
+        spartan::is_virtual_shift(),
+        spartan::is_first_in_sequence_shift(),
+        spartan::is_noop_shift(),
+    ];
+    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] = [
+        instruction::right_operand_is_rs2(),
+        instruction::rs2_value(),
+        instruction::right_operand_is_imm(),
+        instruction::imm(),
+        instruction::left_operand_is_rs1(),
+        instruction::rs1_value(),
+        instruction::left_operand_is_pc(),
+        instruction::unexpanded_pc(),
+    ];
+    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] = [
+        registers_claim_reduction::rd_write_value_reduced(),
+        registers_claim_reduction::rs1_value_reduced(),
+        registers_claim_reduction::rs2_value_reduced(),
+    ];
 
     match id {
         id if id == unexpanded_pc_shift => Some(&mut claims.shift.unexpanded_pc),
@@ -1334,9 +1377,14 @@ fn claim_from_stage4_outputs<F: Field>(
     claims: &Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
-    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
-        registers::read_write_checking_output_openings();
-    let [ram_ra, ram_inc] = ram::val_check_output_openings();
+    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] = [
+        registers::registers_val_read_write(),
+        registers::rs1_ra_read_write(),
+        registers::rs2_ra_read_write(),
+        registers::rd_wa_read_write(),
+        registers::rd_inc_read_write(),
+    ];
+    let [ram_ra, ram_inc] = [ram::ram_ra_val_check(), ram::ram_inc_val_check()];
 
     match id {
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
@@ -1359,9 +1407,14 @@ fn claim_mut_from_stage4_outputs<F: Field>(
     claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
-    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
-        registers::read_write_checking_output_openings();
-    let [ram_ra, ram_inc] = ram::val_check_output_openings();
+    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] = [
+        registers::registers_val_read_write(),
+        registers::rs1_ra_read_write(),
+        registers::rs2_ra_read_write(),
+        registers::rd_wa_read_write(),
+        registers::rd_inc_read_write(),
+    ];
+    let [ram_ra, ram_inc] = [ram::ram_ra_val_check(), ram::ram_inc_val_check()];
 
     match id {
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
@@ -1406,8 +1459,11 @@ fn claim_from_stage5_outputs<F: Field>(
         }
     }
 
-    let [ram_ra] = ram::ra_claim_reduction_output_openings();
-    let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
+    let ram_ra = ram::ram_ra_claim_reduction();
+    let [rd_inc, rd_wa] = [
+        registers::rd_inc_val_evaluation(),
+        registers::rd_wa_val_evaluation(),
+    ];
     match id {
         id if id == instruction::read_raf_instruction_raf_flag_opening() => {
             Some(claims.instruction_read_raf.instruction_raf_flag)
@@ -1443,8 +1499,11 @@ fn claim_mut_from_stage5_outputs<F: Field>(
         }
     }
 
-    let [ram_ra] = ram::ra_claim_reduction_output_openings();
-    let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
+    let ram_ra = ram::ram_ra_claim_reduction();
+    let [rd_inc, rd_wa] = [
+        registers::rd_inc_val_evaluation(),
+        registers::rd_wa_val_evaluation(),
+    ];
     match id {
         id if id == instruction::read_raf_instruction_raf_flag_opening() => {
             Some(&mut claims.instruction_read_raf.instruction_raf_flag)
@@ -1501,7 +1560,7 @@ fn claim_from_stage6_outputs<F: Field>(
             return Some(*opening_claim);
         }
     }
-    let [ram_hamming_weight] = ram::hamming_booleanity_output_openings();
+    let ram_hamming_weight = ram::ram_hamming_weight();
     if id == ram_hamming_weight {
         return Some(claims.ram_hamming_booleanity.ram_hamming_weight);
     }
@@ -1520,7 +1579,7 @@ fn claim_from_stage6_outputs<F: Field>(
             return Some(*opening_claim);
         }
     }
-    let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
+    let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
     match id {
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
             Some(claims.address_phase.bytecode_read_raf)
@@ -1597,7 +1656,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
             return Some(opening_claim);
         }
     }
-    let [ram_hamming_weight] = ram::hamming_booleanity_output_openings();
+    let ram_hamming_weight = ram::ram_hamming_weight();
     if id == ram_hamming_weight {
         return Some(&mut claims.ram_hamming_booleanity.ram_hamming_weight);
     }
@@ -1616,7 +1675,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
             return Some(opening_claim);
         }
     }
-    let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
+    let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
     match id {
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
             Some(&mut claims.address_phase.bytecode_read_raf)

@@ -2836,12 +2836,22 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "derive_more",
+ "jolt-claims-derive",
  "jolt-field",
  "jolt-lookup-tables",
  "jolt-poly",
  "jolt-riscv",
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-claims-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3373,6 +3383,7 @@ dependencies = [
  "common",
  "jolt-blindfold",
  "jolt-claims",
+ "jolt-claims-derive",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3385,21 +3396,11 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
- "jolt-verifier-derive",
  "num-traits",
  "postcard",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "jolt-verifier-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]

@@ -10,10 +10,10 @@ use super::super::{
     InstructionReadRafPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
-use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec};
+use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError};
 
 pub(crate) const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
-const READ_RAF_BASE_DEGREE: usize = 2;
+pub(crate) const READ_RAF_BASE_DEGREE: usize = 2;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct InstructionReadRafDimensions {
@@ -47,11 +47,8 @@ impl InstructionReadRafDimensions {
         self.num_virtual_ra_polys.get()
     }
 
-    pub fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(
-            self.instruction_address_bits + self.log_t,
-            self.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE,
-        )
+    pub const fn sumcheck_rounds(self) -> usize {
+        self.instruction_address_bits + self.log_t
     }
 
     pub fn opening_point<F: Field>(
@@ -154,10 +151,6 @@ impl InstructionRaVirtualizationDimensions {
     pub fn num_committed_ra_polys(self) -> usize {
         self.committed_ra_polys.get()
     }
-
-    pub fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, self.num_committed_per_virtual() + 1)
-    }
 }
 
 impl TryFrom<(usize, usize, usize)> for InstructionRaVirtualizationDimensions {
@@ -178,19 +171,6 @@ impl TryFrom<(usize, usize, usize)> for InstructionRaVirtualizationDimensions {
             )?,
         )
     }
-}
-
-pub fn input_virtualization_output_openings() -> [JoltOpeningId; 8] {
-    [
-        right_operand_is_rs2(),
-        rs2_value(),
-        right_operand_is_imm(),
-        imm(),
-        left_operand_is_rs1(),
-        rs1_value(),
-        left_operand_is_pc(),
-        unexpanded_pc(),
-    ]
 }
 
 pub fn input_virtualization_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 2] {
@@ -416,56 +396,56 @@ pub(crate) fn instruction_raf_flag() -> JoltOpeningId {
     )
 }
 
-pub(crate) fn left_operand_is_rs1() -> JoltOpeningId {
+pub fn left_operand_is_rs1() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-pub(crate) fn rs1_value() -> JoltOpeningId {
+pub fn rs1_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-pub(crate) fn left_operand_is_pc() -> JoltOpeningId {
+pub fn left_operand_is_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-pub(crate) fn unexpanded_pc() -> JoltOpeningId {
+pub fn unexpanded_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-pub(crate) fn right_operand_is_rs2() -> JoltOpeningId {
+pub fn right_operand_is_rs2() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-pub(crate) fn rs2_value() -> JoltOpeningId {
+pub fn rs2_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-pub(crate) fn right_operand_is_imm() -> JoltOpeningId {
+pub fn right_operand_is_imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-pub(crate) fn imm() -> JoltOpeningId {
+pub fn imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Imm,
         JoltRelationId::InstructionInputVirtualization,

@@ -7,19 +7,16 @@ use jolt_poly::{
 };
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 
-use crate::public;
+use crate::derived;
 
 use super::super::{
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
+    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
-use super::dimensions::{
-    JoltSumcheckSpec, OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-    PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-};
+use super::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 
-const OUTER_REMAINDER_DEGREE: usize = 3;
-const PRODUCT_REMAINDER_DEGREE: usize = 3;
+pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
+pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
 const SPARTAN_OUTER_RV64_ROW_COUNT: usize = 19;
 const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
@@ -139,16 +136,8 @@ impl SpartanOuterDimensions {
         self.include_constant_term
     }
 
-    pub const fn uniskip_sumcheck(&self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::centered_integer(
-            OUTER_UNISKIP_DOMAIN_SIZE,
-            1,
-            OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-        )
-    }
-
-    pub const fn remainder_sumcheck(&self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(1 + self.log_t, OUTER_REMAINDER_DEGREE)
+    pub const fn remainder_rounds(&self) -> usize {
+        1 + self.log_t
     }
 
     pub fn rv64(log_t: usize) -> Self {
@@ -298,18 +287,6 @@ impl SpartanProductDimensions {
     pub const fn log_t(self) -> usize {
         self.log_t
     }
-
-    pub const fn uniskip_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::centered_integer(
-            PRODUCT_UNISKIP_DOMAIN_SIZE,
-            1,
-            PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-        )
-    }
-
-    pub const fn remainder_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, PRODUCT_REMAINDER_DEGREE)
-    }
 }
 
 pub fn outer_opening(polynomial: JoltVirtualPolynomial) -> JoltOpeningId {
@@ -318,29 +295,6 @@ pub fn outer_opening(polynomial: JoltVirtualPolynomial) -> JoltOpeningId {
 
 pub fn outer_uniskip_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::UnivariateSkip)
-}
-
-pub fn product_remainder_output_openings() -> [JoltOpeningId; 8] {
-    [
-        left_instruction_input_product(),
-        right_instruction_input_product(),
-        jump_flag_product(),
-        write_lookup_output_to_rd_product(),
-        lookup_output_product(),
-        branch_flag_product(),
-        next_is_noop_product(),
-        virtual_instruction_product(),
-    ]
-}
-
-pub fn shift_output_openings() -> [JoltOpeningId; 5] {
-    [
-        unexpanded_pc_shift(),
-        pc_shift(),
-        is_virtual_shift(),
-        is_first_in_sequence_shift(),
-        is_noop_shift(),
-    ]
 }
 
 fn check_linear_form_len(expected: usize, got: usize) -> Result<(), SpartanOuterClaimError> {
@@ -364,7 +318,7 @@ pub(crate) fn product_weight<F>(index: usize) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    public(JoltPublicId::from(
+    derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::LagrangeWeight(index),
     ))
 }
@@ -373,7 +327,7 @@ pub(crate) fn product_uniskip_weight<F>(index: usize) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    public(JoltPublicId::from(
+    derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
     ))
 }
@@ -382,7 +336,7 @@ pub(crate) fn product_tau_kernel<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
-    public(JoltPublicId::from(
+    derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::TauKernel,
     ))
 }
@@ -406,56 +360,56 @@ pub fn product_should_jump_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
-pub(crate) fn left_instruction_input_product() -> JoltOpeningId {
+pub fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-pub(crate) fn right_instruction_input_product() -> JoltOpeningId {
+pub fn right_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-pub(crate) fn lookup_output_product() -> JoltOpeningId {
+pub fn lookup_output_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-pub(crate) fn jump_flag_product() -> JoltOpeningId {
+pub fn jump_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn write_lookup_output_to_rd_product() -> JoltOpeningId {
+pub fn write_lookup_output_to_rd_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-pub(crate) fn branch_flag_product() -> JoltOpeningId {
+pub fn branch_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-pub(crate) fn next_is_noop_product() -> JoltOpeningId {
+pub fn next_is_noop_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::NextIsNoop,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn virtual_instruction_product() -> JoltOpeningId {
+pub fn virtual_instruction_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
         JoltRelationId::SpartanProductVirtualization,
@@ -478,32 +432,32 @@ pub(crate) fn next_is_first_in_sequence_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextIsFirstInSequence)
 }
 
-pub(crate) fn unexpanded_pc_shift() -> JoltOpeningId {
+pub fn unexpanded_pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::SpartanShift,
     )
 }
 
-pub(crate) fn pc_shift() -> JoltOpeningId {
+pub fn pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
-pub(crate) fn is_virtual_shift() -> JoltOpeningId {
+pub fn is_virtual_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
         JoltRelationId::SpartanShift,
     )
 }
 
-pub(crate) fn is_first_in_sequence_shift() -> JoltOpeningId {
+pub fn is_first_in_sequence_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
         JoltRelationId::SpartanShift,
     )
 }
 
-pub(crate) fn is_noop_shift() -> JoltOpeningId {
+pub fn is_noop_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
         JoltRelationId::SpartanShift,

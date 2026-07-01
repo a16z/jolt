@@ -9,45 +9,22 @@
 //! claim structs stay fully derive-driven.
 //!
 //! As with the committed-program address phases, the `FinalScale` public is a
-//! function of the reduction's final opening point, which `resolve_public`
+//! function of the reduction's final opening point, which `derive_output_term`
 //! recovers from the output claims.
 
 use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
+    AdviceAddressPhaseInputClaims, AdviceAddressPhaseOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
-    AdviceClaimReductionLayout, AdviceClaimReductionPublic, JoltAdviceKind, JoltPublicId,
+    AdviceClaimReductionLayout, AdviceClaimReductionPublic, JoltAdviceKind, JoltDerivedId,
     JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::VerifierError;
-
-/// Produced final advice openings, keyed by kind; present only when that kind's
-/// address phase ran. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(AdviceClaimReduction)]
-pub struct AdviceAddressPhaseOutputClaims<C> {
-    #[opening(trusted_advice)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice)]
-    pub untrusted: Option<C>,
-}
-
-/// Consumed cycle-phase advice openings, keyed by kind.
-#[derive(Clone, Debug, InputClaims)]
-pub struct AdviceAddressPhaseInputClaims<C> {
-    #[opening(trusted_advice, from = AdviceClaimReductionCyclePhase)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice, from = AdviceClaimReductionCyclePhase)]
-    pub untrusted: Option<C>,
-}
 
 pub struct AdviceAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::advice::AddressPhase,
@@ -107,8 +84,6 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
     type Symbolic = relations::claim_reductions::advice::AddressPhase;
-    type Inputs<C> = AdviceAddressPhaseInputClaims<C>;
-    type Outputs<C> = AdviceAddressPhaseOutputClaims<C>;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -135,19 +110,19 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &AdviceAddressPhaseInputClaims<C>,
-        outputs: Option<&AdviceAddressPhaseOutputClaims<OpeningClaim<F>>>,
+        outputs: &AdviceAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
-        let JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
+        let JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
         else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         if *kind != self.kind {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         }
         self.layout
             .address_phase_scale_at_opening_point(

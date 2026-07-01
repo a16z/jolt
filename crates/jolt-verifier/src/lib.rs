@@ -17,10 +17,10 @@ pub use stages::relations::{
     ConcreteSumcheck, GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims,
 };
 pub use stages::zk::committed::zk_vector_commitment_capacity_requirement;
-// Derive macros share the names of the traits they implement (distinct
-// namespaces), so `#[derive(OutputClaims)]` and `impl OutputClaims` can both be
-// reached as `crate::{OutputClaims, InputClaims}`.
-pub use jolt_verifier_derive::{InputClaims, OutputClaims};
+// The `stages::relations` re-export above carries both the `InputClaims` /
+// `OutputClaims` traits and the same-named derive macros (jolt-claims re-exports
+// both), so `crate::{OutputClaims, InputClaims}` reaches `#[derive(OutputClaims)]`
+// and `impl OutputClaims` alike via distinct namespaces.
 pub use verifier::{
     absorb_transcript_commitments, absorb_transcript_preamble, validate_inputs_from_parts, verify,
     verify_until_stage1, CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,

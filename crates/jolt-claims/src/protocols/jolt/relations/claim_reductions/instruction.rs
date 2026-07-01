@@ -1,6 +1,7 @@
 //! Instruction claim-reduction symbolic sumcheck relation.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     left_instruction_input_reduced, left_instruction_input_spartan, left_lookup_operand_reduced,
@@ -9,10 +10,60 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     right_lookup_operand_spartan, weighted_claims,
 };
 use crate::protocols::jolt::{
-    InstructionClaimReductionPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltRelationId, JoltSumcheckSpec, TraceDimensions,
+    InstructionClaimReductionChallenge, InstructionClaimReductionPublic, JoltChallengeId,
+    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, TraceDimensions,
 };
-use crate::{public, SymbolicSumcheck};
+use crate::{derived, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+
+/// Produced reduced instruction-lookup openings, all sharing the single reduced
+/// opening point. The three aliased openings are [`Option`] (absent on the wire ⇒
+/// they alias the product-remainder openings; the clear opening-claim projection
+/// fills them). Generic over the cell. Field declaration order is the canonical
+/// Fiat-Shamir order (single-sourced via [`OutputClaims::canonical_order`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(InstructionClaimReduction)]
+pub struct InstructionClaimReductionOutputClaims<C> {
+    #[opening(LookupOutput)]
+    pub lookup_output: Option<C>,
+    #[opening(LeftLookupOperand)]
+    pub left_lookup_operand: C,
+    #[opening(RightLookupOperand)]
+    pub right_lookup_operand: C,
+    #[opening(LeftInstructionInput)]
+    pub left_instruction_input: Option<C>,
+    #[opening(RightInstructionInput)]
+    pub right_instruction_input: Option<C>,
+}
+
+/// Consumed instruction-lookup openings from stage 1's outer sumcheck, reduced by
+/// this sumcheck. The relation reads only these values (its output point comes from
+/// its own sumcheck point), so the input points are left empty. Generic over the
+/// cell. Field order matches
+/// [`instruction_claim_reduction::claim_reduction_input_openings`].
+#[derive(Clone, Debug, InputClaims)]
+pub struct InstructionClaimReductionInputClaims<C> {
+    #[opening(LookupOutput, from = SpartanOuter)]
+    pub lookup_output: C,
+    #[opening(LeftLookupOperand, from = SpartanOuter)]
+    pub left_lookup_operand: C,
+    #[opening(RightLookupOperand, from = SpartanOuter)]
+    pub right_lookup_operand: C,
+    #[opening(LeftInstructionInput, from = SpartanOuter)]
+    pub left_instruction_input: C,
+    #[opening(RightInstructionInput, from = SpartanOuter)]
+    pub right_instruction_input: C,
+}
+
+/// Fiat-Shamir challenge drawn by the instruction claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct InstructionClaimReductionChallenges<F> {
+    #[challenge(InstructionClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
 
 /// Batches the Spartan-outer instruction-lookup openings (lookup output, left/
 /// right lookup operands, left/right instruction inputs) by `gamma` and reduces
@@ -24,9 +75,12 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = InstructionClaimReductionChallenges<F>;
+    type Inputs<C> = InstructionClaimReductionInputClaims<C>;
+    type Outputs<C> = InstructionClaimReductionOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }
@@ -36,8 +90,12 @@ impl SymbolicSumcheck for ClaimReduction {
         JoltRelationId::InstructionClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(2)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -51,7 +109,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        public(InstructionClaimReductionPublic::EqSpartan)
+        derived(InstructionClaimReductionPublic::EqSpartan)
             * weighted_claims(
                 lookup_output_reduced(),
                 left_lookup_operand_reduced(),
@@ -150,7 +208,7 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::InstructionClaimReduction(
+                JoltDerivedId::InstructionClaimReduction(
                     InstructionClaimReductionPublic::EqSpartan,
                 ) => eq_spartan,
                 _ => zero,
@@ -184,7 +242,8 @@ mod tests {
             ClaimReduction::id(),
             JoltRelationId::InstructionClaimReduction
         );
-        assert_eq!(relation.spec(), dimensions().sumcheck(2));
+        assert_eq!(relation.rounds(), dimensions().log_t());
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![
@@ -212,8 +271,8 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(
                 InstructionClaimReductionPublic::EqSpartan
             )]
         );

@@ -1,13 +1,13 @@
-//! Derive macros generating the opening-claim plumbing for `jolt-verifier`.
+//! Derive macros generating the opening-claim plumbing for Jolt relations.
 //!
 //! These derives operate on a single relation's claim struct. They emit the
-//! per-struct encode/resolve impls so that the canonical opening **order** and
-//! **count** are single-sourced from the struct's field declaration order
-//! (rather than hand-written three times, where they drift). They generate impls
-//! of the `OutputClaims` / `InputClaims` traits defined in
-//! `jolt_verifier::stages::relations`; the generated code references those traits
-//! through `crate::stages::relations::*`, so the derives are for use *within*
-//! `jolt-verifier`.
+//! per-struct encode/resolve impls so that the canonical opening **order** is
+//! single-sourced from the struct's field declaration order (rather than
+//! hand-written, where copies drift). They generate impls
+//! of the `OutputClaims` / `InputClaims` traits defined in `jolt_claims`; the
+//! generated code references those traits through `::jolt_claims::*` (absolute
+//! paths), so the derives can be applied to structs in any crate that depends on
+//! `jolt-claims`.
 //!
 //! The claim struct is generic over an opening *cell* (`OpeningClaim<F>` on the
 //! clear path, `Vec<F>` for ZK points, `F` for the serialized wire form). The
@@ -21,9 +21,9 @@
 //! has leaf opening fields. Each field is either a leaf opening (annotated with
 //! `#[opening(..)]`) or a nested aggregate (no annotation; its type must also
 //! implement `OutputClaims`). An `Option<C>` leaf is a *conditional* opening: it
-//! contributes to `opening_values` / `opening_count` / `append_openings` and
-//! resolves by id only when `Some` (used for advice / committed-program openings
-//! that are present only in some proof configurations).
+//! contributes to `opening_values` / `canonical_order` and resolves by id only when
+//! `Some` (used for advice / committed-program openings that are present only in
+//! some proof configurations).
 //!
 //! ## `#[derive(InputClaims)]`
 //!
@@ -53,6 +53,23 @@
 //!   families keyed by an enum rather than a contiguous index.
 //!
 //! `InputClaims` leaves additionally take `, from = ProducingRelation`.
+//!
+//! ## `#[derive(SumcheckChallenges)]`
+//!
+//! For a relation's drawn Fiat-Shamir challenges. The struct is generic over the
+//! field `F` directly (challenges carry no opening point, so there is no opening
+//! *cell* / `GetValue` indirection — field values are read directly). Each field
+//! carries `#[challenge(SubEnum::Variant)]` naming a challenge sub-enum *unit*
+//! variant; the resolved id is `JoltChallengeId::from(SubEnum::Variant)` (relying
+//! on the `From<SubEnum> for JoltChallengeId` impls). Every field is a scalar `F`
+//! (one drawn Fiat-Shamir scalar). A `Vec<F>` field is rejected (challenge sub-enum
+//! variants are unit, so there is no indexed id), and an `Option<F>` field is
+//! rejected (no relation draws a conditional challenge, and the `draw_challenges`
+//! default treats every field as one unconditional `challenge_scalar`).
+//!
+//! Generates both halves of [`SumcheckChallenges`]: `resolve_challenge` (id →
+//! value) and `from_transcript_values` (consume one drawn scalar per field in
+//! declaration order, erroring if the stream runs dry).
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -73,6 +90,16 @@ pub fn derive_output_claims(input: TokenStream) -> TokenStream {
 pub fn derive_input_claims(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_input(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Each field names its challenge via `#[challenge(SubEnum::Variant)]`; the id is
+/// `JoltChallengeId::from(SubEnum::Variant)`.
+#[proc_macro_derive(SumcheckChallenges, attributes(challenge))]
+pub fn derive_sumcheck_challenges(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_challenges(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -156,7 +183,7 @@ fn cell_impl_pieces(
         .as_ref()
         .map(|where_clause| &where_clause.predicates);
     let where_clause = quote! {
-        where #cell: crate::stages::relations::GetValue<#value>, #orig_predicates
+        where #cell: ::jolt_claims::GetValue<#value>, #orig_predicates
     };
     Ok((value, impl_generics, quote!(#ty_generics), where_clause))
 }
@@ -358,10 +385,13 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         .map(|field| plan_field(field, struct_relation.as_ref()))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let get = quote!(crate::stages::relations::GetValue::value);
-    let mut value_chains = Vec::new();
-    let mut count_terms = Vec::new();
-    let mut append_stmts = Vec::new();
+    let get = quote!(::jolt_claims::GetValue::value);
+    let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
+    // `order_chains` lists each leaf's id (per `Vec` element, per `Some` `Option`) in
+    // field-declaration order, so it lists exactly the ids `resolve_output` hits.
+    // `OutputClaims::opening_values` reconstructs the values from this order via
+    // `resolve_output`, so the canonical order is single-sourced here.
+    let mut order_chains = Vec::new();
     let mut resolve_arms = Vec::new();
 
     for plan in &plans {
@@ -374,13 +404,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         } = plan;
         if *is_many {
             let id = id_expr(kind, relation, Some(quote!(index)));
-            value_chains.push(quote!(.chain(self.#ident.iter().map(|__cell| #get(__cell)))));
-            count_terms.push(quote!(self.#ident.len()));
-            append_stmts.push(quote! {
-                for __cell in &self.#ident {
-                    transcript.append_labeled(b"opening_claim", &#get(__cell));
-                }
-            });
+            order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
                 for (index, __cell) in self.#ident.iter().enumerate() {
                     if *id == #id {
@@ -390,13 +414,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             });
         } else if *is_option {
             let id = id_expr(kind, relation, None);
-            value_chains.push(quote!(.chain(self.#ident.as_ref().map(|__cell| #get(__cell)))));
-            count_terms.push(quote!(::core::primitive::usize::from(self.#ident.is_some())));
-            append_stmts.push(quote! {
-                if let ::core::option::Option::Some(__cell) = &self.#ident {
-                    transcript.append_labeled(b"opening_claim", &#get(__cell));
-                }
-            });
+            order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__cell) = &self.#ident {
                     if *id == #id {
@@ -406,11 +424,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             });
         } else {
             let id = id_expr(kind, relation, None);
-            value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
-            count_terms.push(quote!(1usize));
-            append_stmts.push(quote! {
-                transcript.append_labeled(b"opening_claim", &#get(&self.#ident));
-            });
+            order_chains.push(quote!(.chain(::core::iter::once(#id))));
             resolve_arms.push(quote! {
                 if *id == #id {
                     return ::core::option::Option::Some(#get(&self.#ident));
@@ -419,16 +433,10 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     }
 
-    let count_body = if count_terms.is_empty() {
-        quote!(0usize)
-    } else {
-        quote!(#(#count_terms)+*)
-    };
-
     // Field-wise zip of the value-only (`F`) and point-only (`Vec<F>`) cell forms
     // into the clear `OpeningClaim<F>` form: one `OpeningClaim` per leaf,
     // element-wise for `Vec` families, value-driven for `Option` leaves.
-    let opening = quote!(crate::stages::relations::OpeningClaim);
+    let opening = quote!(::jolt_claims::OpeningClaim);
     let zip_field = Ident::new("__JoltZipField", proc_macro2::Span::call_site());
     let mut zip_inits = Vec::new();
     for plan in &plans {
@@ -460,24 +468,13 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     Ok(quote! {
-        impl #impl_generics crate::stages::relations::OutputClaims<#value>
+        impl #impl_generics ::jolt_claims::OutputClaims<#value>
             for #name #ty_generics #where_clause
         {
-            fn opening_values(&self) -> ::std::vec::Vec<#value> {
-                ::core::iter::empty::<#value>()
-                    #(#value_chains)*
+            fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
+                ::core::iter::empty::<#id_ty>()
+                    #(#order_chains)*
                     .collect()
-            }
-
-            fn opening_count(&self) -> usize {
-                #count_body
-            }
-
-            fn append_openings<T: ::jolt_transcript::Transcript<Challenge = #value>>(
-                &self,
-                transcript: &mut T,
-            ) {
-                #(#append_stmts)*
             }
 
             fn resolve_output(
@@ -489,7 +486,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
 
-        impl<#zip_field: ::jolt_field::Field> crate::stages::relations::ZipOpenings<#zip_field>
+        impl<#zip_field: ::jolt_field::Field> ::jolt_claims::ZipOpenings<#zip_field>
             for #name<#opening<#zip_field>>
         {
             type Values = #name<#zip_field>;
@@ -512,8 +509,13 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
         .map(|field| plan_field(field, None))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let get = quote!(crate::stages::relations::GetValue::value);
+    let get = quote!(::jolt_claims::GetValue::value);
+    let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
     let mut resolve_arms = Vec::new();
+    // Mirrors the resolve iteration (id per leaf, per `Vec` element, per `Some`
+    // `Option`), so `canonical_order()` lists exactly the ids `resolve_input`
+    // would hit, in field-declaration order.
+    let mut order_chains = Vec::new();
     for plan in &plans {
         let FieldPlan {
             ident,
@@ -524,6 +526,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
         } = plan;
         if *is_many {
             let id = id_expr(kind, relation, Some(quote!(index)));
+            order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
                 for (index, __cell) in self.#ident.iter().enumerate() {
                     if *id == #id {
@@ -533,6 +536,11 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
             });
         } else {
             let id = id_expr(kind, relation, None);
+            if *is_option {
+                order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
+            } else {
+                order_chains.push(quote!(.chain(::core::iter::once(#id))));
+            }
             let hit = if *is_option {
                 // The field is `Option<C>`; surface the value if present.
                 quote!(return self.#ident.as_ref().map(|__cell| #get(__cell));)
@@ -548,13 +556,144 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     Ok(quote! {
-        impl #impl_generics crate::stages::relations::InputClaims<#value>
+        impl #impl_generics ::jolt_claims::InputClaims<#value>
             for #name #ty_generics #where_clause
         {
+            fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
+                ::core::iter::empty::<#id_ty>()
+                    #(#order_chains)*
+                    .collect()
+            }
+
             fn resolve_input(
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltOpeningId,
             ) -> ::core::option::Option<#value> {
+                #(#resolve_arms)*
+                ::core::option::Option::None
+            }
+        }
+    })
+}
+
+/// One challenge field: its identifier and the `SubEnum::Variant` path it names.
+/// Challenge fields are always a scalar `F` (one drawn Fiat-Shamir scalar).
+struct ChallengeFieldPlan {
+    ident: Ident,
+    path: syn::Path,
+}
+
+fn challenge_attr(field: &syn::Field) -> Option<&Attribute> {
+    field
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("challenge"))
+}
+
+fn parse_challenge(attr: &Attribute) -> syn::Result<syn::Path> {
+    attr.parse_args::<syn::Path>()
+}
+
+fn plan_challenge_field(field: &syn::Field) -> syn::Result<ChallengeFieldPlan> {
+    let ident = field
+        .ident
+        .clone()
+        .ok_or_else(|| syn::Error::new_spanned(field, "fields must be named"))?;
+    let attr = challenge_attr(field).ok_or_else(|| {
+        syn::Error::new_spanned(
+            field,
+            "every field needs a #[challenge(SubEnum::Variant)] annotation",
+        )
+    })?;
+    let path = parse_challenge(attr)?;
+    if is_vec_type(&field.ty) {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "challenges are scalar; a `Vec` challenge field has no indexed id \
+             (every challenge sub-enum variant is a unit variant)",
+        ));
+    }
+    if is_option_type(&field.ty) {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "challenge fields are an unconditional scalar `F`; a conditional \
+             `Option<F>` challenge is not supported (no relation draws one, and the \
+             `draw_challenges` default treats every field as one `challenge_scalar`)",
+        ));
+    }
+    Ok(ChallengeFieldPlan { ident, path })
+}
+
+/// The single field type generic parameter (the field type, conventionally `F`).
+fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
+    generics
+        .params
+        .iter()
+        .find_map(|param| match param {
+            GenericParam::Type(param) => Some(param.ident.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            syn::Error::new_spanned(
+                generics,
+                "expected a field-type generic parameter (e.g. `<F>`)",
+            )
+        })
+}
+
+fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let field = field_type_param(&input.generics)?;
+    let fields = named_fields(&input.data, name.span())?;
+    let plans = fields
+        .iter()
+        .map(plan_challenge_field)
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let mut resolve_arms = Vec::new();
+    let mut build_stmts = Vec::new();
+    let mut field_idents = Vec::new();
+    // Every challenge field is a scalar, so the struct requires one drawn value per
+    // field; `required` is the field count.
+    let required = plans.len();
+    for (index, plan) in plans.iter().enumerate() {
+        let ChallengeFieldPlan { ident, path } = plan;
+        field_idents.push(ident.clone());
+        let id = quote!(::jolt_claims::protocols::jolt::JoltChallengeId::from(#path));
+        resolve_arms.push(quote! {
+            if *id == #id {
+                return ::core::option::Option::Some(self.#ident);
+            }
+        });
+        // Each scalar field consumes one drawn value; a dry stream is an error. The
+        // already-populated count (`index`) is baked per field so the error reports
+        // progress without a runtime counter.
+        build_stmts.push(quote! {
+            let #ident = __values.next().ok_or(
+                ::jolt_claims::ChallengeDrawError {
+                    required: #required,
+                    populated: #index,
+                },
+            )?;
+        });
+    }
+
+    Ok(quote! {
+        impl<#field: ::jolt_field::Field> ::jolt_claims::SumcheckChallenges<#field> for #name<#field> {
+            fn from_transcript_values<__I: ::core::iter::Iterator<Item = #field>>(
+                values: __I,
+            ) -> ::core::result::Result<Self, ::jolt_claims::ChallengeDrawError> {
+                let mut __values = values;
+                #(#build_stmts)*
+                ::core::result::Result::Ok(Self {
+                    #(#field_idents),*
+                })
+            }
+
+            fn resolve_challenge(
+                &self,
+                id: &::jolt_claims::protocols::jolt::JoltChallengeId,
+            ) -> ::core::option::Option<#field> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
             }

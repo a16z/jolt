@@ -6,7 +6,7 @@ use super::super::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial, RamRaClaimReductionPublic, RamValCheckPublic,
 };
-use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions};
+use super::dimensions::ReadWriteDimensions;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RamRafEvaluationDimensions(ReadWriteDimensions);
@@ -33,10 +33,6 @@ impl RamRafEvaluationDimensions {
     pub const fn phase3_cycle_rounds(self) -> usize {
         self.0.phase3_cycle_rounds()
     }
-
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        self.0.raf_evaluation_sumcheck()
-    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -59,10 +55,6 @@ impl RamRaVirtualizationDimensions {
 
     pub const fn num_committed_ra_polys(self) -> usize {
         self.committed_ra_polys
-    }
-
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, self.committed_ra_polys + 1)
     }
 }
 
@@ -144,39 +136,11 @@ impl<F> RamValCheckInitContribution<F> {
     }
 }
 
-pub fn read_write_checking_output_openings() -> [JoltOpeningId; 3] {
-    [ram_val(), ram_ra(), ram_inc()]
-}
-
-pub fn read_write_checking_input_openings() -> [JoltOpeningId; 2] {
-    [ram_read_value(), ram_write_value()]
-}
-
-pub fn raf_evaluation_output_openings() -> [JoltOpeningId; 1] {
-    [ram_ra_raf_evaluation()]
-}
-
-pub fn output_check_output_openings() -> [JoltOpeningId; 1] {
-    [ram_val_final()]
-}
-
-pub fn val_check_input_openings() -> [JoltOpeningId; 2] {
-    [ram_val(), ram_val_final()]
-}
-
-pub fn val_check_output_openings() -> [JoltOpeningId; 2] {
-    [ram_ra_val_check(), ram_inc_val_check()]
-}
-
 pub fn val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
     match kind {
         JoltAdviceKind::Trusted => JoltOpeningId::trusted_advice(JoltRelationId::RamValCheck),
         JoltAdviceKind::Untrusted => JoltOpeningId::untrusted_advice(JoltRelationId::RamValCheck),
     }
-}
-
-pub fn ra_claim_reduction_output_openings() -> [JoltOpeningId; 1] {
-    [ram_ra_claim_reduction()]
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -196,20 +160,8 @@ impl<F: Field> RamRaClaimReductionPublicValues<F> {
     }
 }
 
-pub fn ra_virtualization_output_openings(
-    dimensions: RamRaVirtualizationDimensions,
-) -> Vec<JoltOpeningId> {
-    (0..dimensions.num_committed_ra_polys())
-        .map(ra_virtualization_committed_ram_ra_opening)
-        .collect()
-}
-
 pub fn ra_virtualization_committed_ram_ra_opening(index: usize) -> JoltOpeningId {
     committed_ram_ra(index)
-}
-
-pub fn hamming_booleanity_output_openings() -> [JoltOpeningId; 1] {
-    [ram_hamming_weight()]
 }
 
 pub(crate) fn committed_ram_ra_product<F>(dimensions: RamRaVirtualizationDimensions) -> JoltExpr<F>
@@ -237,39 +189,39 @@ pub(crate) fn ram_write_value() -> JoltOpeningId {
     )
 }
 
-pub(crate) fn ram_ra() -> JoltOpeningId {
+pub fn ram_ra() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamRa,
         JoltRelationId::RamReadWriteChecking,
     )
 }
 
-pub(crate) fn ram_val() -> JoltOpeningId {
+pub fn ram_val() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamVal,
         JoltRelationId::RamReadWriteChecking,
     )
 }
 
-pub(crate) fn ram_val_final() -> JoltOpeningId {
+pub fn ram_val_final() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamValFinal,
         JoltRelationId::RamOutputCheck,
     )
 }
 
-pub(crate) fn ram_inc() -> JoltOpeningId {
+pub fn ram_inc() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamInc,
         JoltRelationId::RamReadWriteChecking,
     )
 }
 
-pub(crate) fn ram_inc_val_check() -> JoltOpeningId {
+pub fn ram_inc_val_check() -> JoltOpeningId {
     JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, JoltRelationId::RamValCheck)
 }
 
-pub(crate) fn ram_ra_val_check() -> JoltOpeningId {
+pub fn ram_ra_val_check() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamRa, JoltRelationId::RamValCheck)
 }
 
@@ -280,14 +232,14 @@ pub(crate) fn ram_address_spartan() -> JoltOpeningId {
     )
 }
 
-pub(crate) fn ram_ra_raf_evaluation() -> JoltOpeningId {
+pub fn ram_ra_raf_evaluation() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamRa,
         JoltRelationId::RamRafEvaluation,
     )
 }
 
-pub(crate) fn ram_ra_claim_reduction() -> JoltOpeningId {
+pub fn ram_ra_claim_reduction() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamRa,
         JoltRelationId::RamRaClaimReduction,
@@ -301,7 +253,7 @@ pub(crate) fn committed_ram_ra(index: usize) -> JoltOpeningId {
     )
 }
 
-pub(crate) fn ram_hamming_weight() -> JoltOpeningId {
+pub fn ram_hamming_weight() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamHammingWeight,
         JoltRelationId::RamHammingBooleanity,

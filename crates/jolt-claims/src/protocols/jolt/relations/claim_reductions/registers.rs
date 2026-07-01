@@ -1,16 +1,57 @@
 //! Registers claim-reduction symbolic sumcheck relation.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::registers::{
     rd_write_value_reduced, rd_write_value_spartan, rs1_value_reduced, rs1_value_spartan,
     rs2_value_reduced, rs2_value_spartan,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::{challenge, opening, public, SymbolicSumcheck};
+use crate::{
+    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
+};
+
+/// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
+/// values reduced to the Spartan point), all sharing the single reduction opening
+/// point. Generic over the cell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RegistersClaimReduction)]
+pub struct RegistersClaimReductionOutputClaims<C> {
+    #[opening(RdWriteValue)]
+    pub rd_write_value: C,
+    #[opening(Rs1Value)]
+    pub rs1_value: C,
+    #[opening(Rs2Value)]
+    pub rs2_value: C,
+}
+
+/// Consumed register openings reduced by this sumcheck, wired from stage 1's outer
+/// sumcheck. The relation reads only these values, so the input points are left
+/// empty. Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RegistersClaimReductionInputClaims<C> {
+    #[opening(RdWriteValue, from = SpartanOuter)]
+    pub rd_write_value: C,
+    #[opening(Rs1Value, from = SpartanOuter)]
+    pub rs1_value: C,
+    #[opening(Rs2Value, from = SpartanOuter)]
+    pub rs2_value: C,
+}
+
+/// Fiat-Shamir challenge drawn by the registers claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct RegistersClaimReductionChallenges<F> {
+    #[challenge(RegistersClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
 
 /// Batches the Spartan-outer register openings (`RdWriteValue`, `Rs1Value`,
 /// `Rs2Value`) by `gamma` and reduces them to the registers-claim-reduction
@@ -22,9 +63,12 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
+    type Challenges<F> = RegistersClaimReductionChallenges<F>;
+    type Inputs<C> = RegistersClaimReductionInputClaims<C>;
+    type Outputs<C> = RegistersClaimReductionOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }
@@ -34,8 +78,12 @@ impl SymbolicSumcheck for ClaimReduction {
         JoltRelationId::RegistersClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck(2)
+    fn rounds(&self) -> usize {
+        self.shape.log_t()
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -48,7 +96,7 @@ impl SymbolicSumcheck for ClaimReduction {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
-        let eq_spartan = public(RegistersClaimReductionPublic::EqSpartan);
+        let eq_spartan = derived(RegistersClaimReductionPublic::EqSpartan);
 
         eq_spartan.clone() * opening(rd_write_value_reduced())
             + eq_spartan.clone() * gamma.clone() * opening(rs1_value_reduced())
@@ -135,9 +183,9 @@ mod tests {
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
-                JoltPublicId::RegistersClaimReduction(RegistersClaimReductionPublic::EqSpartan) => {
-                    eq_spartan
-                }
+                JoltDerivedId::RegistersClaimReduction(
+                    RegistersClaimReductionPublic::EqSpartan,
+                ) => eq_spartan,
                 _ => zero,
             },
         );
@@ -160,7 +208,8 @@ mod tests {
             ClaimReduction::id(),
             JoltRelationId::RegistersClaimReduction
         );
-        assert_eq!(relation.spec(), dimensions().sumcheck(2));
+        assert_eq!(relation.rounds(), dimensions().log_t());
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![
@@ -184,8 +233,10 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
-            vec![JoltPublicId::from(RegistersClaimReductionPublic::EqSpartan)]
+            relation.required_deriveds::<Fr>(),
+            vec![JoltDerivedId::from(
+                RegistersClaimReductionPublic::EqSpartan
+            )]
         );
     }
 }

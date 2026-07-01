@@ -1,6 +1,7 @@
 //! Hamming-weight claim-reduction symbolic sumcheck relation.
 
 use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
     booleanity_claim, hamming_weight_claim, reduced_claim, virtualization_claim,
@@ -8,9 +9,59 @@ use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
 };
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
-use crate::{challenge, opening, public, SymbolicSumcheck};
+use crate::{
+    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
+};
+
+/// Produced one-hot `Ra` opening claims, grouped by family (instruction,
+/// bytecode, RAM) in canonical layout order. Every produced opening shares the
+/// single hamming-weight opening point. Generic over the cell (`F` on the wire,
+/// `Vec<F>` for ZK points, `OpeningClaim<F>` on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(HammingWeightClaimReduction)]
+pub struct HammingWeightClaimReductionOutputClaims<C> {
+    #[opening(committed = InstructionRa)]
+    pub instruction_ra: Vec<C>,
+    #[opening(committed = BytecodeRa)]
+    pub bytecode_ra: Vec<C>,
+    #[opening(committed = RamRa)]
+    pub ram_ra: Vec<C>,
+}
+
+/// Consumed claims reduced by the hamming-weight sumcheck: the RAM hamming-weight
+/// claim (from RAM hamming booleanity) plus the per-family booleanity and
+/// virtualization claims (each wired from its producing stage-6 relation).
+/// Generic over the cell.
+#[derive(Clone, Debug, InputClaims)]
+pub struct HammingWeightClaimReductionInputClaims<C> {
+    #[opening(RamHammingWeight, from = RamHammingBooleanity)]
+    pub ram_hamming_weight: C,
+    #[opening(committed = InstructionRa, from = Booleanity)]
+    pub instruction_booleanity: Vec<C>,
+    #[opening(committed = BytecodeRa, from = Booleanity)]
+    pub bytecode_booleanity: Vec<C>,
+    #[opening(committed = RamRa, from = Booleanity)]
+    pub ram_booleanity: Vec<C>,
+    #[opening(committed = InstructionRa, from = InstructionRaVirtualization)]
+    pub instruction_virtualization: Vec<C>,
+    #[opening(committed = BytecodeRa, from = BytecodeReadRaf)]
+    pub bytecode_virtualization: Vec<C>,
+    #[opening(committed = RamRa, from = RamRaVirtualization)]
+    pub ram_virtualization: Vec<C>,
+}
+
+/// Fiat-Shamir challenge drawn by the hamming-weight claim-reduction sumcheck.
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct HammingWeightClaimReductionChallenges<F> {
+    #[challenge(HammingWeightClaimReductionChallenge::Gamma)]
+    pub gamma: F,
+}
 
 /// Batches each RA polynomial's hamming-weight, booleanity, and virtualization
 /// claims by powers of `gamma` and reduces them to the per-polynomial
@@ -22,9 +73,12 @@ pub struct ClaimReduction {
 impl SymbolicSumcheck for ClaimReduction {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
-    type PublicId = JoltPublicId;
+    type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = HammingWeightClaimReductionDimensions;
+    type Challenges<F> = HammingWeightClaimReductionChallenges<F>;
+    type Inputs<C> = HammingWeightClaimReductionInputClaims<C>;
+    type Outputs<C> = HammingWeightClaimReductionOutputClaims<C>;
 
     fn new(shape: HammingWeightClaimReductionDimensions) -> Self {
         Self { shape }
@@ -34,8 +88,12 @@ impl SymbolicSumcheck for ClaimReduction {
         JoltRelationId::HammingWeightClaimReduction
     }
 
-    fn spec(&self) -> JoltSumcheckSpec {
-        self.shape.sumcheck()
+    fn rounds(&self) -> usize {
+        self.shape.log_k_chunk
+    }
+
+    fn degree(&self) -> usize {
+        2
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -59,9 +117,9 @@ impl SymbolicSumcheck for ClaimReduction {
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             let output_coeff = gamma.clone().pow(3 * i)
                 + gamma.clone().pow(3 * i + 1)
-                    * public(HammingWeightClaimReductionPublic::EqBooleanity)
+                    * derived(HammingWeightClaimReductionPublic::EqBooleanity)
                 + gamma.clone().pow(3 * i + 2)
-                    * public(HammingWeightClaimReductionPublic::EqVirtualization(i));
+                    * derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
             output = output + output_coeff * opening(reduced_claim(polynomial));
         }
 
@@ -157,16 +215,16 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqBooleanity,
                 ) => eq_bool,
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqVirtualization(0),
                 ) => eq_virt_instruction,
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqVirtualization(1),
                 ) => eq_virt_bytecode,
-                JoltPublicId::HammingWeightClaimReduction(
+                JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqVirtualization(2),
                 ) => eq_virt_ram,
                 _ => zero,
@@ -216,7 +274,8 @@ mod tests {
             ClaimReduction::id(),
             JoltRelationId::HammingWeightClaimReduction
         );
-        assert_eq!(relation.spec(), JoltSumcheckSpec::boolean(8, 2));
+        assert_eq!(relation.rounds(), 8);
+        assert_eq!(relation.degree(), 2);
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),
             vec![
@@ -244,12 +303,12 @@ mod tests {
             )]
         );
         assert_eq!(
-            relation.required_publics::<Fr>(),
+            relation.required_deriveds::<Fr>(),
             vec![
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqBooleanity),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(0)),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(1)),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(2)),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanity),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(0)),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(1)),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(2)),
             ]
         );
         Ok(())

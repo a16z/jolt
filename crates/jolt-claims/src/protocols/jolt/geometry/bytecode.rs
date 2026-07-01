@@ -6,14 +6,14 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
-use crate::{challenge, opening, public};
+use crate::{challenge, derived, opening};
 
 use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltCommittedPolynomial, JoltExpr,
     JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
+use super::dimensions::JoltFormulaPointError;
 use super::error::require_len;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -44,16 +44,8 @@ impl BytecodeReadRafDimensions {
         self.committed_ra_polys
     }
 
-    pub const fn sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t + self.log_k, self.committed_ra_polys + 1)
-    }
-
-    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_k, self.committed_ra_polys + 1)
-    }
-
-    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.log_t, self.committed_ra_polys + 1)
+    pub const fn sumcheck_rounds(self) -> usize {
+        self.log_t + self.log_k
     }
 }
 
@@ -62,14 +54,14 @@ where
     F: RingCore,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
-    let output_coeff = public(BytecodeReadRafPublic::StageValue(0))
-        + gamma.clone() * public(BytecodeReadRafPublic::StageValue(1))
-        + gamma.clone().pow(2) * public(BytecodeReadRafPublic::StageValue(2))
-        + gamma.clone().pow(3) * public(BytecodeReadRafPublic::StageValue(3))
-        + gamma.clone().pow(4) * public(BytecodeReadRafPublic::StageValue(4))
-        + gamma.clone().pow(5) * public(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(6) * public(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(7) * public(BytecodeReadRafPublic::Entry);
+    let output_coeff = derived(BytecodeReadRafPublic::StageValue(0))
+        + gamma.clone() * derived(BytecodeReadRafPublic::StageValue(1))
+        + gamma.clone().pow(2) * derived(BytecodeReadRafPublic::StageValue(2))
+        + gamma.clone().pow(3) * derived(BytecodeReadRafPublic::StageValue(3))
+        + gamma.clone().pow(4) * derived(BytecodeReadRafPublic::StageValue(4))
+        + gamma.clone().pow(5) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(6) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(7) * derived(BytecodeReadRafPublic::Entry);
 
     output_coeff * bytecode_ra_product(dimensions)
 }
@@ -88,13 +80,13 @@ where
     for stage in 0..STAGES {
         output = output
             + gamma.clone().pow(stage)
-                * public(BytecodeReadRafPublic::StageCycleEq(stage))
+                * derived(BytecodeReadRafPublic::StageCycleEq(stage))
                 * bytecode_ra_product(dimensions)
                 * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(stage));
     }
-    let raf_coeff = gamma.clone().pow(STAGES) * public(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(STAGES + 1) * public(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(STAGES + 2) * public(BytecodeReadRafPublic::Entry);
+    let raf_coeff = gamma.clone().pow(STAGES) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(STAGES + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(STAGES + 2) * derived(BytecodeReadRafPublic::Entry);
 
     output + raf_coeff * bytecode_ra_product(dimensions)
 }
