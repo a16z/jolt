@@ -210,21 +210,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                rd_write_value_spartan(),
-                rs1_value_spartan(),
-                rs2_value_spartan(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                rd_write_value_reduced(),
-                rs1_value_reduced(),
-                rs2_value_reduced(),
-            ]
-        );
     }
 }

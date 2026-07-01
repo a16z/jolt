@@ -55,24 +55,6 @@ impl<F, O, P, C> Expr<F, O, P, C> {
     }
 }
 
-impl<F, O, P, C: Clone + Eq> Expr<F, O, P, C> {
-    pub fn required_challenges(&self) -> Vec<C> {
-        let mut challenges = Vec::new();
-        for source in self.terms.iter().flat_map(|term| term.factors.iter()) {
-            if let Source::Challenge(id) = source {
-                if !challenges.contains(id) {
-                    challenges.push(id.clone());
-                }
-            }
-        }
-        challenges
-    }
-
-    pub fn num_challenges(&self) -> usize {
-        self.required_challenges().len()
-    }
-}
-
 impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
     pub fn one() -> Self {
         Self {
@@ -162,48 +144,6 @@ impl<F: RingCore, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
     }
 }
 
-impl<F: RingCore, O, C> Expr<F, O, (), C> {
-    pub fn evaluate_without_derived<OpeningValue, ChallengeValue>(
-        &self,
-        opening_value: OpeningValue,
-        challenge_value: ChallengeValue,
-    ) -> F
-    where
-        OpeningValue: FnMut(&O) -> F,
-        ChallengeValue: FnMut(&C) -> F,
-    {
-        self.evaluate(opening_value, challenge_value, |()| F::zero())
-    }
-}
-
-impl<F, O: Clone + Eq, P, C> Expr<F, O, P, C> {
-    pub fn required_openings(&self) -> Vec<O> {
-        let mut openings = Vec::new();
-        for source in self.terms.iter().flat_map(|term| term.factors.iter()) {
-            if let Source::Opening(id) = source {
-                if !openings.contains(id) {
-                    openings.push(id.clone());
-                }
-            }
-        }
-        openings
-    }
-}
-
-impl<F, O, P: Clone + Eq, C> Expr<F, O, P, C> {
-    pub fn required_deriveds(&self) -> Vec<P> {
-        let mut deriveds = Vec::new();
-        for source in self.terms.iter().flat_map(|term| term.factors.iter()) {
-            if let Source::Derived(id) = source {
-                if !deriveds.contains(id) {
-                    deriveds.push(id.clone());
-                }
-            }
-        }
-        deriveds
-    }
-}
-
 /// Builds an opening source expression.
 pub fn opening<F: RingCore, O, P, C>(id: impl Into<O>) -> Expr<F, O, P, C> {
     Expr {
@@ -249,7 +189,6 @@ mod tests {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     enum Challenge {
         Alpha,
-        Beta,
     }
 
     #[test]
@@ -259,7 +198,7 @@ mod tests {
                 + challenge(1usize) * opening(Opening::A)
                 - constant(Fr::from_u64(5));
 
-        let value = expr.evaluate_without_derived(
+        let value = expr.evaluate(
             |opening| match opening {
                 Opening::A => Fr::from_u64(3),
                 Opening::B => Fr::from_u64(7),
@@ -268,6 +207,7 @@ mod tests {
                 1 => Fr::from_u64(11),
                 _ => Fr::from_u64(0),
             },
+            |()| Fr::from_u64(0),
         );
 
         assert_eq!(value, Fr::from_u64(70));
@@ -304,8 +244,6 @@ mod tests {
         let gamma: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Alpha);
         let expr = gamma.pow(3) * opening(Opening::A);
 
-        assert_eq!(expr.required_challenges(), vec![Challenge::Alpha]);
-        assert_eq!(expr.required_openings(), vec![Opening::A]);
         assert_eq!(
             expr.evaluate(
                 |_| Fr::from_u64(5),
@@ -327,37 +265,6 @@ mod tests {
                 |_| Fr::from_u64(0)
             ),
             Fr::from_u64(1)
-        );
-    }
-
-    #[test]
-    fn zero_coefficient_terms_keep_non_constant_metadata() {
-        let expr: Expr<Fr, Opening, Derived, Challenge> = Term {
-            coefficient: Fr::from_u64(0),
-            factors: vec![Source::Opening(Opening::A)],
-        }
-        .into();
-
-        assert_eq!(expr.required_openings(), vec![Opening::A]);
-        assert!(
-            expr.evaluate(
-                |_| Fr::from_u64(9),
-                |_| Fr::from_u64(0),
-                |_| Fr::from_u64(0)
-            ) == Fr::from_u64(0)
-        );
-    }
-
-    #[test]
-    fn typed_challenges_have_canonical_order() {
-        let expression: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Beta)
-            * opening(Opening::B)
-            + challenge(Challenge::Alpha) * derived(Derived::Offset)
-            + challenge(Challenge::Beta);
-
-        assert_eq!(
-            expression.required_challenges(),
-            vec![Challenge::Beta, Challenge::Alpha]
         );
     }
 }

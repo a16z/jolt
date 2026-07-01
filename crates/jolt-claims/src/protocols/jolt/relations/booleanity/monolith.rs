@@ -167,10 +167,6 @@ mod tests {
         assert_eq!(Booleanity::id(), JoltRelationId::Booleanity);
         assert_eq!(relation.rounds(), 13);
         assert_eq!(relation.degree(), 3);
-        assert!(relation
-            .input_expression::<Fr>()
-            .required_openings()
-            .is_empty());
     }
 
     /// The `gamma` is folded inside `booleanity_cycle_output`, so it never appears

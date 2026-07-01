@@ -137,16 +137,5 @@ mod tests {
         assert_eq!(AddressPhase::id(), JoltRelationId::BytecodeClaimReduction);
         assert_eq!(relation.rounds(), dimensions.address_phase_total_rounds());
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![cycle_phase_intermediate_opening()]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                final_bytecode_chunk_opening(0),
-                final_bytecode_chunk_opening(1),
-            ]
-        );
     }
 }
