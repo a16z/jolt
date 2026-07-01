@@ -5,7 +5,6 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 use num_traits::Zero;
 
@@ -135,29 +134,7 @@ where
     if checked.zk {
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
-        let statements = [
-            SumcheckStatement::new(
-                sumchecks.instruction_read_raf.rounds(),
-                sumchecks.instruction_read_raf.degree(),
-            ),
-            SumcheckStatement::new(
-                sumchecks.ram_ra_claim_reduction.rounds(),
-                sumchecks.ram_ra_claim_reduction.degree(),
-            ),
-            SumcheckStatement::new(
-                sumchecks.registers_val_evaluation.rounds(),
-                sumchecks.registers_val_evaluation.degree(),
-            ),
-        ];
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
-            &statements,
-            &proof.stages.stage5_sumcheck_proof,
-            transcript,
-        )
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: error.to_string(),
-        })?;
+        let consistency = sumchecks.verify_zk(&proof.stages.stage5_sumcheck_proof, transcript)?;
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
@@ -263,41 +240,12 @@ where
     let input_values = stage5_input_values_from_upstream(stage2, stage4);
     let input_points = stage5_input_points_from_upstream(stage2, stage4);
 
-    let sumcheck_claims = [
-        SumcheckClaim::new(
-            sumchecks.instruction_read_raf.rounds(),
-            sumchecks.instruction_read_raf.degree(),
-            sumchecks.instruction_read_raf.input_claim(
-                &input_values.instruction_read_raf,
-                &challenges.instruction_read_raf,
-            )?,
-        ),
-        SumcheckClaim::new(
-            sumchecks.ram_ra_claim_reduction.rounds(),
-            sumchecks.ram_ra_claim_reduction.degree(),
-            sumchecks.ram_ra_claim_reduction.input_claim(
-                &input_values.ram_ra_claim_reduction,
-                &challenges.ram_ra_claim_reduction,
-            )?,
-        ),
-        SumcheckClaim::new(
-            sumchecks.registers_val_evaluation.rounds(),
-            sumchecks.registers_val_evaluation.degree(),
-            sumchecks.registers_val_evaluation.input_claim(
-                &input_values.registers_val_evaluation,
-                &challenges.registers_val_evaluation,
-            )?,
-        ),
-    ];
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
+    let batch = sumchecks.verify_clear(
+        &input_values,
+        &challenges,
         &proof.stages.stage5_sumcheck_proof,
         transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::InstructionReadRaf,
-        reason: error.to_string(),
-    })?;
+    )?;
 
     let instruction_point = batch
         .try_instance_point(sumchecks.instruction_read_raf.rounds())
