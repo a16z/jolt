@@ -40,8 +40,24 @@ pub struct Stage2OutputClaims<F: Field> {
 /// `left`/`right_instruction_input`) that alias the product-remainder openings and
 /// must NOT be re-absorbed, so the canonical order is curated by hand below (and
 /// enforced by `validate`).
+///
+/// `output_shape` is intentionally NOT enabled for the same reason: the generated
+/// `output_claim_count` would sum the members' expression-referenced openings (16),
+/// but the batch commits/absorbs only 15 (the three aliases are absorbed once via
+/// their product-remainder source), so the committed-output-claim count stays
+/// hand-written in `verify`. The `verify_clear` / `verify_zk` /
+/// `derive_opening_points` / `expected_final_claim` drivers are generated; the
+/// two RAM relations slice their point at the phase-1 `instance_point_offset`,
+/// and `expected_final_claim` must be fed the alias-filled
+/// [`effective_aggregates`](Stage2BatchOutputClaims::effective_aggregates).
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values)]
+#[sumcheck_batch(
+    custom_opening_values,
+    verify_clear,
+    verify_zk,
+    derive_opening_points,
+    expected_final_claim
+)]
 pub struct Stage2BatchSumchecks<F: Field> {
     pub ram_read_write: RamReadWriteChecking<F>,
     pub product_remainder: ProductRemainder<F>,
@@ -184,6 +200,66 @@ impl<F: Field> Stage2BatchOutputClaims<F> {
         }
         Ok(())
     }
+
+    /// Build the *effective* output aggregates the batch's final-claim fold is
+    /// evaluated against: clones of the wire values/points with the reduction's
+    /// three aliased openings (`lookup_output`, `left`/`right_instruction_input`)
+    /// filled in — the reduction's output `Expr` reads them, and the raw wire
+    /// `None`s would error as `MissingOpeningClaim`. Absent on the wire, they reuse
+    /// the product-remainder values at the shared reduction point (or zero when the
+    /// product/reduction points disagree — a defensive fallback that mirrors the
+    /// legacy reconstruction). The fallback VALUE reads from `self` (the values);
+    /// the point-agreement test reads from `points`; do not cross their provenance.
+    pub fn effective_aggregates(
+        &self,
+        points: &Stage2BatchOutputPoints<F>,
+    ) -> (Stage2BatchOutputClaims<F>, Stage2BatchOutputPoints<F>) {
+        let reduction = &self.instruction_claim_reduction;
+        let product = &self.product_remainder;
+        let reduction_point = points
+            .instruction_claim_reduction
+            .left_lookup_operand
+            .clone();
+        let points_match = points.product_remainder.left_instruction_input.as_slice()
+            == reduction_point.as_slice();
+        let aliased_value = |value: Option<F>, product_value: F| {
+            value.unwrap_or(if points_match {
+                product_value
+            } else {
+                F::from_u64(0)
+            })
+        };
+        let effective_reduction_values = InstructionClaimReductionOutputClaims {
+            lookup_output: Some(aliased_value(
+                reduction.lookup_output,
+                product.lookup_output,
+            )),
+            left_lookup_operand: reduction.left_lookup_operand,
+            right_lookup_operand: reduction.right_lookup_operand,
+            left_instruction_input: Some(aliased_value(
+                reduction.left_instruction_input,
+                product.left_instruction_input,
+            )),
+            right_instruction_input: Some(aliased_value(
+                reduction.right_instruction_input,
+                product.right_instruction_input,
+            )),
+        };
+        // Every reduced opening shares the single reduction point.
+        let effective_reduction_points = InstructionClaimReductionOutputClaims {
+            lookup_output: Some(reduction_point.clone()),
+            left_lookup_operand: reduction_point.clone(),
+            right_lookup_operand: reduction_point.clone(),
+            left_instruction_input: Some(reduction_point.clone()),
+            right_instruction_input: Some(reduction_point),
+        };
+
+        let mut effective_values = self.clone();
+        effective_values.instruction_claim_reduction = effective_reduction_values;
+        let mut effective_points = points.clone();
+        effective_points.instruction_claim_reduction = effective_reduction_points;
+        (effective_values, effective_points)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -275,12 +351,73 @@ pub struct VerifiedProductUniSkip<F: Field> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_claims::protocols::jolt::geometry::{
+        dimensions::{ReadWriteDimensions, TraceDimensions},
+        ram::RamRafEvaluationDimensions,
+        spartan::SpartanProductDimensions,
+    };
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_program::preprocess::PublicIoMemory;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
+    }
+
+    /// Pins the batch's `draw_challenges` to the pre-port inline draw: exactly two
+    /// squeezes, the RAM read-write gamma then the instruction claim-reduction
+    /// gamma (the other three members are `NoChallenges` and draw nothing).
+    #[test]
+    fn draw_challenges_matches_inline_two_gamma_sequence() {
+        let log_t = 4usize;
+        let log_k = 3usize;
+        let dimensions = ReadWriteDimensions::new(log_t, log_k, 2, 1);
+        let raf_dimensions = RamRafEvaluationDimensions::try_from(dimensions).unwrap();
+        let public_memory = PublicIoMemory::new(&JoltDevice::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        }))
+        .unwrap();
+        let sumchecks = Stage2BatchSumchecks::<Fr> {
+            ram_read_write: RamReadWriteChecking::new(dimensions, log_k, Vec::new()),
+            product_remainder: ProductRemainder::new(
+                SpartanProductDimensions::new(log_t),
+                fr(1),
+                fr(2),
+                Vec::new(),
+            ),
+            instruction_claim_reduction: InstructionClaimReduction::new(
+                TraceDimensions::new(log_t),
+                Vec::new(),
+            ),
+            ram_raf_evaluation: RamRafEvaluation::new(
+                dimensions,
+                raf_dimensions,
+                log_k,
+                0,
+                Vec::new(),
+            ),
+            ram_output_check: RamOutputCheck::new(dimensions, Vec::new(), public_memory),
+        };
+
+        let (inline_events, (inline_ram_gamma, inline_instruction_gamma)) =
+            record(|t| (t.challenge_scalar(), t.challenge_scalar()));
+        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(
+            draw_events,
+            vec![DrawEvent::Squeeze(1), DrawEvent::Squeeze(2)]
+        );
+        assert_eq!(challenges.ram_read_write.gamma, inline_ram_gamma);
+        assert_eq!(
+            challenges.instruction_claim_reduction.gamma,
+            inline_instruction_gamma
+        );
     }
 
     /// Locks the stage-2 batch Fiat-Shamir append order against silent drift. The

@@ -35,10 +35,9 @@ pub fn ram_read_write_input_values_from_upstream<F: Field>(
 }
 
 /// Wire the consumed RAM read/write value opening *points* (both empty — these
-/// openings carry no point at this stage).
-pub fn ram_read_write_input_points_from_upstream<F: Field>(
-    _stage1: &Stage1ClearOutput<F>,
-) -> RamReadWriteInputClaims<Vec<F>> {
+/// openings carry no point at this stage, so no upstream data is needed and the
+/// same wiring serves the clear and ZK paths).
+pub fn ram_read_write_input_points_from_upstream<F: Field>() -> RamReadWriteInputClaims<Vec<F>> {
     RamReadWriteInputClaims {
         ram_read_value: Vec::new(),
         ram_write_value: Vec::new(),

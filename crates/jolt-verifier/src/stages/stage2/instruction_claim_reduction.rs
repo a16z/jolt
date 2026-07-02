@@ -50,9 +50,9 @@ pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
 }
 
 /// Wire the consumed instruction-lookup opening *points* (all empty — these
-/// openings carry no point at this stage).
+/// openings carry no point at this stage, so no upstream data is needed and the
+/// same wiring serves the clear and ZK paths).
 pub fn instruction_claim_reduction_input_points_from_upstream<F: Field>(
-    _stage1: &Stage1ClearOutput<F>,
 ) -> InstructionClaimReductionInputClaims<Vec<F>> {
     InstructionClaimReductionInputClaims {
         lookup_output: Vec::new(),
