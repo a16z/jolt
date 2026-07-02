@@ -2426,7 +2426,7 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-sdk",
  "sha2 0.11.0",
- "sha3 0.10.8",
+ "sha3 0.12.0",
 ]
 
 [[package]]
@@ -3056,7 +3056,7 @@ dependencies = [
  "hex-literal",
  "jolt-inlines-sdk",
  "rand 0.8.5",
- "sha3 0.11.0-rc.9",
+ "sha3 0.12.0",
  "tracer",
 ]
 
@@ -3269,7 +3269,7 @@ dependencies = [
  "rayon",
  "serde",
  "serial_test",
- "sha3 0.11.0-rc.9",
+ "sha3 0.12.0",
  "strum 0.28.0",
  "strum_macros 0.28.0",
  "sysinfo",
@@ -5831,6 +5831,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha3"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc9bad02c26382724b2d2692c6f179285e4b54eeecd7968f52a50059c3c11759"
+dependencies = [
+ "digest 0.11.3",
+ "keccak 0.2.0",
+ "sponge-cursor",
+]
+
+[[package]]
 name = "sha3-asm"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6006,6 +6017,12 @@ dependencies = [
  "base64ct",
  "der",
 ]
+
+[[package]]
+name = "sponge-cursor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "spongefish"
