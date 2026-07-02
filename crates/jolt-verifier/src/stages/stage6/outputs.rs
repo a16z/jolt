@@ -84,8 +84,8 @@ impl<F: Field> Stage6AddressPhaseOutputPoints<F> {
 ///
 /// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
 /// members' challenges have stage-level provenance (the bytecode gamma shares
-/// stage 6a's squeeze, the booleanity gamma is drawn pre-6a with a
-/// prover-matched zero-replacement, and the instruction-RA gamma keeps
+/// stage 6a's squeeze, the booleanity gamma is drawn pre-6a where the prover's
+/// booleanity subprotocol samples it, and the instruction-RA gamma keeps
 /// `powers(n)[1].unwrap_or(one)`), so `verify` hand-assembles
 /// `Stage6CyclePhaseChallenges` from the stage-level draws — a generated
 /// per-member draw would squeeze at the wrong transcript position if it

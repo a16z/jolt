@@ -146,13 +146,8 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         }
 
         // Sample a single batching challenge γ, and derive per-polynomial weights γ^{2i}.
-        let mut gamma = transcript.challenge_scalar_optimized::<F>();
-        let mut gamma_f: F = gamma.into();
-        // Avoid the degenerate gamma=0 case (vanishing weights + non-invertible scaling).
-        if gamma_f.is_zero() {
-            gamma = F::Challenge::from(1_u128);
-            gamma_f = gamma.into();
-        }
+        let gamma = transcript.challenge_scalar_optimized::<F>();
+        let gamma_f: F = gamma.into();
 
         // Compute gamma_powers_square (verifier needs these for expected_output_claim)
         let gamma_sq = gamma_f.square();

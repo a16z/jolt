@@ -21,7 +21,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
-use num_traits::{One, Zero};
+use num_traits::One;
 
 use super::{
     batch::Stage6CyclePhaseParams,
@@ -185,12 +185,7 @@ where
     }
     let mut booleanity_reference_cycle = stage5_instruction_cycle.to_vec();
     booleanity_reference_cycle.reverse();
-    // The zero-replacement mirrors the prover's booleanity draw exactly (it has
-    // no transcript effect) and MUST stay.
-    let mut booleanity_gamma = transcript.challenge();
-    if booleanity_gamma.is_zero() {
-        booleanity_gamma = PCS::Field::one();
-    }
+    let booleanity_gamma = transcript.challenge();
 
     let address_input_points = Stage6AddressPhaseInputPoints {
         bytecode_read_raf: bytecode_read_raf_address_phase_input_points_from_upstream(),
@@ -451,10 +446,10 @@ where
         untrusted_advice_reference_point,
     })?;
 
-    // Hand-assembled (NOT the generated `draw_challenges`): the bytecode gamma
-    // shares stage 6a's squeeze, the booleanity gamma was drawn pre-6a with the
-    // prover-matched zero-replacement, and the instruction-RA gamma keeps the
-    // `powers(1)` edge above.
+    // Hand-assembled (the generated `draw_challenges` is suppressed): the bytecode
+    // gamma shares stage 6a's squeeze, the booleanity gamma was drawn pre-6a where
+    // the prover's booleanity subprotocol samples it, and the instruction-RA gamma
+    // keeps the `powers(1)` edge above.
     let cycle_challenges = Stage6CyclePhaseChallenges {
         bytecode_read_raf: BytecodeReadRafCyclePhaseCommittedChallenges {
             gamma: bytecode_gamma,
