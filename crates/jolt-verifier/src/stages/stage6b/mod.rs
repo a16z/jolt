@@ -1,4 +1,4 @@
-//! Stage 6 verifier entry point.
+//! Stage 6b (cycle-phase) verifier entry point.
 
 pub mod batch;
 pub mod booleanity;
@@ -11,5 +11,5 @@ pub mod ram_hamming_booleanity;
 pub mod ram_ra_virtualization;
 pub mod verify;
 
-pub use outputs::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput};
+pub use outputs::{Stage6bClearOutput, Stage6bOutput, Stage6bZkOutput};
 pub use verify::verify;

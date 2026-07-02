@@ -1,18 +1,15 @@
-//! The stage 6 booleanity sumcheck instances (address phase + cycle phase).
+//! The stage 6b booleanity cycle-phase sumcheck instance.
 //!
 //! Booleanity proves every one-hot `Ra` chunk (instruction, bytecode, RAM) is
 //! boolean. It runs in two phases: the stage-6a address phase binds the
 //! `log_k_chunk` address variables and stages the `BooleanityAddrClaim`
-//! intermediate; the stage-6b cycle phase binds the `log_t` cycle variables and
+//! intermediate; this stage-6b cycle phase binds the `log_t` cycle variables and
 //! opens the committed per-family `Ra` claims. The cycle phase's single public,
 //! `EqAddressCycle`, ties the full two-phase sumcheck point to the reference
 //! address/cycle drawn from the stage-5 instruction opening.
 
-use core::marker::PhantomData;
-
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::booleanity::{
-    BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims,
     BooleanityCyclePhaseChallenges, BooleanityInputClaims, BooleanityOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
@@ -24,53 +21,6 @@ use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
-
-/// The address phase consumes no openings (its input claim is the constant zero).
-/// (Verifier-side constructor for the moved [`BooleanityAddressPhaseInputClaims`].)
-pub fn booleanity_address_phase_input_values_from_upstream<F: Field>(
-) -> BooleanityAddressPhaseInputClaims<F> {
-    BooleanityAddressPhaseInputClaims::default()
-}
-
-/// The address phase consumes no openings, so its input-point struct is empty.
-pub fn booleanity_address_phase_input_points_from_upstream<F: Field>(
-) -> BooleanityAddressPhaseInputClaims<Vec<F>> {
-    BooleanityAddressPhaseInputClaims::default()
-}
-
-pub struct BooleanityAddressPhase<F: Field> {
-    symbolic: relations::booleanity::BooleanityAddressPhase,
-    _field: PhantomData<F>,
-}
-
-impl<F: Field> BooleanityAddressPhase<F> {
-    pub fn new(dimensions: BooleanityDimensions) -> Self {
-        Self {
-            symbolic: relations::booleanity::BooleanityAddressPhase::new(dimensions),
-            _field: PhantomData,
-        }
-    }
-}
-
-impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
-    type Symbolic = relations::booleanity::BooleanityAddressPhase;
-
-    fn symbolic(&self) -> &Self::Symbolic {
-        &self.symbolic
-    }
-
-    fn derive_opening_points(
-        &self,
-        sumcheck_point: &[F],
-        _input_points: &BooleanityAddressPhaseInputClaims<Vec<F>>,
-    ) -> Result<BooleanityAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
-        // The address opening point (`booleanity_r_address`) is the reversed
-        // address sumcheck point; the cycle phase prepends it to its cycle point.
-        Ok(BooleanityAddressPhaseOutputClaims {
-            intermediate: sumcheck_point.iter().rev().copied().collect(),
-        })
-    }
-}
 
 /// The `BooleanityAddrClaim` intermediate *value* consumed from the address phase.
 /// (Verifier-side constructor for the moved [`BooleanityInputClaims`].)

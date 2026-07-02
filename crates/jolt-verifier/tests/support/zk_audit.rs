@@ -13,7 +13,7 @@ use jolt_verifier::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
+        stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
         zk::{blindfold, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
     },
     verifier::{validate_inputs, validate_proof_consistency, CheckedInputs},
@@ -253,7 +253,18 @@ where
         &stage2,
         &stage4,
     )?;
-    let stage6 = stage6::verify(
+    let stage6a = stage6a::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+    )?;
+    let stage6b = stage6b::verify(
         &checked,
         preprocessing,
         proof,
@@ -264,6 +275,7 @@ where
         &stage3,
         &stage4,
         &stage5,
+        &stage6a,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -271,7 +283,7 @@ where
         &formula_dimensions,
         &mut transcript,
         &stage4,
-        &stage6,
+        &stage6b,
     )?;
     let stage8 = stage8::verify(
         &checked,
@@ -280,12 +292,12 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
-        &stage6,
+        &stage6b,
         &stage7,
     )?;
 
     let zk_stages = zk_stage_outputs::<PCS, VC>(
-        &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,
+        &stage1, &stage2, &stage3, &stage4, &stage5, &stage6a, &stage6b, &stage7, &stage8,
     )?;
     let blindfold = blindfold::build(BlindFoldInputs {
         checked: &checked,
@@ -296,7 +308,8 @@ where
         stage3: zk_stages.stage3,
         stage4: zk_stages.stage4,
         stage5: zk_stages.stage5,
-        stage6: zk_stages.stage6,
+        stage6a: zk_stages.stage6a,
+        stage6b: zk_stages.stage6b,
         stage7: zk_stages.stage7,
         stage8: zk_stages.stage8,
     })?;

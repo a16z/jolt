@@ -16,7 +16,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
+        stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
         CommittedProgramSchedule, PrecommittedSchedule,
     },
@@ -114,7 +114,18 @@ where
         &stage2,
         &stage4,
     )?;
-    let stage6 = stage6::verify(
+    let stage6a = stage6a::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+    )?;
+    let stage6b = stage6b::verify(
         &checked,
         preprocessing,
         proof,
@@ -125,6 +136,7 @@ where
         &stage3,
         &stage4,
         &stage5,
+        &stage6a,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -132,7 +144,7 @@ where
         &formula_dimensions,
         &mut transcript,
         &stage4,
-        &stage6,
+        &stage6b,
     )?;
     let stage8 = stage8::verify(
         &checked,
@@ -141,13 +153,13 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
-        &stage6,
+        &stage6b,
         &stage7,
     )?;
 
     if checked.zk {
         let zk_stages = zk_stage_outputs::<PCS, VC>(
-            &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,
+            &stage1, &stage2, &stage3, &stage4, &stage5, &stage6a, &stage6b, &stage7, &stage8,
         )?;
         let blindfold = blindfold::build(BlindFoldInputs {
             checked: &checked,
@@ -158,7 +170,8 @@ where
             stage3: zk_stages.stage3,
             stage4: zk_stages.stage4,
             stage5: zk_stages.stage5,
-            stage6: zk_stages.stage6,
+            stage6a: zk_stages.stage6a,
+            stage6b: zk_stages.stage6b,
             stage7: zk_stages.stage7,
             stage8: zk_stages.stage8,
         })?;
@@ -1113,44 +1126,42 @@ mod tests {
                     rd_wa: zero,
                 },
             },
-            stage6: stage6::outputs::Stage6OutputClaims {
-                address_phase: stage6::outputs::Stage6AddressPhaseOutputClaims {
-                    bytecode_read_raf: stage6::outputs::BytecodeReadRafAddressPhaseOutputClaims {
-                        intermediate: zero,
-                        val_stages: Vec::new(),
-                    },
-                    booleanity: stage6::outputs::BooleanityAddressPhaseOutputClaims {
-                        intermediate: zero,
-                    },
+            stage6a: stage6a::outputs::Stage6aOutputClaims {
+                bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
+                    intermediate: zero,
+                    val_stages: Vec::new(),
                 },
-                cycle_phase: stage6::outputs::Stage6CyclePhaseOutputClaims {
-                    bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
-                        bytecode_ra: Vec::new(),
-                    },
-                    booleanity: stage6::outputs::BooleanityOutputClaims {
-                        instruction_ra: Vec::new(),
-                        bytecode_ra: Vec::new(),
-                        ram_ra: Vec::new(),
-                    },
-                    ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
-                        ram_hamming_weight: zero,
-                    },
-                    ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
-                        ram_ra: Vec::new(),
-                    },
-                    instruction_ra_virtualization:
-                        stage6::outputs::InstructionRaVirtualizationOutputClaims {
-                            committed_instruction_ra: Vec::new(),
-                        },
-                    inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
-                        ram_inc: zero,
-                        rd_inc: zero,
-                    },
-                    trusted_advice: None,
-                    untrusted_advice: None,
-                    bytecode_reduction: None,
-                    program_image_reduction: None,
+                booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
+                    intermediate: zero,
                 },
+            },
+            stage6b: stage6b::outputs::Stage6bOutputClaims {
+                bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
+                    bytecode_ra: Vec::new(),
+                },
+                booleanity: stage6b::outputs::BooleanityOutputClaims {
+                    instruction_ra: Vec::new(),
+                    bytecode_ra: Vec::new(),
+                    ram_ra: Vec::new(),
+                },
+                ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
+                    ram_hamming_weight: zero,
+                },
+                ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
+                    ram_ra: Vec::new(),
+                },
+                instruction_ra_virtualization:
+                    stage6b::outputs::InstructionRaVirtualizationOutputClaims {
+                        committed_instruction_ra: Vec::new(),
+                    },
+                inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
+                    ram_inc: zero,
+                    rd_inc: zero,
+                },
+                trusted_advice: None,
+                untrusted_advice: None,
+                bytecode_reduction: None,
+                program_image_reduction: None,
             },
             stage7: stage7::outputs::Stage7OutputClaims {
                 hamming_weight_claim_reduction:

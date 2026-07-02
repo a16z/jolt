@@ -126,7 +126,7 @@ use super::{
     outputs::{BlindFoldOutput, CommittedOutputClaimOutput},
 };
 use crate::stages::{
-    stage6::{outputs::BytecodeReductionWeights, verify},
+    stage6b::{outputs::BytecodeReductionWeights, verify},
     stage8::outputs::Stage8OpeningId,
 };
 use crate::VerifierError;
@@ -136,7 +136,8 @@ mod stage2;
 mod stage3;
 mod stage4;
 mod stage5;
-mod stage6;
+mod stage6a;
+mod stage6b;
 mod stage7;
 
 type Builder<F, C> = BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId>;
@@ -193,7 +194,8 @@ where
     builder = stage3::add_stage3(&input, builder, &mut values)?;
     builder = stage4::add_stage4(&input, builder, &mut values)?;
     builder = stage5::add_stage5(&input, builder, &mut values)?;
-    builder = stage6::add_stage6(&input, builder, &mut values)?;
+    builder = stage6a::add_stage6a(&input, builder, &mut values)?;
+    builder = stage6b::add_stage6b(&input, builder, &mut values)?;
     builder = stage7::add_stage7(&input, builder, &mut values)?;
 
     for (id, value) in values.publics {
@@ -696,38 +698,38 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Gamma)),
-        input.stage6.challenges.bytecode_gamma_powers[1],
+        input.stage6a.challenges.bytecode_gamma_powers[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma)),
-        input.stage6.challenges.stage1_gammas[1],
+        input.stage6a.challenges.stage1_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma)),
-        input.stage6.challenges.stage2_gammas[1],
+        input.stage6a.challenges.stage2_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma)),
-        input.stage6.challenges.stage3_gammas[1],
+        input.stage6a.challenges.stage3_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma)),
-        input.stage6.challenges.stage4_gammas[1],
+        input.stage6a.challenges.stage4_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma)),
-        input.stage6.challenges.stage5_gammas[1],
+        input.stage6a.challenges.stage5_gammas[1],
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(BooleanityChallenge::Gamma)),
-        input.stage6.challenges.booleanity_gamma,
+        input.stage6a.challenges.booleanity_gamma,
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(
             InstructionRaVirtualizationChallenge::Gamma,
         )),
         input
-            .stage6
+            .stage6b
             .challenges
             .instruction_ra_gamma_powers
             .get(1)
@@ -736,12 +738,12 @@ where
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(IncClaimReductionChallenge::Gamma)),
-        input.stage6.challenges.inc_gamma,
+        input.stage6b.challenges.inc_gamma,
     )?;
 
     let bytecode_address_point = input
-        .stage6
-        .address_phase_consistency
+        .stage6a
+        .consistency
         .try_instance_point(bytecode_address_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_address = bytecode_address_point
@@ -750,7 +752,7 @@ where
         .copied()
         .collect::<Vec<_>>();
     let bytecode_point = input
-        .stage6
+        .stage6b
         .batch_consistency
         .try_instance_point(bytecode_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
@@ -846,11 +848,11 @@ where
                     .output_points
                     .registers_opening_point()[..REGISTER_ADDRESS_BITS],
                 entry_bytecode_index,
-                stage1_gammas: &input.stage6.challenges.stage1_gammas,
-                stage2_gammas: &input.stage6.challenges.stage2_gammas,
-                stage3_gammas: &input.stage6.challenges.stage3_gammas,
-                stage4_gammas: &input.stage6.challenges.stage4_gammas,
-                stage5_gammas: &input.stage6.challenges.stage5_gammas,
+                stage1_gammas: &input.stage6a.challenges.stage1_gammas,
+                stage2_gammas: &input.stage6a.challenges.stage2_gammas,
+                stage3_gammas: &input.stage6a.challenges.stage3_gammas,
+                stage4_gammas: &input.stage6a.challenges.stage4_gammas,
+                stage5_gammas: &input.stage6a.challenges.stage5_gammas,
             })
             .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
         for (index, stage_value) in bytecode_public_values.stage_values.iter().enumerate() {
@@ -874,24 +876,24 @@ where
     }
 
     let booleanity_address_point = input
-        .stage6
-        .address_phase_consistency
+        .stage6a
+        .consistency
         .try_instance_point(booleanity_address_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let booleanity_point = input
-        .stage6
+        .stage6b
         .batch_consistency
         .try_instance_point(booleanity_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let reference_eq_point = input
-        .stage6
+        .stage6a
         .challenges
         .booleanity_reference_address
         .iter()
         .rev()
         .chain(
             input
-                .stage6
+                .stage6a
                 .challenges
                 .booleanity_reference_cycle
                 .iter()
@@ -911,7 +913,7 @@ where
     )?;
 
     let ram_hamming_point = input
-        .stage6
+        .stage6b
         .batch_consistency
         .try_instance_point(ram_hamming_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
@@ -923,7 +925,7 @@ where
     )?;
 
     let ram_ra_point = input
-        .stage6
+        .stage6b
         .batch_consistency
         .try_instance_point(ram_ra_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaVirtualization, error))?;
@@ -938,7 +940,7 @@ where
     )?;
 
     let instruction_ra_point = input
-        .stage6
+        .stage6b
         .batch_consistency
         .try_instance_point(instruction_ra_rounds)
         .map_err(|error| {
@@ -957,7 +959,7 @@ where
     )?;
 
     let inc_point = input
-        .stage6
+        .stage6b
         .batch_consistency
         .try_instance_point(inc_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::IncClaimReduction, error))?;
@@ -1009,7 +1011,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let eta = input
-        .stage6
+        .stage6b
         .challenges
         .bytecode_reduction_eta
         .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
@@ -1019,21 +1021,16 @@ where
         layout,
         verify::BytecodeReductionWeightInputs {
             eta,
-            stage1_gammas: &input.stage6.challenges.stage1_gammas,
-            stage2_gammas: &input.stage6.challenges.stage2_gammas,
-            stage3_gammas: &input.stage6.challenges.stage3_gammas,
-            stage4_gammas: &input.stage6.challenges.stage4_gammas,
-            stage5_gammas: &input.stage6.challenges.stage5_gammas,
+            stage1_gammas: &input.stage6a.challenges.stage1_gammas,
+            stage2_gammas: &input.stage6a.challenges.stage2_gammas,
+            stage3_gammas: &input.stage6a.challenges.stage3_gammas,
+            stage4_gammas: &input.stage6a.challenges.stage4_gammas,
+            stage5_gammas: &input.stage6a.challenges.stage5_gammas,
             register_read_write_point: &input.stage4.output_points.registers_read_write_point()
                 [..REGISTER_ADDRESS_BITS],
             register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
                 [..REGISTER_ADDRESS_BITS],
-            bytecode_r_address: &input
-                .stage6
-                .output_points
-                .address_phase
-                .bytecode_read_raf
-                .intermediate,
+            bytecode_r_address: &input.stage6a.output_points.bytecode_read_raf.intermediate,
         },
     )
 }
@@ -1064,7 +1061,7 @@ where
         return Ok(());
     }
     let opening_point = input
-        .stage6
+        .stage6b
         .output_points
         .bytecode_reduction_opening_point()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
@@ -1098,7 +1095,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let cycle_phase_variables = input
-        .stage6
+        .stage6b
         .output_points
         .bytecode_cycle_phase_variables()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
@@ -1132,7 +1129,7 @@ where
         return Ok(());
     }
     let opening_point = input
-        .stage6
+        .stage6b
         .output_points
         .program_image_opening_point()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
@@ -1161,7 +1158,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let cycle_phase_variables = input
-        .stage6
+        .stage6b
         .output_points
         .program_image_cycle_phase_variables()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
@@ -1194,7 +1191,7 @@ where
         return Ok(());
     }
     let opening_point = input
-        .stage6
+        .stage6b
         .output_points
         .advice_cycle_phase_opening_point(kind)
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
@@ -1223,7 +1220,7 @@ where
 {
     let source_point = advice_source_point(input, kind)?;
     let cycle_phase_variables = input
-        .stage6
+        .stage6b
         .output_points
         .advice_cycle_phase_variables(kind)
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
@@ -1246,10 +1243,9 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let output_points = &input.stage6.output_points;
+    let output_points = &input.stage6b.output_points;
     let mut points = Vec::with_capacity(dimensions.layout.total());
     for point in &output_points
-        .cycle_phase
         .instruction_ra_virtualization
         .committed_instruction_ra
     {
@@ -1258,13 +1254,13 @@ where
             point,
         )?);
     }
-    for point in &output_points.cycle_phase.bytecode_read_raf.bytecode_ra {
+    for point in &output_points.bytecode_read_raf.bytecode_ra {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,
         )?);
     }
-    for point in &output_points.cycle_phase.ram_ra_virtualization.ram_ra {
+    for point in &output_points.ram_ra_virtualization.ram_ra {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,

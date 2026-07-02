@@ -22,7 +22,7 @@ use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use super::outputs::Stage8OpeningId;
 use crate::{
-    stages::{stage6::Stage6ClearOutput, stage7::outputs::Stage7ClearOutput},
+    stages::{stage6b::Stage6bClearOutput, stage7::outputs::Stage7ClearOutput},
     VerifierError,
 };
 
@@ -87,7 +87,7 @@ pub struct Stage8FinalOpeningClaimsInput<'a, F: Field> {
     pub trusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
     /// `Some(..)` signals untrusted advice is part of the batch.
     pub untrusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
-    pub stage6: &'a Stage6ClearOutput<F>,
+    pub stage6: &'a Stage6bClearOutput<F>,
     pub stage7: &'a Stage7ClearOutput<F>,
 }
 
@@ -98,7 +98,7 @@ pub struct Stage8FinalOpeningBatchInput<'a, F: Field> {
     pub trace_polynomial_order: TracePolynomialOrder,
     pub trusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
     pub untrusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
-    pub stage6: &'a Stage6ClearOutput<F>,
+    pub stage6: &'a Stage6bClearOutput<F>,
     pub stage7: &'a Stage7ClearOutput<F>,
 }
 
@@ -299,16 +299,16 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
     opening_point: &[F],
     hamming_weight_opening_point: &[F],
     inc_claim_reduction_opening_point: &[F],
-    stage6: &Stage6ClearOutput<F>,
+    stage6: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
 ) -> Result<(F, F), VerifierError> {
     match polynomial {
         JoltCommittedPolynomial::RamInc => Ok((
-            stage6.output_values.cycle_phase.inc_claim_reduction.ram_inc,
+            stage6.output_values.inc_claim_reduction.ram_inc,
             commitment_embedding_scale(opening_point, inc_claim_reduction_opening_point),
         )),
         JoltCommittedPolynomial::RdInc => Ok((
-            stage6.output_values.cycle_phase.inc_claim_reduction.rd_inc,
+            stage6.output_values.inc_claim_reduction.rd_inc,
             commitment_embedding_scale(opening_point, inc_claim_reduction_opening_point),
         )),
         JoltCommittedPolynomial::InstructionRa(index) => hamming_weight_opening_claim(
