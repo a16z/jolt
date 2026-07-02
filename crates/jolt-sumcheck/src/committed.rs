@@ -80,6 +80,89 @@ impl<F: Copy, C: Clone> CommittedSumcheckConsistency<F, C> {
     }
 }
 
+/// A [`CommittedSumcheckConsistency`] paired with the batching data the ZK
+/// verify driver folds it against.
+///
+/// Produced by `jolt-verifier`'s generated per-stage `verify_zk` driver and
+/// read back by BlindFold. Committed proofs expose only transcript challenges
+/// and commitments, not scalar evaluation claims, so this type carries no claim
+/// values — only the per-instance batching coefficients and the combined
+/// `(max_num_vars, max_degree)` dimensions.
+///
+/// Instances are laid out with front-loaded dummy rounds: a shorter instance
+/// with `num_vars` rounds is active only in the last `num_vars` rounds, so its
+/// challenge suffix begins at `max_num_vars - num_vars`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchedCommittedSumcheckConsistency<F: Field, C> {
+    pub consistency: CommittedSumcheckConsistency<F, C>,
+    pub batching_coefficients: Vec<F>,
+    pub max_num_vars: usize,
+    pub max_degree: usize,
+}
+
+impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
+    /// Returns the front-padding offset for an instance with `num_vars`.
+    ///
+    /// Batched committed verification front-loads dummy rounds for smaller
+    /// instances, so an instance with `num_vars` is evaluated on the suffix
+    /// beginning at `max_num_vars - num_vars`.
+    pub fn try_round_offset(&self, num_vars: usize) -> Result<usize, SumcheckError<F>> {
+        self.max_num_vars
+            .checked_sub(num_vars)
+            .ok_or(SumcheckError::BatchedPointOutOfRange {
+                offset: 0,
+                num_vars,
+                total: self.consistency.rounds.len(),
+            })
+    }
+
+    pub fn challenges(&self) -> Vec<F>
+    where
+        F: Copy,
+    {
+        self.consistency
+            .rounds
+            .iter()
+            .map(|round| round.challenge)
+            .collect()
+    }
+
+    /// Returns the suffix challenge vector for an instance with `num_vars`.
+    pub fn try_instance_point(&self, num_vars: usize) -> Result<Vec<F>, SumcheckError<F>>
+    where
+        F: Copy,
+    {
+        self.try_instance_point_at(self.try_round_offset(num_vars)?, num_vars)
+    }
+
+    /// Returns a challenge vector starting at `offset`.
+    ///
+    /// This is useful for protocols whose instance point is embedded inside the
+    /// batched challenge vector but not necessarily at the canonical suffix
+    /// offset.
+    pub fn try_instance_point_at(
+        &self,
+        offset: usize,
+        num_vars: usize,
+    ) -> Result<Vec<F>, SumcheckError<F>>
+    where
+        F: Copy,
+    {
+        let end = offset
+            .checked_add(num_vars)
+            .ok_or(SumcheckError::BatchedPointRangeOverflow { offset, num_vars })?;
+        self.consistency
+            .rounds
+            .get(offset..end)
+            .ok_or(SumcheckError::BatchedPointOutOfRange {
+                offset,
+                num_vars,
+                total: self.consistency.rounds.len(),
+            })
+            .map(|rounds| rounds.iter().map(|round| round.challenge).collect())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedRoundWitness<F> {
     pub coefficients: Vec<F>,

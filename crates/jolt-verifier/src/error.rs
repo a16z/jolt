@@ -20,9 +20,6 @@ pub enum VerifierError {
     #[error("proof field {field} must be committed for ZK verification")]
     ExpectedCommittedProof { field: &'static str },
 
-    #[error("clear proof is missing opening claims")]
-    MissingOpeningClaims,
-
     #[error("clear proof unexpectedly includes a BlindFold proof")]
     UnexpectedBlindFoldProof,
 
@@ -68,9 +65,6 @@ pub enum VerifierError {
     #[error("invalid committed program preprocessing: {reason}")]
     InvalidCommittedProgram { reason: String },
 
-    #[error("missing stage claim opening input {id:?}")]
-    MissingStageClaimOpening { id: JoltOpeningId },
-
     #[error("missing stage claim challenge input {id:?}")]
     MissingStageClaimChallenge { id: JoltChallengeId },
 
@@ -86,9 +80,6 @@ pub enum VerifierError {
         left: JoltOpeningId,
         right: JoltOpeningId,
     },
-
-    #[error("stage {stage:?} claim expressions must evaluate to the same value")]
-    StageClaimExpressionMismatch { stage: JoltRelationId },
 
     #[error("stage {stage:?} sumcheck degree {degree} is invalid")]
     InvalidStageSumcheckDegree {
