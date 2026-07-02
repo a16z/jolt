@@ -41,14 +41,15 @@ use jolt_verifier::{
             InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
             RegistersValEvaluationOutputClaims, Stage5OutputClaims,
         },
-        stage6::outputs::{
-            AdviceCyclePhaseOutputClaims, BooleanityAddressPhaseOutputClaims,
-            BooleanityOutputClaims, BytecodeReadRafAddressPhaseOutputClaims,
-            BytecodeReadRafOutputClaims, BytecodeReductionCyclePhaseOutputClaims,
-            IncClaimReductionOutputClaims, InstructionRaVirtualizationOutputClaims,
-            ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
-            RamRaVirtualizationOutputClaims, Stage6AddressPhaseOutputClaims,
-            Stage6CyclePhaseOutputClaims, Stage6OutputClaims,
+        stage6a::outputs::{
+            BooleanityAddressPhaseOutputClaims, BytecodeReadRafAddressPhaseOutputClaims,
+            Stage6aOutputClaims,
+        },
+        stage6b::outputs::{
+            AdviceCyclePhaseOutputClaims, BooleanityOutputClaims, BytecodeReadRafOutputClaims,
+            BytecodeReductionCyclePhaseOutputClaims, IncClaimReductionOutputClaims,
+            InstructionRaVirtualizationOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
+            RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
         },
         stage7::{
             advice_address_phase::AdviceAddressPhaseOutputClaims,
@@ -79,7 +80,8 @@ pub(crate) fn clear_claims_from_native<F: Field>(
         stage3: stage3_claims_from_native(&claims)?,
         stage4: stage4_claims_from_native(&claims)?,
         stage5: stage5_claims_from_native(&claims)?,
-        stage6: stage6_claims_from_native(&claims)?,
+        stage6a: stage6a_claims_from_native(&claims)?,
+        stage6b: stage6b_claims_from_native(&claims)?,
         stage7: stage7_claims_from_native(&claims)?,
     })
 }
@@ -272,9 +274,26 @@ fn stage5_claims_from_native<F: Field>(
     })
 }
 
-fn stage6_claims_from_native<F: Field>(
+fn stage6a_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage6OutputClaims<F>, VerifierError> {
+) -> Result<Stage6aOutputClaims<F>, VerifierError> {
+    let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
+    let booleanity_address = booleanity::booleanity_address_phase_opening();
+
+    Ok(Stage6aOutputClaims {
+        bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
+            intermediate: claims.require(bytecode_read_raf_address)?,
+            val_stages: bytecode_val_stage_claims_from_native(claims)?,
+        },
+        booleanity: BooleanityAddressPhaseOutputClaims {
+            intermediate: claims.require(booleanity_address)?,
+        },
+    })
+}
+
+fn stage6b_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Stage6bOutputClaims<F>, VerifierError> {
     let mut bytecode_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -369,48 +388,32 @@ fn stage6_claims_from_native<F: Field>(
 
     let ram_hamming_weight = ram::ram_hamming_weight();
     let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
-    let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
-    let booleanity_address = booleanity::booleanity_address_phase_opening();
 
-    Ok(Stage6OutputClaims {
-        address_phase: Stage6AddressPhaseOutputClaims {
-            bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
-                intermediate: claims.require(bytecode_read_raf_address)?,
-                val_stages: bytecode_val_stage_claims_from_native(claims)?,
-            },
-            booleanity: BooleanityAddressPhaseOutputClaims {
-                intermediate: claims.require(booleanity_address)?,
-            },
+    Ok(Stage6bOutputClaims {
+        bytecode_read_raf: BytecodeReadRafOutputClaims { bytecode_ra },
+        booleanity: BooleanityOutputClaims {
+            instruction_ra: booleanity_instruction_ra,
+            bytecode_ra: booleanity_bytecode_ra,
+            ram_ra: booleanity_ram_ra,
         },
-        cycle_phase: Stage6CyclePhaseOutputClaims {
-            bytecode_read_raf: BytecodeReadRafOutputClaims { bytecode_ra },
-            booleanity: BooleanityOutputClaims {
-                instruction_ra: booleanity_instruction_ra,
-                bytecode_ra: booleanity_bytecode_ra,
-                ram_ra: booleanity_ram_ra,
-            },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: claims.require(ram_hamming_weight)?,
-            },
-            ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
-                committed_instruction_ra,
-            },
-            inc_claim_reduction: IncClaimReductionOutputClaims {
-                ram_inc: claims.require(ram_inc)?,
-                rd_inc: claims.require(rd_inc)?,
-            },
-            trusted_advice: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
-            untrusted_advice: advice_cycle_phase_claim_from_native(
-                claims,
-                JoltAdviceKind::Untrusted,
-            ),
-            bytecode_reduction: bytecode_cycle_phase_claims_from_native(claims),
-            program_image_reduction: claims
-                .get(program_image::cycle_phase_program_image_opening())
-                .or_else(|| claims.get(program_image::final_program_image_opening()))
-                .map(|program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image }),
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+            ram_hamming_weight: claims.require(ram_hamming_weight)?,
         },
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+            committed_instruction_ra,
+        },
+        inc_claim_reduction: IncClaimReductionOutputClaims {
+            ram_inc: claims.require(ram_inc)?,
+            rd_inc: claims.require(rd_inc)?,
+        },
+        trusted_advice: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
+        untrusted_advice: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
+        bytecode_reduction: bytecode_cycle_phase_claims_from_native(claims),
+        program_image_reduction: claims
+            .get(program_image::cycle_phase_program_image_opening())
+            .or_else(|| claims.get(program_image::final_program_image_opening()))
+            .map(|program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image }),
     })
 }
 
@@ -705,39 +708,37 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_wa: zero,
             },
         },
-        stage6: Stage6OutputClaims {
-            address_phase: Stage6AddressPhaseOutputClaims {
-                bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
-                    intermediate: zero,
-                    val_stages: Vec::new(),
-                },
-                booleanity: BooleanityAddressPhaseOutputClaims { intermediate: zero },
+        stage6a: Stage6aOutputClaims {
+            bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
+                intermediate: zero,
+                val_stages: Vec::new(),
             },
-            cycle_phase: Stage6CyclePhaseOutputClaims {
-                bytecode_read_raf: BytecodeReadRafOutputClaims {
-                    bytecode_ra: vec![zero],
-                },
-                booleanity: BooleanityOutputClaims {
-                    instruction_ra: vec![zero],
-                    bytecode_ra: vec![zero],
-                    ram_ra: vec![zero],
-                },
-                ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                    ram_hamming_weight: zero,
-                },
-                ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra: vec![zero] },
-                instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
-                    committed_instruction_ra: vec![zero],
-                },
-                inc_claim_reduction: IncClaimReductionOutputClaims {
-                    ram_inc: zero,
-                    rd_inc: zero,
-                },
-                trusted_advice: None,
-                untrusted_advice: None,
-                bytecode_reduction: None,
-                program_image_reduction: None,
+            booleanity: BooleanityAddressPhaseOutputClaims { intermediate: zero },
+        },
+        stage6b: Stage6bOutputClaims {
+            bytecode_read_raf: BytecodeReadRafOutputClaims {
+                bytecode_ra: vec![zero],
             },
+            booleanity: BooleanityOutputClaims {
+                instruction_ra: vec![zero],
+                bytecode_ra: vec![zero],
+                ram_ra: vec![zero],
+            },
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                ram_hamming_weight: zero,
+            },
+            ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra: vec![zero] },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                committed_instruction_ra: vec![zero],
+            },
+            inc_claim_reduction: IncClaimReductionOutputClaims {
+                ram_inc: zero,
+                rd_inc: zero,
+            },
+            trusted_advice: None,
+            untrusted_advice: None,
+            bytecode_reduction: None,
+            program_image_reduction: None,
         },
         stage7: Stage7OutputClaims {
             hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
@@ -911,7 +912,7 @@ fn claim_from_clear<F: Field>(
         .or_else(|| claim_from_stage4_outputs(&claims.stage4, id))
         .or_else(|| claim_from_stage5_outputs(&claims.stage5, id))
         .or_else(|| claim_from_stage7_outputs(&claims.stage7, id))
-        .or_else(|| claim_from_stage6_outputs(&claims.stage6, id))
+        .or_else(|| claim_from_stage6_outputs(&claims.stage6a, &claims.stage6b, id))
 }
 
 #[cfg(any(feature = "prover-fixtures", test))]
@@ -983,7 +984,7 @@ fn claim_mut_from_clear<F: Field>(
         .or_else(|| claim_mut_from_stage4_outputs(&mut claims.stage4, id))
         .or_else(|| claim_mut_from_stage5_outputs(&mut claims.stage5, id))
         .or_else(|| claim_mut_from_stage7_outputs(&mut claims.stage7, id))
-        .or_else(|| claim_mut_from_stage6_outputs(&mut claims.stage6, id))
+        .or_else(|| claim_mut_from_stage6_outputs(&mut claims.stage6a, &mut claims.stage6b, id))
 }
 
 #[cfg(any(feature = "prover-fixtures", test))]
@@ -1048,7 +1049,7 @@ fn set_claim_in_clear<F: Field>(
 
     set_optional_stage2_batch_output(&mut claims.stage2.batch_outputs, id, opening_claim)
         || set_optional_stage4_output(&mut claims.stage4, id, opening_claim)
-        || set_optional_stage6_output(&mut claims.stage6, id, opening_claim)
+        || set_optional_stage6_output(&mut claims.stage6a, &mut claims.stage6b, id, opening_claim)
 }
 
 #[cfg(any(feature = "prover-fixtures", test))]
@@ -1248,23 +1249,24 @@ fn set_optional_stage4_output<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn set_optional_stage6_output<F: Field>(
-    claims: &mut Stage6OutputClaims<F>,
+    stage6a: &mut Stage6aOutputClaims<F>,
+    stage6b: &mut Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
     match id {
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
-            claims.address_phase.bytecode_read_raf.intermediate = opening_claim;
+            stage6a.bytecode_read_raf.intermediate = opening_claim;
             true
         }
         id if id == booleanity::booleanity_address_phase_opening() => {
-            claims.address_phase.booleanity.intermediate = opening_claim;
+            stage6a.booleanity.intermediate = opening_claim;
             true
         }
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
-            claims.cycle_phase.trusted_advice = Some(AdviceCyclePhaseOutputClaims {
+            stage6b.trusted_advice = Some(AdviceCyclePhaseOutputClaims {
                 trusted: Some(opening_claim),
                 untrusted: None,
             });
@@ -1273,7 +1275,7 @@ fn set_optional_stage6_output<F: Field>(
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
-            claims.cycle_phase.untrusted_advice = Some(AdviceCyclePhaseOutputClaims {
+            stage6b.untrusted_advice = Some(AdviceCyclePhaseOutputClaims {
                 trusted: None,
                 untrusted: Some(opening_claim),
             });
@@ -1534,7 +1536,8 @@ fn claim_mut_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_from_stage6_outputs<F: Field>(
-    claims: &Stage6OutputClaims<F>,
+    stage6a: &Stage6aOutputClaims<F>,
+    stage6b: &Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening_claim) in claims
@@ -1569,7 +1572,7 @@ fn claim_from_stage6_outputs<F: Field>(
             return Some(*opening_claim);
         }
     }
-    for (index, opening_claim) in claims.cycle_phase.booleanity.bytecode_ra.iter().enumerate() {
+    for (index, opening_claim) in stage6b.booleanity.bytecode_ra.iter().enumerate() {
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
@@ -1579,7 +1582,7 @@ fn claim_from_stage6_outputs<F: Field>(
             return Some(*opening_claim);
         }
     }
-    for (index, opening_claim) in claims.cycle_phase.booleanity.ram_ra.iter().enumerate() {
+    for (index, opening_claim) in stage6b.booleanity.ram_ra.iter().enumerate() {
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
@@ -1591,7 +1594,7 @@ fn claim_from_stage6_outputs<F: Field>(
     }
     let ram_hamming_weight = ram::ram_hamming_weight();
     if id == ram_hamming_weight {
-        return Some(claims.cycle_phase.ram_hamming_booleanity.ram_hamming_weight);
+        return Some(stage6b.ram_hamming_booleanity.ram_hamming_weight);
     }
     for (index, opening_claim) in claims
         .cycle_phase
@@ -1618,13 +1621,13 @@ fn claim_from_stage6_outputs<F: Field>(
     let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
     match id {
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
-            Some(claims.address_phase.bytecode_read_raf.intermediate)
+            Some(stage6a.bytecode_read_raf.intermediate)
         }
         id if id == booleanity::booleanity_address_phase_opening() => {
-            Some(claims.address_phase.booleanity.intermediate)
+            Some(stage6a.booleanity.intermediate)
         }
-        id if id == ram_inc => Some(claims.cycle_phase.inc_claim_reduction.ram_inc),
-        id if id == rd_inc => Some(claims.cycle_phase.inc_claim_reduction.rd_inc),
+        id if id == ram_inc => Some(stage6b.inc_claim_reduction.ram_inc),
+        id if id == rd_inc => Some(stage6b.inc_claim_reduction.rd_inc),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -1649,7 +1652,8 @@ fn claim_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "prover-fixtures", test))]
 fn claim_mut_from_stage6_outputs<F: Field>(
-    claims: &mut Stage6OutputClaims<F>,
+    stage6a: &mut Stage6aOutputClaims<F>,
+    stage6b: &mut Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening_claim) in claims
@@ -1700,7 +1704,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
             return Some(opening_claim);
         }
     }
-    for (index, opening_claim) in claims.cycle_phase.booleanity.ram_ra.iter_mut().enumerate() {
+    for (index, opening_claim) in stage6b.booleanity.ram_ra.iter_mut().enumerate() {
         if id
             == JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
@@ -1712,7 +1716,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
     }
     let ram_hamming_weight = ram::ram_hamming_weight();
     if id == ram_hamming_weight {
-        return Some(&mut claims.cycle_phase.ram_hamming_booleanity.ram_hamming_weight);
+        return Some(&mut stage6b.ram_hamming_booleanity.ram_hamming_weight);
     }
     for (index, opening_claim) in claims
         .cycle_phase
@@ -1739,13 +1743,13 @@ fn claim_mut_from_stage6_outputs<F: Field>(
     let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
     match id {
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
-            Some(&mut claims.address_phase.bytecode_read_raf.intermediate)
+            Some(&mut stage6a.bytecode_read_raf.intermediate)
         }
         id if id == booleanity::booleanity_address_phase_opening() => {
-            Some(&mut claims.address_phase.booleanity.intermediate)
+            Some(&mut stage6a.booleanity.intermediate)
         }
-        id if id == ram_inc => Some(&mut claims.cycle_phase.inc_claim_reduction.ram_inc),
-        id if id == rd_inc => Some(&mut claims.cycle_phase.inc_claim_reduction.rd_inc),
+        id if id == ram_inc => Some(&mut stage6b.inc_claim_reduction.ram_inc),
+        id if id == rd_inc => Some(&mut stage6b.inc_claim_reduction.rd_inc),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {

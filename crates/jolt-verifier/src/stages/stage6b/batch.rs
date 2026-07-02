@@ -1,6 +1,6 @@
 //! Construction of the stage-6b cycle-phase sumcheck batch.
 //!
-//! [`Stage6CyclePhaseSumchecks::build`] assembles the batch members ONCE, after
+//! [`Stage6bSumchecks::build`] assembles the batch members ONCE, after
 //! stage 6a and the post-6a draws, from mode-agnostic constructor legs (per-stage
 //! cycle bindings, reduced points, the stage-6a address openings) plus the
 //! clear-only value aux (`table_fold`, `address_val_stages`, advice reference
@@ -30,16 +30,16 @@ use super::committed_reduction_cycle_phase::{
 };
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
-use super::outputs::{BytecodeReductionWeights, Stage6CyclePhaseSumchecks};
+use super::outputs::{BytecodeReductionWeights, Stage6bSumchecks};
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::VerifierError;
 
-/// Construction inputs for [`Stage6CyclePhaseSumchecks::build`]: the formula
+/// Construction inputs for [`Stage6bSumchecks::build`]: the formula
 /// dimensions, the stage-6a address openings, the upstream cycle/reduced points,
 /// and the committed-program reduction layouts. Clear-only fields are documented
 /// as such; everything else is available in both proving modes.
-pub(super) struct Stage6CyclePhaseParams<'a, F: Field> {
+pub(super) struct Stage6bParams<'a, F: Field> {
     pub bytecode_dimensions: BytecodeReadRafDimensions,
     pub booleanity_dimensions: BooleanityDimensions,
     pub trace_dimensions: TraceDimensions,
@@ -87,8 +87,8 @@ pub(super) struct Stage6CyclePhaseParams<'a, F: Field> {
     pub untrusted_advice_reference_point: Option<Vec<F>>,
 }
 
-impl<F: Field> Stage6CyclePhaseSumchecks<F> {
-    pub(super) fn build(params: Stage6CyclePhaseParams<'_, F>) -> Result<Self, VerifierError> {
+impl<F: Field> Stage6bSumchecks<F> {
+    pub(super) fn build(params: Stage6bParams<'_, F>) -> Result<Self, VerifierError> {
         let committed_program = params.bytecode_reduction_layout.is_some();
         let bytecode_read_raf = if committed_program {
             BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {

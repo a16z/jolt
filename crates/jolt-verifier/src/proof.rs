@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::JoltProtocolConfig,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
     VerifierError,
 };
 
@@ -159,7 +159,8 @@ pub struct ClearProofClaims<F: Field> {
     pub stage3: stage3::outputs::Stage3OutputClaims<F>,
     pub stage4: stage4::outputs::Stage4OutputClaims<F>,
     pub stage5: stage5::outputs::Stage5OutputClaims<F>,
-    pub stage6: stage6::outputs::Stage6OutputClaims<F>,
+    pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
+    pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
 }
 

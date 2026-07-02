@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn add_stage6<PCS, VC, ZkProof>(
+pub(super) fn add_stage6b<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
@@ -15,15 +15,11 @@ where
     let formula_dimensions = formula_dimensions(input)?;
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
-    let bytecode_address_claims =
-        relations::bytecode::ReadRafAddressPhase::new(formula_dimensions.bytecode_read_raf);
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
         input.proof.one_hot_config.committed_chunk_bits(),
     );
-    let booleanity_address_claims =
-        relations::booleanity::BooleanityAddressPhase::new(booleanity_dimensions);
     let booleanity_claims = relations::booleanity::BooleanityCyclePhase::new(booleanity_dimensions);
     let ram_hamming_claims = relations::ram::HammingBooleanity::new(trace_dimensions);
     let ram_ra_claims =
@@ -67,75 +63,6 @@ where
                 claims.output_expression::<PCS::Field>(),
             )
         };
-
-    add_stage6_publics_and_challenges(
-        input,
-        values,
-        bytecode_address_claims.rounds(),
-        bytecode_rounds,
-        booleanity_address_claims.rounds(),
-        booleanity_claims.rounds(),
-        ram_hamming_claims.rounds(),
-        ram_ra_claims.rounds(),
-        instruction_ra_claims.rounds(),
-        inc_claims.rounds(),
-    )?;
-    if let (Some(layout), Some(_claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
-        add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted)?;
-    }
-    if let (Some(layout), Some(_claim)) = (untrusted_layout.as_ref(), untrusted_claims.as_ref()) {
-        add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted)?;
-    }
-    if let Some(layout) = bytecode_reduction_layout.as_ref() {
-        let eta = input
-            .stage6
-            .challenges
-            .bytecode_reduction_eta
-            .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
-                id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-            })?;
-        values.public(
-            VerifierPublicId::Challenge(JoltChallengeId::from(
-                BytecodeClaimReductionChallenge::Eta,
-            )),
-            eta,
-        )?;
-        add_bytecode_reduction_cycle_publics(input, values, layout)?;
-    }
-    if let Some(layout) = program_image_reduction_layout.as_ref() {
-        add_program_image_reduction_cycle_publics(input, values, layout)?;
-    }
-
-    let mut address_phase_output_ids = vec![bytecode::bytecode_read_raf_address_phase_opening()];
-    if bytecode_reduction_layout.is_some() {
-        address_phase_output_ids.extend(
-            (0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES)
-                .map(bytecode_reduction::bytecode_val_stage_opening),
-        );
-    }
-    address_phase_output_ids.push(booleanity::booleanity_address_phase_opening());
-    let builder = add_batched_stage(
-        builder,
-        "stage6.address_phase",
-        bytecode_address_claims.domain(),
-        &[
-            bytecode_address_claims.rounds(),
-            booleanity_address_claims.rounds(),
-        ],
-        &[
-            bytecode_address_claims.input_expression::<PCS::Field>(),
-            booleanity_address_claims.input_expression::<PCS::Field>(),
-        ],
-        &[
-            bytecode_address_claims.output_expression::<PCS::Field>(),
-            booleanity_address_claims.output_expression::<PCS::Field>(),
-        ],
-        &input.stage6.address_phase_consistency,
-        &input.stage6.address_phase_output_claims,
-        values,
-        address_phase_output_ids,
-        Vec::new(),
-    )?;
 
     let bytecode_input_expr = map_jolt_expr(bytecode_input);
 
@@ -201,7 +128,7 @@ where
     }
 
     let booleanity_opening_point = input
-        .stage6
+        .stage6b
         .output_points
         .booleanity_opening_point()
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
@@ -210,12 +137,7 @@ where
         })?;
     let (mut output_ids, aliases) = stage6_cycle_output_openings_and_aliases(
         formula_dimensions,
-        &input
-            .stage6
-            .output_points
-            .cycle_phase
-            .bytecode_read_raf
-            .bytecode_ra,
+        &input.stage6b.output_points.bytecode_read_raf.bytecode_ra,
         booleanity_opening_point,
     );
     output_ids.extend(map_jolt_opening_ids(
@@ -274,7 +196,7 @@ where
         ));
     }
 
-    let coefficients = &input.stage6.batch_consistency.batching_coefficients;
+    let coefficients = &input.stage6b.batch_consistency.batching_coefficients;
     if batch_claims.len() != coefficients.len() {
         return Err(VerifierError::BlindFoldConstructionFailed {
             reason: format!(
@@ -288,7 +210,7 @@ where
         VerifierExpr::zero(),
         |acc, ((rounds, input_expr, _), coefficient)| {
             let scale = *coefficient
-                * PCS::Field::pow2(input.stage6.batch_consistency.max_num_vars - *rounds);
+                * PCS::Field::pow2(input.stage6b.batch_consistency.max_num_vars - *rounds);
             acc + scale_expr(input_expr.clone(), scale)
         },
     );
@@ -303,12 +225,12 @@ where
         builder,
         "stage6.cycle_phase",
         SumcheckStatement::new(
-            input.stage6.batch_consistency.max_num_vars,
-            input.stage6.batch_consistency.max_degree,
+            input.stage6b.batch_consistency.max_num_vars,
+            input.stage6b.batch_consistency.max_degree,
         ),
         domain_spec(bytecode_domain),
-        input.stage6.batch_consistency.consistency.clone(),
-        &input.stage6.batch_output_claims,
+        input.stage6b.batch_consistency.consistency.clone(),
+        &input.stage6b.batch_output_claims,
         values,
         output_ids,
         aliases,

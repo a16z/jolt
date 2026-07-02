@@ -3,7 +3,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
-        stage6::{outputs::Stage6OutputClaims, Stage6Output},
+        stage6b::{outputs::Stage6bOutputClaims, Stage6bOutput},
         stage7::{
             outputs::{PrecommittedFinalOpening, Stage7OutputClaims},
             Stage7Output,
@@ -52,7 +52,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-    stage6: &Stage6Output<F, VC::Output>,
+    stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
@@ -69,22 +69,22 @@ where
 
     let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) =
         match (stage6, stage7) {
-            (Stage6Output::Clear(stage6), Stage7Output::Clear(stage7)) => (
+            (Stage6bOutput::Clear(stage6), Stage7Output::Clear(stage7)) => (
                 stage7.hamming_weight_opening_point.as_slice(),
                 stage6.output_points.inc_opening_point(),
                 stage7.precommitted_final_openings.as_slice(),
                 Some((&stage6.output_values, &stage7.output_values)),
             ),
-            (Stage6Output::Zk(stage6), Stage7Output::Zk(stage7)) => (
+            (Stage6bOutput::Zk(stage6), Stage7Output::Zk(stage7)) => (
                 stage7.hamming_weight_opening_point.as_slice(),
                 stage6.output_points.inc_opening_point(),
                 stage7.precommitted_final_openings.as_slice(),
                 None,
             ),
-            (Stage6Output::Clear(_), Stage7Output::Zk(_)) => {
+            (Stage6bOutput::Clear(_), Stage7Output::Zk(_)) => {
                 return Err(VerifierError::ExpectedClearProof { field: "stage7" });
             }
-            (Stage6Output::Zk(_), Stage7Output::Clear(_)) => {
+            (Stage6bOutput::Zk(_), Stage7Output::Clear(_)) => {
                 return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
             }
         };
@@ -239,7 +239,7 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(&Stage6OutputClaims<F>, &Stage7OutputClaims<F>)>,
+    clear_claims: Option<(&Stage6bOutputClaims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,
@@ -270,12 +270,12 @@ where
                 JoltCommittedPolynomial::RamInc => (
                     &proof.commitments.ram_inc,
                     inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.cycle_phase.inc_claim_reduction.ram_inc),
+                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
                 ),
                 JoltCommittedPolynomial::RdInc => (
                     &proof.commitments.rd_inc,
                     inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.cycle_phase.inc_claim_reduction.rd_inc),
+                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
                 ),
                 JoltCommittedPolynomial::InstructionRa(index) => (
                     proof

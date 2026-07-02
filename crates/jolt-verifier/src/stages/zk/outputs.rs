@@ -5,7 +5,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedOutputClaims;
 
 use crate::{
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8},
     VerifierError,
 };
 
@@ -37,7 +37,8 @@ where
     pub stage3: &'a stage3::Stage3ZkOutput<PCS::Field, VC::Output>,
     pub stage4: &'a stage4::Stage4ZkOutput<PCS::Field, VC::Output>,
     pub stage5: &'a stage5::Stage5ZkOutput<PCS::Field, VC::Output>,
-    pub stage6: &'a stage6::Stage6ZkOutput<PCS::Field, VC::Output>,
+    pub stage6a: &'a stage6a::Stage6aZkOutput<PCS::Field, VC::Output>,
+    pub stage6b: &'a stage6b::Stage6bZkOutput<PCS::Field, VC::Output>,
     pub stage7: &'a stage7::Stage7ZkOutput<PCS::Field, VC::Output>,
     pub stage8: &'a stage8::Stage8ZkOutput<PCS::Field, PCS::Output, VC::Output>,
 }
@@ -52,7 +53,8 @@ pub fn zk_stage_outputs<'a, PCS, VC>(
     stage3: &'a stage3::Stage3Output<PCS::Field, VC::Output>,
     stage4: &'a stage4::Stage4Output<PCS::Field, VC::Output>,
     stage5: &'a stage5::Stage5Output<PCS::Field, VC::Output>,
-    stage6: &'a stage6::Stage6Output<PCS::Field, VC::Output>,
+    stage6a: &'a stage6a::Stage6aOutput<PCS::Field, VC::Output>,
+    stage6b: &'a stage6b::Stage6bOutput<PCS::Field, VC::Output>,
     stage7: &'a stage7::Stage7Output<PCS::Field, VC::Output>,
     stage8: &'a stage8::Stage8Output<PCS::Field, PCS::Output, VC::Output>,
 ) -> Result<ZkStageOutputs<'a, PCS, VC>, VerifierError>
@@ -91,10 +93,16 @@ where
                 return Err(VerifierError::ExpectedCommittedProof { field: "stage5" });
             }
         },
-        stage6: match stage6 {
-            stage6::Stage6Output::Zk(stage) => stage,
-            stage6::Stage6Output::Clear(_) => {
-                return Err(VerifierError::ExpectedCommittedProof { field: "stage6" });
+        stage6a: match stage6a {
+            stage6a::Stage6aOutput::Zk(stage) => stage,
+            stage6a::Stage6aOutput::Clear(_) => {
+                return Err(VerifierError::ExpectedCommittedProof { field: "stage6a" });
+            }
+        },
+        stage6b: match stage6b {
+            stage6b::Stage6bOutput::Zk(stage) => stage,
+            stage6b::Stage6bOutput::Clear(_) => {
+                return Err(VerifierError::ExpectedCommittedProof { field: "stage6b" });
             }
         },
         stage7: match stage7 {

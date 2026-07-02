@@ -52,7 +52,7 @@ where
         })?;
     let rho_rev = hamming_point.iter().rev().copied().collect::<Vec<_>>();
     let booleanity_opening = input
-        .stage6
+        .stage6b
         .output_points
         .booleanity_opening_point()
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
