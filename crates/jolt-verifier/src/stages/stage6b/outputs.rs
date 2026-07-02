@@ -196,6 +196,26 @@ impl<F: Field> Stage6bOutputPoints<F> {
     }
 }
 
+impl<F: Field> Stage6bOutputClaims<F> {
+    /// The consumed cycle-phase advice opening *value* for `kind` (the trusted /
+    /// untrusted slot of that advice member), present only when the advice
+    /// reduction ran a cycle phase. Read by stage 7's advice input wiring and stage
+    /// 8's precommitted finals resolution.
+    pub fn advice_cycle_phase_claim(
+        &self,
+        kind: jolt_claims::protocols::jolt::JoltAdviceKind,
+    ) -> Option<F> {
+        use jolt_claims::protocols::jolt::JoltAdviceKind;
+        match kind {
+            JoltAdviceKind::Trusted => self.trusted_advice.as_ref().and_then(|claim| claim.trusted),
+            JoltAdviceKind::Untrusted => self
+                .untrusted_advice
+                .as_ref()
+                .and_then(|claim| claim.untrusted),
+        }
+    }
+}
+
 fn reversed<F: Field>(point: &[F]) -> Vec<F> {
     point.iter().rev().copied().collect()
 }

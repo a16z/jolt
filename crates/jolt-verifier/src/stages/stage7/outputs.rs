@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 7 verification.
 
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
+use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
@@ -98,39 +98,23 @@ impl<F: Field> Stage7OutputPoints<F> {
     }
 }
 
-/// Final opening of a precommitted polynomial, resolved from whichever stage
-/// completed its claim reduction (stage 6b cycle phase or stage 7 address
-/// phase). Stage 8 consumes these as anchors and batch members of the final
-/// PCS opening.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrecommittedFinalOpening<F: Field> {
-    pub polynomial: JoltCommittedPolynomial,
-    pub point: Vec<F>,
-    /// `None` in ZK mode, where opening claims stay committed.
-    pub opening_claim: Option<F>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ClearOutput<F: Field> {
     /// The produced stage-7 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage7OutputClaims<F>,
     /// The produced stage-7 opening *points*, paired field-for-field with
-    /// `output_values`. Later stages read each opening's point off these cells.
+    /// `output_values`. Stage 8 reads each opening's point off these cells, and
+    /// derives the hamming-weight opening point and the precommitted final openings
+    /// from them.
     pub output_points: Stage7OutputPoints<F>,
-    /// The hamming-weight reduction's opening point — the own point of the one-hot
-    /// `Ra` polynomials, shared by all reduced RA openings. Stored contiguously so
-    /// stage 8 can borrow it directly (the per-family RA opening cells can be empty
-    /// for a missing family, so it cannot always be read off a cell).
-    pub hamming_weight_opening_point: Vec<F>,
-    pub precommitted_final_openings: Vec<PrecommittedFinalOpening<F>>,
 }
 
 /// ZK counterpart of [`Stage7ClearOutput`]. The produced opening *values* stay
 /// committed (in `batch_output_claims`); BlindFold recomputes every per-relation
-/// sumcheck point and public it needs from `batch_consistency`, so only the data
-/// stage 8 consumes is carried in the clear: the shared hamming-weight opening
-/// point and the precommitted final openings (point-only, claims committed).
+/// sumcheck point and public it needs from `batch_consistency`, so the only data
+/// stage 8 consumes in the clear is the produced opening points, off which it reads
+/// the hamming-weight opening point and resolves the precommitted final openings.
 ///
 /// The path-agnostically drawn stage-7 challenges are carried so BlindFold can
 /// source the hamming-weight batching gamma from
@@ -142,13 +126,10 @@ pub struct Stage7ZkOutput<F: Field, C> {
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     /// The produced opening points, the ZK counterpart of the clear path's
-    /// `Stage7ClearOutput::output_points`. Computed as a byproduct of the unified
-    /// `derive_opening_points`; the stored `hamming_weight_opening_point` and the
-    /// precommitted final openings are read off it (the per-family RA cells can be
-    /// empty, so the shared opening point is also stored contiguously below).
+    /// `Stage7ClearOutput::output_points`, computed as a byproduct of the unified
+    /// `derive_opening_points`. Stage 8 reads the hamming-weight opening point and
+    /// resolves the precommitted final openings off these cells.
     pub output_points: Stage7OutputPoints<F>,
-    pub hamming_weight_opening_point: Vec<F>,
-    pub precommitted_final_openings: Vec<PrecommittedFinalOpening<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

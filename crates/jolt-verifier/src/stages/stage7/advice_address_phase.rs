@@ -24,7 +24,28 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
 use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage6b::outputs::Stage6bOutputClaims;
 use crate::VerifierError;
+
+/// The consumed cycle-phase advice opening *value* for `kind`, in the shared
+/// `AdviceAddressPhaseInputClaims` with only that kind's slot filled (the relation
+/// reads only its own kind's field).
+pub fn advice_input_values_from_upstream<F: Field>(
+    cycle_phase: &Stage6bOutputClaims<F>,
+    kind: JoltAdviceKind,
+) -> AdviceAddressPhaseInputClaims<F> {
+    let claim = cycle_phase.advice_cycle_phase_claim(kind);
+    match kind {
+        JoltAdviceKind::Trusted => AdviceAddressPhaseInputClaims {
+            trusted: claim,
+            untrusted: None,
+        },
+        JoltAdviceKind::Untrusted => AdviceAddressPhaseInputClaims {
+            trusted: None,
+            untrusted: claim,
+        },
+    }
+}
 
 pub struct AdviceAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::advice::AddressPhase,

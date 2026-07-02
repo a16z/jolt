@@ -1,13 +1,11 @@
 use super::outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
+use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
         stage6b::{outputs::Stage6bOutputClaims, Stage6bOutput},
-        stage7::{
-            outputs::{PrecommittedFinalOpening, Stage7OutputClaims},
-            Stage7Output,
-        },
+        stage7::{outputs::Stage7OutputClaims, Stage7Output},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -21,7 +19,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::JoltFormulaDimensions,
         ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial, JoltOpeningId,
+    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
@@ -68,28 +66,38 @@ where
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
-    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) =
-        match (stage6, stage7) {
-            (Stage6bOutput::Clear(stage6), Stage7Output::Clear(stage7)) => (
-                stage7.hamming_weight_opening_point.as_slice(),
-                stage6.output_points.inc_opening_point(),
-                stage7.precommitted_final_openings.as_slice(),
-                Some((&stage6.output_values, &stage7.output_values)),
-            ),
-            (Stage6bOutput::Zk(stage6), Stage7Output::Zk(stage7)) => (
-                stage7.hamming_weight_opening_point.as_slice(),
-                stage6.output_points.inc_opening_point(),
-                stage7.precommitted_final_openings.as_slice(),
-                None,
-            ),
-            (Stage6bOutput::Clear(_), Stage7Output::Zk(_)) => {
-                return Err(VerifierError::ExpectedClearProof { field: "stage7" });
-            }
-            (Stage6bOutput::Zk(_), Stage7Output::Clear(_)) => {
-                return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
-            }
-        };
+    // Stage 7's produced opening points, and (clear mode) the stage-7 and stage-6b
+    // output claims. The hamming-weight opening point and precommitted finals are
+    // resolved off these — before any transcript operation — since the finals'
+    // points anchor the unified opening point.
+    let (stage7_points, clear) = match (stage6, stage7) {
+        (Stage6bOutput::Clear(stage6), Stage7Output::Clear(stage7)) => (
+            &stage7.output_points,
+            Some((&stage7.output_values, &stage6.output_values)),
+        ),
+        (Stage6bOutput::Zk(_), Stage7Output::Zk(stage7)) => (&stage7.output_points, None),
+        (Stage6bOutput::Clear(_), Stage7Output::Zk(_)) => {
+            return Err(VerifierError::ExpectedClearProof { field: "stage7" });
+        }
+        (Stage6bOutput::Zk(_), Stage7Output::Clear(_)) => {
+            return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
+        }
+    };
+    let stage6_points = stage6.output_points();
+    let inc_opening_point = stage6_points.inc_opening_point();
+    // `batch_entries` reads the clear claims in (stage6, stage7) order.
+    let clear_claims = clear.map(|(stage7_values, stage6_values)| (stage6_values, stage7_values));
     require_commitment_layout(&proof.commitments, layout)?;
+
+    let hamming_opening_point = stage7_points
+        .hamming_weight_opening_point()
+        .map(<[F]>::to_vec)
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: "stage 7 produced no hamming-weight openings".to_string(),
+        })?;
+    let precommitted_finals =
+        precommitted_final_openings(&checked.precommitted, stage7_points, stage6_points, clear)?;
 
     let anchor_points: Vec<&[F]> = precommitted_finals
         .iter()
@@ -99,7 +107,7 @@ where
         log_t,
         log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
         trace_order: proof.trace_polynomial_order,
-        hamming_weight_opening_point: hamming_opening_point,
+        hamming_weight_opening_point: hamming_opening_point.as_slice(),
         inc_claim_reduction_opening_point: inc_opening_point,
         precommitted_anchor_points: &anchor_points,
     })
@@ -114,9 +122,9 @@ where
         layout,
         trusted_advice_commitment,
         &opening_point,
-        hamming_opening_point,
+        hamming_opening_point.as_slice(),
         inc_opening_point,
-        precommitted_finals,
+        &precommitted_finals,
         clear_claims,
     )?;
     let opening_ids: Vec<JoltOpeningId> = entries.iter().map(|entry| entry.id).collect();

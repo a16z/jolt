@@ -19,7 +19,68 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage6b::outputs::{Stage6bOutputClaims, Stage6bOutputPoints};
 use crate::VerifierError;
+
+/// The hamming reduction's consumed opening *values*, wired from the stage-6b
+/// cycle-phase output claims. The relation reads only their values (its produced
+/// points are derived from its own sumcheck point), so no input points are needed.
+pub fn hamming_weight_input_values_from_upstream<F: Field>(
+    cycle_phase: &Stage6bOutputClaims<F>,
+) -> HammingWeightClaimReductionInputClaims<F> {
+    HammingWeightClaimReductionInputClaims {
+        ram_hamming_weight: cycle_phase.ram_hamming_booleanity.ram_hamming_weight,
+        instruction_booleanity: cycle_phase.booleanity.instruction_ra.clone(),
+        bytecode_booleanity: cycle_phase.booleanity.bytecode_ra.clone(),
+        ram_booleanity: cycle_phase.booleanity.ram_ra.clone(),
+        instruction_virtualization: cycle_phase
+            .instruction_ra_virtualization
+            .committed_instruction_ra
+            .clone(),
+        bytecode_virtualization: cycle_phase.bytecode_read_raf.bytecode_ra.clone(),
+        ram_virtualization: cycle_phase.ram_ra_virtualization.ram_ra.clone(),
+    }
+}
+
+/// The per-RA virtualization address chunks the hamming reduction's
+/// `EqVirtualization` publics compare against, in canonical (instruction, bytecode,
+/// RAM) order: the leading `log_k_chunk` coordinates of each stage-6b RA
+/// virtualization opening point.
+pub fn stage7_hamming_virtualization_address_points<F: Field>(
+    dimensions: HammingWeightClaimReductionDimensions,
+    stage6_points: &Stage6bOutputPoints<F>,
+) -> Result<Vec<Vec<F>>, VerifierError> {
+    let instruction_ra_points = stage6_points
+        .instruction_ra_virtualization
+        .committed_instruction_ra();
+    let bytecode_ra_points = stage6_points.bytecode_read_raf.bytecode_ra();
+    let ram_ra_points = stage6_points.ram_ra_virtualization.ram_ra();
+    if instruction_ra_points.len() != dimensions.layout.instruction()
+        || bytecode_ra_points.len() != dimensions.layout.bytecode()
+        || ram_ra_points.len() != dimensions.layout.ram()
+    {
+        return Err(public_input_failed(
+            "Stage 6 RA opening point count mismatch for Stage 7",
+        ));
+    }
+
+    let mut points = Vec::with_capacity(dimensions.layout.total());
+    for point in instruction_ra_points
+        .iter()
+        .chain(bytecode_ra_points)
+        .chain(ram_ra_points)
+    {
+        let chunk = point.get(..dimensions.log_k_chunk).ok_or_else(|| {
+            public_input_failed(format!(
+                "Stage 6 RA opening point is too short for HammingWeight address chunk: expected at least {}, got {}",
+                dimensions.log_k_chunk,
+                point.len()
+            ))
+        })?;
+        points.push(chunk.to_vec());
+    }
+    Ok(points)
+}
 
 pub struct HammingWeightClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::hamming_weight::ClaimReduction,
