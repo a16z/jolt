@@ -96,9 +96,9 @@ where
     let mut packed_evaluations = vec![F::zero(); packed_len];
 
     for (id, polynomial) in polynomials {
-        let offset = packing[id].packed_offset();
+        let slot = &packing[id];
         for (local_index, evaluation) in polynomial.evaluations().iter().copied().enumerate() {
-            packed_evaluations[offset + local_index] = evaluation;
+            packed_evaluations[slot.packed_index(local_index)] = evaluation;
         }
     }
 

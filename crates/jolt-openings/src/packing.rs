@@ -130,9 +130,11 @@ impl PrefixSlot {
             .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
     }
 
-    /// First packed index of this slot's subcube.
-    pub fn packed_offset(&self) -> usize {
-        self.prefix_index() << self.num_vars
+    /// Packed evaluation index of this slot's cell `local` — where witness
+    /// assembly places the cell in the packed table.
+    pub fn packed_index(&self, local: usize) -> usize {
+        debug_assert!(local < 1usize << self.num_vars);
+        (self.prefix_index() << self.num_vars) | local
     }
 }
 
@@ -409,7 +411,7 @@ where
         debug_assert_eq!(self.ordered_claims.len(), alpha.len());
         let mut table = unsafe_allocate_zero_vec(1usize << self.packed_num_vars);
         for ((evaluation, slot), alpha_i) in self.ordered_claims.iter().zip(alpha) {
-            let offset = slot.packed_offset();
+            let offset = slot.packed_index(0);
             let evals = EqPolynomial::evals(evaluation.point.as_slice(), Some(*alpha_i));
             table[offset..offset + evals.len()].copy_from_slice(&evals);
         }
