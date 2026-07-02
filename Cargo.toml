@@ -26,7 +26,6 @@ keywords = ["SNARK", "cryptography", "proofs"]
 members = [
   "crates/jolt-claims",
   "crates/jolt-claims-derive",
-  "crates/jolt-claims-ref",
   "crates/jolt-akita",
   "crates/jolt-blindfold",
   "crates/jolt-crypto",

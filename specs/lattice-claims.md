@@ -36,11 +36,13 @@ implementation yet; this crate-level design is written so that the later
 verifier integration is mechanical (`ConcreteSumcheck` impls + a stage-schedule
 swap + a packed-opening stage).
 
-The previous integration attempt is preserved verbatim as `jolt-claims-ref`.
-Its **semantics** (the fused-inc chain, the shared-final-point trick) are the
-reference; its **structure** (a parallel packing model, untyped
-`Lattice{relation, index}` openings, validity-requirement descriptors, digest
-machinery) is explicitly rejected here.
+The previous integration attempt was snapshotted as the `jolt-claims-ref`
+crate (commit `16727bef9`; deleted from the workspace once this module reached
+parity — recover it from git history if needed). Its **semantics** (the
+fused-inc chain, the shared-final-point trick) were the reference; its
+**structure** (a parallel packing model, untyped `Lattice{relation, index}`
+openings, validity-requirement descriptors, digest machinery) is explicitly
+rejected here.
 
 ## Scope
 
