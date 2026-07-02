@@ -24,7 +24,12 @@
 //! *values*, the `*Points` aggregates the derived opening points); the
 //! `BatchingCoefficients` aggregate holds one `F` per member (the scalar the batched
 //! verifier draws for that instance). A source field `Option<Instance>` becomes an
-//! `Option<projection>` (a conditional instance), chained only when `Some`.
+//! `Option<projection>` (a conditional instance), chained only when `Some`. The
+//! generated drivers treat a *present* instance with an absent input / challenge /
+//! claim / point / coefficient cell as a wiring error (attributed to the member's
+//! relation id), never as an absent member: silently skipping such a member would
+//! desynchronize the Fiat-Shamir transcript (a missed absorb or coefficient draw)
+//! or drop a term from the final-claim fold.
 //!
 //! The projections are emitted *without* `Instance: ConcreteSumcheck<F>`
 //! where-bounds on purpose: such a bound would make the compiler treat each
@@ -285,8 +290,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             .collect::<Vec<_>>();
 
         // Each member's claimed sum (its `input_claim`), bound to `__sum_<member>`.
-        // `Option` members bind an `Option<F>`, present iff the instance and its
-        // wired input/challenge cells are all present.
+        // `Option` members bind an `Option<F>`, present iff the instance is. A
+        // present instance with a missing input or challenge cell is a WIRING BUG,
+        // not an absent member: silently skipping it would drop this member's sum
+        // absorb from the transcript (a Fiat-Shamir divergence that surfaces as an
+        // unattributable batch failure downstream), so it errors here with the
+        // member's relation id instead.
         let sum_bindings = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
             let id = &plan.ident;
             if plan.is_option {
@@ -297,7 +306,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                             ::core::option::Option::Some(__inputs),
                             ::core::option::Option::Some(__challenges),
                         ) => ::core::option::Option::Some(__member.input_claim(__inputs, __challenges)?),
-                        _ => ::core::option::Option::None,
+                        (::core::option::Option::None, _, _) => ::core::option::Option::None,
+                        (::core::option::Option::Some(__member), __inputs, _) => {
+                            return ::core::result::Result::Err(
+                                crate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: __member.id(),
+                                    reason: if __inputs.is_none() {
+                                        "present instance is missing its input values"
+                                    } else {
+                                        "present instance is missing its challenges"
+                                    }
+                                    .to_string(),
+                                },
+                            );
+                        }
                     };
                 }
             } else {
@@ -321,21 +343,26 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
 
         // Draw one batching coefficient per present member (declaration order),
-        // binding it to `__coeff_<member>`. `Option` members draw only when present.
-        let coeff_draws = plans.iter().zip(&coeff_idents).map(|(plan, coeff)| {
-            let id = &plan.ident;
-            if plan.is_option {
-                quote! {
-                    let #coeff = if self.#id.is_some() {
-                        ::core::option::Option::Some(transcript.challenge_scalar())
+        // binding it to `__coeff_<member>`. `Option` members key the draw on the
+        // member's bound sum — the same resolution the absorb used — so an absorb
+        // and its coefficient draw can never disagree about presence.
+        let coeff_draws =
+            plans
+                .iter()
+                .zip(sum_idents.iter().zip(&coeff_idents))
+                .map(|(plan, (sum, coeff))| {
+                    if plan.is_option {
+                        quote! {
+                            let #coeff = if #sum.is_some() {
+                                ::core::option::Option::Some(transcript.challenge_scalar())
+                            } else {
+                                ::core::option::Option::None
+                            };
+                        }
                     } else {
-                        ::core::option::Option::None
-                    };
-                }
-            } else {
-                quote!(let #coeff = transcript.challenge_scalar();)
-            }
-        });
+                        quote!(let #coeff = transcript.challenge_scalar();)
+                    }
+                });
 
         // Pack the drawn coefficients into the named aggregate, in member order.
         let coeff_fields = plans.iter().zip(&coeff_idents).map(|(plan, coeff)| {
@@ -585,27 +612,37 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     // Fold the members' expected output claims with the batch coefficients into the
     // final claim the reduction is checked against: `Σ coeff_m * expected_output_m`.
+    // A present `Option` member with any absent cell errors rather than silently
+    // dropping its term (which would surface as an opaque final-claim mismatch).
     // Opt-in via `#[sumcheck_batch(expected_final_claim)]`.
     let expected_final_claim_method = if options.expected_final_claim {
         let output_terms = plans.iter().map(|plan| {
             let id = &plan.ident;
             if plan.is_option {
                 quote! {
-                    if let (
-                        ::core::option::Option::Some(__coeff),
-                        ::core::option::Option::Some(__member),
-                        ::core::option::Option::Some(__input_points),
-                        ::core::option::Option::Some(__output_values),
-                        ::core::option::Option::Some(__output_points),
-                        ::core::option::Option::Some(__challenges),
-                    ) = (
-                        coefficients.#id,
-                        self.#id.as_ref(),
-                        input_points.#id.as_ref(),
-                        output_values.#id.as_ref(),
-                        output_points.#id.as_ref(),
-                        challenges.#id.as_ref(),
-                    ) {
+                    if let ::core::option::Option::Some(__member) = self.#id.as_ref() {
+                        let (
+                            ::core::option::Option::Some(__coeff),
+                            ::core::option::Option::Some(__input_points),
+                            ::core::option::Option::Some(__output_values),
+                            ::core::option::Option::Some(__output_points),
+                            ::core::option::Option::Some(__challenges),
+                        ) = (
+                            coefficients.#id,
+                            input_points.#id.as_ref(),
+                            output_values.#id.as_ref(),
+                            output_points.#id.as_ref(),
+                            challenges.#id.as_ref(),
+                        ) else {
+                            return ::core::result::Result::Err(
+                                crate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: __member.id(),
+                                    reason: "present instance is missing a coefficient, claim, \
+                                             point, or challenge cell for the final-claim fold"
+                                        .to_string(),
+                                },
+                            );
+                        };
                         __terms.push(__coeff * __member.expected_output(
                             __input_points,
                             __output_values,
