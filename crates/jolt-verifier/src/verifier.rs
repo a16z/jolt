@@ -727,7 +727,7 @@ mod tests {
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
-    use jolt_poly::{MultilinearPoly, Polynomial};
+    use jolt_poly::MultilinearPoly;
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
@@ -752,7 +752,6 @@ mod tests {
         type Proof = ();
         type ProverSetup = ();
         type VerifierSetup = ();
-        type Polynomial = Polynomial<Fr>;
         type OpeningHint = ();
         type SetupParams = ();
 
@@ -769,8 +768,8 @@ mod tests {
             (TestCommitment, ())
         }
 
-        fn open(
-            _poly: &Self::Polynomial,
+        fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
+            _poly: &P,
             _point: &[Self::Field],
             _eval: Self::Field,
             _setup: &Self::ProverSetup,
@@ -788,13 +787,6 @@ mod tests {
             _transcript: &mut impl Transcript<Challenge = Self::Field>,
         ) -> Result<(), OpeningsError> {
             Ok(())
-        }
-
-        fn bind_opening_inputs(
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
-            _point: &[Self::Field],
-            _eval: &Self::Field,
-        ) {
         }
     }
 

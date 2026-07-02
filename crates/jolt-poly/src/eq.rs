@@ -145,7 +145,7 @@ pub fn eq_index_msb<F: Field>(point: &[F], index: u128) -> F {
     eq
 }
 
-pub fn boolean_point_msb<F: Field>(num_vars: usize, index: usize) -> Vec<F> {
+pub fn boolean_bits_msb(num_vars: usize, index: usize) -> Vec<bool> {
     (0..num_vars)
         .map(|position| {
             let shift = num_vars - 1 - position;
@@ -154,8 +154,15 @@ pub fn boolean_point_msb<F: Field>(num_vars: usize, index: usize) -> Vec<F> {
             } else {
                 0
             };
-            F::from_u64(bit as u64)
+            bit == 1
         })
+        .collect()
+}
+
+pub fn boolean_point_msb<F: Field>(num_vars: usize, index: usize) -> Vec<F> {
+    boolean_bits_msb(num_vars, index)
+        .into_iter()
+        .map(|bit| F::from_u64(bit as u64))
         .collect()
 }
 
@@ -243,10 +250,12 @@ impl<F: Field> EqPolynomial<F> {
         let prefix_len = total_vars - block_vars;
         let prefix_value = start_index >> block_vars;
         let mut prefix_scale = F::one();
-        for (index, r_i) in r.iter().take(prefix_len).enumerate() {
-            let bit = (prefix_value >> (prefix_len - 1 - index)) & 1;
+        for (bit, r_i) in boolean_bits_msb(prefix_len, prefix_value)
+            .into_iter()
+            .zip(r.iter())
+        {
             let r_i = (*r_i).into();
-            prefix_scale *= if bit == 1 { r_i } else { F::one() - r_i };
+            prefix_scale *= if bit { r_i } else { F::one() - r_i };
         }
 
         Self::evals(&r[prefix_len..], Some(prefix_scale))

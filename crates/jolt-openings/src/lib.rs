@@ -1,19 +1,20 @@
-//! PCS traits and opening reduction for the Jolt zkVM.
+//! PCS traits and batch openings for the Jolt zkVM.
 //!
-//! Abstract interfaces for polynomial commitment schemes (PCS) and a reduction
-//! framework for batching opening claims. Protocol code is written generically
-//! over the PCS with zero implementation leakage.
+//! Abstract interfaces for polynomial commitment schemes (PCS) and batching
+//! adapters. Protocol code is written generically over the PCS with zero
+//! implementation leakage.
 //!
 //! # Design
 //!
-//! - **Stateless.** No accumulators. Claims are plain data
-//!   ([`ProverOpeningClaim`], [`VerifierOpeningClaim`]) collected by the caller
-//!   in `Vec`s.
-//! - **Reduction is separate from proving.** [`reduce_prover`] /
-//!   [`reduce_verifier`] transform claims (many → fewer) via RLC.
-//!   The PCS opens the reduced claims.
-//! - **No batching in PCS traits.** Batching is a reduction concern, not a
-//!   PCS property.
+//! - **Stateless.** No accumulators. A batch opening receives an explicit
+//!   statement plus borrowed prover-side source data needed to open it.
+//! - **Batch openings are an extension trait.** [`BatchOpeningScheme`] lets a
+//!   protocol adapter own its batching strategy while preserving the ordinary
+//!   single-opening API for the underlying PCS.
+//! - **Statement shape is scheme-specific.** [`HomomorphicBatch`] uses
+//!   `Vec<VerifierOpeningClaim<_, _>>`, because each logical polynomial has its
+//!   own commitment. [`PackedBatch`] uses [`PrefixPackedStatement`], which
+//!   carries one packed commitment and logical `(id, evaluation)` claims.
 //!
 //! # Trait Hierarchy
 //!
@@ -21,26 +22,33 @@
 //!                 Commitment              (jolt-crypto: Output type)
 //!                     │
 //!             CommitmentScheme            (+ Field, Proof, commit/open/verify)
-//!                ╱        ╲
-//! AdditivelyHomomorphic   ZkOpeningScheme
-//!       (+ combine)        (+ commit_zk/open_zk/verify_zk)
-//!             │
-//!   StreamingCommitment ── ZkStreamingCommitment
-//!     (+ begin/feed/finish) (+ one-hot/feed_*/finish_zk)
+//!        ╱          │          ╲
+//! Additively   Streaming       ZkOpeningScheme
+//! Homomorphic  Commitment            │
+//!       │                       ZkStreamingCommitment
+//!       │
+//! HomomorphicBatch<PCS>        PackedBatch<PCS, Id>
+//!   Statement = Vec<...>       Statement = PrefixPackedStatement<...>
+//!        ╲                         ╱
+//!             BatchOpeningScheme
+//!
+//! Batching is selected explicitly through [`HomomorphicBatch`] or
+//! [`PackedBatch`].
 //! ```
 
 mod claims;
 mod error;
-#[cfg(any(test, feature = "test-utils"))]
-pub mod mock;
-mod reduction;
+mod packing;
 mod schemes;
 
-pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
+pub use claims::{EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim};
 pub use error::OpeningsError;
-pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
+pub use packing::{
+    PackedBatchProof, PackedPolynomial, PrefixPackedProverSetup, PrefixPackedStatement,
+    PrefixPackedVerifierSetup, PrefixPacking, PrefixSlot,
+};
 
 pub use schemes::{
-    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
-    ZkStreamingCommitment,
+    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, HomomorphicBatch, PackedBatch,
+    StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
 };

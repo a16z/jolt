@@ -27,7 +27,8 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim, ZkOpeningScheme,
+    AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim,
+    ZkEvaluationClaim, ZkOpeningScheme,
 };
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
@@ -144,11 +145,8 @@ where
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
         })?;
-        PCS::bind_zk_opening_inputs(
-            transcript,
-            pcs_opening_point.as_slice(),
-            &hiding_evaluation_commitment,
-        );
+        ZkEvaluationClaim::new(pcs_opening_point.as_slice(), &hiding_evaluation_commitment)
+            .append_to_transcript(transcript);
 
         return Ok(Stage8Output::Zk(Stage8ZkOutput {
             opening_ids,
@@ -212,7 +210,7 @@ where
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
-    PCS::bind_opening_inputs(transcript, pcs_opening_point.as_slice(), &joint_claim);
+    EvaluationClaim::new(pcs_opening_point.clone(), joint_claim).append_to_transcript(transcript);
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
         opening_claims,

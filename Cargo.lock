@@ -3129,9 +3129,10 @@ dependencies = [
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
- "criterion",
  "jolt-crypto",
+ "jolt-dory",
  "jolt-field",
+ "jolt-hyperkzg",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.5",
@@ -3139,7 +3140,6 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]

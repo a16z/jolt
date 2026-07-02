@@ -13,8 +13,8 @@ use std::marker::PhantomData;
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::{FromPrimitiveInt, RandomSampling};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
-use jolt_poly::Polynomial;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_poly::MultilinearPoly;
+use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
 
@@ -255,7 +255,6 @@ where
     type Proof = HyperKZGProof<P>;
     type ProverSetup = HyperKZGProverSetup<P>;
     type VerifierSetup = HyperKZGVerifierSetup<P>;
-    type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
     type SetupParams = (usize, P::G1, P::G2);
 
@@ -273,29 +272,28 @@ where
         HyperKZGVerifierSetup::from(prover_setup)
     }
 
-    fn commit<S: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+    fn commit<S: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &S,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        // HyperKZG always works on dense evaluations.
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        // HyperKZG always works on dense evaluations; `to_dense` borrows them
+        // when the source is already dense.
+        let evaluations = poly.to_dense();
         let point = kzg::kzg_commit::<P>(&evaluations, setup)
             .expect("SRS must be large enough for the polynomial");
         (HyperKZGCommitment { point }, ())
     }
 
-    fn open(
-        poly: &Self::Polynomial,
+    fn open<S: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &S,
         point: &[Self::Field],
         _eval: Self::Field,
         setup: &Self::ProverSetup,
         _hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        Self::open(setup, poly.evaluations(), point, transcript)
+        let evaluations = poly.to_dense();
+        Self::open(setup, &evaluations, point, transcript)
             .expect("HyperKZG open should not fail with valid inputs")
     }
 
@@ -309,22 +307,6 @@ where
     ) -> Result<(), OpeningsError> {
         Self::verify(setup, commitment, point, &eval, proof, transcript)
             .map_err(|_| OpeningsError::VerificationFailed)
-    }
-
-    fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        eval: &Self::Field,
-    ) {
-        transcript.append(&LabelWithCount(
-            b"hyperkzg_opening_point",
-            point.len() as u64,
-        ));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"hyperkzg_opening_eval"));
-        eval.append_to_transcript(transcript);
     }
 }
 
