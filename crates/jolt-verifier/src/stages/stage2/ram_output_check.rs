@@ -59,6 +59,17 @@ impl<F: Field> RamOutputCheck<F> {
         }
     }
 
+    /// Complete a two-phase construction: the output-check address reference point
+    /// is drawn AFTER the batch's member gammas, so the stage-2 verifier builds
+    /// this instance with a placeholder and injects the drawn point here, right
+    /// after the draw. Sound because this relation draws no challenges of its own
+    /// (`NoChallenges`) and `rounds()`/`degree()` are dims-only, so the placeholder
+    /// is never read before injection; a premature `derive_output_term` on the
+    /// placeholder fails loudly (`try_eq_mle` length mismatch).
+    pub fn set_output_address_challenges(&mut self, output_address_challenges: Vec<F>) {
+        self.output_address_challenges = output_address_challenges;
+    }
+
     /// `(EqIoMask, NegEqIoMaskValIo)` at the produced output address point:
     /// `eq_io_mask = eq(output_address_challenges, addr) * range_mask(io, addr)`,
     /// and the negated `eq_io_mask * val_io` term that subtracts the committed
@@ -113,6 +124,26 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         &self.symbolic
     }
 
+    /// This instance's point is embedded at the batch's phase-1 offset: the active
+    /// stage-2 window (the RAM read-write leader's `log_t + log_k` rounds) starts
+    /// at `batch_num_vars - (log_t + log_k)`, and this relation joins it after the
+    /// leader's `phase1_num_rounds` cycle rounds — the pre-port verifier's
+    /// `try_round_offset(log_t + log_k) + phase1_num_rounds()` slicing.
+    fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
+        let dimensions = self.read_write_dimensions;
+        let window_offset = batch_num_vars
+            .checked_sub(dimensions.read_write_rounds())
+            .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::RamOutputCheck,
+                reason: format!(
+                    "batch challenge vector has {batch_num_vars} entries, fewer than the \
+                     active stage-2 window's {} rounds",
+                    dimensions.read_write_rounds()
+                ),
+            })?;
+        Ok(window_offset + dimensions.phase1_num_rounds())
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
@@ -139,6 +170,39 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         match public_id {
             RamOutputCheckPublic::EqIoMask => Ok(eq_io_mask),
             RamOutputCheckPublic::NegEqIoMaskValIo => Ok(neg_eq_io_mask_val_io),
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_field::Fr;
+
+    /// The `instance_point_offset` override must reproduce the legacy phase-1
+    /// slicing `(batch_num_vars - (log_t + log_k)) + phase1_num_rounds` the
+    /// pre-port verifier computed via `try_round_offset(log_t + log_k)`.
+    #[test]
+    fn instance_point_offset_matches_legacy_phase1_formula() {
+        for (log_t, log_k, phase1, phase2) in [(4usize, 3usize, 2usize, 1usize), (6, 5, 3, 2)] {
+            let dimensions = ReadWriteDimensions::new(log_t, log_k, phase1, phase2);
+            let public_memory = PublicIoMemory::new(&JoltDevice::new(&MemoryConfig {
+                program_size: Some(1024),
+                ..Default::default()
+            }))
+            .unwrap();
+            let relation = RamOutputCheck::<Fr>::new(dimensions, Vec::new(), public_memory);
+            // The real batch has `log_t + log_k` variables (the RAM read-write
+            // leader); also probe a padded vector.
+            for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {
+                let legacy = (batch_num_vars - (log_t + log_k)) + phase1;
+                let offset = relation.instance_point_offset(batch_num_vars).unwrap();
+                assert_eq!(offset, legacy);
+                assert_eq!(offset + relation.rounds(), batch_num_vars);
+            }
+            assert!(relation.instance_point_offset(log_t + log_k - 1).is_err());
         }
     }
 }

@@ -38,9 +38,9 @@ pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
 }
 
 /// Wire the consumed RAM address opening *point* (empty — this input carries no
-/// point at this stage).
+/// point at this stage, so no upstream data is needed and the same wiring serves
+/// the clear and ZK paths).
 pub fn ram_raf_evaluation_input_points_from_upstream<F: Field>(
-    _stage1: &Stage1ClearOutput<F>,
 ) -> RamRafEvaluationInputClaims<Vec<F>> {
     RamRafEvaluationInputClaims {
         ram_address: Vec::new(),
@@ -85,6 +85,26 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    /// This instance's point is embedded at the batch's phase-1 offset: the active
+    /// stage-2 window (the RAM read-write leader's `log_t + log_k` rounds) starts
+    /// at `batch_num_vars - (log_t + log_k)`, and this relation joins it after the
+    /// leader's `phase1_num_rounds` cycle rounds — the pre-port verifier's
+    /// `try_round_offset(log_t + log_k) + phase1_num_rounds()` slicing.
+    fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
+        let dimensions = self.read_write_dimensions;
+        let window_offset = batch_num_vars
+            .checked_sub(dimensions.read_write_rounds())
+            .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::RamRafEvaluation,
+                reason: format!(
+                    "batch challenge vector has {batch_num_vars} entries, fewer than the \
+                     active stage-2 window's {} rounds",
+                    dimensions.read_write_rounds()
+                ),
+            })?;
+        Ok(window_offset + dimensions.phase1_num_rounds())
     }
 
     fn derive_opening_points(
@@ -138,6 +158,35 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
                         + F::from_u64(self.lowest_address),
                 )
             }
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use jolt_field::Fr;
+
+    /// The `instance_point_offset` override must reproduce the legacy phase-1
+    /// slicing `(batch_num_vars - (log_t + log_k)) + phase1_num_rounds` the
+    /// pre-port verifier computed via `try_round_offset(log_t + log_k)`.
+    #[test]
+    fn instance_point_offset_matches_legacy_phase1_formula() {
+        for (log_t, log_k, phase1, phase2) in [(4usize, 3usize, 2usize, 1usize), (6, 5, 3, 2)] {
+            let dimensions = ReadWriteDimensions::new(log_t, log_k, phase1, phase2);
+            let raf_dimensions = RamRafEvaluationDimensions::try_from(dimensions).unwrap();
+            let relation =
+                RamRafEvaluation::<Fr>::new(dimensions, raf_dimensions, log_k, 0, Vec::new());
+            // The real batch has `log_t + log_k` variables (the RAM read-write
+            // leader); also probe a padded vector.
+            for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {
+                let legacy = (batch_num_vars - (log_t + log_k)) + phase1;
+                let offset = relation.instance_point_offset(batch_num_vars).unwrap();
+                assert_eq!(offset, legacy);
+                assert_eq!(offset + relation.rounds(), batch_num_vars);
+            }
+            assert!(relation.instance_point_offset(log_t + log_k - 1).is_err());
         }
     }
 }

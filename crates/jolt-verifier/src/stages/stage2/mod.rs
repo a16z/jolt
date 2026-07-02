@@ -29,4 +29,4 @@ pub use ram_raf_evaluation::{
 pub use ram_read_write_checking::{
     RamReadWriteChecking, RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
-pub use verify::{stage2_expected_final_claim, verify};
+pub use verify::verify;
