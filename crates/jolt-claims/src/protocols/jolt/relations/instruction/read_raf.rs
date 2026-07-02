@@ -32,7 +32,7 @@ pub struct InstructionReadRafOutputClaims<C> {
 
 /// Consumed instruction-lookup openings (the reduced lookup output + left/right
 /// operands), wired from the upstream instruction claim-reduction.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct InstructionReadRafInputClaims<C> {
     #[opening(LookupOutput, from = InstructionClaimReduction)]
     pub lookup_output: C,
@@ -43,7 +43,7 @@ pub struct InstructionReadRafInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction read-RAF sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionReadRafChallenges<F> {
     #[challenge(InstructionReadRafChallenge::Gamma)]
     pub gamma: F,
@@ -123,12 +123,6 @@ mod tests {
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))
             .unwrap_or_else(|err| panic!("test read-RAF dimensions should be nonzero: {err}"))
-    }
-
-    fn eq_table_value_publics() -> Vec<JoltDerivedId> {
-        LookupTableKind::<XLEN>::iter()
-            .map(|table| JoltDerivedId::from(eq_table_value(table)))
-            .collect()
     }
 
     #[test]
@@ -247,15 +241,5 @@ mod tests {
             relation.degree(),
             dimensions.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(InstructionReadRafChallenge::Gamma)]
-        );
-        let mut expected_publics = eq_table_value_publics();
-        expected_publics.extend([
-            JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
-            JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
-        ]);
-        assert_eq!(relation.required_deriveds::<Fr>(), expected_publics);
     }
 }

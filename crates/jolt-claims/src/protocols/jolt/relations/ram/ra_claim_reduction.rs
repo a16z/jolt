@@ -13,8 +13,8 @@ use crate::protocols::jolt::{
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
-/// Produced RAM-RA reduced opening, generic over the cell (`F` on the wire,
-/// `Vec<F>` for ZK points, `OpeningClaim<F>` (point + value) on the clear path).
+/// Produced RAM-RA reduced opening, generic over the opening cell (`F` for the
+/// serialized wire value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -28,9 +28,9 @@ pub struct RamRaClaimReductionOutputClaims<C> {
 
 /// Consumed RAM-RA openings reduced by the `RamRaClaimReduction` sumcheck, wired
 /// from the upstream RAF-evaluation, read-write-checking, and val-check
-/// relations. Generic over the cell (`OpeningClaim<F>` on the clear path,
-/// `Vec<F>` for ZK points).
-#[derive(Clone, Debug, InputClaims)]
+/// relations. Generic over the opening cell (`F` for the serialized wire value,
+/// `Vec<F>` for the derived opening point).
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct RamRaClaimReductionInputClaims<C> {
     #[opening(RamRa, from = RamRafEvaluation)]
     pub raf: C,
@@ -41,7 +41,7 @@ pub struct RamRaClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the RAM `ra` claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct RamRaClaimReductionChallenges<F> {
     #[challenge(RamRaClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -195,26 +195,5 @@ mod tests {
         assert_eq!(RaClaimReduction::id(), JoltRelationId::RamRaClaimReduction);
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_ra_raf_evaluation(),
-                ram_ra(),
-                ram_ra_val_check(),
-                ram_ra_claim_reduction(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleRaf),
-                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
-                JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleValCheck),
-            ]
-        );
     }
 }

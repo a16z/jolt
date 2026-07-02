@@ -28,37 +28,36 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::program_image
     ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs, AdviceClaimReductionLayout,
-    BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout,
-    ProgramImageClaimReductionLayout,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
+    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
 use super::outputs::BytecodeReductionWeights;
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
-use crate::stages::stage4::Stage4ClearOutput;
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage4::RamValCheckInitialEvaluation;
 use crate::VerifierError;
 
-/// Wire the consumed RAM value-check advice opening, keyed by kind. (Verifier-side
-/// constructor for the moved [`AdviceCyclePhaseInputClaims`].)
-pub fn advice_cycle_phase_inputs_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
-) -> AdviceCyclePhaseInputClaims<OpeningClaim<F>> {
-    let opening = |kind| {
-        stage4
-            .ram_val_check_init
-            .advice_contributions
-            .iter()
-            .find(|contribution| contribution.kind == kind)
-            .map(|contribution| OpeningClaim {
-                point: contribution.opening.point.clone(),
-                value: contribution.opening.value,
-            })
-    };
-    AdviceCyclePhaseInputClaims {
-        trusted: opening(JoltAdviceKind::Trusted),
-        untrusted: opening(JoltAdviceKind::Untrusted),
+/// Wire the consumed RAM value-check advice opening *value* for `kind`, in the
+/// shared [`AdviceCyclePhaseInputClaims`] with only that kind's slot filled (the
+/// relation's input `Expr` reads only its own kind's opening). Clear-only.
+pub fn advice_cycle_phase_input_values_from_upstream<F: Field>(
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
+    kind: JoltAdviceKind,
+) -> AdviceCyclePhaseInputClaims<F> {
+    let value = ram_val_check_init
+        .advice_contribution(kind)
+        .map(|contribution| contribution.opening_value);
+    match kind {
+        JoltAdviceKind::Trusted => AdviceCyclePhaseInputClaims {
+            trusted: value,
+            untrusted: None,
+        },
+        JoltAdviceKind::Untrusted => AdviceCyclePhaseInputClaims {
+            trusted: None,
+            untrusted: value,
+        },
     }
 }
 
@@ -68,14 +67,15 @@ pub struct AdviceCyclePhase<F: Field> {
     layout: AdviceClaimReductionLayout,
     /// The RAM address point of the staged advice opening from RAM value-check;
     /// the `FinalScale` public compares the produced opening point against it.
-    reference_opening_point: Vec<F>,
+    /// `None` in ZK, where `expected_output` (its only reader) never runs.
+    reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: Field> AdviceCyclePhase<F> {
     pub fn new(
         kind: JoltAdviceKind,
         layout: &AdviceClaimReductionLayout,
-        reference_opening_point: Vec<F>,
+        reference_opening_point: Option<Vec<F>>,
     ) -> Self {
         Self {
             symbolic: relations::claim_reductions::advice::CyclePhase::new((
@@ -88,19 +88,23 @@ impl<F: Field> AdviceCyclePhase<F> {
         }
     }
 
-    pub fn kind(&self) -> JoltAdviceKind {
-        self.kind
-    }
-
+    /// The produced advice opening for this kind: its value and point, or an error
+    /// if the cycle phase produced no opening.
     fn output<'a>(
         &self,
-        outputs: &'a AdviceCyclePhaseOutputClaims<OpeningClaim<F>>,
-    ) -> Result<&'a OpeningClaim<F>, VerifierError> {
-        match self.kind {
-            JoltAdviceKind::Trusted => outputs.trusted.as_ref(),
-            JoltAdviceKind::Untrusted => outputs.untrusted.as_ref(),
+        output_values: &AdviceCyclePhaseOutputClaims<F>,
+        output_points: &'a AdviceCyclePhaseOutputClaims<Vec<F>>,
+    ) -> Result<(F, &'a [F]), VerifierError> {
+        let (value, point) = match self.kind {
+            JoltAdviceKind::Trusted => (output_values.trusted, output_points.trusted()),
+            JoltAdviceKind::Untrusted => (output_values.untrusted, output_points.untrusted()),
+        };
+        match (value, point) {
+            (Some(value), Some(point)) => Ok((value, point)),
+            _ => Err(advice_public_failed(
+                "advice cycle phase produced no opening",
+            )),
         }
-        .ok_or_else(|| advice_public_failed("advice cycle phase produced no opening"))
     }
 }
 
@@ -118,10 +122,16 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
+    /// the batch challenge vector, not the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &AdviceCyclePhaseInputClaims<C>,
+        _input_points: &AdviceCyclePhaseInputClaims<Vec<F>>,
     ) -> Result<AdviceCyclePhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -139,42 +149,43 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
         })
     }
 
-    fn expected_output<C: GetPoint<F>>(
+    fn expected_output(
         &self,
-        _inputs: &AdviceCyclePhaseInputClaims<C>,
-        outputs: &AdviceCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &AdviceCyclePhaseInputClaims<Vec<F>>,
+        output_values: &AdviceCyclePhaseOutputClaims<F>,
+        output_points: &AdviceCyclePhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let opening = self.output(outputs)?;
+        let (value, point) = self.output(output_values, output_points)?;
         if self.layout.dimensions().has_address_phase() {
-            Ok(opening.value)
+            Ok(value)
         } else {
+            let reference_opening_point =
+                self.reference_opening_point.as_ref().ok_or_else(|| {
+                    advice_public_failed("advice reference opening point unavailable")
+                })?;
             let scale = self
                 .layout
-                .cycle_phase_scale_at_opening_point(&self.reference_opening_point, &opening.point)
+                .cycle_phase_scale_at_opening_point(reference_opening_point, point)
                 .map_err(advice_public_failed)?;
-            Ok(scale * opening.value)
+            Ok(scale * value)
         }
     }
 }
 
-/// Wire the consumed RAM value-check program-image contribution. (Verifier-side
-/// constructor for the moved [`ProgramImageReductionCyclePhaseInputClaims`].)
-pub fn program_image_reduction_cycle_phase_inputs_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
-) -> Result<ProgramImageReductionCyclePhaseInputClaims<OpeningClaim<F>>, VerifierError> {
-    let contribution = stage4
-        .ram_val_check_init
+/// Wire the consumed RAM value-check program-image contribution *value*.
+/// Clear-only.
+pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
+) -> Result<ProgramImageReductionCyclePhaseInputClaims<F>, VerifierError> {
+    let (_, value) = ram_val_check_init
         .program_image_contribution
         .as_ref()
         .ok_or_else(|| {
             program_image_public_failed("missing RAM value-check program-image contribution")
         })?;
     Ok(ProgramImageReductionCyclePhaseInputClaims {
-        contribution: OpeningClaim {
-            point: contribution.point.clone(),
-            value: contribution.value,
-        },
+        contribution: *value,
     })
 }
 
@@ -213,10 +224,16 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
+    /// the batch challenge vector, not the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &ProgramImageReductionCyclePhaseInputClaims<C>,
+        _input_points: &ProgramImageReductionCyclePhaseInputClaims<Vec<F>>,
     ) -> Result<ProgramImageReductionCyclePhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -227,32 +244,24 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
         })
     }
 
-    fn expected_output<C: GetPoint<F>>(
+    fn expected_output(
         &self,
-        _inputs: &ProgramImageReductionCyclePhaseInputClaims<C>,
-        outputs: &ProgramImageReductionCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &ProgramImageReductionCyclePhaseInputClaims<Vec<F>>,
+        output_values: &ProgramImageReductionCyclePhaseOutputClaims<F>,
+        output_points: &ProgramImageReductionCyclePhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let opening = &outputs.program_image;
+        let value = output_values.program_image;
         if self.layout.dimensions().has_address_phase() {
-            Ok(opening.value)
+            Ok(value)
         } else {
             let scale = self
                 .layout
-                .cycle_phase_scale_at_opening_point(&self.r_addr_rw, &opening.point)
+                .cycle_phase_scale_at_opening_point(&self.r_addr_rw, output_points.program_image())
                 .map_err(program_image_public_failed)?;
-            Ok(scale * opening.value)
+            Ok(scale * value)
         }
     }
-}
-
-/// The consumed staged `BytecodeValStage` openings from the bytecode read-RAF
-/// address phase. (Verifier-side constructor for the moved
-/// [`BytecodeReductionCyclePhaseInputClaims`].)
-pub fn bytecode_reduction_cycle_phase_inputs_from_values<F: Field>(
-    val_stages: Vec<OpeningClaim<F>>,
-) -> BytecodeReductionCyclePhaseInputClaims<OpeningClaim<F>> {
-    BytecodeReductionCyclePhaseInputClaims { val_stages }
 }
 
 pub struct BytecodeReductionCyclePhase<F: Field> {
@@ -277,14 +286,6 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
             chunk_count: layout.chunk_count(),
         }
     }
-
-    fn output_weight_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
-        BytecodeOutputWeightInputs {
-            r_bc: &self.weights.r_bc,
-            chunk_rbc_weights: &self.weights.chunk_rbc_weights,
-            lane_weights: &self.weights.lane_weights,
-        }
-    }
 }
 
 fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
@@ -301,10 +302,16 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
+    /// the batch challenge vector, not the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &BytecodeReductionCyclePhaseInputClaims<C>,
+        _input_points: &BytecodeReductionCyclePhaseInputClaims<Vec<F>>,
     ) -> Result<BytecodeReductionCyclePhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -323,44 +330,45 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
         })
     }
 
-    fn expected_output<C: GetPoint<F>>(
+    fn expected_output(
         &self,
-        _inputs: &BytecodeReductionCyclePhaseInputClaims<C>,
-        outputs: &BytecodeReductionCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &BytecodeReductionCyclePhaseInputClaims<Vec<F>>,
+        output_values: &BytecodeReductionCyclePhaseOutputClaims<F>,
+        output_points: &BytecodeReductionCyclePhaseOutputClaims<Vec<F>>,
         _challenges: &BytecodeReductionCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         if self.layout.dimensions().has_address_phase() {
-            let intermediate = outputs.intermediate.as_ref().ok_or_else(|| {
+            let intermediate = output_values.intermediate.ok_or_else(|| {
                 bytecode_public_failed("bytecode reduction produced no intermediate")
             })?;
-            return Ok(intermediate.value);
+            return Ok(intermediate);
         }
-        if outputs.chunks.len() != self.chunk_count {
+        if output_values.chunks.len() != self.chunk_count {
             return Err(bytecode_public_failed(format!(
                 "bytecode chunk claim count mismatch: expected {}, got {}",
                 self.chunk_count,
-                outputs.chunks.len()
+                output_values.chunks.len()
             )));
         }
-        let opening_point = outputs
-            .chunks
+        let opening_point = output_points
+            .chunks()
             .first()
-            .map(|chunk| chunk.point.as_slice())
+            .map(Vec::as_slice)
             .ok_or_else(|| {
                 bytecode_public_failed("bytecode reduction produced no chunk openings")
             })?;
         let weights = self
             .layout
             .cycle_phase_final_output_weights_at_opening_point(
-                self.output_weight_inputs(),
+                self.weights.as_inputs(),
                 opening_point,
             )
             .map_err(bytecode_public_failed)?;
-        Ok(outputs
+        Ok(output_values
             .chunks
             .iter()
             .zip(weights)
-            .map(|(chunk, weight)| chunk.value * weight)
+            .map(|(chunk, weight)| *chunk * weight)
             .sum())
     }
 }

@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Field, Fr};
 use jolt_verifier::{
     proof::ClearProofClaims,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
 };
 use serde_json::Value;
 
@@ -26,12 +26,15 @@ impl TamperMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "the shared `Checked` prefix records where a tampered field is caught; dropping it would obscure the disposition semantics"
+)]
 pub enum TamperDisposition {
     CheckedAtStage,
     CheckedByLaterStage(VerifierPhase),
     CheckedByFinalOpenings,
     CheckedByZk,
-    NotVerifierOwned,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +43,6 @@ pub enum MutationStrategy {
     FlipBool,
     ChangeEnumVariant,
     RemoveItem,
-    AddItem,
     DuplicateItem,
     SwapOrder,
     TruncateVector,
@@ -48,7 +50,6 @@ pub enum MutationStrategy {
     ReplaceProofPayload,
     ReplaceModePayload,
     ReplaceSetup,
-    None,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +57,6 @@ pub enum TamperCoverage {
     Active,
     IgnoredUntilFixture,
     Deferred,
-    NotApplicable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -632,7 +632,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage4.claims.advice.untrusted",
-        "claims.stage4.advice.untrusted",
+        "claims.stage4.ram_val_check.untrusted_advice",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -640,7 +640,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage4.claims.advice.trusted",
-        "claims.stage4.advice.trusted",
+        "claims.stage4.ram_val_check.trusted_advice",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -648,7 +648,7 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage4.claims.program_image_contribution",
-        "claims.stage4.program_image_contribution",
+        "claims.stage4.ram_val_check.program_image",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
@@ -774,7 +774,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.address_phase.bytecode_read_raf",
-        "claims.stage6.address_phase.bytecode_read_raf",
+        "claims.stage6a.bytecode_read_raf.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -782,7 +782,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.address_phase.booleanity",
-        "claims.stage6.address_phase.booleanity",
+        "claims.stage6a.booleanity.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -790,7 +790,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.bytecode_read_raf.bytecode_ra",
-        "claims.stage6.bytecode_read_raf.bytecode_ra",
+        "claims.stage6b.bytecode_read_raf.bytecode_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -798,7 +798,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.booleanity.instruction_ra",
-        "claims.stage6.booleanity.instruction_ra",
+        "claims.stage6b.booleanity.instruction_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -806,7 +806,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.booleanity.bytecode_ra",
-        "claims.stage6.booleanity.bytecode_ra",
+        "claims.stage6b.booleanity.bytecode_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -814,7 +814,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.booleanity.ram_ra",
-        "claims.stage6.booleanity.ram_ra",
+        "claims.stage6b.booleanity.ram_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -822,7 +822,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
-        "claims.stage6.ram_hamming_booleanity.ram_hamming_weight",
+        "claims.stage6b.ram_hamming_booleanity.ram_hamming_weight",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -830,7 +830,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.ram_ra_virtualization.ram_ra",
-        "claims.stage6.ram_ra_virtualization.ram_ra",
+        "claims.stage6b.ram_ra_virtualization.ram_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -838,7 +838,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.instruction_ra_virtualization.committed_instruction_ra",
-        "claims.stage6.instruction_ra_virtualization.committed_instruction_ra",
+        "claims.stage6b.instruction_ra_virtualization.committed_instruction_ra",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -846,7 +846,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.inc_claim_reduction.ram_inc",
-        "claims.stage6.inc_claim_reduction.ram_inc",
+        "claims.stage6b.inc_claim_reduction.ram_inc",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -854,47 +854,71 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.inc_claim_reduction.rd_inc",
-        "claims.stage6.inc_claim_reduction.rd_inc",
+        "claims.stage6b.inc_claim_reduction.rd_inc",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets the register increment reduction output claim",
     ),
     checked_standard(
-        "stage6.claims.advice_cycle_phase.trusted.opening_claim",
-        "claims.stage6.advice_cycle_phase.trusted.opening_claim",
+        "stage6.claims.trusted_advice.trusted",
+        "claims.stage6b.trusted_advice.trusted",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice cycle-phase output claim",
     ),
     checked_standard(
-        "stage6.claims.advice_cycle_phase.untrusted.opening_claim",
-        "claims.stage6.advice_cycle_phase.untrusted.opening_claim",
+        "stage6.claims.untrusted_advice.untrusted",
+        "claims.stage6b.untrusted_advice.untrusted",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice cycle-phase output claim",
     ),
     checked_standard(
+        "stage6.claims.trusted_advice.untrusted",
+        "claims.stage6b.trusted_advice.untrusted",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "trusted advice cycle-phase claim carries only the trusted kind; the untrusted field is structurally always absent",
+    ),
+    checked_standard(
+        "stage6.claims.untrusted_advice.trusted",
+        "claims.stage6b.untrusted_advice.trusted",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "untrusted advice cycle-phase claim carries only the untrusted kind; the trusted field is structurally always absent",
+    ),
+    checked_standard(
         "stage6.claims.address_phase.bytecode_val_stages",
-        "claims.stage6.address_phase.bytecode_val_stages",
+        "claims.stage6a.bytecode_read_raf.val_stages",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
         "committed fixture test offsets each staged bytecode Val-stage claim",
     ),
     checked_standard(
-        "stage6.claims.bytecode_claim_reduction",
-        "claims.stage6.bytecode_claim_reduction.Intermediate",
+        "stage6.claims.bytecode_reduction.intermediate",
+        "claims.stage6b.bytecode_reduction.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the bytecode reduction cycle-phase output claim",
+        "committed fixture test offsets the bytecode reduction cycle-phase intermediate output claim",
     ),
     checked_standard(
-        "stage6.claims.program_image_claim_reduction",
-        "claims.stage6.program_image_claim_reduction.opening_claim",
+        "stage6.claims.bytecode_reduction.chunks",
+        "claims.stage6b.bytecode_reduction.chunks",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets the bytecode reduction cycle-phase per-chunk output claims",
+    ),
+    checked_standard(
+        "stage6.claims.program_image_reduction.program_image",
+        "claims.stage6b.program_image_reduction.program_image",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
@@ -952,20 +976,36 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         "prover-fixture test offsets every HammingWeight RAM RA output claim",
     ),
     checked_standard(
-        "stage7.claims.advice_address_phase.trusted.opening_claim",
-        "claims.stage7.advice_address_phase.trusted",
+        "stage7.claims.trusted_advice.trusted",
+        "claims.stage7.trusted_advice.trusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice address-phase output claim",
     ),
     checked_standard(
-        "stage7.claims.advice_address_phase.untrusted.opening_claim",
-        "claims.stage7.advice_address_phase.untrusted",
+        "stage7.claims.untrusted_advice.untrusted",
+        "claims.stage7.untrusted_advice.untrusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice address-phase output claim",
+    ),
+    checked_standard(
+        "stage7.claims.trusted_advice.untrusted",
+        "claims.stage7.trusted_advice.untrusted",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "trusted advice address-phase claim carries only the trusted kind; the untrusted field is structurally always absent",
+    ),
+    checked_standard(
+        "stage7.claims.untrusted_advice.trusted",
+        "claims.stage7.untrusted_advice.trusted",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "untrusted advice address-phase claim carries only the untrusted kind; the trusted field is structurally always absent",
     ),
     checked_standard(
         "stage7.claims.bytecode_address_phase.chunks",
@@ -1040,19 +1080,15 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .collect()
 }
 
-pub fn target(name: &str) -> Option<TamperTarget> {
-    all_targets().into_iter().find(|target| target.name == name)
-}
-
 #[expect(
     clippy::panic,
     reason = "tamper tests should fail loudly when they reference a missing manifest entry"
 )]
 pub fn required_target(name: &str) -> TamperTarget {
-    match target(name) {
-        Some(target) => target,
-        None => panic!("missing tamper manifest target {name}"),
-    }
+    all_targets()
+        .into_iter()
+        .find(|target| target.name == name)
+        .unwrap_or_else(|| panic!("missing tamper manifest target {name}"))
 }
 
 pub fn target_names_are_unique() -> bool {
@@ -1074,7 +1110,7 @@ pub fn manifest_paths() -> BTreeSet<&'static str> {
     reason = "manifest structural tests should fail loudly if claim serialization breaks"
 )]
 pub fn clear_claim_leaf_paths() -> BTreeSet<String> {
-    let claims = zero_clear_claims();
+    let claims = clear_claims::<Fr>(true);
     let value = serde_json::to_value(claims).expect("clear claims should serialize");
     let mut paths = BTreeSet::new();
     collect_leaf_paths("claims", &value, &mut paths);
@@ -1123,6 +1159,16 @@ pub fn assert_manifest_target_is_active(target: TamperTarget) {
     );
 }
 
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+pub fn assert_zk_target_active(name: &str) {
+    let target = required_target(name);
+    assert_manifest_target_is_active(target);
+    assert!(
+        target.mode.includes(true),
+        "tamper target mode does not include ZK: {target:?}"
+    );
+}
+
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 pub fn assert_verifier_fixture_tamper_rejects(
     target: TamperTarget,
@@ -1138,41 +1184,41 @@ pub fn assert_verifier_fixture_tamper_rejects(
 fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
     match target.path {
         "claims.stage1.outer.*" => vec![
-            "claims.stage1.outer.left_instruction_input",
-            "claims.stage1.outer.right_instruction_input",
-            "claims.stage1.outer.product",
-            "claims.stage1.outer.should_branch",
-            "claims.stage1.outer.pc",
-            "claims.stage1.outer.unexpanded_pc",
-            "claims.stage1.outer.imm",
-            "claims.stage1.outer.ram_address",
-            "claims.stage1.outer.rs1_value",
-            "claims.stage1.outer.rs2_value",
-            "claims.stage1.outer.rd_write_value",
-            "claims.stage1.outer.ram_read_value",
-            "claims.stage1.outer.ram_write_value",
-            "claims.stage1.outer.left_lookup_operand",
-            "claims.stage1.outer.right_lookup_operand",
-            "claims.stage1.outer.next_unexpanded_pc",
-            "claims.stage1.outer.next_pc",
-            "claims.stage1.outer.next_is_virtual",
-            "claims.stage1.outer.next_is_first_in_sequence",
-            "claims.stage1.outer.lookup_output",
-            "claims.stage1.outer.should_jump",
-            "claims.stage1.outer.flags.add_operands",
-            "claims.stage1.outer.flags.subtract_operands",
-            "claims.stage1.outer.flags.multiply_operands",
-            "claims.stage1.outer.flags.load",
-            "claims.stage1.outer.flags.store",
-            "claims.stage1.outer.flags.jump",
-            "claims.stage1.outer.flags.write_lookup_output_to_rd",
-            "claims.stage1.outer.flags.virtual_instruction",
-            "claims.stage1.outer.flags.assert",
-            "claims.stage1.outer.flags.do_not_update_unexpanded_pc",
-            "claims.stage1.outer.flags.advice",
-            "claims.stage1.outer.flags.is_compressed",
-            "claims.stage1.outer.flags.is_first_in_sequence",
-            "claims.stage1.outer.flags.is_last_in_sequence",
+            "claims.stage1.outer.outer_remainder.left_instruction_input",
+            "claims.stage1.outer.outer_remainder.right_instruction_input",
+            "claims.stage1.outer.outer_remainder.product",
+            "claims.stage1.outer.outer_remainder.should_branch",
+            "claims.stage1.outer.outer_remainder.pc",
+            "claims.stage1.outer.outer_remainder.unexpanded_pc",
+            "claims.stage1.outer.outer_remainder.imm",
+            "claims.stage1.outer.outer_remainder.ram_address",
+            "claims.stage1.outer.outer_remainder.rs1_value",
+            "claims.stage1.outer.outer_remainder.rs2_value",
+            "claims.stage1.outer.outer_remainder.rd_write_value",
+            "claims.stage1.outer.outer_remainder.ram_read_value",
+            "claims.stage1.outer.outer_remainder.ram_write_value",
+            "claims.stage1.outer.outer_remainder.left_lookup_operand",
+            "claims.stage1.outer.outer_remainder.right_lookup_operand",
+            "claims.stage1.outer.outer_remainder.next_unexpanded_pc",
+            "claims.stage1.outer.outer_remainder.next_pc",
+            "claims.stage1.outer.outer_remainder.next_is_virtual",
+            "claims.stage1.outer.outer_remainder.next_is_first_in_sequence",
+            "claims.stage1.outer.outer_remainder.lookup_output",
+            "claims.stage1.outer.outer_remainder.should_jump",
+            "claims.stage1.outer.outer_remainder.add_operands",
+            "claims.stage1.outer.outer_remainder.subtract_operands",
+            "claims.stage1.outer.outer_remainder.multiply_operands",
+            "claims.stage1.outer.outer_remainder.load",
+            "claims.stage1.outer.outer_remainder.store",
+            "claims.stage1.outer.outer_remainder.jump",
+            "claims.stage1.outer.outer_remainder.write_lookup_output_to_rd",
+            "claims.stage1.outer.outer_remainder.virtual_instruction",
+            "claims.stage1.outer.outer_remainder.assert",
+            "claims.stage1.outer.outer_remainder.do_not_update_unexpanded_pc",
+            "claims.stage1.outer.outer_remainder.advice",
+            "claims.stage1.outer.outer_remainder.is_compressed",
+            "claims.stage1.outer.outer_remainder.is_first_in_sequence",
+            "claims.stage1.outer.outer_remainder.is_last_in_sequence",
         ],
         "claims.stage2.batch_outputs.ram_read_write.*" => vec![
             "claims.stage2.batch_outputs.ram_read_write.val",
@@ -1248,35 +1294,36 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
     }
 }
 
-fn zero_clear_claims() -> ClearProofClaims<Fr> {
-    let zero = Fr::from_u64(0);
+pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
+    let zero = F::zero();
+    let optional = fill_optionals.then_some(zero);
 
     ClearProofClaims {
         stage1: stage1::outputs::Stage1OutputClaims {
             uniskip_output_claim: zero,
-            outer: stage1::outputs::SpartanOuterClaims {
-                left_instruction_input: zero,
-                right_instruction_input: zero,
-                product: zero,
-                should_branch: zero,
-                pc: zero,
-                unexpanded_pc: zero,
-                imm: zero,
-                ram_address: zero,
-                rs1_value: zero,
-                rs2_value: zero,
-                rd_write_value: zero,
-                ram_read_value: zero,
-                ram_write_value: zero,
-                left_lookup_operand: zero,
-                right_lookup_operand: zero,
-                next_unexpanded_pc: zero,
-                next_pc: zero,
-                next_is_virtual: zero,
-                next_is_first_in_sequence: zero,
-                lookup_output: zero,
-                should_jump: zero,
-                flags: stage1::outputs::SpartanOuterFlagClaims {
+            outer: stage1::outputs::Stage1BatchOutputClaims {
+                outer_remainder: stage1::OuterRemainderOutputClaims {
+                    left_instruction_input: zero,
+                    right_instruction_input: zero,
+                    product: zero,
+                    should_branch: zero,
+                    pc: zero,
+                    unexpanded_pc: zero,
+                    imm: zero,
+                    ram_address: zero,
+                    rs1_value: zero,
+                    rs2_value: zero,
+                    rd_write_value: zero,
+                    ram_read_value: zero,
+                    ram_write_value: zero,
+                    left_lookup_operand: zero,
+                    right_lookup_operand: zero,
+                    next_unexpanded_pc: zero,
+                    next_pc: zero,
+                    next_is_virtual: zero,
+                    next_is_first_in_sequence: zero,
+                    lookup_output: zero,
+                    should_jump: zero,
                     add_operands: zero,
                     subtract_operands: zero,
                     multiply_operands: zero,
@@ -1314,11 +1361,11 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 },
                 instruction_claim_reduction:
                     stage2::outputs::InstructionClaimReductionOutputClaims {
-                        lookup_output: Some(zero),
+                        lookup_output: optional,
                         left_lookup_operand: zero,
                         right_lookup_operand: zero,
-                        left_instruction_input: Some(zero),
-                        right_instruction_input: Some(zero),
+                        left_instruction_input: optional,
+                        right_instruction_input: optional,
                     },
                 ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims { ram_ra: zero },
                 ram_output_check: stage2::outputs::RamOutputCheckOutputClaims { val_final: zero },
@@ -1349,11 +1396,6 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             },
         },
         stage4: stage4::outputs::Stage4OutputClaims {
-            advice: stage4::RamValCheckAdviceClaims {
-                untrusted: Some(zero),
-                trusted: Some(zero),
-            },
-            program_image_contribution: None,
             registers_read_write: stage4::RegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
@@ -1362,6 +1404,9 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rd_inc: zero,
             },
             ram_val_check: stage4::RamValCheckOutputClaims {
+                untrusted_advice: optional,
+                trusted_advice: optional,
+                program_image: None,
                 ram_ra: zero,
                 ram_inc: zero,
             },
@@ -1378,48 +1423,59 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rd_wa: zero,
             },
         },
-        stage6: stage6::outputs::Stage6OutputClaims {
-            address_phase: stage6::outputs::Stage6AddressPhaseClaims {
-                bytecode_read_raf: zero,
-                booleanity: zero,
-                bytecode_val_stages: Some([zero; 5]),
+        stage6a: stage6a::outputs::Stage6aOutputClaims {
+            bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
+                intermediate: zero,
+                val_stages: Vec::new(),
             },
-            bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
+            booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
+                intermediate: zero,
+            },
+        },
+        stage6b: stage6b::outputs::Stage6bOutputClaims {
+            bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![zero],
             },
-            booleanity: stage6::outputs::BooleanityOutputClaims {
+            booleanity: stage6b::outputs::BooleanityOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
+            ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
-            ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
+            ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                 ram_ra: vec![zero],
             },
             instruction_ra_virtualization:
-                stage6::outputs::InstructionRaVirtualizationOutputClaims {
+                stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                     committed_instruction_ra: vec![zero],
                 },
-            inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
+            inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                 ram_inc: zero,
                 rd_inc: zero,
             },
-            advice_cycle_phase: stage6::outputs::Stage6AdviceCyclePhaseClaims {
-                trusted: Some(stage6::outputs::AdviceCyclePhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-                untrusted: Some(stage6::outputs::AdviceCyclePhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-            },
-            bytecode_claim_reduction: Some(
-                stage6::outputs::BytecodeCyclePhaseOutputClaims::Intermediate(zero),
+            trusted_advice: fill_optionals.then_some(
+                stage6b::outputs::AdviceCyclePhaseOutputClaims {
+                    trusted: Some(zero),
+                    untrusted: None,
+                },
             ),
-            program_image_claim_reduction: Some(
-                stage6::outputs::ProgramImageCyclePhaseOutputClaim {
-                    opening_claim: zero,
+            untrusted_advice: fill_optionals.then_some(
+                stage6b::outputs::AdviceCyclePhaseOutputClaims {
+                    trusted: None,
+                    untrusted: Some(zero),
+                },
+            ),
+            bytecode_reduction: fill_optionals.then_some(
+                stage6b::outputs::BytecodeReductionCyclePhaseOutputClaims {
+                    intermediate: Some(zero),
+                    chunks: Vec::new(),
+                },
+            ),
+            program_image_reduction: fill_optionals.then_some(
+                stage6b::outputs::ProgramImageReductionCyclePhaseOutputClaims {
+                    program_image: zero,
                 },
             ),
         },
@@ -1430,17 +1486,24 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                 },
-            advice_address_phase:
+            trusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
                     trusted: Some(zero),
+                    untrusted: None,
+                },
+            ),
+            untrusted_advice: fill_optionals.then_some(
+                stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
+                    trusted: None,
                     untrusted: Some(zero),
                 },
-            bytecode_address_phase: Some(
+            ),
+            bytecode_address_phase: fill_optionals.then_some(
                 stage7::committed_reduction_address_phase::BytecodeReductionAddressPhaseOutputClaims {
                     chunks: vec![zero],
                 },
             ),
-            program_image_address_phase: Some(
+            program_image_address_phase: fill_optionals.then_some(
                 stage7::committed_reduction_address_phase::ProgramImageReductionAddressPhaseOutputClaims {
                     program_image: zero,
                 },

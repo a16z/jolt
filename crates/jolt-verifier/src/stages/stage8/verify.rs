@@ -1,10 +1,9 @@
-use super::outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput};
+use super::outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
-        relations::OpeningClaim,
-        stage6::{outputs::Stage6OutputClaims, Stage6Output},
+        stage6b::{outputs::Stage6bOutputClaims, Stage6bOutput},
         stage7::{
             outputs::{PrecommittedFinalOpening, Stage7OutputClaims},
             Stage7Output,
@@ -22,7 +21,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::JoltFormulaDimensions,
         ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial,
+    JoltCommittedPolynomial, JoltOpeningId,
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
@@ -33,7 +32,7 @@ use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 struct Stage8BatchEntry<'a, F: Field, C> {
-    id: Stage8OpeningId,
+    id: JoltOpeningId,
     commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
     opening_claim: Option<F>,
@@ -53,7 +52,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-    stage6: &Stage6Output<F, VC::Output>,
+    stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
@@ -70,22 +69,22 @@ where
 
     let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) =
         match (stage6, stage7) {
-            (Stage6Output::Clear(stage6), Stage7Output::Clear(stage7)) => (
+            (Stage6bOutput::Clear(stage6), Stage7Output::Clear(stage7)) => (
                 stage7.hamming_weight_opening_point.as_slice(),
                 stage6.output_points.inc_opening_point(),
                 stage7.precommitted_final_openings.as_slice(),
-                Some((&stage6.output_claims, &stage7.output_claims)),
+                Some((&stage6.output_values, &stage7.output_values)),
             ),
-            (Stage6Output::Zk(stage6), Stage7Output::Zk(stage7)) => (
+            (Stage6bOutput::Zk(stage6), Stage7Output::Zk(stage7)) => (
                 stage7.hamming_weight_opening_point.as_slice(),
                 stage6.output_points.inc_opening_point(),
                 stage7.precommitted_final_openings.as_slice(),
                 None,
             ),
-            (Stage6Output::Clear(_), Stage7Output::Zk(_)) => {
+            (Stage6bOutput::Clear(_), Stage7Output::Zk(_)) => {
                 return Err(VerifierError::ExpectedClearProof { field: "stage7" });
             }
-            (Stage6Output::Zk(_), Stage7Output::Clear(_)) => {
+            (Stage6bOutput::Zk(_), Stage7Output::Clear(_)) => {
                 return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
             }
         };
@@ -119,7 +118,7 @@ where
         precommitted_finals,
         clear_claims,
     )?;
-    let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
+    let opening_ids: Vec<JoltOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
     if checked.zk {
         let gamma_powers = transcript.challenge_scalar_powers(entries.len());
@@ -240,7 +239,7 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(&Stage6OutputClaims<F>, &Stage7OutputClaims<OpeningClaim<F>>)>,
+    clear_claims: Option<(&Stage6bOutputClaims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,
@@ -278,101 +277,71 @@ where
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
                 ),
-                JoltCommittedPolynomial::InstructionRa(index) => (
-                    proof
-                        .commitments
-                        .ra
-                        .instruction
+                JoltCommittedPolynomial::InstructionRa(index)
+                | JoltCommittedPolynomial::BytecodeRa(index)
+                | JoltCommittedPolynomial::RamRa(index) => {
+                    let (commitment_list, claim_list): (&[PCS::Output], Option<&[F]>) =
+                        match polynomial {
+                            JoltCommittedPolynomial::InstructionRa(_) => (
+                                &proof.commitments.ra.instruction,
+                                clear_claims.map(|(_, stage7)| {
+                                    stage7
+                                        .hamming_weight_claim_reduction
+                                        .instruction_ra
+                                        .as_slice()
+                                }),
+                            ),
+                            JoltCommittedPolynomial::BytecodeRa(_) => (
+                                &proof.commitments.ra.bytecode,
+                                clear_claims.map(|(_, stage7)| {
+                                    stage7.hamming_weight_claim_reduction.bytecode_ra.as_slice()
+                                }),
+                            ),
+                            JoltCommittedPolynomial::RamRa(_) => (
+                                &proof.commitments.ra.ram,
+                                clear_claims.map(|(_, stage7)| {
+                                    stage7.hamming_weight_claim_reduction.ram_ra.as_slice()
+                                }),
+                            ),
+                            _ => unreachable!("outer arm matches only the one-hot RA families"),
+                        };
+                    let commitment = commitment_list
                         .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            stage7
-                                .hamming_weight_claim_reduction
-                                .instruction_ra
+                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+                    let opening_claim = claim_list
+                        .map(|claims| {
+                            claims
                                 .get(index)
-                                .map(|claim| claim.value)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::BytecodeRa(index) => (
-                    proof
-                        .commitments
-                        .ra
-                        .bytecode
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            stage7
-                                .hamming_weight_claim_reduction
-                                .bytecode_ra
-                                .get(index)
-                                .map(|claim| claim.value)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::RamRa(index) => (
-                    proof
-                        .commitments
-                        .ra
-                        .ram
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            stage7
-                                .hamming_weight_claim_reduction
-                                .ram_ra
-                                .get(index)
-                                .map(|claim| claim.value)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::TrustedAdvice => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = trusted_advice_commitment
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
+                                .copied()
+                                .ok_or(VerifierError::MissingOpeningClaim { id })
+                        })
+                        .transpose()?;
+                    (commitment, hamming_opening_point, opening_claim)
                 }
-                JoltCommittedPolynomial::UntrustedAdvice => {
+                JoltCommittedPolynomial::TrustedAdvice
+                | JoltCommittedPolynomial::UntrustedAdvice
+                | JoltCommittedPolynomial::BytecodeChunk(_)
+                | JoltCommittedPolynomial::ProgramImageInit => {
                     let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = proof
-                        .untrusted_advice_commitment
-                        .as_ref()
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::BytecodeChunk(index) => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = committed_program
-                        .and_then(|committed| committed.bytecode_chunk_commitments.get(index))
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::ProgramImageInit => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = committed_program
-                        .map(|committed| &committed.program_image_commitment)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+                    let commitment = match polynomial {
+                        JoltCommittedPolynomial::TrustedAdvice => trusted_advice_commitment,
+                        JoltCommittedPolynomial::UntrustedAdvice => {
+                            proof.untrusted_advice_commitment.as_ref()
+                        }
+                        JoltCommittedPolynomial::BytecodeChunk(index) => committed_program
+                            .and_then(|committed| committed.bytecode_chunk_commitments.get(index)),
+                        JoltCommittedPolynomial::ProgramImageInit => {
+                            committed_program.map(|committed| &committed.program_image_commitment)
+                        }
+                        _ => unreachable!("outer arm matches only precommitted polynomials"),
+                    }
+                    .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
             };
         entries.push(Stage8BatchEntry {
-            id: id.into(),
+            id,
             commitment,
             opening_claim,
             scale: commitment_embedding_scale(opening_point, own_point),

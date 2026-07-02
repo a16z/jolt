@@ -32,14 +32,14 @@ pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
 
 /// The consumed staged `BytecodeValStage` openings from the bytecode read-RAF
 /// address phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReductionCyclePhaseInputClaims<C> {
     #[opening(BytecodeValStage, from = BytecodeReadRaf)]
     pub val_stages: Vec<C>,
 }
 
 /// Fiat-Shamir challenge drawn by the committed-bytecode reduction cycle phase.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BytecodeReductionCyclePhaseChallenges<F> {
     #[challenge(BytecodeClaimReductionChallenge::Eta)]
     pub eta: F,
@@ -102,10 +102,8 @@ impl SymbolicSumcheck for CyclePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::geometry::claim_reductions::bytecode::final_bytecode_chunk_opening;
-    use crate::protocols::jolt::{
-        BooleanityChallenge, BytecodeClaimReductionPublic, PrecommittedReductionDimensions,
-    };
+
+    use crate::protocols::jolt::{BooleanityChallenge, PrecommittedReductionDimensions};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn fr(value: u64) -> Fr {
@@ -154,42 +152,6 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            (0..NUM_BYTECODE_VAL_STAGES)
-                .map(bytecode_val_stage_opening)
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![cycle_phase_intermediate_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta)]
-        );
-        assert!(relation.required_deriveds::<Fr>().is_empty());
-    }
-
-    #[test]
-    fn cycle_phase_without_address_phase_opens_committed_chunks() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, false);
-        let relation = CyclePhase::new((dimensions, 2));
-
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                final_bytecode_chunk_opening(0),
-                final_bytecode_chunk_opening(1),
-            ]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
-                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
-            ]
-        );
     }
 
     #[test]

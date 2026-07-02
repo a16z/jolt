@@ -16,8 +16,8 @@ use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// Produced product-remainder openings (the eight virtualized instruction-product
 /// operands and flags), all sharing the single product opening point. Generic over
-/// the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>` on the
-/// clear path). Field declaration order is the canonical Fiat-Shamir order
+/// the opening cell (`F` for the serialized wire value, `Vec<F>` for the derived
+/// opening point). Field declaration order is the canonical Fiat-Shamir order
 /// (single-sourced via [`OutputClaims::canonical_order`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -47,7 +47,7 @@ pub struct ProductRemainderOutputClaims<C> {
 /// Consumed product-remainder input: the product uni-skip's reduced opening. The
 /// relation reads only this value (its output point comes from its own sumcheck
 /// point), so the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct ProductRemainderInputClaims<C> {
     #[opening(UnivariateSkip, from = SpartanProductVirtualization)]
     pub product_uniskip: C,

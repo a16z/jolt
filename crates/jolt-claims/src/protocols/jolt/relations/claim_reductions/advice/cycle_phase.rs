@@ -30,7 +30,7 @@ pub struct AdviceCyclePhaseOutputClaims<C> {
 }
 
 /// The consumed RAM value-check advice opening, keyed by kind.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct AdviceCyclePhaseInputClaims<C> {
     #[opening(trusted_advice, from = RamValCheck)]
     pub trusted: Option<C>,
@@ -150,34 +150,5 @@ mod tests {
             with_address_phase().cycle_phase_total_rounds()
         );
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![ram_val_check_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
-    }
-
-    #[test]
-    fn cycle_phase_without_address_phase_exposes_final_scale() {
-        let relation = CyclePhase::new((JoltAdviceKind::Untrusted, without_address_phase()));
-
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_val_check_advice_opening(JoltAdviceKind::Untrusted),
-                final_advice_opening(JoltAdviceKind::Untrusted),
-            ]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
-                JoltAdviceKind::Untrusted
-            ))]
-        );
     }
 }

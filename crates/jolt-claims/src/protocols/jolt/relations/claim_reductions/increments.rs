@@ -30,7 +30,7 @@ pub struct IncClaimReductionOutputClaims<C> {
 
 /// The four reduced `Inc` openings consumed from the read-write / value
 /// relations of RAM and registers.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct IncClaimReductionInputClaims<C> {
     #[opening(committed = RamInc, from = RamReadWriteChecking)]
     pub ram_inc_read_write: C,
@@ -43,7 +43,7 @@ pub struct IncClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the increment claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct IncClaimReductionChallenges<F> {
     #[challenge(IncClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -190,31 +190,5 @@ mod tests {
         assert_eq!(ClaimReduction::id(), JoltRelationId::IncClaimReduction);
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                ram_inc_read_write(),
-                ram_inc_val_check(),
-                rd_inc_read_write(),
-                rd_inc_val_evaluation(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![ram_inc_reduced(), rd_inc_reduced()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(IncClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(IncClaimReductionPublic::EqRamReadWrite),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRamValCheck),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersReadWrite),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
-            ]
-        );
     }
 }

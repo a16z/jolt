@@ -16,8 +16,8 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
-        zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
+        stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
+        zk::{blindfold, inputs::BlindFoldInputs},
         CommittedProgramSchedule, PrecommittedSchedule,
     },
     VerifierError,
@@ -32,20 +32,6 @@ pub struct ProofTranscriptConfig {
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
-}
-
-impl ProofTranscriptConfig {
-    pub const fn new(
-        rw_config: JoltReadWriteConfig,
-        one_hot_config: JoltOneHotConfig,
-        trace_polynomial_order: TracePolynomialOrder,
-    ) -> Self {
-        Self {
-            rw_config,
-            one_hot_config,
-            trace_polynomial_order,
-        }
-    }
 }
 
 pub fn verify<F, PCS, VC, T>(
@@ -66,24 +52,16 @@ where
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    let checked = validate_inputs(
+    let PreStage1VerifierState {
+        checked,
+        mut transcript,
+    } = verify_until_stage1::<PCS, VC, T, _>(
         preprocessing,
         public_io,
         proof,
-        trusted_advice_commitment.is_some(),
+        trusted_advice_commitment,
         zk,
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
-
-    let mut transcript = T::new(b"Jolt");
-    absorb_preamble(&checked, proof, &mut transcript);
-    absorb_commitments(
-        preprocessing,
-        proof,
-        trusted_advice_commitment,
-        &mut transcript,
-    );
 
     // Built once for the whole verification and shared by the stages that read the
     // RA layout (5–8), instead of each rebuilding the same dimensions.
@@ -114,7 +92,18 @@ where
         &stage2,
         &stage4,
     )?;
-    let stage6 = stage6::verify(
+    let stage6a = stage6a::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+    )?;
+    let stage6b = stage6b::verify(
         &checked,
         preprocessing,
         proof,
@@ -125,6 +114,7 @@ where
         &stage3,
         &stage4,
         &stage5,
+        &stage6a,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -132,7 +122,7 @@ where
         &formula_dimensions,
         &mut transcript,
         &stage4,
-        &stage6,
+        &stage6b,
     )?;
     let stage8 = stage8::verify(
         &checked,
@@ -141,26 +131,24 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
-        &stage6,
+        &stage6b,
         &stage7,
     )?;
 
     if checked.zk {
-        let zk_stages = zk_stage_outputs::<PCS, VC>(
-            &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,
-        )?;
         let blindfold = blindfold::build(BlindFoldInputs {
             checked: &checked,
             preprocessing,
             proof,
-            stage1: zk_stages.stage1,
-            stage2: zk_stages.stage2,
-            stage3: zk_stages.stage3,
-            stage4: zk_stages.stage4,
-            stage5: zk_stages.stage5,
-            stage6: zk_stages.stage6,
-            stage7: zk_stages.stage7,
-            stage8: zk_stages.stage8,
+            stage1: stage1.zk()?,
+            stage2: stage2.zk()?,
+            stage3: stage3.zk()?,
+            stage4: stage4.zk()?,
+            stage5: stage5.zk()?,
+            stage6a: stage6a.zk()?,
+            stage6b: stage6b.zk()?,
+            stage7: stage7.zk()?,
+            stage8: stage8.zk()?,
         })?;
         let vc_setup = preprocessing
             .vc_setup
@@ -168,7 +156,6 @@ where
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
         transcript.append(&Label(b"BlindFold"));
         blindfold
-            .protocol
             .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
             .map_err(|error| VerifierError::BlindFoldVerificationFailed {
                 reason: error.to_string(),
@@ -195,8 +182,8 @@ pub struct PreStage1VerifierState<T> {
 
 /// Runs the [`verify`] preamble — input validation, proof-consistency and
 /// config checks, then preamble + commitment absorption — and returns the
-/// pre-stage-1 state. WARNING: the absorption order here must stay identical to
-/// [`verify`] or the prover and verifier transcripts diverge.
+/// pre-stage-1 state. [`verify`] delegates to this function, so both paths share
+/// one absorption order and cannot diverge.
 pub fn verify_until_stage1<PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -434,7 +421,7 @@ where
         .vc_setup
         .as_ref()
         .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-    let required = committed::zk_vector_commitment_capacity_requirement();
+    let required = common::constants::MAX_BLINDFOLD_GENERATORS;
     let got = VC::capacity(setup);
     if got < required {
         return Err(VerifierError::InvalidVectorCommitmentCapacity { required, got });
@@ -454,11 +441,11 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
 {
     absorb_transcript_preamble(
         checked,
-        ProofTranscriptConfig::new(
-            proof.rw_config,
-            proof.one_hot_config,
-            proof.trace_polynomial_order,
-        ),
+        ProofTranscriptConfig {
+            rw_config: proof.rw_config,
+            one_hot_config: proof.one_hot_config,
+            trace_polynomial_order: proof.trace_polynomial_order,
+        },
         transcript,
     );
 }
@@ -635,56 +622,33 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    validate_sumcheck_representation(
-        &proof.stages.stage1_uni_skip_first_round_proof,
-        "stage1_uni_skip_first_round_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage1_sumcheck_proof,
-        "stage1_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage2_uni_skip_first_round_proof,
-        "stage2_uni_skip_first_round_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage2_sumcheck_proof,
-        "stage2_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage3_sumcheck_proof,
-        "stage3_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage4_sumcheck_proof,
-        "stage4_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage5_sumcheck_proof,
-        "stage5_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage6a_sumcheck_proof,
-        "stage6a_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage6b_sumcheck_proof,
-        "stage6b_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage7_sumcheck_proof,
-        "stage7_sumcheck_proof",
-        zk,
-    )?;
+    let stage_proofs = [
+        (
+            &proof.stages.stage1_uni_skip_first_round_proof,
+            "stage1_uni_skip_first_round_proof",
+        ),
+        (&proof.stages.stage1_sumcheck_proof, "stage1_sumcheck_proof"),
+        (
+            &proof.stages.stage2_uni_skip_first_round_proof,
+            "stage2_uni_skip_first_round_proof",
+        ),
+        (&proof.stages.stage2_sumcheck_proof, "stage2_sumcheck_proof"),
+        (&proof.stages.stage3_sumcheck_proof, "stage3_sumcheck_proof"),
+        (&proof.stages.stage4_sumcheck_proof, "stage4_sumcheck_proof"),
+        (&proof.stages.stage5_sumcheck_proof, "stage5_sumcheck_proof"),
+        (
+            &proof.stages.stage6a_sumcheck_proof,
+            "stage6a_sumcheck_proof",
+        ),
+        (
+            &proof.stages.stage6b_sumcheck_proof,
+            "stage6b_sumcheck_proof",
+        ),
+        (&proof.stages.stage7_sumcheck_proof, "stage7_sumcheck_proof"),
+    ];
+    for (stage_proof, field) in stage_proofs {
+        validate_sumcheck_representation(stage_proof, field, zk)?;
+    }
 
     match (&proof.claims, zk) {
         (crate::proof::JoltProofClaims::Clear(_), false)
@@ -877,6 +841,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::unwrap_used)]
     fn validate_inputs_normalizes_public_output() {
         let preprocessing = test_preprocessing();
         let mut public_io = JoltDevice {
@@ -887,11 +852,7 @@ mod tests {
         };
         let proof = proof_with_zk(false, clear_claims());
 
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false);
-        assert!(checked.is_ok());
-        let Ok(checked) = checked else {
-            return;
-        };
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false).unwrap();
 
         assert_eq!(checked.public_io.inputs, vec![1, 2]);
         assert_eq!(checked.public_io.outputs, vec![3]);
@@ -899,11 +860,7 @@ mod tests {
         assert_eq!(checked.ram_K, proof.ram_K);
 
         public_io.outputs = vec![0, 0];
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false);
-        assert!(checked.is_ok());
-        let Ok(checked) = checked else {
-            return;
-        };
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false).unwrap();
         assert!(checked.public_io.outputs.is_empty());
     }
 
@@ -990,26 +947,27 @@ mod tests {
     }
 
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
-        JoltProof::new(
-            test_commitments(),
-            stage_proofs(is_zk),
-            (),
-            None,
+        JoltProof {
+            protocol: JoltProtocolConfig::for_zk(claims.is_zk()),
+            commitments: test_commitments(),
+            stages: stage_proofs(is_zk),
+            joint_opening_proof: (),
+            untrusted_advice_commitment: None,
             claims,
-            1,
-            4,
-            JoltReadWriteConfig {
+            trace_length: 1,
+            ram_K: 4,
+            rw_config: JoltReadWriteConfig {
                 ram_rw_phase1_num_rounds: 0,
                 ram_rw_phase2_num_rounds: 0,
                 registers_rw_phase1_num_rounds: 0,
                 registers_rw_phase2_num_rounds: 0,
             },
-            JoltOneHotConfig {
+            one_hot_config: JoltOneHotConfig {
                 log_k_chunk: 0,
                 lookups_ra_virtual_log_k_chunk: 0,
             },
-            crate::proof::TracePolynomialOrder::CycleMajor,
-        )
+            trace_polynomial_order: crate::proof::TracePolynomialOrder::CycleMajor,
+        }
     }
 
     fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
@@ -1091,11 +1049,6 @@ mod tests {
                 },
             },
             stage4: stage4::outputs::Stage4OutputClaims {
-                advice: stage4::RamValCheckAdviceClaims {
-                    untrusted: None,
-                    trusted: None,
-                },
-                program_image_contribution: None,
                 registers_read_write: stage4::RegistersReadWriteOutputClaims {
                     registers_val: zero,
                     rs1_ra: zero,
@@ -1104,6 +1057,9 @@ mod tests {
                     rd_inc: zero,
                 },
                 ram_val_check: stage4::RamValCheckOutputClaims {
+                    untrusted_advice: None,
+                    trusted_advice: None,
+                    program_image: None,
                     ram_ra: zero,
                     ram_inc: zero,
                 },
@@ -1120,40 +1076,42 @@ mod tests {
                     rd_wa: zero,
                 },
             },
-            stage6: stage6::outputs::Stage6OutputClaims {
-                address_phase: stage6::outputs::Stage6AddressPhaseClaims {
-                    bytecode_read_raf: zero,
-                    booleanity: zero,
-                    bytecode_val_stages: None,
+            stage6a: stage6a::outputs::Stage6aOutputClaims {
+                bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
+                    intermediate: zero,
+                    val_stages: Vec::new(),
                 },
-                bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
+                booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
+                    intermediate: zero,
+                },
+            },
+            stage6b: stage6b::outputs::Stage6bOutputClaims {
+                bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
                     bytecode_ra: Vec::new(),
                 },
-                booleanity: stage6::outputs::BooleanityOutputClaims {
+                booleanity: stage6b::outputs::BooleanityOutputClaims {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
+                ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
                 },
-                ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
+                ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),
                 },
                 instruction_ra_virtualization:
-                    stage6::outputs::InstructionRaVirtualizationOutputClaims {
+                    stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                         committed_instruction_ra: Vec::new(),
                     },
-                inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
+                inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
-                advice_cycle_phase: stage6::outputs::Stage6AdviceCyclePhaseClaims {
-                    trusted: None,
-                    untrusted: None,
-                },
-                bytecode_claim_reduction: None,
-                program_image_claim_reduction: None,
+                trusted_advice: None,
+                untrusted_advice: None,
+                bytecode_reduction: None,
+                program_image_reduction: None,
             },
             stage7: stage7::outputs::Stage7OutputClaims {
                 hamming_weight_claim_reduction:
@@ -1162,43 +1120,40 @@ mod tests {
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
                     },
-                advice_address_phase:
-                    stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
-                        trusted: None,
-                        untrusted: None,
-                    },
+                trusted_advice: None,
+                untrusted_advice: None,
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
             },
         })
     }
 
-    fn empty_spartan_outer_claims() -> stage1::outputs::SpartanOuterClaims<Fr> {
+    fn empty_spartan_outer_claims() -> stage1::outputs::Stage1BatchOutputClaims<Fr> {
         let zero = Fr::zero();
 
-        stage1::outputs::SpartanOuterClaims {
-            left_instruction_input: zero,
-            right_instruction_input: zero,
-            product: zero,
-            should_branch: zero,
-            pc: zero,
-            unexpanded_pc: zero,
-            imm: zero,
-            ram_address: zero,
-            rs1_value: zero,
-            rs2_value: zero,
-            rd_write_value: zero,
-            ram_read_value: zero,
-            ram_write_value: zero,
-            left_lookup_operand: zero,
-            right_lookup_operand: zero,
-            next_unexpanded_pc: zero,
-            next_pc: zero,
-            next_is_virtual: zero,
-            next_is_first_in_sequence: zero,
-            lookup_output: zero,
-            should_jump: zero,
-            flags: stage1::outputs::SpartanOuterFlagClaims {
+        stage1::outputs::Stage1BatchOutputClaims {
+            outer_remainder: stage1::OuterRemainderOutputClaims {
+                left_instruction_input: zero,
+                right_instruction_input: zero,
+                product: zero,
+                should_branch: zero,
+                pc: zero,
+                unexpanded_pc: zero,
+                imm: zero,
+                ram_address: zero,
+                rs1_value: zero,
+                rs2_value: zero,
+                rd_write_value: zero,
+                ram_read_value: zero,
+                ram_write_value: zero,
+                left_lookup_operand: zero,
+                right_lookup_operand: zero,
+                next_unexpanded_pc: zero,
+                next_pc: zero,
+                next_is_virtual: zero,
+                next_is_first_in_sequence: zero,
+                lookup_output: zero,
+                should_jump: zero,
                 add_operands: zero,
                 subtract_operands: zero,
                 multiply_operands: zero,

@@ -5,8 +5,8 @@
 //! instances differ only by a runtime [`JoltAdviceKind`], so each is a separate
 //! batch member built from a per-kind relation that carries the kind; the produced
 //! and consumed openings are keyed positionally by kind (trusted/untrusted
-//! `Option<C>` fields, exactly as stage 4's `RamValCheckAdviceClaims`), so the
-//! claim structs stay fully derive-driven.
+//! `Option<C>` fields, exactly as the advice leaves folded into stage 4's
+//! `RamValCheckOutputClaims`), so the claim structs stay fully derive-driven.
 //!
 //! As with the committed-program address phases, the `FinalScale` public is a
 //! function of the reduction's final opening point, which `derive_output_term`
@@ -23,7 +23,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 pub struct AdviceAddressPhase<F: Field> {
@@ -31,17 +31,21 @@ pub struct AdviceAddressPhase<F: Field> {
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
-    reference_opening_point: Vec<F>,
+    /// The RAM address point of the staged advice opening from RAM value-check
+    /// (stage 4). Consumed only by the clear-only `derive_output_term` (`FinalScale`),
+    /// so it is `None` in ZK — where BlindFold recomputes the scale independently and
+    /// this relation's `derive_output_term` never runs.
+    reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: Field> AdviceAddressPhase<F> {
     /// `reference_opening_point` is the RAM address point of the staged advice
-    /// opening from RAM value-check (stage 4). It and the cycle-phase variables are
-    /// known before the stage-7 sumcheck.
+    /// opening from RAM value-check (stage 4), `None` in ZK (clear-only aux). It and
+    /// the cycle-phase variables are known before the stage-7 sumcheck.
     pub fn new(
         kind: JoltAdviceKind,
         layout: &AdviceClaimReductionLayout,
-        reference_opening_point: Vec<F>,
+        reference_opening_point: Option<Vec<F>>,
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
@@ -56,22 +60,16 @@ impl<F: Field> AdviceAddressPhase<F> {
         }
     }
 
-    pub fn kind(&self) -> JoltAdviceKind {
-        self.kind
-    }
-
-    /// This kind's produced opening point, recovered from the output claims.
+    /// This kind's produced opening point, recovered from the output points.
     fn output_point<'a>(
         &self,
-        outputs: &'a AdviceAddressPhaseOutputClaims<OpeningClaim<F>>,
+        output_points: &'a AdviceAddressPhaseOutputClaims<Vec<F>>,
     ) -> Result<&'a [F], VerifierError> {
-        let claim = match self.kind {
-            JoltAdviceKind::Trusted => outputs.trusted.as_ref(),
-            JoltAdviceKind::Untrusted => outputs.untrusted.as_ref(),
+        let point = match self.kind {
+            JoltAdviceKind::Trusted => output_points.trusted(),
+            JoltAdviceKind::Untrusted => output_points.untrusted(),
         };
-        claim
-            .map(|opening| opening.point.as_slice())
-            .ok_or_else(|| advice_public_failed("advice address phase produced no opening"))
+        point.ok_or_else(|| advice_public_failed("advice address phase produced no opening"))
     }
 }
 
@@ -89,10 +87,17 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    /// The advice address phase is bound on the offset-0 prefix of the batch
+    /// challenge vector (two-phase reductions front-load the address rounds), not
+    /// the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &AdviceAddressPhaseInputClaims<C>,
+        _input_points: &AdviceAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<AdviceAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -110,11 +115,11 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &AdviceAddressPhaseInputClaims<C>,
-        outputs: &AdviceAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &AdviceAddressPhaseInputClaims<Vec<F>>,
+        output_points: &AdviceAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(kind)) = id
@@ -124,10 +129,15 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
         if *kind != self.kind {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         }
+        let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
+            advice_public_failed(
+                "advice address phase has no reference opening point (ZK-only construction)",
+            )
+        })?;
         self.layout
             .address_phase_scale_at_opening_point(
-                &self.reference_opening_point,
-                self.output_point(outputs)?,
+                reference_opening_point,
+                self.output_point(output_points)?,
             )
             .map_err(advice_public_failed)
     }

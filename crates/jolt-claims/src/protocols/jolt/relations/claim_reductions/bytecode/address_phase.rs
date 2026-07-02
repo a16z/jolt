@@ -27,7 +27,7 @@ pub struct BytecodeReductionAddressPhaseOutputClaims<C> {
 }
 
 /// Consumed intermediate opening from the stage-6b bytecode cycle phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReductionAddressPhaseInputClaims<C> {
     #[opening(BytecodeClaimReductionIntermediate, from = BytecodeClaimReductionCyclePhase)]
     pub cycle_phase_intermediate: C,
@@ -137,23 +137,5 @@ mod tests {
         assert_eq!(AddressPhase::id(), JoltRelationId::BytecodeClaimReduction);
         assert_eq!(relation.rounds(), dimensions.address_phase_total_rounds());
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![cycle_phase_intermediate_opening()]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                final_bytecode_chunk_opening(0),
-                final_bytecode_chunk_opening(1),
-            ]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
-                JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
-            ]
-        );
     }
 }

@@ -23,10 +23,9 @@ where
             }
         })?;
 
-    // `product_tau_low` is opening-derived (stage 1's remainder cycle point); the
-    // carrier no longer stores it, so recompute it from `stage1.remainder_consistency`
-    // with the same orientation the clear path uses for `product_uniskip.tau_low`.
-    let product_tau_low = stage1_remainder_cycle(input);
+    // `product_tau_low` is stage 1's remainder cycle point (low half), computed once
+    // by the stage-2 verifier and carried on the ZK output.
+    let product_tau_low = input.stage2.product_tau_low.clone();
 
     let product_uniskip_rounds = 1;
     let product_uniskip_degree = SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
@@ -34,7 +33,7 @@ where
         JoltSumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE);
     let product_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.challenges.product_tau_high,
+        input.stage2.product_tau_high,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::SpartanProductVirtualization,
@@ -50,10 +49,10 @@ where
         input.stage2.product_uniskip_consistency.clone(),
         &input.stage2.product_uniskip_output_claims,
         values,
-        vec![VerifierOpeningId::Jolt(product_uniskip_opening())],
+        vec![product_uniskip_opening()],
         Vec::new(),
         product_uniskip_input,
-        opening(VerifierOpeningId::Jolt(product_uniskip_opening())),
+        opening(product_uniskip_opening()),
     )?;
 
     let ram_read_write = relations::ram::ReadWriteChecking::new(read_write_dimensions);
@@ -75,7 +74,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
-        input.stage2.challenges.ram_read_write_gamma,
+        input.stage2.challenges.ram_read_write.gamma,
     )?;
     values.public(JoltDerivedId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
 
@@ -89,15 +88,15 @@ where
     let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
     let product_tau_high_bound = centered_lagrange_kernel(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.challenges.product_tau_high,
-        input.stage2.challenges.product_uniskip_challenge,
+        input.stage2.product_tau_high,
+        input.stage2.product_uniskip_challenge,
     )
     .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_tau_low_eq = try_eq_mle(&product_tau_low, &product_opening_point)
         .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_lagrange_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        input.stage2.challenges.product_uniskip_challenge,
+        input.stage2.product_uniskip_challenge,
     )
     .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
     let product_tau_kernel = product_tau_high_bound * product_tau_low_eq;
@@ -118,7 +117,7 @@ where
         VerifierPublicId::Challenge(JoltChallengeId::from(
             InstructionClaimReductionChallenge::Gamma,
         )),
-        input.stage2.challenges.instruction_gamma,
+        input.stage2.challenges.instruction_claim_reduction.gamma,
     )?;
     values.public(
         JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan),
@@ -158,7 +157,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let output_publics = ram_output_publics(
         input,
-        &input.stage2.challenges.output_address_challenges,
+        &input.stage2.output_address_challenges,
         &ram_output_address,
     )?;
     values.public(
@@ -194,113 +193,57 @@ where
         .canonical_order();
 
     let mut output_ids = Vec::new();
-    output_ids.extend(map_jolt_opening_ids(
+    output_ids.extend(
         relations::ram::RamReadWriteOutputClaims::<PCS::Field> {
             val: PCS::Field::zero(),
             ra: PCS::Field::zero(),
             inc: PCS::Field::zero(),
         }
         .canonical_order(),
-    ));
-    output_ids.extend(map_jolt_opening_ids(product_order.clone()));
-    output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[1]));
-    output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[2]));
-    output_ids.extend(map_jolt_opening_ids(
+    );
+    output_ids.extend(product_order.clone());
+    output_ids.push(instruction_outputs[1]);
+    output_ids.push(instruction_outputs[2]);
+    output_ids.extend(
         relations::ram::RamRafEvaluationOutputClaims::<PCS::Field> {
             ram_ra: PCS::Field::zero(),
         }
         .canonical_order(),
-    ));
-    output_ids.extend(map_jolt_opening_ids(
+    );
+    output_ids.extend(
         relations::ram::RamOutputCheckOutputClaims::<PCS::Field> {
             val_final: PCS::Field::zero(),
         }
         .canonical_order(),
-    ));
+    );
     let aliases = vec![
-        OpeningAlias::new(
-            VerifierOpeningId::Jolt(instruction_outputs[0]),
-            VerifierOpeningId::Jolt(product_order[4]),
-        ),
-        OpeningAlias::new(
-            VerifierOpeningId::Jolt(instruction_outputs[3]),
-            VerifierOpeningId::Jolt(product_order[0]),
-        ),
-        OpeningAlias::new(
-            VerifierOpeningId::Jolt(instruction_outputs[4]),
-            VerifierOpeningId::Jolt(product_order[1]),
-        ),
+        OpeningAlias::new(instruction_outputs[0], product_order[4]),
+        OpeningAlias::new(instruction_outputs[3], product_order[0]),
+        OpeningAlias::new(instruction_outputs[4], product_order[1]),
     ];
 
-    let mut batch_claims = vec![
-        (
-            ram_read_write.rounds(),
-            map_jolt_expr(ram_read_write.input_expression::<PCS::Field>()),
-            map_jolt_expr(ram_read_write.output_expression::<PCS::Field>()),
-        ),
+    let batch_claims = [
+        relation_claim(&ram_read_write),
         (
             product_remainder.rounds(),
             map_jolt_expr(product_remainder.input_expression::<PCS::Field>()),
             product_remainder_output,
         ),
-        (
-            instruction_reduction.rounds(),
-            map_jolt_expr(instruction_reduction.input_expression::<PCS::Field>()),
-            map_jolt_expr(instruction_reduction.output_expression::<PCS::Field>()),
-        ),
+        relation_claim(&instruction_reduction),
+        relation_claim(&ram_raf),
+        relation_claim(&ram_output),
     ];
-    batch_claims.extend([
-        (
-            ram_raf.rounds(),
-            map_jolt_expr(ram_raf.input_expression::<PCS::Field>()),
-            map_jolt_expr(ram_raf.output_expression::<PCS::Field>()),
-        ),
-        (
-            ram_output.rounds(),
-            map_jolt_expr(ram_output.input_expression::<PCS::Field>()),
-            map_jolt_expr(ram_output.output_expression::<PCS::Field>()),
-        ),
-    ]);
-    let coefficients = &input.stage2.batch_consistency.batching_coefficients;
-    if batch_claims.len() != coefficients.len() {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "stage2.batch: expected {} batching coefficients, got {}",
-                batch_claims.len(),
-                coefficients.len()
-            ),
-        });
-    }
-    let input_claim = batch_claims.iter().zip(coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((rounds, input_expr, _), coefficient)| {
-            let scale = *coefficient
-                * PCS::Field::pow2(input.stage2.batch_consistency.max_num_vars - *rounds);
-            acc + scale_expr(input_expr.clone(), scale)
-        },
-    );
-    let output_claim = batch_claims.iter().zip(coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((_, _, output_expr), coefficient)| {
-            acc + scale_expr(output_expr.clone(), *coefficient)
-        },
-    );
 
-    add_stage(
+    add_batched_stage(
         builder,
         "stage2.batch",
-        SumcheckStatement::new(
-            input.stage2.batch_consistency.max_num_vars,
-            input.stage2.batch_consistency.max_degree,
-        ),
-        domain_spec(ram_read_write.domain()),
-        input.stage2.batch_consistency.consistency.clone(),
+        ram_read_write.domain(),
+        &batch_claims,
+        &input.stage2.batch_consistency,
         &input.stage2.batch_output_claims,
         values,
         output_ids,
         aliases,
-        input_claim,
-        output_claim,
     )
 }
 
@@ -316,18 +259,15 @@ fn selected_product_uniskip_input_expr<F: Field>(
             ),
         });
     };
-    let expr = scale_expr(
-        opening(VerifierOpeningId::Jolt(product_outer_opening())),
-        *product_weight,
-    ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(
-            product_should_branch_outer_opening(),
-        )),
-        *should_branch_weight,
-    ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(product_should_jump_outer_opening())),
-        *should_jump_weight,
-    );
+    let expr = scale_expr(opening(product_outer_opening()), *product_weight)
+        + scale_expr(
+            opening(product_should_branch_outer_opening()),
+            *should_branch_weight,
+        )
+        + scale_expr(
+            opening(product_should_jump_outer_opening()),
+            *should_jump_weight,
+        );
 
     if !rest.is_empty() {
         return Err(VerifierError::BlindFoldConstructionFailed {
@@ -355,26 +295,16 @@ fn selected_product_remainder_output_expr<F: Field>(
         });
     };
     let left_base = scale_expr(
-        opening(VerifierOpeningId::Jolt(left_instruction_input_product())),
+        opening(left_instruction_input_product()),
         *instruction_product_weight,
-    ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(lookup_output_product())),
-        *should_branch_weight,
-    ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(jump_flag_product())),
-        *should_jump_weight,
-    );
+    ) + scale_expr(opening(lookup_output_product()), *should_branch_weight)
+        + scale_expr(opening(jump_flag_product()), *should_jump_weight);
     let right_base = scale_expr(
-        opening(VerifierOpeningId::Jolt(right_instruction_input_product())),
+        opening(right_instruction_input_product()),
         *instruction_product_weight,
-    ) + scale_expr(
-        opening(VerifierOpeningId::Jolt(branch_flag_product())),
-        *should_branch_weight,
-    ) + scale_expr(VerifierExpr::one(), *should_jump_weight)
-        + scale_expr(
-            opening(VerifierOpeningId::Jolt(next_is_noop_product())),
-            -*should_jump_weight,
-        );
+    ) + scale_expr(opening(branch_flag_product()), *should_branch_weight)
+        + scale_expr(VerifierExpr::one(), *should_jump_weight)
+        + scale_expr(opening(next_is_noop_product()), -*should_jump_weight);
 
     let (left, right) = {
         if !rest.is_empty() {

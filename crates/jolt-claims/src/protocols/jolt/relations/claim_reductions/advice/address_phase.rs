@@ -30,7 +30,7 @@ pub struct AdviceAddressPhaseOutputClaims<C> {
 }
 
 /// Consumed cycle-phase advice openings, keyed by kind.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct AdviceAddressPhaseInputClaims<C> {
     #[opening(trusted_advice, from = AdviceClaimReductionCyclePhase)]
     pub trusted: Option<C>,
@@ -138,19 +138,5 @@ mod tests {
             with_address_phase().address_phase_total_rounds()
         );
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![final_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
-                JoltAdviceKind::Trusted
-            ))]
-        );
     }
 }

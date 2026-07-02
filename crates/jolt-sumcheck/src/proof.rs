@@ -113,10 +113,17 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         }
     }
 
-    /// Verifies a compressed clear Boolean-hypercube sumcheck proof.
+    /// Verifies a compressed clear Boolean-hypercube sumcheck proof against a
+    /// combined claim given as plain `(num_vars, degree, claimed_sum)`.
+    ///
+    /// Takes the claim dimensions directly rather than a [`SumcheckClaim`] so a
+    /// batched-verify driver that has already reduced its instances to one combined
+    /// claim can call it without constructing a claim value.
     pub fn verify_compressed_boolean<T>(
         &self,
-        claim: &SumcheckClaim<F>,
+        num_vars: usize,
+        degree: usize,
+        claimed_sum: F,
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
@@ -125,7 +132,7 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
     {
         match self {
             Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
-                claim,
+                &SumcheckClaim::new(num_vars, degree, claimed_sum),
                 proof,
                 BooleanHypercube,
                 SUMCHECK_ROUND_TRANSCRIPT_LABEL,
@@ -168,5 +175,22 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
                 got: "compressed clear",
             }),
         }
+    }
+
+    /// [`verify_committed_consistency`](Self::verify_committed_consistency) taking the
+    /// combined statement as plain `(num_vars, degree)`, for a batched-verify driver
+    /// that computes those dimensions itself rather than building a
+    /// [`SumcheckStatement`].
+    pub fn verify_committed_consistency_dims<T>(
+        &self,
+        num_vars: usize,
+        degree: usize,
+        transcript: &mut T,
+    ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+        C: Clone + AppendToTranscript,
+    {
+        self.verify_committed_consistency(SumcheckStatement::new(num_vars, degree), transcript)
     }
 }

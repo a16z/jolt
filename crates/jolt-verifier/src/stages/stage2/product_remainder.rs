@@ -1,11 +1,8 @@
 //! The stage 2 `SpartanProductVirtualization` product-remainder sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 2 batch proof) and the verifier (after checking it). It
-//! owns the product opening-point derivation and the uni-skip Lagrange-weight /
-//! `TauKernel` public-value computation, so the input/output claim algebra lives
-//! here once (and stays in lockstep with the BlindFold constraint, which evaluates
-//! the same `spartan::product_remainder` formula).
+//! Owns the product opening-point derivation and the uni-skip Lagrange-weight /
+//! `TauKernel` public-value computation, in lockstep with the BlindFold constraint's
+//! `spartan::product_remainder` formula.
 //!
 //! The companion product *uni-skip* first round is a univariate skip rather than a
 //! [`ConcreteSumcheck`], so it stays hand-coded in the stage-2 verifier; this
@@ -27,20 +24,16 @@ use jolt_poly::{
 };
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
-/// Wire the consumed opening from the product uni-skip's reduced output claim.
-/// Only the value feeds the input claim (the output point comes from this
-/// relation's own sumcheck point), so the input point is left empty.
-pub fn product_remainder_inputs_from_uniskip_output<F: Field>(
+/// Wire the consumed opening *value* from the product uni-skip's reduced output
+/// claim (the output point comes from this relation's own sumcheck point).
+pub fn product_remainder_input_values_from_uniskip_output<F: Field>(
     product_uniskip_output_claim: F,
-) -> ProductRemainderInputClaims<OpeningClaim<F>> {
+) -> ProductRemainderInputClaims<F> {
     ProductRemainderInputClaims {
-        product_uniskip: OpeningClaim {
-            point: Vec::new(),
-            value: product_uniskip_output_claim,
-        },
+        product_uniskip: product_uniskip_output_claim,
     }
 }
 
@@ -81,10 +74,10 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &ProductRemainderInputClaims<C>,
+        _input_points: &ProductRemainderInputClaims<Vec<F>>,
     ) -> Result<ProductRemainderOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(ProductRemainderOutputClaims {
@@ -99,11 +92,11 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &ProductRemainderInputClaims<C>,
-        outputs: &ProductRemainderOutputClaims<OpeningClaim<F>>,
+        _input_points: &ProductRemainderInputClaims<Vec<F>>,
+        output_points: &ProductRemainderOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {
@@ -137,7 +130,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
             // `tau_high`) and the equality of the low remainder challenges
             // (`tau_low`) with the produced product opening point.
             SpartanProductVirtualizationPublic::TauKernel => {
-                let product_opening = outputs.left_instruction_input.point();
+                let product_opening = output_points.left_instruction_input();
                 let tau_high_bound = centered_lagrange_kernel(
                     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
                     self.tau_high,

@@ -2,52 +2,42 @@ use jolt_claims::protocols::jolt::{
     geometry::{
         claim_reductions::{
             advice,
-            bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
+            bytecode::{self as bytecode_reduction},
             hamming_weight, program_image,
         },
         dimensions::JoltFormulaDimensions,
     },
-    relations, AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
     JoltCommittedPolynomial, JoltRelationId, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout,
 };
-use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::{
-    BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
-    SumcheckClaim, SumcheckStatement,
-};
 use jolt_transcript::Transcript;
 
-use super::advice_address_phase::{
-    AdviceAddressPhase, AdviceAddressPhaseInputClaims, AdviceAddressPhaseOutputClaims,
-};
+use super::advice_address_phase::{AdviceAddressPhase, AdviceAddressPhaseInputClaims};
 use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, BytecodeReductionAddressPhaseInputClaims,
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseInputClaims,
 };
 use super::hamming_weight_claim_reduction::{
-    HammingWeightClaimReduction, HammingWeightClaimReductionChallenges,
-    HammingWeightClaimReductionInputClaims,
+    HammingWeightClaimReduction, HammingWeightClaimReductionInputClaims,
 };
 use super::outputs::{
-    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7Output,
-    Stage7OutputClaims, Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7ClearOutput, Stage7InputClaims, Stage7InputPoints,
+    Stage7Output, Stage7OutputClaims, Stage7OutputPoints, Stage7Sumchecks, Stage7ZkOutput,
 };
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{
-            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-        },
         stage4::{Stage4ClearOutput, Stage4Output},
-        stage6::{
-            outputs::BytecodeCyclePhaseOutputClaims, Stage6ClearOutput, Stage6Output,
-            Stage6ZkOutput,
+        stage6b::{
+            outputs::{BytecodeReductionWeights, Stage6bOutputPoints},
+            Stage6bClearOutput, Stage6bOutput,
         },
         zk::committed,
+        PrecommittedSchedule,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -59,7 +49,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
-    stage6: &Stage6Output<PCS::Field, VC::Output>,
+    stage6: &Stage6bOutput<PCS::Field, VC::Output>,
 ) -> Result<Stage7Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -70,993 +60,466 @@ where
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
     );
-    let hamming_claims =
-        relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);
 
-    let layouts = Stage7Layouts {
-        trusted_advice: checked.precommitted.trusted_advice.as_ref(),
-        untrusted_advice: checked.precommitted.untrusted_advice.as_ref(),
-        bytecode: checked.precommitted.bytecode.as_ref(),
-        program_image: checked.precommitted.program_image.as_ref(),
+    // The clear-only reference geometry each address phase's expected-output term
+    // reads (advice / program-image RAM address points, bytecode cycle-phase
+    // weights). Empty in ZK, where those terms are proved by BlindFold and the
+    // relations' `derive_output_term` never runs.
+    let references = if checked.zk {
+        Stage7ClearReferences::empty()
+    } else {
+        Stage7ClearReferences::from_clear(stage4.clear()?, stage6.clear()?)
     };
-    let trusted_advice_claims = layouts.trusted_advice.and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            relations::claim_reductions::advice::AddressPhase::new((
-                JoltAdviceKind::Trusted,
-                layout.dimensions(),
-            ))
-        })
-    });
-    let untrusted_advice_claims = layouts.untrusted_advice.and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            relations::claim_reductions::advice::AddressPhase::new((
-                JoltAdviceKind::Untrusted,
-                layout.dimensions(),
-            ))
-        })
-    });
-    let bytecode_reduction_claims = layouts.bytecode.and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            relations::claim_reductions::bytecode::AddressPhase::new((
-                layout.dimensions(),
-                layout.chunk_count(),
-            ))
-        })
-    });
-    let program_image_reduction_claims = layouts.program_image.and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            relations::claim_reductions::program_image::AddressPhase::new(layout.dimensions())
-        })
-    });
 
-    check_relation_boolean_hypercube(
-        relations::claim_reductions::hamming_weight::ClaimReduction::id(),
-        hamming_claims.domain(),
-        hamming_claims.degree(),
+    // One construction serves both paths: the hamming reduction from the stage-6
+    // booleanity point split and the per-RA virtualization points, and each
+    // address phase from its layout + `has_address_phase` presence flag + stage-6b
+    // cycle-phase variables + clear-only reference aux. All point/challenge data is
+    // read mode-agnostically off `stage6.output_points()`.
+    let sumchecks = build_stage7_sumchecks(
+        hamming_dimensions,
+        &checked.precommitted,
+        stage6.output_points(),
+        &references,
     )?;
-    for (relation, domain, degree) in [
-        (
-            relations::claim_reductions::advice::AddressPhase::id(),
-            trusted_advice_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::advice::AddressPhase::id(),
-            untrusted_advice_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::bytecode::AddressPhase::id(),
-            bytecode_reduction_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-        (
-            relations::claim_reductions::program_image::AddressPhase::id(),
-            program_image_reduction_claims
-                .as_ref()
-                .map(|r| (r.domain(), r.degree())),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(relation, opt)| opt.map(|(domain, degree)| (relation, domain, degree)))
-    {
-        check_relation_boolean_hypercube(relation, domain, degree)?;
-    }
 
-    // The hamming-weight reduction's batching gamma is drawn path-agnostically before
-    // the ZK/clear branch (a single `challenge_scalar`, matching the relation's default
-    // `draw_challenges`). The ZK path builds no relation object, so its scalar is carried
-    // in the `Stage7Challenges` aggregate for BlindFold to source `gamma` from; the clear
-    // path threads this struct into the hamming relation's input/output claims.
-    let hamming_challenges = HammingWeightClaimReductionChallenges {
-        gamma: transcript.challenge_scalar(),
-    };
+    // Draw the hamming-weight reduction's batching gamma (a single `challenge_scalar`,
+    // matching the relation's default `draw_challenges`) path-agnostically before the
+    // ZK/clear branch; the advice and committed-program address phases draw nothing
+    // (`NoChallenges`). BlindFold sources the gamma from
+    // `challenges.hamming_weight_claim_reduction.gamma`.
+    let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk {
-        let stage6 = stage6.zk()?;
-        let mut statements = vec![SumcheckStatement::new(
-            hamming_claims.rounds(),
-            hamming_claims.degree(),
-        )];
-        for (rounds, degree) in [
-            trusted_advice_claims
-                .as_ref()
-                .map(|r| (r.rounds(), r.degree())),
-            untrusted_advice_claims
-                .as_ref()
-                .map(|r| (r.rounds(), r.degree())),
-            bytecode_reduction_claims
-                .as_ref()
-                .map(|r| (r.rounds(), r.degree())),
-            program_image_reduction_claims
-                .as_ref()
-                .map(|r| (r.rounds(), r.degree())),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            statements.push(SumcheckStatement::new(rounds, degree));
-        }
-
-        let batch_consistency = BatchedSumcheckVerifier::verify_committed_consistency(
-            &statements,
+        let consistency = sumchecks.verify_zk(&proof.stages.stage7_sumcheck_proof, transcript)?;
+        let batch_output_claims = committed::verify_output_claim_commitments(
+            checked,
             &proof.stages.stage7_sumcheck_proof,
-            transcript,
-        )
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
-
-        let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
-        let committed_output_claims = output_openings.instruction_ra.len()
-            + output_openings.bytecode_ra.len()
-            + output_openings.ram_ra.len()
-            + usize::from(trusted_advice_claims.is_some())
-            + usize::from(untrusted_advice_claims.is_some())
-            + bytecode_reduction_claims
-                .as_ref()
-                .and(layouts.bytecode)
-                .map_or(0, BytecodeClaimReductionLayout::chunk_count)
-            + usize::from(program_image_reduction_claims.is_some());
-        let batch_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage7_sumcheck_proof,
-                proof_label: "stage7_sumcheck_proof",
-                output_claim_count: committed_output_claims,
-                stage: JoltRelationId::HammingWeightClaimReduction,
-            })?;
-
-        let hamming_point = batch_consistency
-            .try_instance_point(hamming_claims.rounds())
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::HammingWeightClaimReduction,
-                reason: error.to_string(),
-            })?;
-        let booleanity_opening = stage6.output_points.booleanity_opening_point().ok_or(
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::HammingWeightClaimReduction,
-                reason: "Stage 6 booleanity produced no opening point".to_string(),
-            },
+            "stage7_sumcheck_proof",
+            sumchecks.output_claim_count(),
+            JoltRelationId::HammingWeightClaimReduction,
         )?;
-        let booleanity_r_cycle = &booleanity_opening[hamming_dimensions.log_k_chunk..];
-        let hamming_opening_point = hamming_dimensions
-            .opening_point(&hamming_point, booleanity_r_cycle)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::HammingWeightClaimReduction,
-                reason: error.to_string(),
-            })?;
-        // The advice / committed-program address-phase opening points. Their
-        // sumcheck points and `FinalScale`/`ChunkOutputWeight` publics are
-        // recomputed by BlindFold from `batch_consistency`, so only the opening
-        // points (needed for the precommitted finals stage 8 consumes) are
-        // recovered here.
-        let trusted_advice = if let (Some(layout), Some(claim)) =
-            (layouts.trusted_advice, trusted_advice_claims.as_ref())
-        {
-            Some(advice_address_phase_opening_point(
-                &batch_consistency,
-                claim.rounds(),
-                layout,
-                JoltAdviceKind::Trusted,
-                stage6,
-            )?)
-        } else {
-            None
-        };
-        let untrusted_advice = if let (Some(layout), Some(claim)) =
-            (layouts.untrusted_advice, untrusted_advice_claims.as_ref())
-        {
-            Some(advice_address_phase_opening_point(
-                &batch_consistency,
-                claim.rounds(),
-                layout,
-                JoltAdviceKind::Untrusted,
-                stage6,
-            )?)
-        } else {
-            None
-        };
-        let bytecode_address_phase = if let (Some(layout), Some(claim)) =
-            (layouts.bytecode, bytecode_reduction_claims.as_ref())
-        {
-            let cycle_phase_variables = stage6
-                .output_points
-                .bytecode_cycle_phase_variables()
-                .ok_or(VerifierError::MissingOpeningClaim {
-                    id: bytecode_reduction::cycle_phase_intermediate_opening(),
-                })?;
-            Some(committed_reduction_address_phase_opening_point(
-                &batch_consistency,
-                claim.rounds(),
-                layout.precommitted(),
-                &cycle_phase_variables,
-                JoltRelationId::BytecodeClaimReduction,
-            )?)
-        } else {
-            None
-        };
-        let program_image_address_phase = if let (Some(layout), Some(claim)) = (
-            layouts.program_image,
-            program_image_reduction_claims.as_ref(),
-        ) {
-            let cycle_phase_variables = stage6
-                .output_points
-                .program_image_cycle_phase_variables()
-                .ok_or(VerifierError::MissingOpeningClaim {
-                    id: program_image::cycle_phase_program_image_opening(),
-                })?;
-            Some(committed_reduction_address_phase_opening_point(
-                &batch_consistency,
-                claim.rounds(),
-                layout.precommitted(),
-                &cycle_phase_variables,
-                JoltRelationId::ProgramImageClaimReduction,
-            )?)
-        } else {
-            None
-        };
 
-        let mut precommitted_final_openings = Vec::new();
-        for (kind, layout, address_phase, cycle_phase) in [
-            (
-                JoltAdviceKind::Trusted,
-                layouts.trusted_advice,
-                trusted_advice.as_deref().map(PrecommittedFinalSource::zk),
-                stage6
-                    .output_points
-                    .advice_cycle_phase_opening_point(JoltAdviceKind::Trusted)
-                    .map(PrecommittedFinalSource::zk),
-            ),
-            (
-                JoltAdviceKind::Untrusted,
-                layouts.untrusted_advice,
-                untrusted_advice.as_deref().map(PrecommittedFinalSource::zk),
-                stage6
-                    .output_points
-                    .advice_cycle_phase_opening_point(JoltAdviceKind::Untrusted)
-                    .map(PrecommittedFinalSource::zk),
-            ),
-        ] {
-            if let Some(layout) = layout {
-                precommitted_final_openings.push(advice_final_opening(
-                    kind,
-                    layout,
-                    address_phase,
-                    cycle_phase,
-                )?);
-            }
-        }
-        if let Some(layout) = layouts.bytecode {
-            precommitted_final_openings.extend(bytecode_final_openings(
-                layout,
-                bytecode_address_phase
-                    .as_deref()
-                    .map(PrecommittedFinalSource::zk),
-                stage6
-                    .output_points
-                    .bytecode_reduction_opening_point()
-                    .map(PrecommittedFinalSource::zk),
-            )?);
-        }
-        if let Some(layout) = layouts.program_image {
-            precommitted_final_openings.push(program_image_final_opening(
-                layout,
-                program_image_address_phase
-                    .as_deref()
-                    .map(PrecommittedFinalSource::zk),
-                stage6
-                    .output_points
-                    .program_image_opening_point()
-                    .map(PrecommittedFinalSource::zk),
-            )?);
-        }
+        // Built via the same wiring as the clear path off the ZK-agnostic upstream
+        // points; the address-phase opening points come off `output_points`, replacing
+        // the ad-hoc per-relation ZK point recoveries. BlindFold recomputes each
+        // relation's sumcheck point and publics independently from `batch_consistency`.
+        let input_points = stage7_input_points_from_upstream(&sumchecks);
+        let output_points =
+            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        let hamming_weight_opening_point = hamming_weight_opening_point(&output_points)?;
+        let precommitted_final_openings = zk_precommitted_final_openings(
+            &checked.precommitted,
+            &output_points,
+            stage6.output_points(),
+        )?;
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
-            challenges: Stage7Challenges {
-                hamming_gamma: hamming_challenges.gamma,
-            },
-            batch_consistency,
+            challenges,
+            batch_consistency: consistency,
             batch_output_claims,
-            hamming_weight_opening_point: hamming_opening_point,
+            output_points,
+            hamming_weight_opening_point,
             precommitted_final_openings,
         }));
     }
 
-    let stage4 = stage4.clear()?;
     let stage6 = stage6.clear()?;
     let claims = &proof.clear_claims()?.stage7;
 
-    let relations = Stage7Relations::build(
-        hamming_dimensions,
-        hamming_challenges,
-        &layouts,
-        stage4,
-        stage6,
-    )?;
+    // Also rejects claims supplied for phases that did not run, with the same
+    // `UnexpectedOpeningClaim` ids the former hand-written guards used (the id is
+    // derived from the supplied claims' canonical order).
+    sumchecks.validate_output_claims(claims)?;
 
-    // Reject opening claims supplied for phases that did not run.
-    if relations.trusted_advice.is_none() && claims.advice_address_phase.trusted.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::final_advice_opening(JoltAdviceKind::Trusted),
-        });
-    }
-    if relations.untrusted_advice.is_none() && claims.advice_address_phase.untrusted.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::final_advice_opening(JoltAdviceKind::Untrusted),
-        });
-    }
-    if relations.bytecode.is_none() && claims.bytecode_address_phase.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: bytecode_reduction::final_bytecode_chunk_opening(0),
-        });
-    }
-    if relations.program_image.is_none() && claims.program_image_address_phase.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: program_image::final_program_image_opening(),
-        });
-    }
+    let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
+    let input_points = stage7_input_points_from_upstream(&sumchecks);
 
-    let sumcheck_claims =
-        relations.sumcheck_claims(hamming_claims.rounds(), hamming_claims.degree())?;
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
+    let batch = sumchecks.verify_clear(
+        &input_values,
+        &challenges,
         &proof.stages.stage7_sumcheck_proof,
         transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::HammingWeightClaimReduction,
-        reason: error.to_string(),
-    })?;
+    )?;
 
-    let points = relations.instance_points_from_batch(&batch, hamming_claims.rounds())?;
-    let parts = relations.clear_output(&points, claims, stage6, &layouts)?;
+    let output_points =
+        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
 
-    if batch.batching_coefficients.len() != parts.expected_outputs.len() {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: format!(
-                "Stage 7 batch verifier returned {} coefficients for {} instances",
-                batch.batching_coefficients.len(),
-                parts.expected_outputs.len()
-            ),
-        });
-    }
-    let expected_final_claim = batch
-        .batching_coefficients
-        .iter()
-        .zip(&parts.expected_outputs)
-        .map(|(coefficient, output)| *coefficient * *output)
-        .sum();
+    let expected_final_claim = sumchecks.expected_final_claim(
+        &batch.coefficients,
+        &input_points,
+        claims,
+        &output_points,
+        &challenges,
+    )?;
     if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 7 });
     }
 
     claims.append_to_transcript(transcript);
 
-    Ok(Stage7Output::Clear(parts.output))
+    let hamming_weight_opening_point = hamming_weight_opening_point(&output_points)?;
+    let precommitted_final_openings =
+        clear_precommitted_final_openings(&checked.precommitted, claims, &output_points, stage6)?;
+
+    Ok(Stage7Output::Clear(Stage7ClearOutput {
+        output_values: claims.clone(),
+        output_points,
+        hamming_weight_opening_point,
+        precommitted_final_openings,
+    }))
 }
 
-/// The committed-program claim-reduction layouts present in this proof
-/// configuration (each `Some` only when the corresponding precommitted poly is
-/// committed). Bundled so the verifier and prover build the same relation set.
-#[derive(Clone, Copy)]
-pub struct Stage7Layouts<'a> {
-    pub trusted_advice: Option<&'a AdviceClaimReductionLayout>,
-    pub untrusted_advice: Option<&'a AdviceClaimReductionLayout>,
-    pub bytecode: Option<&'a BytecodeClaimReductionLayout>,
-    pub program_image: Option<&'a ProgramImageClaimReductionLayout>,
+/// The clear-only reference geometry consumed by the address phases'
+/// expected-output terms. Every field is `None` in ZK (stage 4/6 clear outputs are
+/// absent), where those terms are proved by BlindFold and the relations'
+/// `derive_output_term` is unreachable.
+struct Stage7ClearReferences<F: Field> {
+    /// The trusted / untrusted advice RAM address points (staged from stage 4's RAM
+    /// value-check), each `Some` only when that advice is committed.
+    trusted_advice: Option<Vec<F>>,
+    untrusted_advice: Option<Vec<F>>,
+    /// The program-image RAM address point (staged from stage 4), `Some` only in
+    /// committed-program mode.
+    program_image: Option<Vec<F>>,
+    /// The stage-6b bytecode cycle-phase output weights, `Some` only in
+    /// committed-program mode.
+    bytecode_weights: Option<BytecodeReductionWeights<F>>,
 }
 
-/// The stage-7 relation objects and their wired input claims. Built once from the
-/// stage-4/stage-6 outputs and shared by the verifier and the prover, so the
-/// input-claim and output-claim algebra cannot drift between them.
-pub struct Stage7Relations<F: Field> {
-    hamming_challenges: HammingWeightClaimReductionChallenges<F>,
-    pub hamming: HammingWeightClaimReduction<F>,
-    pub hamming_inputs: HammingWeightClaimReductionInputClaims<OpeningClaim<F>>,
-    pub trusted_advice: Option<AdviceAddressPhase<F>>,
-    pub untrusted_advice: Option<AdviceAddressPhase<F>>,
-    pub advice_inputs: AdviceAddressPhaseInputClaims<OpeningClaim<F>>,
-    pub bytecode: Option<BytecodeReductionAddressPhase<F>>,
-    pub bytecode_inputs: Option<BytecodeReductionAddressPhaseInputClaims<OpeningClaim<F>>>,
-    pub program_image: Option<ProgramImageReductionAddressPhase<F>>,
-    pub program_image_inputs: Option<ProgramImageReductionAddressPhaseInputClaims<OpeningClaim<F>>>,
-}
-
-/// Each present instance's sumcheck point, in batch order. The hamming reduction
-/// is suffix-aligned within the batch; the address phases are prefix-aligned.
-pub struct Stage7InstancePoints<'a, F> {
-    pub hamming: &'a [F],
-    pub trusted_advice: Option<&'a [F]>,
-    pub untrusted_advice: Option<&'a [F]>,
-    pub bytecode: Option<&'a [F]>,
-    pub program_image: Option<&'a [F]>,
-}
-
-/// The produced stage-7 clear output plus the per-instance expected output claims
-/// (batch order) the verifier folds against the batching coefficients.
-pub struct Stage7ClearOutputParts<F: Field> {
-    pub output: Stage7ClearOutput<F>,
-    pub expected_outputs: Vec<F>,
-}
-
-impl<F: Field> Stage7Relations<F> {
-    pub fn build(
-        hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
-        hamming_challenges: HammingWeightClaimReductionChallenges<F>,
-        layouts: &Stage7Layouts<'_>,
-        stage4: &Stage4ClearOutput<F>,
-        stage6: &Stage6ClearOutput<F>,
-    ) -> Result<Self, VerifierError> {
-        let booleanity_opening = stage6.output_points.booleanity_opening_point().ok_or(
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::HammingWeightClaimReduction,
-                reason: "Stage 6 booleanity produced no opening point".to_string(),
-            },
-        )?;
-        let (booleanity_r_address, booleanity_r_cycle) =
-            booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
-        let hamming = HammingWeightClaimReduction::new(
-            hamming_dimensions,
-            booleanity_r_cycle.to_vec(),
-            booleanity_r_address.to_vec(),
-            stage7_hamming_virtualization_address_points(hamming_dimensions, stage6)?,
-        );
-        let bytecode = clear_bytecode_relation(layouts.bytecode, stage6)?;
-        let bytecode_inputs = bytecode
-            .as_ref()
-            .map(|_| clear_bytecode_input_claims(stage6))
-            .transpose()?;
-        let program_image = clear_program_image_relation(layouts.program_image, stage4, stage6)?;
-        let program_image_inputs = program_image
-            .as_ref()
-            .map(|_| clear_program_image_input_claims(stage6))
-            .transpose()?;
-        Ok(Self {
-            hamming_challenges,
-            hamming,
-            hamming_inputs: hamming_input_claims(stage6),
-            trusted_advice: clear_advice_relation(
-                JoltAdviceKind::Trusted,
-                layouts.trusted_advice,
-                stage4,
-                stage6,
-            )?,
-            untrusted_advice: clear_advice_relation(
-                JoltAdviceKind::Untrusted,
-                layouts.untrusted_advice,
-                stage4,
-                stage6,
-            )?,
-            advice_inputs: clear_advice_input_claims(stage6),
-            bytecode,
-            bytecode_inputs,
-            program_image,
-            program_image_inputs,
-        })
+impl<F: Field> Stage7ClearReferences<F> {
+    fn empty() -> Self {
+        Self {
+            trusted_advice: None,
+            untrusted_advice: None,
+            program_image: None,
+            bytecode_weights: None,
+        }
     }
 
-    /// The hamming-weight reduction's batching gamma, drawn before the stage-7
-    /// batch and recorded in the stage-7 public output.
-    pub fn hamming_gamma(&self) -> F {
-        self.hamming_challenges.gamma
-    }
-
-    /// The per-instance batched-sumcheck claims, in canonical batch order: hamming,
-    /// trusted/untrusted advice, bytecode, program image.
-    pub fn sumcheck_claims(
-        &self,
-        hamming_rounds: usize,
-        hamming_degree: usize,
-    ) -> Result<Vec<SumcheckClaim<F>>, VerifierError> {
-        let no_challenges = NoChallenges::default();
-        let mut claims = vec![SumcheckClaim::new(
-            hamming_rounds,
-            hamming_degree,
-            self.hamming
-                .input_claim(&self.hamming_inputs, &self.hamming_challenges)?,
-        )];
-        for relation in [&self.trusted_advice, &self.untrusted_advice]
-            .into_iter()
-            .flatten()
-        {
-            claims.push(SumcheckClaim::new(
-                relation.rounds(),
-                relation.degree(),
-                relation.input_claim(&self.advice_inputs, &no_challenges)?,
-            ));
-        }
-        if let (Some(relation), Some(inputs)) = (&self.bytecode, &self.bytecode_inputs) {
-            claims.push(SumcheckClaim::new(
-                relation.rounds(),
-                relation.degree(),
-                relation.input_claim(inputs, &no_challenges)?,
-            ));
-        }
-        if let (Some(relation), Some(inputs)) = (&self.program_image, &self.program_image_inputs) {
-            claims.push(SumcheckClaim::new(
-                relation.rounds(),
-                relation.degree(),
-                relation.input_claim(inputs, &no_challenges)?,
-            ));
-        }
-        Ok(claims)
-    }
-
-    /// Slice each present instance's sumcheck point out of the verifier's batched
-    /// evaluation claim (hamming suffix-aligned, address phases prefix-aligned).
-    pub fn instance_points_from_batch<'a>(
-        &self,
-        batch: &'a BatchedEvaluationClaim<F>,
-        hamming_rounds: usize,
-    ) -> Result<Stage7InstancePoints<'a, F>, VerifierError> {
-        let address = |relation: &Option<AdviceAddressPhase<F>>| {
-            relation
+    fn from_clear(stage4: &Stage4ClearOutput<F>, stage6: &Stage6bClearOutput<F>) -> Self {
+        let advice = |kind| {
+            stage4
+                .ram_val_check_init
+                .advice_contribution(kind)
+                .map(|contribution| contribution.opening_point.clone())
+        };
+        Self {
+            trusted_advice: advice(JoltAdviceKind::Trusted),
+            untrusted_advice: advice(JoltAdviceKind::Untrusted),
+            program_image: stage4
+                .ram_val_check_init
+                .program_image_contribution
                 .as_ref()
-                .map(|relation| address_phase_point(batch, relation.rounds(), relation.id()))
-                .transpose()
-        };
-        Ok(Stage7InstancePoints {
-            hamming: batch.try_instance_point(hamming_rounds).map_err(|error| {
-                sumcheck_failed(JoltRelationId::HammingWeightClaimReduction, error)
-            })?,
-            trusted_advice: address(&self.trusted_advice)?,
-            untrusted_advice: address(&self.untrusted_advice)?,
-            bytecode: self
-                .bytecode
-                .as_ref()
-                .map(|relation| address_phase_point(batch, relation.rounds(), relation.id()))
-                .transpose()?,
-            program_image: self
-                .program_image
-                .as_ref()
-                .map(|relation| address_phase_point(batch, relation.rounds(), relation.id()))
-                .transpose()?,
-        })
-    }
-
-    /// Build the produced clear output from the wire opening values (`claims`) and
-    /// the per-instance sumcheck points: derive each relation's opening points,
-    /// pair them with the values, evaluate the expected output claims, and resolve
-    /// the precommitted final openings. Shared by the verifier and the prover.
-    pub fn clear_output(
-        &self,
-        points: &Stage7InstancePoints<'_, F>,
-        claims: &Stage7OutputClaims<F>,
-        stage6: &Stage6ClearOutput<F>,
-        layouts: &Stage7Layouts<'_>,
-    ) -> Result<Stage7ClearOutputParts<F>, VerifierError> {
-        let hamming_output_points = self
-            .hamming
-            .derive_opening_points(points.hamming, &self.hamming_inputs)?;
-        let hamming_weight_opening_point = hamming_output_points
-            .instruction_ra
-            .first()
-            .or_else(|| hamming_output_points.bytecode_ra.first())
-            .or_else(|| hamming_output_points.ram_ra.first())
-            .cloned()
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::HammingWeightClaimReduction,
-                reason: "stage 7 produced no hamming-weight openings".to_string(),
-            })?;
-        let hamming_output = zip_openings(
-            &claims.hamming_weight_claim_reduction,
-            &hamming_output_points,
-        );
-
-        let advice_points = AdviceAddressPhaseOutputClaims {
-            trusted: advice_kind_point(
-                self.trusted_advice.as_ref(),
-                points.trusted_advice,
-                &self.advice_inputs,
-            )?,
-            untrusted: advice_kind_point(
-                self.untrusted_advice.as_ref(),
-                points.untrusted_advice,
-                &self.advice_inputs,
-            )?,
-        };
-        let advice_output = zip_openings(&claims.advice_address_phase, &advice_points);
-
-        let bytecode_output = match (&self.bytecode, &self.bytecode_inputs, points.bytecode) {
-            (Some(relation), Some(inputs), Some(point)) => {
-                let derived = relation.derive_opening_points(point, inputs)?;
-                let wire = claims.bytecode_address_phase.as_ref().ok_or(
-                    VerifierError::MissingOpeningClaim {
-                        id: bytecode_reduction::final_bytecode_chunk_opening(0),
-                    },
-                )?;
-                Some(zip_openings(wire, &derived))
-            }
-            _ => None,
-        };
-        let program_image_output = match (
-            &self.program_image,
-            &self.program_image_inputs,
-            points.program_image,
-        ) {
-            (Some(relation), Some(inputs), Some(point)) => {
-                let derived = relation.derive_opening_points(point, inputs)?;
-                let wire = claims.program_image_address_phase.as_ref().ok_or(
-                    VerifierError::MissingOpeningClaim {
-                        id: program_image::final_program_image_opening(),
-                    },
-                )?;
-                Some(zip_openings(wire, &derived))
-            }
-            _ => None,
-        };
-
-        let output_claims = Stage7OutputClaims {
-            hamming_weight_claim_reduction: hamming_output,
-            advice_address_phase: advice_output,
-            bytecode_address_phase: bytecode_output,
-            program_image_address_phase: program_image_output,
-        };
-
-        let no_challenges = NoChallenges::default();
-        let mut expected_outputs = vec![self.hamming.expected_output(
-            &self.hamming_inputs,
-            &output_claims.hamming_weight_claim_reduction,
-            &self.hamming_challenges,
-        )?];
-        for relation in [&self.trusted_advice, &self.untrusted_advice]
-            .into_iter()
-            .flatten()
-        {
-            expected_outputs.push(relation.expected_output(
-                &self.advice_inputs,
-                &output_claims.advice_address_phase,
-                &no_challenges,
-            )?);
+                .map(|(point, _)| point.clone()),
+            bytecode_weights: stage6.bytecode_reduction_weights.clone(),
         }
-        if let (Some(relation), Some(inputs), Some(output)) = (
-            &self.bytecode,
-            &self.bytecode_inputs,
-            &output_claims.bytecode_address_phase,
-        ) {
-            expected_outputs.push(relation.expected_output(inputs, output, &no_challenges)?);
-        }
-        if let (Some(relation), Some(inputs), Some(output)) = (
-            &self.program_image,
-            &self.program_image_inputs,
-            &output_claims.program_image_address_phase,
-        ) {
-            expected_outputs.push(relation.expected_output(inputs, output, &no_challenges)?);
-        }
-
-        let precommitted_final_openings =
-            clear_precommitted_final_openings(layouts, &output_claims, stage6)?;
-
-        Ok(Stage7ClearOutputParts {
-            output: Stage7ClearOutput {
-                output_claims,
-                hamming_weight_opening_point,
-                precommitted_final_openings,
-            },
-            expected_outputs,
-        })
     }
 }
 
-fn sumcheck_failed<F: Field>(
-    stage: JoltRelationId,
-    error: jolt_sumcheck::SumcheckError<F>,
-) -> VerifierError {
-    VerifierError::StageClaimSumcheckFailed {
-        stage,
-        reason: error.to_string(),
-    }
-}
+/// Build the stage-7 sumcheck batch once, for both proving paths. The hamming
+/// reduction and every present address phase are constructed from the stage-6
+/// output points (mode-agnostic) and the clear-only reference aux (`None` in ZK).
+/// An address phase is present exactly when its precommitted layout is committed
+/// and its dimensions carry active address rounds — the presence flag the input /
+/// challenge aggregates track in lockstep.
+fn build_stage7_sumchecks<F: Field>(
+    hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    schedule: &PrecommittedSchedule,
+    stage6_points: &Stage6bOutputPoints<F>,
+    references: &Stage7ClearReferences<F>,
+) -> Result<Stage7Sumchecks<F>, VerifierError> {
+    let booleanity_opening = stage6_points.booleanity_opening_point().ok_or(
+        VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: "Stage 6 booleanity produced no opening point".to_string(),
+        },
+    )?;
+    let (booleanity_r_address, booleanity_r_cycle) =
+        booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
+    let hamming = HammingWeightClaimReduction::new(
+        hamming_dimensions,
+        booleanity_r_cycle.to_vec(),
+        booleanity_r_address.to_vec(),
+        stage7_hamming_virtualization_address_points(hamming_dimensions, stage6_points)?,
+    );
 
-/// The prefix-aligned instance point of an address-phase relation within the
-/// stage-7 batch (address phases start at offset 0).
-fn address_phase_point<F: Field>(
-    batch: &BatchedEvaluationClaim<F>,
-    rounds: usize,
-    stage: JoltRelationId,
-) -> Result<&[F], VerifierError> {
-    batch
-        .try_instance_point_at(0, rounds)
-        .map_err(|error| sumcheck_failed(stage, error))
-}
-
-/// The produced address-phase opening point for `relation`'s kind, or `None` when
-/// the kind's advice address phase did not run.
-fn advice_kind_point<F: Field>(
-    relation: Option<&AdviceAddressPhase<F>>,
-    point: Option<&[F]>,
-    inputs: &AdviceAddressPhaseInputClaims<OpeningClaim<F>>,
-) -> Result<Option<Vec<F>>, VerifierError> {
-    let (Some(relation), Some(point)) = (relation, point) else {
-        return Ok(None);
-    };
-    let derived = relation.derive_opening_points(point, inputs)?;
-    Ok(match relation.kind() {
-        JoltAdviceKind::Trusted => derived.trusted,
-        JoltAdviceKind::Untrusted => derived.untrusted,
+    Ok(Stage7Sumchecks {
+        hamming_weight_claim_reduction: hamming,
+        trusted_advice: build_advice_member(
+            JoltAdviceKind::Trusted,
+            schedule.trusted_advice.as_ref(),
+            stage6_points,
+            references.trusted_advice.clone(),
+        )?,
+        untrusted_advice: build_advice_member(
+            JoltAdviceKind::Untrusted,
+            schedule.untrusted_advice.as_ref(),
+            stage6_points,
+            references.untrusted_advice.clone(),
+        )?,
+        bytecode_address_phase: build_bytecode_member(
+            schedule.bytecode.as_ref(),
+            stage6_points,
+            references.bytecode_weights.as_ref(),
+        )?,
+        program_image_address_phase: build_program_image_member(
+            schedule.program_image.as_ref(),
+            stage6_points,
+            references.program_image.clone(),
+        )?,
     })
 }
 
-fn input_opening<F: Field>(value: F) -> OpeningClaim<F> {
-    OpeningClaim {
-        point: Vec::new(),
-        value,
-    }
-}
-
-/// The hamming reduction's consumed claims, wired from stage 6. The relation reads
-/// only their values (its produced points are derived from its own sumcheck
-/// point), so the input opening points are left empty.
-fn hamming_input_claims<F: Field>(
-    stage6: &Stage6ClearOutput<F>,
-) -> HammingWeightClaimReductionInputClaims<OpeningClaim<F>> {
-    let openings = |values: &[F]| values.iter().copied().map(input_opening).collect();
-    HammingWeightClaimReductionInputClaims {
-        ram_hamming_weight: input_opening(
-            stage6
-                .output_claims
-                .ram_hamming_booleanity
-                .ram_hamming_weight,
-        ),
-        instruction_booleanity: openings(&stage6.output_claims.booleanity.instruction_ra),
-        bytecode_booleanity: openings(&stage6.output_claims.booleanity.bytecode_ra),
-        ram_booleanity: openings(&stage6.output_claims.booleanity.ram_ra),
-        instruction_virtualization: openings(
-            &stage6
-                .output_claims
-                .instruction_ra_virtualization
-                .committed_instruction_ra,
-        ),
-        bytecode_virtualization: openings(&stage6.output_claims.bytecode_read_raf.bytecode_ra),
-        ram_virtualization: openings(&stage6.output_claims.ram_ra_virtualization.ram_ra),
-    }
-}
-
-fn clear_advice_relation<F: Field>(
+fn build_advice_member<F: Field>(
     kind: JoltAdviceKind,
     layout: Option<&AdviceClaimReductionLayout>,
-    stage4: &Stage4ClearOutput<F>,
-    stage6: &Stage6ClearOutput<F>,
+    stage6_points: &Stage6bOutputPoints<F>,
+    reference_opening_point: Option<Vec<F>>,
 ) -> Result<Option<AdviceAddressPhase<F>>, VerifierError> {
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let cycle_phase_variables = stage6
-        .output_points
-        .advice_cycle_phase_variables(kind)
-        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+    let cycle_phase_variables = stage6_points.advice_cycle_phase_variables(kind).ok_or(
+        VerifierError::MissingOpeningClaim {
             id: advice::cycle_phase_advice_opening(kind),
-        })?;
-    let contribution = stage4
-        .ram_val_check_init
-        .advice_contribution(kind)
-        .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: advice::ram_val_check_advice_opening(kind),
-        })?;
+        },
+    )?;
     Ok(Some(AdviceAddressPhase::new(
         kind,
         layout,
-        contribution.opening.point.clone(),
+        reference_opening_point,
         cycle_phase_variables,
     )))
 }
 
-/// The consumed cycle-phase advice openings (both kinds, present only when that
-/// kind ran). Each address-phase relation reads its own kind's field.
-fn clear_advice_input_claims<F: Field>(
-    stage6: &Stage6ClearOutput<F>,
-) -> AdviceAddressPhaseInputClaims<OpeningClaim<F>> {
-    AdviceAddressPhaseInputClaims {
-        trusted: stage6_advice_cycle_phase_claim(stage6, JoltAdviceKind::Trusted)
-            .ok()
-            .map(input_opening),
-        untrusted: stage6_advice_cycle_phase_claim(stage6, JoltAdviceKind::Untrusted)
-            .ok()
-            .map(input_opening),
-    }
-}
-
-fn clear_bytecode_relation<F: Field>(
+fn build_bytecode_member<F: Field>(
     layout: Option<&BytecodeClaimReductionLayout>,
-    stage6: &Stage6ClearOutput<F>,
+    stage6_points: &Stage6bOutputPoints<F>,
+    weights: Option<&BytecodeReductionWeights<F>>,
 ) -> Result<Option<BytecodeReductionAddressPhase<F>>, VerifierError> {
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let weights =
-        stage6
-            .bytecode_reduction_weights
-            .as_ref()
-            .ok_or(VerifierError::MissingOpeningClaim {
-                id: bytecode_reduction::cycle_phase_intermediate_opening(),
-            })?;
-    let cycle_phase_variables = stage6
-        .output_points
-        .bytecode_cycle_phase_variables()
-        .ok_or(VerifierError::MissingOpeningClaim {
+    let cycle_phase_variables = stage6_points.bytecode_cycle_phase_variables().ok_or(
+        VerifierError::MissingOpeningClaim {
             id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        })?;
+        },
+    )?;
     Ok(Some(BytecodeReductionAddressPhase::new(
         layout,
-        BytecodeOutputWeightInputs {
-            r_bc: &weights.r_bc,
-            chunk_rbc_weights: &weights.chunk_rbc_weights,
-            lane_weights: &weights.lane_weights,
-        },
+        weights.cloned(),
         cycle_phase_variables,
     )))
 }
 
-fn clear_bytecode_input_claims<F: Field>(
-    stage6: &Stage6ClearOutput<F>,
-) -> Result<BytecodeReductionAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
-    let value = match stage6.output_claims.bytecode_claim_reduction.as_ref() {
-        Some(BytecodeCyclePhaseOutputClaims::Intermediate(value)) => *value,
-        _ => {
-            return Err(VerifierError::MissingOpeningClaim {
-                id: bytecode_reduction::cycle_phase_intermediate_opening(),
-            })
-        }
-    };
-    Ok(BytecodeReductionAddressPhaseInputClaims {
-        cycle_phase_intermediate: input_opening(value),
-    })
-}
-
-fn clear_program_image_relation<F: Field>(
+fn build_program_image_member<F: Field>(
     layout: Option<&ProgramImageClaimReductionLayout>,
-    stage4: &Stage4ClearOutput<F>,
-    stage6: &Stage6ClearOutput<F>,
+    stage6_points: &Stage6bOutputPoints<F>,
+    reference_opening_point: Option<Vec<F>>,
 ) -> Result<Option<ProgramImageReductionAddressPhase<F>>, VerifierError> {
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let cycle_phase_variables = stage6
-        .output_points
-        .program_image_cycle_phase_variables()
-        .ok_or(VerifierError::MissingOpeningClaim {
+    let cycle_phase_variables = stage6_points.program_image_cycle_phase_variables().ok_or(
+        VerifierError::MissingOpeningClaim {
             id: program_image::cycle_phase_program_image_opening(),
-        })?;
-    let contribution = stage4
-        .ram_val_check_init
-        .program_image_contribution
-        .as_ref()
-        .ok_or(VerifierError::MissingOpeningClaim {
-            id: program_image::ram_val_check_contribution_opening(),
-        })?;
+        },
+    )?;
     Ok(Some(ProgramImageReductionAddressPhase::new(
         layout,
-        contribution.point.clone(),
+        reference_opening_point,
         cycle_phase_variables,
     )))
 }
 
-fn clear_program_image_input_claims<F: Field>(
-    stage6: &Stage6ClearOutput<F>,
-) -> Result<ProgramImageReductionAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
-    let value = stage6
-        .output_claims
-        .program_image_claim_reduction
-        .as_ref()
-        .map(|claim| claim.opening_claim)
-        .ok_or(VerifierError::MissingOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
-        })?;
-    Ok(ProgramImageReductionAddressPhaseInputClaims {
-        cycle_phase: input_opening(value),
+/// Assemble the stage-7 consumed opening *values* from the upstream stage-6 clear
+/// output into the generated `Stage7InputClaims` aggregate. The two advice members
+/// and the two committed-program members are `Some` exactly when their address
+/// phase runs (tracking each `Stage7Sumchecks` member's presence), so a present
+/// member always has its input cell populated.
+fn stage7_input_values_from_upstream<F: Field>(
+    sumchecks: &Stage7Sumchecks<F>,
+    stage6: &Stage6bClearOutput<F>,
+) -> Result<Stage7InputClaims<F>, VerifierError> {
+    Ok(Stage7InputClaims {
+        hamming_weight_claim_reduction: hamming_input_values(stage6),
+        trusted_advice: sumchecks
+            .trusted_advice
+            .as_ref()
+            .map(|_| advice_input_values(stage6, JoltAdviceKind::Trusted)),
+        untrusted_advice: sumchecks
+            .untrusted_advice
+            .as_ref()
+            .map(|_| advice_input_values(stage6, JoltAdviceKind::Untrusted)),
+        bytecode_address_phase: sumchecks
+            .bytecode_address_phase
+            .as_ref()
+            .map(|_| clear_bytecode_input_values(stage6))
+            .transpose()?,
+        program_image_address_phase: sumchecks
+            .program_image_address_phase
+            .as_ref()
+            .map(|_| clear_program_image_input_values(stage6))
+            .transpose()?,
     })
 }
 
-/// Resolve the final openings of the precommitted polynomials from whichever phase
-/// completed each reduction: this stage's address phase (when it ran) or the
-/// stage 6b cycle phase. Mirrors the ZK arm's assembly but reads the clear address
-/// openings from the produced [`Stage7OutputClaims`].
-fn clear_precommitted_final_openings<F: Field>(
-    layouts: &Stage7Layouts<'_>,
-    output_claims: &Stage7OutputClaims<OpeningClaim<F>>,
-    stage6: &Stage6ClearOutput<F>,
-) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
-    let mut openings = Vec::new();
-    for (kind, layout, address, cycle) in [
-        (
-            JoltAdviceKind::Trusted,
-            layouts.trusted_advice,
-            output_claims.advice_address_phase.trusted.as_ref(),
-            stage6
-                .output_points
-                .advice_cycle_phase_opening_point(JoltAdviceKind::Trusted)
-                .zip(stage6.output_claims.advice_cycle_phase.trusted.as_ref()),
-        ),
-        (
-            JoltAdviceKind::Untrusted,
-            layouts.untrusted_advice,
-            output_claims.advice_address_phase.untrusted.as_ref(),
-            stage6
-                .output_points
-                .advice_cycle_phase_opening_point(JoltAdviceKind::Untrusted)
-                .zip(stage6.output_claims.advice_cycle_phase.untrusted.as_ref()),
-        ),
-    ] {
-        if let Some(layout) = layout {
-            let address_phase = address
-                .map(|opening| PrecommittedFinalSource::clear(&opening.point, opening.value));
-            let cycle_phase = cycle.map(|(opening_point, claim)| {
-                PrecommittedFinalSource::clear(opening_point, claim.opening_claim)
-            });
-            openings.push(advice_final_opening(
-                kind,
-                layout,
-                address_phase,
-                cycle_phase,
-            )?);
-        }
-    }
-    if let Some(layout) = layouts.bytecode {
-        let address_phase = output_claims
-            .bytecode_address_phase
+/// Assemble the stage-7 consumed opening *points*. Every stage-7 relation derives
+/// its produced points from its own sumcheck point and reads no input point, so all
+/// input point cells are empty; presence tracks each `Stage7Sumchecks` member,
+/// serving the clear and ZK paths alike.
+fn stage7_input_points_from_upstream<F: Field>(
+    sumchecks: &Stage7Sumchecks<F>,
+) -> Stage7InputPoints<F> {
+    Stage7InputPoints {
+        hamming_weight_claim_reduction: HammingWeightClaimReductionInputClaims {
+            ram_hamming_weight: Vec::new(),
+            instruction_booleanity: Vec::new(),
+            bytecode_booleanity: Vec::new(),
+            ram_booleanity: Vec::new(),
+            instruction_virtualization: Vec::new(),
+            bytecode_virtualization: Vec::new(),
+            ram_virtualization: Vec::new(),
+        },
+        trusted_advice: sumchecks
+            .trusted_advice
             .as_ref()
-            .and_then(|output| output.chunks.first().map(|first| (output, first)))
-            .map(|(output, first)| {
-                PrecommittedFinalSource::clear_chunks(
-                    &first.point,
-                    output.chunks.iter().map(|chunk| chunk.value).collect(),
-                )
-            });
-        let cycle_phase = match (
-            stage6.output_points.bytecode_reduction_opening_point(),
-            &stage6.output_claims.bytecode_claim_reduction,
-        ) {
-            (Some(opening_point), Some(BytecodeCyclePhaseOutputClaims::Chunks(chunks))) => Some(
-                PrecommittedFinalSource::clear_chunks(opening_point, chunks.clone()),
-            ),
-            _ => None,
-        };
-        openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
+            .map(|_| AdviceAddressPhaseInputClaims {
+                trusted: None,
+                untrusted: None,
+            }),
+        untrusted_advice: sumchecks.untrusted_advice.as_ref().map(|_| {
+            AdviceAddressPhaseInputClaims {
+                trusted: None,
+                untrusted: None,
+            }
+        }),
+        bytecode_address_phase: sumchecks.bytecode_address_phase.as_ref().map(|_| {
+            BytecodeReductionAddressPhaseInputClaims {
+                cycle_phase_intermediate: Vec::new(),
+            }
+        }),
+        program_image_address_phase: sumchecks.program_image_address_phase.as_ref().map(|_| {
+            ProgramImageReductionAddressPhaseInputClaims {
+                cycle_phase: Vec::new(),
+            }
+        }),
     }
-    if let Some(layout) = layouts.program_image {
-        let address_phase = output_claims
-            .program_image_address_phase
-            .as_ref()
-            .map(|output| {
-                PrecommittedFinalSource::clear(
-                    &output.program_image.point,
-                    output.program_image.value,
-                )
-            });
-        let cycle_phase = stage6
-            .output_points
-            .program_image_opening_point()
-            .zip(stage6.output_claims.program_image_claim_reduction.as_ref())
-            .map(|(opening_point, claim)| {
-                PrecommittedFinalSource::clear(opening_point, claim.opening_claim)
-            });
-        openings.push(program_image_final_opening(
-            layout,
-            address_phase,
-            cycle_phase,
-        )?);
-    }
-    Ok(openings)
 }
 
-pub fn stage7_hamming_virtualization_address_points<F: Field>(
+/// The hamming reduction's consumed opening *values*, wired from stage 6. The
+/// relation reads only their values (its produced points are derived from its own
+/// sumcheck point), so no input points are needed.
+fn hamming_input_values<F: Field>(
+    stage6: &Stage6bClearOutput<F>,
+) -> HammingWeightClaimReductionInputClaims<F> {
+    let cycle_phase = &stage6.output_values;
+    HammingWeightClaimReductionInputClaims {
+        ram_hamming_weight: cycle_phase.ram_hamming_booleanity.ram_hamming_weight,
+        instruction_booleanity: cycle_phase.booleanity.instruction_ra.clone(),
+        bytecode_booleanity: cycle_phase.booleanity.bytecode_ra.clone(),
+        ram_booleanity: cycle_phase.booleanity.ram_ra.clone(),
+        instruction_virtualization: cycle_phase
+            .instruction_ra_virtualization
+            .committed_instruction_ra
+            .clone(),
+        bytecode_virtualization: cycle_phase.bytecode_read_raf.bytecode_ra.clone(),
+        ram_virtualization: cycle_phase.ram_ra_virtualization.ram_ra.clone(),
+    }
+}
+
+/// The consumed cycle-phase advice opening *value* for `kind`, in the shared
+/// `AdviceAddressPhaseInputClaims` with only that kind's slot filled (the relation
+/// reads only its own kind's field).
+fn advice_input_values<F: Field>(
+    stage6: &Stage6bClearOutput<F>,
+    kind: JoltAdviceKind,
+) -> AdviceAddressPhaseInputClaims<F> {
+    let claim = stage6_advice_cycle_phase_claim(stage6, kind);
+    match kind {
+        JoltAdviceKind::Trusted => AdviceAddressPhaseInputClaims {
+            trusted: claim,
+            untrusted: None,
+        },
+        JoltAdviceKind::Untrusted => AdviceAddressPhaseInputClaims {
+            trusted: None,
+            untrusted: claim,
+        },
+    }
+}
+
+fn clear_bytecode_input_values<F: Field>(
+    stage6: &Stage6bClearOutput<F>,
+) -> Result<BytecodeReductionAddressPhaseInputClaims<F>, VerifierError> {
+    let value = stage6
+        .output_values
+        .bytecode_reduction
+        .as_ref()
+        .and_then(|reduction| reduction.intermediate)
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+        })?;
+    Ok(BytecodeReductionAddressPhaseInputClaims {
+        cycle_phase_intermediate: value,
+    })
+}
+
+fn clear_program_image_input_values<F: Field>(
+    stage6: &Stage6bClearOutput<F>,
+) -> Result<ProgramImageReductionAddressPhaseInputClaims<F>, VerifierError> {
+    let value = stage6
+        .output_values
+        .program_image_reduction
+        .as_ref()
+        .map(|claim| claim.program_image)
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: program_image::cycle_phase_program_image_opening(),
+        })?;
+    Ok(ProgramImageReductionAddressPhaseInputClaims { cycle_phase: value })
+}
+
+fn stage6_advice_cycle_phase_claim<F: Field>(
+    stage6: &Stage6bClearOutput<F>,
+    kind: JoltAdviceKind,
+) -> Option<F> {
+    match kind {
+        JoltAdviceKind::Trusted => stage6
+            .output_values
+            .trusted_advice
+            .as_ref()
+            .and_then(|claim| claim.trusted),
+        JoltAdviceKind::Untrusted => stage6
+            .output_values
+            .untrusted_advice
+            .as_ref()
+            .and_then(|claim| claim.untrusted),
+    }
+}
+
+/// The hamming-weight reduction's shared opening point off the produced points, or
+/// an error when the reduction produced no openings.
+fn hamming_weight_opening_point<F: Field>(
+    output_points: &Stage7OutputPoints<F>,
+) -> Result<Vec<F>, VerifierError> {
+    output_points
+        .hamming_weight_opening_point()
+        .map(<[F]>::to_vec)
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: "stage 7 produced no hamming-weight openings".to_string(),
+        })
+}
+
+fn stage7_hamming_virtualization_address_points<F: Field>(
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
-    stage6: &Stage6ClearOutput<F>,
+    stage6_points: &Stage6bOutputPoints<F>,
 ) -> Result<Vec<Vec<F>>, VerifierError> {
-    let instruction_ra_points = &stage6
-        .output_points
+    let instruction_ra_points = stage6_points
         .instruction_ra_virtualization
-        .committed_instruction_ra;
-    let bytecode_ra_points = &stage6.output_points.bytecode_read_raf.bytecode_ra;
-    let ram_ra_points = &stage6.output_points.ram_ra_virtualization.ram_ra;
+        .committed_instruction_ra();
+    let bytecode_ra_points = stage6_points.bytecode_read_raf.bytecode_ra();
+    let ram_ra_points = stage6_points.ram_ra_virtualization.ram_ra();
     if instruction_ra_points.len() != dimensions.layout.instruction()
         || bytecode_ra_points.len() != dimensions.layout.bytecode()
         || ram_ra_points.len() != dimensions.layout.ram()
@@ -1068,41 +531,24 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
     }
 
     let mut points = Vec::with_capacity(dimensions.layout.total());
-    for point in instruction_ra_points {
-        points.push(hamming_virtualization_address_point(
-            dimensions.log_k_chunk,
-            point,
-        )?);
-    }
-    for point in bytecode_ra_points {
-        points.push(hamming_virtualization_address_point(
-            dimensions.log_k_chunk,
-            point,
-        )?);
-    }
-    for point in ram_ra_points {
-        points.push(hamming_virtualization_address_point(
-            dimensions.log_k_chunk,
-            point,
-        )?);
+    for point in instruction_ra_points
+        .iter()
+        .chain(bytecode_ra_points)
+        .chain(ram_ra_points)
+    {
+        let chunk = point.get(..dimensions.log_k_chunk).ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::HammingWeightClaimReduction,
+                reason: format!(
+                    "Stage 6 RA opening point is too short for HammingWeight address chunk: expected at least {}, got {}",
+                    dimensions.log_k_chunk,
+                    point.len()
+                ),
+            }
+        })?;
+        points.push(chunk.to_vec());
     }
     Ok(points)
-}
-
-fn hamming_virtualization_address_point<F: Field>(
-    log_k_chunk: usize,
-    point: &[F],
-) -> Result<Vec<F>, VerifierError> {
-    if point.len() < log_k_chunk {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: format!(
-                "Stage 6 RA opening point is too short for HammingWeight address chunk: expected at least {log_k_chunk}, got {}",
-                point.len()
-            ),
-        });
-    }
-    Ok(point[..log_k_chunk].to_vec())
 }
 
 /// Opening point and (clear-mode) claim payload recorded by the stage that
@@ -1129,13 +575,148 @@ impl<'a, F, T> PrecommittedFinalSource<'a, F, T> {
     }
 }
 
-impl<'a, F> PrecommittedFinalSource<'a, F, Vec<F>> {
-    fn clear_chunks(point: &'a [F], chunks: Vec<F>) -> Self {
-        Self {
-            point,
-            opening_claim: Some(chunks),
+/// Resolve the final openings of the precommitted polynomials from whichever phase
+/// completed each reduction: this stage's address phase (read off the produced
+/// `output_points`/`output_values`) or the stage 6b cycle phase.
+fn clear_precommitted_final_openings<F: Field>(
+    schedule: &PrecommittedSchedule,
+    output_values: &Stage7OutputClaims<F>,
+    output_points: &Stage7OutputPoints<F>,
+    stage6: &Stage6bClearOutput<F>,
+) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
+    let mut openings = Vec::new();
+    for (kind, layout, address_value) in [
+        (
+            JoltAdviceKind::Trusted,
+            schedule.trusted_advice.as_ref(),
+            output_values
+                .trusted_advice
+                .as_ref()
+                .and_then(|claims| claims.trusted),
+        ),
+        (
+            JoltAdviceKind::Untrusted,
+            schedule.untrusted_advice.as_ref(),
+            output_values
+                .untrusted_advice
+                .as_ref()
+                .and_then(|claims| claims.untrusted),
+        ),
+    ] {
+        if let Some(layout) = layout {
+            let address_phase = output_points
+                .advice_point(kind)
+                .zip(address_value)
+                .map(|(point, value)| PrecommittedFinalSource::clear(point, value));
+            let cycle_phase = stage6
+                .output_points
+                .advice_cycle_phase_opening_point(kind)
+                .zip(stage6_advice_cycle_phase_claim(stage6, kind))
+                .map(|(point, value)| PrecommittedFinalSource::clear(point, value));
+            openings.push(advice_final_opening(
+                kind,
+                layout,
+                address_phase,
+                cycle_phase,
+            )?);
         }
     }
+    if let Some(layout) = schedule.bytecode.as_ref() {
+        let address_phase = output_points
+            .bytecode_point()
+            .zip(output_values.bytecode_address_phase.as_ref())
+            .map(|(point, values)| PrecommittedFinalSource::clear(point, values.chunks.clone()));
+        let cycle_phase = match (
+            stage6.output_points.bytecode_reduction_opening_point(),
+            &stage6.output_values.bytecode_reduction,
+        ) {
+            (Some(opening_point), Some(reduction))
+                if reduction.intermediate.is_none() && !reduction.chunks.is_empty() =>
+            {
+                Some(PrecommittedFinalSource::clear(
+                    opening_point,
+                    reduction.chunks.clone(),
+                ))
+            }
+            _ => None,
+        };
+        openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
+    }
+    if let Some(layout) = schedule.program_image.as_ref() {
+        let address_phase = output_points
+            .program_image_point()
+            .zip(output_values.program_image_address_phase.as_ref())
+            .map(|(point, values)| PrecommittedFinalSource::clear(point, values.program_image));
+        let cycle_phase = stage6
+            .output_points
+            .program_image_opening_point()
+            .zip(stage6.output_values.program_image_reduction.as_ref())
+            .map(|(opening_point, claim)| {
+                PrecommittedFinalSource::clear(opening_point, claim.program_image)
+            });
+        openings.push(program_image_final_opening(
+            layout,
+            address_phase,
+            cycle_phase,
+        )?);
+    }
+    Ok(openings)
+}
+
+/// The ZK counterpart of [`clear_precommitted_final_openings`]: the address-phase
+/// opening points come off the produced `output_points`, the cycle-phase points off
+/// the stage-6 points, and every opening claim stays committed (`None`).
+fn zk_precommitted_final_openings<F: Field>(
+    schedule: &PrecommittedSchedule,
+    output_points: &Stage7OutputPoints<F>,
+    stage6_points: &Stage6bOutputPoints<F>,
+) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
+    let mut openings = Vec::new();
+    for (kind, layout) in [
+        (JoltAdviceKind::Trusted, schedule.trusted_advice.as_ref()),
+        (
+            JoltAdviceKind::Untrusted,
+            schedule.untrusted_advice.as_ref(),
+        ),
+    ] {
+        if let Some(layout) = layout {
+            let address_phase = output_points
+                .advice_point(kind)
+                .map(PrecommittedFinalSource::zk);
+            let cycle_phase = stage6_points
+                .advice_cycle_phase_opening_point(kind)
+                .map(PrecommittedFinalSource::zk);
+            openings.push(advice_final_opening(
+                kind,
+                layout,
+                address_phase,
+                cycle_phase,
+            )?);
+        }
+    }
+    if let Some(layout) = schedule.bytecode.as_ref() {
+        let address_phase = output_points
+            .bytecode_point()
+            .map(PrecommittedFinalSource::zk);
+        let cycle_phase = stage6_points
+            .bytecode_reduction_opening_point()
+            .map(PrecommittedFinalSource::zk);
+        openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
+    }
+    if let Some(layout) = schedule.program_image.as_ref() {
+        let address_phase = output_points
+            .program_image_point()
+            .map(PrecommittedFinalSource::zk);
+        let cycle_phase = stage6_points
+            .program_image_opening_point()
+            .map(PrecommittedFinalSource::zk);
+        openings.push(program_image_final_opening(
+            layout,
+            address_phase,
+            cycle_phase,
+        )?);
+    }
+    Ok(openings)
 }
 
 /// Resolves the final opening of an advice polynomial from whichever phase
@@ -1164,74 +745,6 @@ fn advice_final_opening<F: Field>(
         point: source.point.to_vec(),
         opening_claim: source.opening_claim,
     })
-}
-
-/// The advice address-phase opening point (the point at which the committed
-/// advice polynomial is finally opened), recovered for the ZK precommitted finals.
-/// BlindFold recomputes the sumcheck point and `FinalScale` independently.
-fn advice_address_phase_opening_point<F: Field, C>(
-    batch: &BatchedCommittedSumcheckConsistency<F, C>,
-    rounds: usize,
-    layout: &AdviceClaimReductionLayout,
-    kind: JoltAdviceKind,
-    stage6: &Stage6ZkOutput<F, C>,
-) -> Result<Vec<F>, VerifierError> {
-    let advice_point = batch.try_instance_point_at(0, rounds).map_err(|error| {
-        VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::AdviceClaimReduction,
-            reason: error.to_string(),
-        }
-    })?;
-    let cycle_phase_variables = stage6
-        .output_points
-        .advice_cycle_phase_variables(kind)
-        .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_advice_opening(kind),
-        })?;
-    layout
-        .address_phase_opening_point(&cycle_phase_variables, &advice_point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::AdviceClaimReduction,
-            reason: error.to_string(),
-        })
-}
-
-fn stage6_advice_cycle_phase_claim<F: Field>(
-    stage6: &Stage6ClearOutput<F>,
-    kind: JoltAdviceKind,
-) -> Result<F, VerifierError> {
-    let claim = match kind {
-        JoltAdviceKind::Trusted => stage6.output_claims.advice_cycle_phase.trusted.as_ref(),
-        JoltAdviceKind::Untrusted => stage6.output_claims.advice_cycle_phase.untrusted.as_ref(),
-    };
-    claim
-        .map(|claim| claim.opening_claim)
-        .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_advice_opening(kind),
-        })
-}
-
-/// The committed bytecode / program-image address-phase opening point, recovered
-/// for the ZK precommitted finals (BlindFold recomputes the rest).
-fn committed_reduction_address_phase_opening_point<F: Field, C>(
-    batch: &BatchedCommittedSumcheckConsistency<F, C>,
-    rounds: usize,
-    precommitted: &jolt_claims::protocols::jolt::PrecommittedClaimReduction,
-    cycle_phase_variables: &[F],
-    stage: JoltRelationId,
-) -> Result<Vec<F>, VerifierError> {
-    let point = batch.try_instance_point_at(0, rounds).map_err(|error| {
-        VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: error.to_string(),
-        }
-    })?;
-    precommitted
-        .address_phase_opening_point(cycle_phase_variables, &point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: error.to_string(),
-        })
 }
 
 /// Resolves the final per-chunk openings of the committed bytecode from whichever

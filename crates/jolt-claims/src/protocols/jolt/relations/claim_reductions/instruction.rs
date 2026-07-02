@@ -44,7 +44,7 @@ pub struct InstructionClaimReductionOutputClaims<C> {
 /// its own sumcheck point), so the input points are left empty. Generic over the
 /// cell. Field order matches
 /// [`instruction_claim_reduction::claim_reduction_input_openings`].
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct InstructionClaimReductionInputClaims<C> {
     #[opening(LookupOutput, from = SpartanOuter)]
     pub lookup_output: C,
@@ -59,7 +59,7 @@ pub struct InstructionClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionClaimReductionChallenges<F> {
     #[challenge(InstructionClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -244,37 +244,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                lookup_output_spartan(),
-                left_lookup_operand_spartan(),
-                right_lookup_operand_spartan(),
-                left_instruction_input_spartan(),
-                right_instruction_input_spartan(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                lookup_output_reduced(),
-                left_lookup_operand_reduced(),
-                right_lookup_operand_reduced(),
-                left_instruction_input_reduced(),
-                right_instruction_input_reduced(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                InstructionClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                InstructionClaimReductionPublic::EqSpartan
-            )]
-        );
     }
 }

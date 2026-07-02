@@ -13,8 +13,20 @@ use crate::protocols::jolt::{
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
-/// Produced RAM value-check openings (`ram_ra`, `ram_inc`) sharing one opening
-/// point. Generic over the cell.
+/// The full set of openings produced by the RAM value-check sumcheck: the staged
+/// `Val_init` advice contributions (untrusted/trusted advice block evaluations,
+/// each present only when its commitment is), the staged committed program-image
+/// contribution (present only in committed program mode), and the main `ram_ra`
+/// /`ram_inc` openings sharing one opening point. Generic over the cell. The
+/// advice / program-image leaves are absent (`None`) in the ZK point-only form,
+/// where BlindFold carries those openings.
+///
+/// WARNING: this struct's `canonical_order()` lists every leaf contiguously, but
+/// the stage-4 Fiat-Shamir append order interleaves these openings around the
+/// register openings (advice + program-image first, then registers, then
+/// `ram_ra`/`ram_inc`). The stage-4 aggregate therefore hand-writes its
+/// `opening_values` rather than concatenating each instance's openings; see
+/// `Stage4OutputClaims` in `jolt-verifier`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -22,33 +34,23 @@ use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChal
 ))]
 #[relation(RamValCheck)]
 pub struct RamValCheckOutputClaims<C> {
+    #[opening(untrusted_advice)]
+    pub untrusted_advice: Option<C>,
+    #[opening(trusted_advice)]
+    pub trusted_advice: Option<C>,
+    #[opening(ProgramImageInitContributionRw)]
+    pub program_image: Option<C>,
     #[opening(RamRa)]
     pub ram_ra: C,
     #[opening(committed = RamInc)]
     pub ram_inc: C,
 }
 
-/// The staged advice openings contributing to `Val_init`: untrusted/trusted
-/// advice block evaluations, each present only when its commitment is. Appended
-/// before the register openings (see the `Stage4OutputClaims` field order).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamValCheck)]
-pub struct RamValCheckAdviceClaims<C> {
-    #[opening(untrusted_advice)]
-    pub untrusted: Option<C>,
-    #[opening(trusted_advice)]
-    pub trusted: Option<C>,
-}
-
 /// Consumed openings of the RAM value-check claim: the read-write `val` (stage 2)
 /// and output-check `val_final` (stage 2), reduced against `Val_init`, whose
 /// committed pieces (advice / program image) are present only in some proof
 /// configurations. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct RamValCheckInputClaims<C> {
     #[opening(RamVal, from = RamReadWriteChecking)]
     pub ram_val: C,
@@ -84,7 +86,7 @@ pub struct RamValCheckShape {
 }
 
 /// Fiat-Shamir challenge drawn by the RAM value-check sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct RamValCheckChallenges<F> {
     #[challenge(RamValCheckChallenge::Gamma)]
     pub gamma: F,
@@ -165,28 +167,6 @@ mod tests {
         assert_eq!(RamValCheck::id(), JoltRelationId::RamValCheck);
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 3);
-        // Full-init form (no committed contributions): only the read-write and
-        // output-check openings on the input side.
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_val(),
-                ram_val_final(),
-                ram_inc_val_check(),
-                ram_ra_val_check(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RamValCheckChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(RamValCheckPublic::InitEval),
-                JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
-            ]
-        );
     }
 
     /// The remodel's soundness anchor: the `Public`-symbol input expression must

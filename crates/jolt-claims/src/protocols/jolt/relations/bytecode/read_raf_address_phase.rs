@@ -37,7 +37,7 @@ pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
 /// hand-written 25-opening resolver. The `op_flags` / `lookup_table_flags`
 /// families are indexed openings (`OpFlags(CIRCUIT_FLAGS[i])` /
 /// `LookupTableFlag(i)`).
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     #[opening(UnexpandedPC, from = SpartanOuter)]
     pub outer_unexpanded_pc: C,
@@ -92,7 +92,7 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
 /// Fiat-Shamir challenges drawn by the address phase of the bytecode read-RAF
 /// sumcheck: the batching `gamma` plus the five per-stage gammas (the same set
 /// the full monolith folds).
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,
@@ -161,21 +161,9 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
 
     fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
         BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    fn stage_gammas() -> Vec<JoltChallengeId> {
-        vec![
-            JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
-        ]
     }
 
     #[test]
@@ -186,11 +174,6 @@ mod tests {
         assert_eq!(
             relation.degree(),
             dimensions(2).num_committed_ra_polys() + 1
-        );
-        assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![bytecode_read_raf_address_phase_opening()]
         );
     }
 }

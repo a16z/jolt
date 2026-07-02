@@ -26,24 +26,21 @@ use jolt_field::Field;
 use jolt_poly::lagrange::centered_lagrange_evals;
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the three consumed Spartan-outer openings from the stage 1 outer output.
-/// Only the values feed the input claim (the uni-skip's output point comes from its
-/// own sumcheck point), so the input points are left empty.
-pub fn product_uniskip_inputs_from_stage1<F: Field>(
+/// Wire the three consumed Spartan-outer opening *values* from the stage 1 outer
+/// output. Only the values feed the input claim (the uni-skip's output point comes
+/// from its own sumcheck point), so the input points are left empty.
+pub fn product_uniskip_input_values_from_stage1<F: Field>(
     stage1: &Stage1ClearOutput<F>,
-) -> ProductUniskipInputClaims<OpeningClaim<F>> {
-    let value = |value: F| OpeningClaim {
-        point: Vec::new(),
-        value,
-    };
+) -> ProductUniskipInputClaims<F> {
+    let outer = &stage1.output_values.outer_remainder;
     ProductUniskipInputClaims {
-        product: value(stage1.outer.product),
-        should_branch: value(stage1.outer.should_branch),
-        should_jump: value(stage1.outer.should_jump),
+        product: outer.product,
+        should_branch: outer.should_branch,
+        should_jump: outer.should_jump,
     }
 }
 
@@ -75,20 +72,19 @@ impl<F: Field> ConcreteSumcheck<F> for ProductUniskip<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &ProductUniskipInputClaims<C>,
+        _input_points: &ProductUniskipInputClaims<Vec<F>>,
     ) -> Result<ProductUniskipOutputClaims<Vec<F>>, VerifierError> {
         Ok(ProductUniskipOutputClaims {
             uniskip: sumcheck_point.to_vec(),
         })
     }
 
-    fn derive_input_term<C: GetPoint<F>>(
+    fn derive_input_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &ProductUniskipInputClaims<C>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {

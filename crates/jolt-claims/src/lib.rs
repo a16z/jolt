@@ -12,11 +12,10 @@ mod ops;
 pub mod protocols;
 mod sumcheck;
 mod symbolic;
-mod util;
 
 pub use claim_data::{
-    zip_openings, ChallengeDrawError, GetPoint, GetValue, InputClaims, NoChallenges, NoInputs,
-    NoOutputs, OpeningClaim, OutputClaims, SumcheckChallenges, ZipOpenings,
+    ChallengeDrawError, InputClaims, NoChallenges, NoInputs, NoOutputs, OutputClaims,
+    SumcheckChallenges,
 };
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};

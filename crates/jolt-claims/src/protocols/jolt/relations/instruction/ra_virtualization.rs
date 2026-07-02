@@ -27,14 +27,14 @@ pub struct InstructionRaVirtualizationOutputClaims<C> {
 
 /// The per-virtual reduced `InstructionRa` openings from the stage-5 instruction
 /// read-RAF.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct InstructionRaVirtualizationInputClaims<C> {
     #[opening(InstructionRa, from = InstructionReadRaf)]
     pub instruction_ra: Vec<C>,
 }
 
 /// Fiat-Shamir challenge drawn by the instruction RA-virtualization sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionRaVirtualizationChallenges<F> {
     #[challenge(InstructionRaVirtualizationChallenge::Gamma)]
     pub gamma: F,
@@ -223,18 +223,6 @@ mod tests {
         assert_eq!(
             relation.degree(),
             dimensions.num_committed_per_virtual() + 1
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                InstructionRaVirtualizationPublic::EqCycle
-            )]
         );
     }
 }

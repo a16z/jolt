@@ -1,0 +1,309 @@
+use jolt_claims::protocols::jolt::{
+    geometry::{
+        booleanity::BooleanityDimensions, claim_reductions::bytecode as bytecode_reduction,
+        dimensions::JoltFormulaDimensions,
+    },
+    JoltRelationId,
+};
+use jolt_crypto::VectorCommitment;
+use jolt_field::Field;
+use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+use jolt_openings::CommitmentScheme;
+use jolt_riscv::NUM_CIRCUIT_FLAGS;
+use jolt_transcript::Transcript;
+
+use super::{
+    booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseInputClaims},
+    bytecode_read_raf::{
+        bytecode_read_raf_address_phase_input_points_from_upstream,
+        bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
+    },
+    outputs::{
+        Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aInputPoints,
+        Stage6aOutput, Stage6aSumchecks, Stage6aZkOutput,
+    },
+};
+use crate::{
+    proof::JoltProof,
+    stages::{
+        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
+        stage5::Stage5Output, zk::committed,
+    },
+    verifier::CheckedInputs,
+    VerifierError,
+};
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
+)]
+pub fn verify<PCS, VC, T, ZkProof>(
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    formula_dimensions: &JoltFormulaDimensions,
+    transcript: &mut T,
+    stage1: &Stage1Output<PCS::Field, VC::Output>,
+    stage2: &Stage2Output<PCS::Field, VC::Output>,
+    stage3: &Stage3Output<PCS::Field, VC::Output>,
+    stage4: &Stage4Output<PCS::Field, VC::Output>,
+    stage5: &Stage5Output<PCS::Field, VC::Output>,
+) -> Result<Stage6aOutput<PCS::Field, VC::Output>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let log_t = formula_dimensions.trace.log_t();
+
+    let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
+    let committed_program = bytecode_reduction_layout.is_some();
+    let num_bytecode_val_stages = if committed_program {
+        bytecode_reduction::NUM_BYTECODE_VAL_STAGES
+    } else {
+        0
+    };
+
+    let booleanity_dimensions = BooleanityDimensions::new(
+        formula_dimensions.ra_layout,
+        log_t,
+        proof.one_hot_config.committed_chunk_bits(),
+    );
+    let address_sumchecks = Stage6aSumchecks {
+        bytecode_read_raf: BytecodeReadRafAddressPhase::new(
+            formula_dimensions.bytecode_read_raf,
+            num_bytecode_val_stages,
+        ),
+        booleanity: BooleanityAddressPhase::new(booleanity_dimensions),
+    };
+
+    // Six squeezes: the bytecode fold gamma plus the five per-stage folding
+    // gammas, each formerly an inline `challenge_scalar_powers(..)` whose single
+    // squeeze's degree-1 power equals the squeezed scalar. Byte- and value-equal
+    // (test-locked in `bytecode_read_raf.rs`); the downstream power VECTORS are
+    // reconstructed below via the same recurrence `challenge_scalar_powers` uses.
+    let address_challenges = address_sumchecks.draw_challenges(transcript)?;
+    let bytecode_gamma = address_challenges.bytecode_read_raf.gamma;
+    let bytecode_gamma_powers = gamma_powers(bytecode_gamma, 8);
+    let stage1_gammas = gamma_powers(
+        address_challenges.bytecode_read_raf.stage1_gamma,
+        2 + NUM_CIRCUIT_FLAGS,
+    );
+    let stage2_gammas = gamma_powers(address_challenges.bytecode_read_raf.stage2_gamma, 4);
+    let stage3_gammas = gamma_powers(address_challenges.bytecode_read_raf.stage3_gamma, 9);
+    let stage4_gammas = gamma_powers(address_challenges.bytecode_read_raf.stage4_gamma, 3);
+    let stage5_gammas = gamma_powers(
+        address_challenges.bytecode_read_raf.stage5_gamma,
+        2 + LookupTableKind::<RISCV_XLEN>::COUNT,
+    );
+
+    // WHY these draws live in stage 6a but feed only stage 6b: the prover's
+    // booleanity subprotocol samples its gamma — and pads the reference address
+    // with a fresh `challenge_vector` draw — before the 6a batch runs, so the
+    // transcript schedule fixes them here. Stage 6b's booleanity member is their
+    // only consumer, so they ride downstream as typed upstream values (the same
+    // idiom as `Stage2ZkOutput`'s `product_tau_high`).
+    let stage5_points = stage5.output_points();
+    let stage5_instruction_address = stage5.instruction_r_address();
+    let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
+
+    let mut booleanity_reference_address = stage5_instruction_address.to_vec();
+    booleanity_reference_address.reverse();
+    if booleanity_reference_address.len() < proof.one_hot_config.committed_chunk_bits() {
+        let missing =
+            proof.one_hot_config.committed_chunk_bits() - booleanity_reference_address.len();
+        booleanity_reference_address.extend(transcript.challenge_vector(missing));
+    } else {
+        booleanity_reference_address = booleanity_reference_address
+            [booleanity_reference_address.len() - proof.one_hot_config.committed_chunk_bits()..]
+            .to_vec();
+    }
+    let mut booleanity_reference_cycle = stage5_instruction_cycle.to_vec();
+    booleanity_reference_cycle.reverse();
+    let booleanity_gamma = transcript.challenge();
+
+    let carried = Stage6aCarriedChallenges {
+        bytecode_gamma_powers,
+        stage1_gammas,
+        stage2_gammas,
+        stage3_gammas,
+        stage4_gammas,
+        stage5_gammas,
+        booleanity_reference_address,
+        booleanity_reference_cycle,
+        booleanity_gamma,
+    };
+
+    let address_input_points = Stage6aInputPoints {
+        bytecode_read_raf: bytecode_read_raf_address_phase_input_points_from_upstream(),
+        booleanity: BooleanityAddressPhaseInputClaims::default(),
+    };
+
+    if checked.zk {
+        let consistency =
+            address_sumchecks.verify_zk(&proof.stages.stage6a_sumcheck_proof, transcript)?;
+        let output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage6a_sumcheck_proof,
+            "stage6a_sumcheck_proof",
+            // The address-phase output Expr carries only the two staged
+            // intermediates; committed mode additionally commits the staged
+            // `BytecodeValStage` columns, so the count stays hand-written.
+            2 + num_bytecode_val_stages,
+            JoltRelationId::BytecodeReadRaf,
+        )?;
+        let output_points = address_sumchecks
+            .derive_opening_points(&consistency.challenges(), &address_input_points)?;
+        return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
+            challenges: carried,
+            consistency,
+            output_claims,
+            output_points,
+        }));
+    }
+
+    let claims = &proof.clear_claims()?.stage6a;
+    let has_val_stages = !claims.bytecode_read_raf.val_stages.is_empty();
+    if committed_program != has_val_stages {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: format!(
+                "bytecode Val-stage claims presence ({has_val_stages}) does not match committed program mode ({committed_program})"
+            ),
+        });
+    }
+
+    // The bytecode address-phase input claim is the gamma-folded bind of every
+    // prior clear stage opening; the relation evaluates it through its input
+    // `Expr` from these wired openings + the per-stage folding gammas.
+    let address_input_values = Stage6aInputClaims {
+        bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
+            &stage1.clear()?.output_values,
+            &stage2.clear()?.output_values,
+            &stage3.clear()?.output_values,
+            &stage4.clear()?.output_values,
+            &stage5.clear()?.output_values,
+        )?,
+        booleanity: BooleanityAddressPhaseInputClaims::default(),
+    };
+
+    let batch = address_sumchecks.verify_clear(
+        &address_input_values,
+        &address_challenges,
+        &proof.stages.stage6a_sumcheck_proof,
+        transcript,
+    )?;
+    let output_points = address_sumchecks
+        .derive_opening_points(batch.reduction.point.as_slice(), &address_input_points)?;
+    let expected_final_claim = address_sumchecks.expected_final_claim(
+        &batch.coefficients,
+        &address_input_points,
+        claims,
+        &output_points,
+        &address_challenges,
+    )?;
+    if batch.reduction.value != expected_final_claim {
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 6 });
+    }
+
+    // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
+    // then booleanity `intermediate`) is single-sourced from the generated
+    // `Stage6aOutputClaims::append_to_transcript` (member declaration order =
+    // canonical Fiat-Shamir order; no alias dedup in the address phase).
+    claims.append_to_transcript(transcript);
+
+    Ok(Stage6aOutput::Clear(Stage6aClearOutput {
+        output_points,
+        challenges: carried,
+    }))
+}
+
+/// `[1, gamma, gamma², ...]` — the same recurrence `Transcript::challenge_scalar_powers`
+/// applies to its single squeezed scalar. Reconstructs a full power vector from the
+/// scalar the generated `draw_challenges` keeps (the squeeze's degree-1 power); no
+/// transcript effect.
+fn gamma_powers<F: Field>(gamma: F, len: usize) -> Vec<F> {
+    let mut powers = vec![F::one(); len];
+    for index in 1..len {
+        powers[index] = powers[index - 1] * gamma;
+    }
+    powers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::booleanity::BooleanityAddressPhaseOutputClaims;
+    use super::super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
+    use super::super::outputs::Stage6aOutputClaims;
+    use super::*;
+    use crate::stages::relations::append_recording::RecordingTranscript;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    fn sample_claims() -> Stage6aOutputClaims<Fr> {
+        Stage6aOutputClaims {
+            bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
+                intermediate: fr(901),
+                val_stages: Vec::new(),
+            },
+            booleanity: BooleanityAddressPhaseOutputClaims {
+                intermediate: fr(902),
+            },
+        }
+    }
+
+    /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
+    /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
+    /// booleanity `intermediate`. Single-sourced from the generated
+    /// `Stage6aOutputClaims::append_to_transcript`.
+    #[test]
+    fn stage6a_output_claims_append_follows_canonical_order() {
+        let mut claims = sample_claims();
+        claims.bytecode_read_raf.val_stages = vec![fr(903), fr(904)];
+
+        let mut got = RecordingTranscript::default();
+        claims.append_to_transcript(&mut got);
+
+        let mut want = RecordingTranscript::default();
+        for value in [fr(901), fr(903), fr(904), fr(902)] {
+            want.append_labeled(b"opening_claim", &value);
+        }
+
+        assert_eq!(got.chunks, want.chunks);
+    }
+
+    /// A transcript double whose every squeeze returns the same nontrivial
+    /// scalar, so `challenge_scalar_powers`' output is a genuine power vector.
+    #[derive(Clone, Default)]
+    struct ConstantChallengeTranscript;
+
+    impl Transcript for ConstantChallengeTranscript {
+        type Challenge = Fr;
+        fn new(_label: &'static [u8]) -> Self {
+            Self
+        }
+        fn append_bytes(&mut self, _bytes: &[u8]) {}
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::from_u64(7)
+        }
+        fn state(&self) -> [u8; 32] {
+            [0u8; 32]
+        }
+    }
+
+    /// The reconstructed power vectors must equal `challenge_scalar_powers`'
+    /// output for the same squeezed scalar — the value-identity the stage-6a
+    /// generated draw substitution relies on.
+    #[test]
+    fn gamma_powers_matches_challenge_scalar_powers() {
+        let mut transcript = ConstantChallengeTranscript;
+        for len in [1usize, 2, 3, 8, 9, 2 + NUM_CIRCUIT_FLAGS] {
+            assert_eq!(
+                gamma_powers(Fr::from_u64(7), len),
+                transcript.challenge_scalar_powers(len),
+            );
+        }
+    }
+}

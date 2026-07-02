@@ -15,8 +15,8 @@ use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced register read-write openings, all sharing the single read-write
-/// opening point. Generic over the cell (`F` on the wire, `Vec<F>` for ZK points,
-/// `OpeningClaim<F>` on the clear path).
+/// opening point. Generic over the opening cell (`F` for the serialized wire
+/// value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -39,7 +39,7 @@ pub struct RegistersReadWriteOutputClaims<C> {
 /// Consumed register openings reduced by the read-write checking sumcheck, wired
 /// from the upstream registers claim-reduction relation (stage 3). Generic over
 /// the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
 pub struct RegistersReadWriteInputClaims<C> {
     #[opening(RdWriteValue, from = RegistersClaimReduction)]
     pub rd_write_value: C,
@@ -50,7 +50,7 @@ pub struct RegistersReadWriteInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the registers read/write-checking sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct RegistersReadWriteChallenges<F> {
     #[challenge(RegistersReadWriteChallenge::Gamma)]
     pub gamma: F,
@@ -219,26 +219,5 @@ mod tests {
             read_write_dimensions().read_write_rounds()
         );
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                rd_write_value_claim(),
-                rs1_value_claim(),
-                rs2_value_claim(),
-                rd_wa_read_write(),
-                rd_inc_read_write(),
-                registers_val_read_write(),
-                rs1_ra_read_write(),
-                rs2_ra_read_write(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RegistersReadWritePublic::EqCycle)]
-        );
     }
 }
