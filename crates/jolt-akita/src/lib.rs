@@ -10,9 +10,14 @@ mod scheme;
 
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_FIELD_MODULUS,
+    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K,
 };
 pub use native_batching::{
     AkitaNativeBatchStatement, AkitaNativeBatchWitness, AkitaNativeBatching,
 };
 pub use scheme::AkitaScheme;
+
+/// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
+/// backend use the exact transform the adapter uses.
+#[doc(hidden)]
+pub use adapters::{jolt_to_akita_evals, jolt_to_akita_index, reverse_point};

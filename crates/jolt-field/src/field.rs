@@ -1,5 +1,3 @@
-#[cfg(all(feature = "allocative", not(feature = "akita")))]
-use allocative::Allocative;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::Mul;
@@ -43,21 +41,8 @@ pub trait Field:
     + WithSignedProductAccumulator
     + MulPow2
     + MulPrimitiveInt
-    + MaybeAllocative
 {
 }
-
-// Akita's field is a foreign type, so the feature-gated bridge cannot add an
-// `Allocative` impl for it. Keep the allocation-profiling bound for normal Jolt
-// fields, but relax the umbrella while the Akita bridge is enabled.
-#[cfg(all(feature = "allocative", not(feature = "akita")))]
-pub trait MaybeAllocative: Allocative {}
-#[cfg(all(feature = "allocative", not(feature = "akita")))]
-impl<T: Allocative> MaybeAllocative for T {}
-#[cfg(any(not(feature = "allocative"), feature = "akita"))]
-pub trait MaybeAllocative {}
-#[cfg(any(not(feature = "allocative"), feature = "akita"))]
-impl<T> MaybeAllocative for T {}
 
 /// Multiplication with fast-path short-circuits for zero and one.
 ///

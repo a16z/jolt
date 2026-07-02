@@ -134,7 +134,7 @@ where
 
     for (id, polynomial) in polynomials {
         let slot = &packing[id];
-        let offset = prefix_index(&slot.prefix) << slot.num_vars;
+        let offset = slot.prefix_index() << slot.num_vars;
         for (local_index, evaluation) in polynomial.evaluations().iter().copied().enumerate() {
             packed_evaluations[offset + local_index] = evaluation;
         }
@@ -166,10 +166,4 @@ where
             )
         })
         .collect()
-}
-
-fn prefix_index(prefix: &[bool]) -> usize {
-    prefix
-        .iter()
-        .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
 }

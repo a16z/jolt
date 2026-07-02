@@ -48,7 +48,10 @@ use akita_types::{
     AkitaCommitmentHint, BasisMode, PointVariableSelection, RingCommitment, SetupContributionMode,
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
-use jolt_akita::{AkitaField, AkitaNativeBatching, AkitaProverHint, AkitaScheme, AkitaSetupParams};
+use jolt_akita::{
+    jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
+    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K,
+};
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
 use jolt_openings::{
@@ -65,7 +68,6 @@ const BATCH_POLYS: usize = 4;
 const BATCH_PREFIX_BITS: usize = 2;
 const DEFAULT_NUM_VARS_CASES: [usize; 3] = [15, 20, 25];
 const DEFAULT_TRACE_NUM_VARS: usize = 20;
-const AKITA_ONE_HOT_K: usize = 256;
 
 type BackendScheme = AkitaCommitmentScheme<AKITA_D, AkitaConfig>;
 type OneHotBackendScheme = AkitaCommitmentScheme<AKITA_D, AkitaOneHotConfig>;
@@ -281,7 +283,7 @@ fn materialize_packed(
 
     for (id, polynomial) in polynomials {
         let slot = &packing[id];
-        let offset = prefix_bits_to_index(&slot.prefix) << slot.num_vars;
+        let offset = slot.prefix_index() << slot.num_vars;
         for (local_index, evaluation) in polynomial.evals().iter().copied().enumerate() {
             packed_evaluations[offset + local_index] = evaluation;
         }
@@ -290,39 +292,13 @@ fn materialize_packed(
     (packing, Polynomial::new(packed_evaluations))
 }
 
-fn prefix_bits_to_index(prefix: &[bool]) -> usize {
-    prefix
-        .iter()
-        .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
-}
-
-fn bit_reverse_index(num_vars: usize, index: usize) -> usize {
-    if num_vars == 0 {
-        index
-    } else {
-        index.reverse_bits() >> (usize::BITS as usize - num_vars)
-    }
-}
-
-fn akita_order_evals(num_vars: usize, jolt_evals: &[AkitaField]) -> Vec<AkitaField> {
-    let mut akita_evals = vec![AkitaField::zero(); jolt_evals.len()];
-    for (jolt_index, &eval) in jolt_evals.iter().enumerate() {
-        akita_evals[bit_reverse_index(num_vars, jolt_index)] = eval;
-    }
-    akita_evals
-}
-
-fn reverse_point(point: &[AkitaField]) -> Vec<AkitaField> {
-    point.iter().rev().copied().collect()
-}
-
 fn make_backend_one_hot_poly(poly: &OneHotPolynomial) -> BackendOneHotPoly {
     BackendOneHotPoly::new(AKITA_ONE_HOT_K, poly.indices().to_vec())
         .expect("valid one-hot backend polynomial")
 }
 
 fn make_backend_dense_poly(poly: &Polynomial<AkitaField>) -> BackendDensePoly {
-    let evals = akita_order_evals(poly.num_vars(), poly.evals());
+    let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals()).expect("valid dimensions");
     BackendDensePoly::from_field_evals(poly.num_vars(), &evals)
         .expect("valid dense backend polynomial")
 }

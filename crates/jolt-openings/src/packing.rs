@@ -67,7 +67,7 @@ impl PrefixSlot {
         }
     }
 
-    pub(crate) fn prefix_index(&self) -> usize {
+    pub fn prefix_index(&self) -> usize {
         self.prefix
             .iter()
             .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
