@@ -14,7 +14,7 @@ use crate::{
     VerifierError,
 };
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         committed_openings::{
             commitment_embedding_scale, final_opening_id, final_opening_point,
             final_opening_polynomial_order, FinalOpeningPointInputs,

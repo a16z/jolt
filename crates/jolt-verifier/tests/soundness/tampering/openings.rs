@@ -12,7 +12,7 @@ use crate::support::proof_claims::offset_opening_claim;
 use crate::support::{tamper_manifest, verifier_fixtures};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
-    formulas::{committed_openings::final_opening_ids, dimensions::JoltFormulaDimensions},
+    geometry::{committed_openings::final_opening_ids, dimensions::JoltFormulaDimensions},
     JoltOpeningId,
 };
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]

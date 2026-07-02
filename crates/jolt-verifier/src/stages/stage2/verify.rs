@@ -1,16 +1,14 @@
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        claim_reductions::instruction as instruction_claim_reduction,
-        dimensions::TraceDimensions,
-        ram::{self, RamRafEvaluationDimensions},
-        spartan::{product_remainder, SpartanProductDimensions},
+    geometry::{
+        dimensions::TraceDimensions, ram::RamRafEvaluationDimensions,
+        spartan::SpartanProductDimensions,
     },
-    JoltRelationId, JoltSumcheckDomain,
+    relations, JoltRelationId, JoltSumcheckDomain,
 };
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::lagrange::centered_lagrange_evals;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_r1cs::constraints::jolt::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
@@ -23,24 +21,34 @@ use jolt_transcript::Transcript;
 
 use super::{
     instruction_claim_reduction::{
-        InstructionClaimReduction, InstructionClaimReductionInputClaims,
+        instruction_claim_reduction_inputs_from_upstream, InstructionClaimReduction,
+        InstructionClaimReductionChallenges, InstructionClaimReductionInputClaims,
         InstructionClaimReductionOutputClaims,
     },
     outputs::{
-        product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output,
-        Stage2ProductUniSkipInputValues, Stage2PublicOutput, Stage2ZkOutput,
+        Stage2BatchOutputClaims, Stage2Challenges, Stage2ClearOutput, Stage2Output, Stage2ZkOutput,
         VerifiedProductUniSkip,
     },
-    product_remainder::{ProductRemainder, ProductRemainderInputClaims},
-    ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims},
-    ram_raf_evaluation::{RamRafEvaluation, RamRafEvaluationInputClaims},
-    ram_read_write_checking::{RamReadWriteChecking, RamReadWriteInputClaims},
+    product_remainder::{
+        product_remainder_inputs_from_uniskip_output, ProductRemainder, ProductRemainderInputClaims,
+    },
+    product_uniskip::{product_uniskip_inputs_from_stage1, ProductUniskip},
+    ram_output_check::{
+        ram_output_check_inputs_from_upstream, RamOutputCheck, RamOutputCheckInputClaims,
+    },
+    ram_raf_evaluation::{
+        ram_raf_evaluation_inputs_from_upstream, RamRafEvaluation, RamRafEvaluationInputClaims,
+    },
+    ram_read_write_checking::{
+        ram_read_write_inputs_from_upstream, RamReadWriteChallenges, RamReadWriteChecking,
+        RamReadWriteInputClaims,
+    },
 };
 use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
         },
         stage1::Stage1Output,
         zk::committed,
@@ -75,7 +83,6 @@ struct Stage2ZkBatch<F: Field, C> {
 // carries committed consistency plus the point-only `output_points`.
 enum Stage2Batch<F: Field, C> {
     Clear {
-        public: Stage2PublicOutput<F>,
         output_claims: Stage2BatchOutputClaims<OpeningClaim<F>>,
     },
     Zk(Stage2ZkBatch<F, C>),
@@ -84,11 +91,17 @@ enum Stage2Batch<F: Field, C> {
 const PRODUCT_UNISKIP_OUTPUT_CLAIMS: usize = 1;
 const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 15;
 
-fn selected_product_uniskip_sumcheck() -> jolt_claims::protocols::jolt::JoltSumcheckSpec {
-    jolt_claims::protocols::jolt::JoltSumcheckSpec::centered_integer(
+fn selected_product_uniskip_rounds() -> usize {
+    1
+}
+
+fn selected_product_uniskip_degree() -> usize {
+    SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
+}
+
+fn selected_product_uniskip_domain() -> jolt_claims::protocols::jolt::JoltSumcheckDomain {
+    jolt_claims::protocols::jolt::JoltSumcheckDomain::centered_integer(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        1,
-        SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
     )
 }
 
@@ -204,21 +217,15 @@ where
     )?;
 
     match (product_uniskip, batch) {
-        (
-            Stage2ProductUniSkip::Clear(product_uniskip),
-            Stage2Batch::Clear {
-                public,
+        (Stage2ProductUniSkip::Clear(product_uniskip), Stage2Batch::Clear { output_claims }) => {
+            Ok(Stage2Output::Clear(Stage2ClearOutput {
                 output_claims,
-            },
-        ) => Ok(Stage2Output::Clear(Stage2ClearOutput {
-            public,
-            output_claims,
-            product_uniskip,
-        })),
+                product_uniskip,
+            }))
+        }
         (Stage2ProductUniSkip::Zk(product_uniskip), Stage2Batch::Zk(batch)) => {
-            let public = Stage2PublicOutput {
+            let challenges = Stage2Challenges {
                 product_uniskip_challenge: product_uniskip.product_uniskip_challenge,
-                product_tau_low: product_uniskip.tau_low,
                 product_tau_high: product_uniskip.tau_high,
                 ram_read_write_gamma: batch.ram_read_write_gamma,
                 instruction_gamma: batch.instruction_gamma,
@@ -226,7 +233,7 @@ where
             };
 
             Ok(Stage2Output::Zk(Stage2ZkOutput {
-                public,
+                challenges,
                 product_uniskip_consistency: product_uniskip.consistency,
                 product_uniskip_output_claims: product_uniskip.output_claims,
                 batch_consistency: batch.consistency,
@@ -260,10 +267,9 @@ where
 {
     let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
-    let _dimensions = SpartanProductDimensions::new(log_t);
-    let stage1_public = stage1.public();
-    let mut tau_low = stage1_public
-        .remainder_challenges
+    let product_dimensions = SpartanProductDimensions::new(log_t);
+    let stage1_remainder = stage1.remainder_point();
+    let mut tau_low = stage1_remainder
         .get(1..)
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
             stage,
@@ -282,14 +288,16 @@ where
     tau_low.reverse();
 
     let tau_high = transcript.challenge();
-    let uniskip_spec = selected_product_uniskip_sumcheck();
-    if uniskip_spec.degree == 0 {
+    let uniskip_rounds = selected_product_uniskip_rounds();
+    let uniskip_degree = selected_product_uniskip_degree();
+    let uniskip_domain = selected_product_uniskip_domain();
+    if uniskip_degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
-            degree: uniskip_spec.degree,
+            degree: uniskip_degree,
         });
     }
-    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_spec.domain else {
+    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_domain else {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage,
             reason: "Stage 2 product uni-skip sumcheck must use the centered-integer domain"
@@ -299,27 +307,18 @@ where
     match stage1 {
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
-            let weights = centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage,
-                    reason: error.to_string(),
-                })?;
+            let uniskip = ProductUniskip::new(product_dimensions, tau_high);
+            let uniskip_inputs = product_uniskip_inputs_from_stage1(stage1);
 
             let uniskip_claim = claims.product_uniskip_output_claim;
-            let uniskip_input_claim = product_uniskip_input_claim(
-                Stage2ProductUniSkipInputValues::from_stage1(stage1),
-                &weights,
-            )?;
+            let uniskip_input_claim =
+                uniskip.input_claim(&uniskip_inputs, &NoChallenges::default())?;
 
             let uniskip_reduction = proof
                 .stages
                 .stage2_uni_skip_first_round_proof
                 .verify(
-                    &SumcheckClaim::new(
-                        uniskip_spec.rounds,
-                        uniskip_spec.degree,
-                        uniskip_input_claim,
-                    ),
+                    &SumcheckClaim::new(uniskip_rounds, uniskip_degree, uniskip_input_claim),
                     CenteredIntegerDomain::new(domain_size),
                     UNISKIP_ROUND_TRANSCRIPT_LABEL,
                     transcript,
@@ -345,7 +344,7 @@ where
                 .stages
                 .stage2_uni_skip_first_round_proof
                 .verify_committed_consistency(
-                    SumcheckStatement::new(uniskip_spec.rounds, uniskip_spec.degree),
+                    SumcheckStatement::new(uniskip_rounds, uniskip_degree),
                     transcript,
                 )
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -405,26 +404,88 @@ where
             }
         })?;
 
-    let ram_read_write_claims = ram::read_write_checking::<PCS::Field>(read_write_dimensions);
-    let product_remainder_claims = product_remainder::<PCS::Field>(product_dimensions);
-    let instruction_claim_reduction_claims =
-        instruction_claim_reduction::claim_reduction::<PCS::Field>(trace_dimensions);
-    let ram_raf_evaluation_claims = ram::raf_evaluation::<PCS::Field>(raf_dimensions);
-    let ram_output_check_claims = ram::output_check::<PCS::Field>(read_write_dimensions);
-    let ram_read_write_gamma = transcript.challenge_scalar();
-    let instruction_gamma = transcript.challenge_scalar();
+    let ram_read_write_rel = relations::ram::ReadWriteChecking::new(read_write_dimensions);
+    let product_remainder_rel = relations::spartan::ProductRemainder::new(product_dimensions);
+    let instruction_claim_reduction_rel =
+        relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions);
+    let ram_raf_evaluation_rel = relations::ram::RafEvaluation::new(raf_dimensions);
+    let ram_output_check_rel = relations::ram::OutputCheck::new(read_write_dimensions);
+
+    struct RelSpec {
+        rounds: usize,
+        degree: usize,
+        domain: JoltSumcheckDomain,
+    }
+    let ram_read_write_claims = RelSpec {
+        rounds: ram_read_write_rel.rounds(),
+        degree: ram_read_write_rel.degree(),
+        domain: ram_read_write_rel.domain(),
+    };
+    let product_remainder_claims = RelSpec {
+        rounds: product_remainder_rel.rounds(),
+        degree: product_remainder_rel.degree(),
+        domain: product_remainder_rel.domain(),
+    };
+    let instruction_claim_reduction_claims = RelSpec {
+        rounds: instruction_claim_reduction_rel.rounds(),
+        degree: instruction_claim_reduction_rel.degree(),
+        domain: instruction_claim_reduction_rel.domain(),
+    };
+    let ram_raf_evaluation_claims = RelSpec {
+        rounds: ram_raf_evaluation_rel.rounds(),
+        degree: ram_raf_evaluation_rel.degree(),
+        domain: ram_raf_evaluation_rel.domain(),
+    };
+    let ram_output_check_claims = RelSpec {
+        rounds: ram_output_check_rel.rounds(),
+        degree: ram_output_check_rel.degree(),
+        domain: ram_output_check_rel.domain(),
+    };
+    // The RAM read-write and instruction-reduction batching gammas (each a single
+    // `challenge_scalar`, matching their default `draw_challenges`), drawn in inline
+    // order. The other three batch relations draw no challenges. The scalars also feed
+    // the ZK arm's `Stage2Challenges`, so they are kept as locals. The non-challenge
+    // `output_address_challenges` point draw stays in place, after both gammas.
+    let ram_read_write_challenges = RamReadWriteChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
+    let instruction_challenges = InstructionClaimReductionChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
+    let ram_read_write_gamma = ram_read_write_challenges.gamma;
+    let instruction_gamma = instruction_challenges.gamma;
     let output_address_challenges = (0..log_k)
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
 
-    for claims in [
-        &ram_read_write_claims,
-        &product_remainder_claims,
-        &instruction_claim_reduction_claims,
-        &ram_raf_evaluation_claims,
-        &ram_output_check_claims,
+    for (relation, domain, degree) in [
+        (
+            relations::ram::ReadWriteChecking::id(),
+            ram_read_write_claims.domain,
+            ram_read_write_claims.degree,
+        ),
+        (
+            relations::spartan::ProductRemainder::id(),
+            product_remainder_claims.domain,
+            product_remainder_claims.degree,
+        ),
+        (
+            relations::claim_reductions::instruction::ClaimReduction::id(),
+            instruction_claim_reduction_claims.domain,
+            instruction_claim_reduction_claims.degree,
+        ),
+        (
+            relations::ram::RafEvaluation::id(),
+            ram_raf_evaluation_claims.domain,
+            ram_raf_evaluation_claims.degree,
+        ),
+        (
+            relations::ram::OutputCheck::id(),
+            ram_output_check_claims.domain,
+            ram_output_check_claims.degree,
+        ),
     ] {
-        check_relation_boolean_hypercube(claims)?;
+        check_relation_boolean_hypercube(relation, domain, degree)?;
     }
 
     match (stage1, product_uniskip) {
@@ -451,7 +512,6 @@ where
             let ram_read_write = RamReadWriteChecking::new(
                 read_write_dimensions,
                 log_k,
-                ram_read_write_gamma,
                 product_uniskip.tau_low.clone(),
             );
             let product_remainder = ProductRemainder::new(
@@ -460,11 +520,8 @@ where
                 product_uniskip.tau_high,
                 product_uniskip.tau_low.clone(),
             );
-            let instruction_reduction = InstructionClaimReduction::new(
-                trace_dimensions,
-                instruction_gamma,
-                product_uniskip.tau_low.clone(),
-            );
+            let instruction_reduction =
+                InstructionClaimReduction::new(trace_dimensions, product_uniskip.tau_low.clone());
             let ram_raf = RamRafEvaluation::new(
                 read_write_dimensions,
                 raf_dimensions,
@@ -478,42 +535,46 @@ where
                 public_memory,
             );
 
-            let ram_read_write_inputs = RamReadWriteInputClaims::from_upstream(stage1);
-            let product_remainder_inputs = ProductRemainderInputClaims::from_uniskip_output(
-                claims.product_uniskip_output_claim,
-            );
+            let ram_read_write_inputs = ram_read_write_inputs_from_upstream(stage1);
+            let product_remainder_inputs =
+                product_remainder_inputs_from_uniskip_output(claims.product_uniskip_output_claim);
             let instruction_reduction_inputs =
-                InstructionClaimReductionInputClaims::from_upstream(stage1);
-            let ram_raf_inputs = RamRafEvaluationInputClaims::from_upstream(stage1);
-            let ram_output_inputs = RamOutputCheckInputClaims::from_upstream();
+                instruction_claim_reduction_inputs_from_upstream(stage1);
+            let ram_raf_inputs = ram_raf_evaluation_inputs_from_upstream(stage1);
+            let ram_output_inputs = ram_output_check_inputs_from_upstream();
+            // The three batch relations that draw no challenges (product remainder,
+            // RAM RAF evaluation, RAM output check) resolve against this empty set.
+            let no_challenges = NoChallenges::default();
 
             // The claim order here must match the output-claim reconstruction below
             // and the transcript appends at the end of the stage.
             let sumcheck_claims = vec![
                 SumcheckClaim::new(
-                    ram_read_write_claims.sumcheck.rounds,
-                    ram_read_write_claims.sumcheck.degree,
-                    ram_read_write.input_claim(&ram_read_write_inputs)?,
+                    ram_read_write_claims.rounds,
+                    ram_read_write_claims.degree,
+                    ram_read_write
+                        .input_claim(&ram_read_write_inputs, &ram_read_write_challenges)?,
                 ),
                 SumcheckClaim::new(
-                    product_remainder_claims.sumcheck.rounds,
-                    product_remainder_claims.sumcheck.degree,
-                    product_remainder.input_claim(&product_remainder_inputs)?,
+                    product_remainder_claims.rounds,
+                    product_remainder_claims.degree,
+                    product_remainder.input_claim(&product_remainder_inputs, &no_challenges)?,
                 ),
                 SumcheckClaim::new(
-                    instruction_claim_reduction_claims.sumcheck.rounds,
-                    instruction_claim_reduction_claims.sumcheck.degree,
-                    instruction_reduction.input_claim(&instruction_reduction_inputs)?,
+                    instruction_claim_reduction_claims.rounds,
+                    instruction_claim_reduction_claims.degree,
+                    instruction_reduction
+                        .input_claim(&instruction_reduction_inputs, &instruction_challenges)?,
                 ),
                 SumcheckClaim::new(
-                    ram_raf_evaluation_claims.sumcheck.rounds,
-                    ram_raf_evaluation_claims.sumcheck.degree,
-                    ram_raf.input_claim(&ram_raf_inputs)?,
+                    ram_raf_evaluation_claims.rounds,
+                    ram_raf_evaluation_claims.degree,
+                    ram_raf.input_claim(&ram_raf_inputs, &no_challenges)?,
                 ),
                 SumcheckClaim::new(
-                    ram_output_check_claims.sumcheck.rounds,
-                    ram_output_check_claims.sumcheck.degree,
-                    ram_output.input_claim(&ram_output_inputs)?,
+                    ram_output_check_claims.rounds,
+                    ram_output_check_claims.degree,
+                    ram_output.input_claim(&ram_output_inputs, &no_challenges)?,
                 ),
             ];
             let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
@@ -527,19 +588,19 @@ where
             })?;
 
             let ram_read_write_point = batch
-                .try_instance_point(ram_read_write_claims.sumcheck.rounds)
+                .try_instance_point(ram_read_write_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let product_point = batch
-                .try_instance_point(product_remainder_claims.sumcheck.rounds)
+                .try_instance_point(product_remainder_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::SpartanProductVirtualization,
                     reason: error.to_string(),
                 })?;
             let instruction_point = batch
-                .try_instance_point(instruction_claim_reduction_claims.sumcheck.rounds)
+                .try_instance_point(instruction_claim_reduction_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
@@ -553,13 +614,13 @@ where
                 })?
                 + read_write_dimensions.phase1_num_rounds();
             let ram_raf_evaluation_point = batch
-                .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.sumcheck.rounds)
+                .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_output_check_point = batch
-                .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
+                .try_instance_point_at(phase1_offset, ram_output_check_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
@@ -585,16 +646,31 @@ where
 
             let expected_final_claim = stage2_expected_final_claim(
                 &batch.batching_coefficients,
-                ram_read_write
-                    .expected_output(&ram_read_write_inputs, &output_claims.ram_read_write)?,
-                product_remainder
-                    .expected_output(&product_remainder_inputs, &output_claims.product_remainder)?,
+                ram_read_write.expected_output(
+                    &ram_read_write_inputs,
+                    &output_claims.ram_read_write,
+                    &ram_read_write_challenges,
+                )?,
+                product_remainder.expected_output(
+                    &product_remainder_inputs,
+                    &output_claims.product_remainder,
+                    &no_challenges,
+                )?,
                 instruction_reduction.expected_output(
                     &instruction_reduction_inputs,
                     &output_claims.instruction_claim_reduction,
+                    &instruction_challenges,
                 )?,
-                ram_raf.expected_output(&ram_raf_inputs, &output_claims.ram_raf_evaluation)?,
-                ram_output.expected_output(&ram_output_inputs, &output_claims.ram_output_check)?,
+                ram_raf.expected_output(
+                    &ram_raf_inputs,
+                    &output_claims.ram_raf_evaluation,
+                    &no_challenges,
+                )?,
+                ram_output.expected_output(
+                    &ram_output_inputs,
+                    &output_claims.ram_output_check,
+                    &no_challenges,
+                )?,
             )?;
             if batch.reduction.value != expected_final_claim {
                 return Err(VerifierError::StageClaimOutputMismatch {
@@ -604,40 +680,26 @@ where
 
             claims.batch_outputs.append_to_transcript(transcript);
 
-            let public = Stage2PublicOutput {
-                product_uniskip_challenge,
-                product_tau_low: product_uniskip.tau_low.clone(),
-                product_tau_high: product_uniskip.tau_high,
-                ram_read_write_gamma,
-                instruction_gamma,
-                output_address_challenges,
-            };
-            Ok(Stage2Batch::Clear {
-                public,
-                output_claims,
-            })
+            Ok(Stage2Batch::Clear { output_claims })
         }
         (Stage1Output::Zk(_), Stage2ProductUniSkip::Zk(product_uniskip)) => {
             let statements = vec![
+                SumcheckStatement::new(ram_read_write_claims.rounds, ram_read_write_claims.degree),
                 SumcheckStatement::new(
-                    ram_read_write_claims.sumcheck.rounds,
-                    ram_read_write_claims.sumcheck.degree,
+                    product_remainder_claims.rounds,
+                    product_remainder_claims.degree,
                 ),
                 SumcheckStatement::new(
-                    product_remainder_claims.sumcheck.rounds,
-                    product_remainder_claims.sumcheck.degree,
+                    instruction_claim_reduction_claims.rounds,
+                    instruction_claim_reduction_claims.degree,
                 ),
                 SumcheckStatement::new(
-                    instruction_claim_reduction_claims.sumcheck.rounds,
-                    instruction_claim_reduction_claims.sumcheck.degree,
+                    ram_raf_evaluation_claims.rounds,
+                    ram_raf_evaluation_claims.degree,
                 ),
                 SumcheckStatement::new(
-                    ram_raf_evaluation_claims.sumcheck.rounds,
-                    ram_raf_evaluation_claims.sumcheck.degree,
-                ),
-                SumcheckStatement::new(
-                    ram_output_check_claims.sumcheck.rounds,
-                    ram_output_check_claims.sumcheck.degree,
+                    ram_output_check_claims.rounds,
+                    ram_output_check_claims.degree,
                 ),
             ];
             let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
@@ -664,19 +726,19 @@ where
             // `derive_opening_points` ignore inputs, so the ZK arm passes empty
             // point-cell inputs.
             let ram_read_write_point = consistency
-                .try_instance_point(ram_read_write_claims.sumcheck.rounds)
+                .try_instance_point(ram_read_write_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let product_point = consistency
-                .try_instance_point(product_remainder_claims.sumcheck.rounds)
+                .try_instance_point(product_remainder_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::SpartanProductVirtualization,
                     reason: error.to_string(),
                 })?;
             let instruction_point = consistency
-                .try_instance_point(instruction_claim_reduction_claims.sumcheck.rounds)
+                .try_instance_point(instruction_claim_reduction_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
@@ -691,13 +753,13 @@ where
                     })?
                     + read_write_dimensions.phase1_num_rounds();
             let ram_raf_evaluation_point = consistency
-                .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.sumcheck.rounds)
+                .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_output_check_point = consistency
-                .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
+                .try_instance_point_at(phase1_offset, ram_output_check_claims.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
@@ -713,7 +775,6 @@ where
             let ram_read_write = RamReadWriteChecking::new(
                 read_write_dimensions,
                 log_k,
-                ram_read_write_gamma,
                 product_uniskip.tau_low.clone(),
             );
             let product_remainder = ProductRemainder::new(
@@ -722,11 +783,8 @@ where
                 product_uniskip.tau_high,
                 product_uniskip.tau_low.clone(),
             );
-            let instruction_reduction = InstructionClaimReduction::new(
-                trace_dimensions,
-                instruction_gamma,
-                product_uniskip.tau_low.clone(),
-            );
+            let instruction_reduction =
+                InstructionClaimReduction::new(trace_dimensions, product_uniskip.tau_low.clone());
             let ram_raf = RamRafEvaluation::new(
                 read_write_dimensions,
                 raf_dimensions,

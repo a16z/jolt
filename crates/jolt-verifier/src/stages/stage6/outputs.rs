@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 6 verification.
 
-use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -176,8 +176,15 @@ fn reversed<F: Field>(point: &[F]) -> Vec<F> {
     point.iter().rev().copied().collect()
 }
 
+/// The Fiat-Shamir challenges the verifier draws during stage 6: the batching
+/// gammas for the bytecode read-RAF address fold and each upstream stage, the
+/// booleanity reference point and gamma, the instruction-RA and increment
+/// gammas, and (committed-program only) the bytecode claim-reduction `eta`. The
+/// two `booleanity_reference_*` points ride here rather than in an Outputs cell
+/// because the address half is padded with a fresh `transcript.challenge_vector`
+/// draw that lives nowhere else, so it is not recoverable from any opening cell.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6PublicOutput<F: Field> {
+pub struct Stage6Challenges<F: Field> {
     pub bytecode_gamma_powers: Vec<F>,
     pub stage1_gammas: Vec<F>,
     pub stage2_gammas: Vec<F>,
@@ -196,7 +203,6 @@ pub struct Stage6PublicOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6ClearOutput<F: Field> {
-    pub public: Stage6PublicOutput<F>,
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
     pub output_claims: Stage6OutputClaims<F>,
@@ -213,7 +219,7 @@ pub struct Stage6ClearOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6ZkOutput<F: Field, C> {
-    pub public: Stage6PublicOutput<F>,
+    pub challenges: Stage6Challenges<F>,
     pub address_phase_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub address_phase_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,

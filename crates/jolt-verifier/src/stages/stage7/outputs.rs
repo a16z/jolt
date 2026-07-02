@@ -75,6 +75,15 @@ pub struct PrecommittedFinalOpening<F: Field> {
     pub opening_claim: Option<F>,
 }
 
+/// The Fiat-Shamir challenge the verifier draws during stage 7: the hamming-weight
+/// claim reduction's batching gamma. Drawn path-agnostically before the ZK/clear
+/// branch; carried in [`Stage7ZkOutput`] for BlindFold (the clear path threads the
+/// per-relation challenges struct directly into the hamming relation's claims).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage7Challenges<F: Field> {
+    pub hamming_gamma: F,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ClearOutput<F: Field> {
     /// The produced stage-7 openings paired with their points (point + value) via
@@ -93,9 +102,13 @@ pub struct Stage7ClearOutput<F: Field> {
 /// sumcheck point and public it needs from `batch_consistency`, so only the data
 /// stage 8 consumes is carried in the clear: the shared hamming-weight opening
 /// point and the precommitted final openings (point-only, claims committed).
+///
+/// The path-agnostically drawn stage-7 challenges are carried so BlindFold can
+/// source the hamming-weight batching gamma from `challenges.hamming_gamma`,
+/// matching the `input.stageN.challenges.<field>` idiom used by stages 3–5.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ZkOutput<F: Field, C> {
-    pub public: Stage7PublicOutput<F>,
+    pub challenges: Stage7Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub hamming_weight_opening_point: Vec<F>,
@@ -122,9 +135,4 @@ impl<F: Field, C> Stage7Output<F, C> {
             Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage7" }),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7PublicOutput<F: Field> {
-    pub hamming_gamma: F,
 }

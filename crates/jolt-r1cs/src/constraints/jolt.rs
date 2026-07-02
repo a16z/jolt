@@ -399,7 +399,7 @@ mod tests {
     use super::*;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::{
-        formulas::spartan::{
+        geometry::spartan::{
             outer_output_openings, FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS,
             FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
         },
@@ -407,7 +407,7 @@ mod tests {
     };
     #[cfg(not(feature = "field-inline"))]
     use jolt_claims::protocols::jolt::{
-        formulas::spartan::SpartanOuterDimensions, SpartanOuterPublic,
+        geometry::spartan::SpartanOuterDimensions, SpartanOuterPublic,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     #[cfg(feature = "field-inline")]

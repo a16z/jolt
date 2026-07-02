@@ -7,7 +7,7 @@
 //! verifier cannot drift on opening order or transcript absorption.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         committed_openings::{
             self, commitment_embedding_scale, final_opening_point, FinalOpeningPointInputs,
         },
