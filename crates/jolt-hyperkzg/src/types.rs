@@ -3,6 +3,7 @@
 //! All types are generic over `P: PairingGroup` — no arkworks leakage.
 
 use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
 /// Commitment to a multilinear polynomial: a single G1 element.
@@ -32,6 +33,16 @@ impl<P: PairingGroup> std::fmt::Debug for HyperKZGCommitment<P> {
         f.debug_struct("HyperKZGCommitment")
             .field("point", &self.point)
             .finish()
+    }
+}
+
+impl<P: PairingGroup> AppendToTranscript for HyperKZGCommitment<P> {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        self.point.append_to_transcript(transcript);
+    }
+
+    fn transcript_payload_len(&self) -> Option<u64> {
+        self.point.transcript_payload_len()
     }
 }
 

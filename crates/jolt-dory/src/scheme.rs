@@ -18,7 +18,7 @@ use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, Pedersen
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::Transcript;
 use rayon::prelude::*;
 
 use crate::transcript::JoltToDoryTranscript;
@@ -140,7 +140,6 @@ impl CommitmentScheme for DoryScheme {
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
-    type Polynomial = jolt_poly::Polynomial<Fr>;
     type OpeningHint = DoryHint;
     type SetupParams = usize;
 
@@ -163,8 +162,8 @@ impl CommitmentScheme for DoryScheme {
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
-    fn open(
-        poly: &Self::Polynomial,
+    fn open<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
@@ -240,19 +239,6 @@ impl CommitmentScheme for DoryScheme {
         )
         .map_err(|_| OpeningsError::VerificationFailed)
     }
-
-    fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        eval: &Self::Field,
-    ) {
-        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"dory_opening_eval"));
-        eval.append_to_transcript(transcript);
-    }
 }
 
 impl AdditivelyHomomorphic for DoryScheme {
@@ -313,8 +299,8 @@ impl ZkOpeningScheme for DoryScheme {
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
-    fn open_zk(
-        poly: &Self::Polynomial,
+    fn open_zk<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
@@ -380,19 +366,6 @@ impl ZkOpeningScheme for DoryScheme {
         .map_err(|_| OpeningsError::VerificationFailed)?;
 
         Ok(hiding_commitment)
-    }
-
-    fn bind_zk_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        hiding_commitment: &Self::HidingCommitment,
-    ) {
-        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"dory_eval_commitment"));
-        hiding_commitment.append_to_transcript(transcript);
     }
 }
 
@@ -485,17 +458,17 @@ impl DoryHint {
 
 /// Bridges [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits
 /// without materializing the full evaluation table.
-struct DorySourceAdapter<'a, S: MultilinearPoly<Fr>> {
+struct DorySourceAdapter<'a, S: MultilinearPoly<Fr> + ?Sized> {
     source: &'a S,
 }
 
-impl<'a, S: MultilinearPoly<Fr>> DorySourceAdapter<'a, S> {
+impl<'a, S: MultilinearPoly<Fr> + ?Sized> DorySourceAdapter<'a, S> {
     fn new(source: &'a S) -> Self {
         Self { source }
     }
 }
 
-impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> {
+impl<S: MultilinearPoly<Fr> + ?Sized> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> {
     fn num_vars(&self) -> usize {
         self.source.num_vars()
     }
@@ -532,7 +505,7 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
     }
 }
 
-impl<S: MultilinearPoly<Fr>> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
+impl<S: MultilinearPoly<Fr> + ?Sized> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
     fn vector_matrix_product(&self, left_vec: &[ArkFr], _nu: usize, sigma: usize) -> Vec<ArkFr> {
         let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
         let result = self.source.fold_rows(&native_left, sigma);
