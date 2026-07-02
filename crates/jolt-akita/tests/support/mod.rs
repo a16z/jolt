@@ -4,11 +4,11 @@
 )]
 
 use jolt_akita::{
-    AkitaCommitment, AkitaField, AkitaNativeBatchStatement, AkitaNativeBatchWitness,
-    AkitaProverHint, AkitaScheme, AkitaSetupParams,
+    AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
+    AkitaScheme, AkitaSetupParams,
 };
 use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, OpeningsError, PrefixPackedClaim, PrefixPackedProverSetup,
+    CommitmentScheme, EvaluationClaim, OpeningsError, PrefixPackedProverSetup,
     PrefixPackedVerifierSetup, PrefixPacking, VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
@@ -101,17 +101,13 @@ pub fn single_statement(
     native_statement(commitment, point, [eval])
 }
 
-pub fn batch_witness<'a>(
+pub fn batch_polynomials<'a>(
     polynomials: impl IntoIterator<Item = &'a Polynomial<AkitaField>>,
-    hint: AkitaProverHint,
-) -> AkitaNativeBatchWitness<'a> {
-    (
-        polynomials
-            .into_iter()
-            .map(|polynomial| polynomial as &(dyn MultilinearPoly<AkitaField> + 'a))
-            .collect(),
-        hint,
-    )
+) -> AkitaNativeBatchPolynomials<'a> {
+    polynomials
+        .into_iter()
+        .map(|polynomial| polynomial as &(dyn MultilinearPoly<AkitaField> + 'a))
+        .collect()
 }
 
 pub fn materialize_packed<Id>(
@@ -150,7 +146,7 @@ pub fn packed_claims<Id>(
     polynomials: &[(Id, Polynomial<AkitaField>)],
     packing: &PrefixPacking<Id>,
     packed_point: &[AkitaField],
-) -> Vec<PrefixPackedClaim<AkitaField, Id>>
+) -> Vec<(Id, EvaluationClaim<AkitaField>)>
 where
     Id: Copy + Ord,
 {
@@ -160,7 +156,7 @@ where
             let logical_point = packing
                 .logical_point(id, packed_point)
                 .expect("packed point should produce logical suffix");
-            PrefixPackedClaim::new(
+            (
                 *id,
                 EvaluationClaim::new(logical_point.clone(), polynomial.evaluate(&logical_point)),
             )

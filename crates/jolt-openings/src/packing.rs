@@ -1,18 +1,77 @@
 //! Prefix packing for multiple logical multilinear polynomials in one PCS
-//! commitment.
+//! commitment, following Peshawaria, *Batching Evaluation Claims Without
+//! Homomorphic Commitments*.
 //!
-//! A packing assigns each logical polynomial id `i` a prefix-free Boolean
-//! address `prefix(i)` so that `P_i(x) = W(prefix(i) || x)` on the Boolean
-//! hypercube. The packed polynomial has
-//! `ceil_log2(sum_i 2^num_vars_i)` variables; unassigned cells in that rounded
-//! domain are zero-filled.
+//! # Why pack
 //!
-//! Slot assignment is deterministic: logical polynomial declarations are sorted
-//! by descending arity, then by `Id: Ord`, and placed by advancing a
-//! power-of-two aligned cursor through the packed Boolean domain. If a slot has
-//! `num_vars = n`, its evaluations are copied to indices
-//! `(prefix_value << n) | local_index`, where prefix bits are interpreted
-//! high-to-low.
+//! A multilinear PIOP ends with evaluation claims `f_i(γ_i) = v_i` on `c`
+//! committed polynomials of varying sizes, all of which must be opened
+//! against commitments. Committing to each polynomial separately pays
+//! per-commitment cryptographic cost `c` times over; padding everything to a
+//! common `n_max`-variable polynomial costs the prover `c · 2^n_max` instead
+//! of `Σ_i 2^n_i`. Packing avoids both: every logical polynomial lives inside
+//! one dense committed polynomial sized proportionally to the total data, and
+//! all claims are settled with a single opening proof.
+//!
+//! # Packing via prefix codes
+//!
+//! Given `c` multilinears `f_1, …, f_c` with `f_i` on `n_i` variables, the
+//! packed polynomial `f` has `n := ceil_log2(Σ_i 2^n_i)` variables — at most
+//! a 2× blowup of the total coefficient count. Each `f_i` receives a Boolean
+//! prefix `b_i ∈ {0,1}^(n - n_i)` such that `{b_1, …, b_c}` is prefix-free;
+//! Kraft's inequality (`Σ_i 2^-(n - n_i) ≤ 1`, guaranteed by the choice of
+//! `n`) says such a code exists. Prefix-freeness makes the subcubes
+//! `{(b_i, x) | x ∈ {0,1}^(n_i)}` pairwise disjoint, so
+//!
+//! ```text
+//! f(z) = f_i(x)  if z = b_i || x for some i,    f(z) = 0  otherwise
+//! ```
+//!
+//! is well defined on the Boolean cube. The committed polynomial is its
+//! multilinear extension, and `f_i(x) = f(b_i || x)` holds for every Boolean
+//! `x`.
+//!
+//! Code assignment is deterministic and greedy: sort polynomials by
+//! descending arity, ties by `Id: Ord`, and advance an integer cursor through
+//! the packed domain. A polynomial with `n_i` variables takes the prefix with
+//! value `cursor >> n_i` and length `n - n_i`, its evaluations land at packed
+//! indices `(prefix_value << n_i) | local_index` (prefix bits high-to-low),
+//! and the cursor advances by `2^n_i`. Descending sizes keep the cursor
+//! power-of-two aligned; strictly increasing code values make the code
+//! prefix-free.
+//!
+//! # Reducing `c` claims to one opening
+//!
+//! Each logical claim `f_i(γ_i) = v_i` — the points `γ_i` may all differ —
+//! is the Boolean-cube identity
+//!
+//! ```text
+//! v_i = Σ_{z ∈ {0,1}^n} eq(z, b_i || γ_i) · f(z),
+//! ```
+//!
+//! because `eq(z, b_i || γ_i)` factors as `eq(z_prefix, b_i) ·
+//! eq(z_suffix, γ_i)`: the prefix factor selects slot `i`'s subcube and the
+//! suffix factor is the multilinear-evaluation kernel inside it. The `c`
+//! sumchecks for these identities run in parallel with shared round
+//! challenges, batched into a single sumcheck by a random linear combination:
+//! after the statement (commitment, prefixes, points, values) is bound to the
+//! transcript, the verifier samples powers `α` and one `n`-round degree-2
+//! sumcheck proves
+//!
+//! ```text
+//! Σ_i α_i · v_i = Σ_{z ∈ {0,1}^n} E(z) · f(z),    E(z) := Σ_i α_i · eq(z, b_i || γ_i).
+//! ```
+//!
+//! After the rounds the verifier holds the claim `E(r) · f(r)` at the
+//! challenge point `r`. It evaluates `E(r)` itself — `c` short eq products —
+//! and checks the claimed `f(r)` with one native PCS opening. The opening
+//! point consists entirely of fresh verifier randomness.
+//!
+//! Soundness is the standard argument: if some `v_i` is false, the batched
+//! input claim differs from the true sum except with probability
+//! `(c-1)/|F|` over `α`, a sumcheck on a false claim survives with
+//! probability at most `2n/|F|`, and the final evaluation of `f` is bound by
+//! the PCS opening.
 
 use std::{
     collections::{btree_map::Iter, BTreeMap, BTreeSet},
@@ -21,7 +80,10 @@ use std::{
 };
 
 use jolt_field::Field;
-use jolt_poly::{boolean_bits_msb, eq_index_msb, MultilinearPoly};
+use jolt_poly::{
+    boolean_bits_msb, eq_index_msb, math::Math, thread::unsafe_allocate_zero_vec, EqPolynomial,
+    Polynomial,
+};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
@@ -33,12 +95,6 @@ use crate::{CommitmentScheme, EvaluationClaim, OpeningsError};
 pub struct PackedPolynomial<Id> {
     pub id: Id,
     pub num_vars: usize,
-}
-
-impl<Id> PackedPolynomial<Id> {
-    pub fn new(id: Id, num_vars: usize) -> Self {
-        Self { id, num_vars }
-    }
 }
 
 impl<Id> From<(Id, usize)> for PackedPolynomial<Id> {
@@ -67,20 +123,30 @@ impl PrefixSlot {
         }
     }
 
+    /// Prefix bits as an integer (MSB-first).
     pub fn prefix_index(&self) -> usize {
         self.prefix
             .iter()
             .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
     }
+
+    /// Packed evaluation index of this slot's cell `local` — where witness
+    /// assembly places the cell in the packed table.
+    pub fn packed_index(&self, local: usize) -> usize {
+        debug_assert!(local < 1usize << self.num_vars);
+        (self.prefix_index() << self.num_vars) | local
+    }
 }
 
 /// Deterministic prefix-free assignment from logical ids to packed slots.
 ///
-/// A physical opening point is `r_pack = r_prefix || x`. For a slot with prefix
-/// length `k`, `x` is the suffix `r_pack[k..]`. Selector evaluations use the
-/// equality polynomial `eq(r_pack[..k], prefix)`, so one opening of `W` at a
-/// full packed point checks a linear combination of logical claims at their
-/// suffix-compatible logical points.
+/// A logical claim `P_i(point_i) = v_i` on a slot with prefix `b_i` is
+/// equivalent to `W(b_i || point_i) = v_i`, i.e. the Boolean-cube sum
+/// `v_i = Σ_z eq(z, b_i || point_i) · W(z)`. Batch openings prove all such
+/// sums with one claim-reduction sumcheck (see
+/// [`PackedBatchProof`]), reducing every logical claim — at arbitrary,
+/// mutually independent points — to a single opening of `W` at a point made
+/// entirely of fresh verifier challenges.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "Id: Serialize",
@@ -114,15 +180,17 @@ where
             ));
         }
 
-        let mut total_cells = 0usize;
+        let mut total_coefficients = 0usize;
         for polynomial in &polynomials {
-            let cells = DomainSize::try_from(polynomial.num_vars)?.cells();
-            total_cells = total_cells.checked_add(cells).ok_or_else(|| {
-                OpeningsError::InvalidSetup("prefix packing domain size overflow".to_owned())
-            })?;
+            let coefficients = coefficient_count(polynomial.num_vars)?;
+            total_coefficients = total_coefficients
+                .checked_add(coefficients)
+                .ok_or_else(|| {
+                    OpeningsError::InvalidSetup("prefix packing domain size overflow".to_owned())
+                })?;
         }
-        let packed_num_vars = usize::BITS as usize - (total_cells - 1).leading_zeros() as usize;
-        let packed_domain_size = DomainSize::try_from(packed_num_vars)?.cells();
+        let packed_num_vars = total_coefficients.log_2();
+        let packed_coefficients = coefficient_count(packed_num_vars)?;
 
         polynomials.sort_by(|left, right| {
             right
@@ -134,8 +202,8 @@ where
         let mut cursor = 0usize;
         let mut slots = BTreeMap::new();
         for polynomial in polynomials {
-            let cells = DomainSize::try_from(polynomial.num_vars)?.cells();
-            if !cursor.is_multiple_of(cells) {
+            let coefficients = coefficient_count(polynomial.num_vars)?;
+            if !cursor.is_multiple_of(coefficients) {
                 return Err(OpeningsError::InvalidSetup(
                     "prefix packing cursor is not aligned to polynomial domain".to_owned(),
                 ));
@@ -154,10 +222,10 @@ where
                     "duplicate packed polynomial id".to_owned(),
                 ));
             }
-            cursor += cells;
+            cursor += coefficients;
         }
 
-        debug_assert!(cursor <= packed_domain_size);
+        debug_assert!(cursor <= packed_coefficients);
         Ok(Self {
             packed_num_vars,
             slots,
@@ -218,7 +286,7 @@ where
     pub(crate) fn prepare_statement<'a, F, C>(
         &'a self,
         statement: &'a PrefixPackedStatement<F, Id, C>,
-    ) -> Result<PreparedPrefixPackedStatement<'a, F, Id, C>, OpeningsError>
+    ) -> Result<PreparedPrefixPackedStatement<'a, F, C>, OpeningsError>
     where
         F: Field,
         Id: Debug,
@@ -231,66 +299,42 @@ where
         }
 
         let mut seen = BTreeSet::new();
-        let mut constrained_point = vec![None; self.packed_num_vars];
         let mut ordered_claims = Vec::with_capacity(claims.len());
 
-        for claim in claims {
-            let slot = self.slots.get(&claim.id).ok_or_else(|| {
-                OpeningsError::InvalidBatch(format!("unknown packed polynomial id: {:?}", claim.id))
+        for (id, evaluation) in claims {
+            let slot = self.slots.get(id).ok_or_else(|| {
+                OpeningsError::InvalidBatch(format!("unknown packed polynomial id: {id:?}"))
             })?;
-            if claim.evaluation.point.len() != slot.num_vars {
+            if evaluation.point.len() != slot.num_vars {
                 return Err(OpeningsError::InvalidBatch(format!(
-                    "claim for packed polynomial id {:?} has point arity {} but slot has {} variables",
-                    claim.id,
-                    claim.evaluation.point.len(),
+                    "claim for packed polynomial id {id:?} has point arity {} but slot has {} variables",
+                    evaluation.point.len(),
                     slot.num_vars
                 )));
             }
-            if !seen.insert(claim.id.clone()) {
+            if !seen.insert(id.clone()) {
                 return Err(OpeningsError::InvalidBatch(format!(
-                    "duplicate claim for packed polynomial id {:?}",
-                    claim.id
+                    "duplicate claim for packed polynomial id {id:?}"
                 )));
             }
-
-            let suffix_start = slot.prefix.len();
-            for (offset, point_coord) in claim.evaluation.point.iter().copied().enumerate() {
-                let packed_index = suffix_start + offset;
-                if let Some(existing) = constrained_point[packed_index] {
-                    if existing != point_coord {
-                        return Err(OpeningsError::InvalidBatch(format!(
-                            "claim for packed polynomial id {:?} is not suffix-compatible at packed coordinate {packed_index}",
-                            claim.id
-                        )));
-                    }
-                } else {
-                    constrained_point[packed_index] = Some(point_coord);
-                }
-            }
-
-            ordered_claims.push((claim, slot));
+            ordered_claims.push((id, evaluation, slot));
         }
 
-        if seen.len() != self.slots.len() {
-            let missing = self
-                .slots
-                .keys()
-                .find(|id| !seen.contains(*id))
-                .ok_or_else(|| {
-                    OpeningsError::InvalidBatch("packed batch has duplicate claim ids".to_owned())
-                })?;
+        if let Some(missing) = self.slots.keys().find(|id| !seen.contains(*id)) {
             return Err(OpeningsError::InvalidBatch(format!(
                 "missing claim for packed polynomial id {missing:?}"
             )));
         }
 
-        ordered_claims.sort_by(|(left, _), (right, _)| left.id.cmp(&right.id));
+        ordered_claims.sort_by_key(|(id, _, _)| *id);
 
         Ok(PreparedPrefixPackedStatement {
             packed_num_vars: self.packed_num_vars,
             commitment: &statement.commitment,
-            constrained_point,
-            ordered_claims,
+            ordered_claims: ordered_claims
+                .into_iter()
+                .map(|(_, evaluation, slot)| (evaluation, slot))
+                .collect(),
         })
     }
 }
@@ -315,48 +359,16 @@ where
     }
 }
 
-/// Borrowed prover-side source for opening a prefix-packed witness.
-///
-/// The PCS sees any [`MultilinearPoly`] source for `W`, plus the opening hint
-/// produced while committing to that same source. Dense reference polynomials,
-/// sparse representations, and lazy packed sources can all use the same
-/// opening path without materializing the full packed evaluation table.
-pub struct PackedWitness<'a, F: Field, H> {
-    pub polynomial: &'a (dyn MultilinearPoly<F> + 'a),
-    pub hint: H,
-}
-
-impl<'a, F, H> PackedWitness<'a, F, H>
-where
-    F: Field,
-{
-    pub fn new(polynomial: &'a (dyn MultilinearPoly<F> + 'a), hint: H) -> Self {
-        Self { polynomial, hint }
-    }
-}
-
-/// One logical opening claim inside a prefix-packed commitment.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrefixPackedClaim<F, Id> {
-    pub id: Id,
-    pub evaluation: EvaluationClaim<F>,
-}
-
-impl<F, Id> PrefixPackedClaim<F, Id> {
-    pub fn new(id: Id, evaluation: EvaluationClaim<F>) -> Self {
-        Self { id, evaluation }
-    }
-}
-
-/// A batch statement for opening one packed witness commitment.
+/// A batch statement for opening one packed witness commitment: one logical
+/// claim `(id, evaluation)` per packed polynomial.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrefixPackedStatement<F, Id, C> {
     pub commitment: C,
-    pub claims: Vec<PrefixPackedClaim<F, Id>>,
+    pub claims: Vec<(Id, EvaluationClaim<F>)>,
 }
 
 impl<F, Id, C> PrefixPackedStatement<F, Id, C> {
-    pub fn new(commitment: C, claims: impl Into<Vec<PrefixPackedClaim<F, Id>>>) -> Self {
+    pub fn new(commitment: C, claims: impl Into<Vec<(Id, EvaluationClaim<F>)>>) -> Self {
         Self {
             commitment,
             claims: claims.into(),
@@ -364,66 +376,67 @@ impl<F, Id, C> PrefixPackedStatement<F, Id, C> {
     }
 }
 
-pub(crate) struct PreparedPrefixPackedStatement<'a, F: Field, Id, C> {
+pub(crate) struct PreparedPrefixPackedStatement<'a, F: Field, C> {
     packed_num_vars: usize,
     pub(crate) commitment: &'a C,
-    constrained_point: Vec<Option<F>>,
-    ordered_claims: Vec<(&'a PrefixPackedClaim<F, Id>, &'a PrefixSlot)>,
+    ordered_claims: Vec<(&'a EvaluationClaim<F>, &'a PrefixSlot)>,
 }
 
-impl<F, Id, C> PreparedPrefixPackedStatement<'_, F, Id, C>
+impl<F, C> PreparedPrefixPackedStatement<'_, F, C>
 where
     F: Field,
 {
-    pub(crate) fn opening_point<T>(&self, transcript: &mut T) -> Result<Vec<F>, OpeningsError>
-    where
-        T: Transcript<Challenge = F>,
-    {
-        let missing_count = self
-            .constrained_point
-            .iter()
-            .filter(|coord| coord.is_none())
-            .count();
-        transcript.append(&LabelWithCount(
-            b"prefix_pack_missing",
-            missing_count as u64,
-        ));
-        let challenges = transcript.challenge_vector(missing_count);
-        let mut challenges = challenges.into_iter();
-        let mut point = Vec::with_capacity(self.constrained_point.len());
-        for coord in &self.constrained_point {
-            if let Some(value) = coord {
-                point.push(*value);
-            } else {
-                let challenge = challenges.next().ok_or_else(|| {
-                    OpeningsError::InvalidBatch(
-                        "packed point completion ran out of challenges".to_owned(),
-                    )
-                })?;
-                point.push(challenge);
-            }
-        }
-        Ok(point)
+    pub(crate) fn num_claims(&self) -> usize {
+        self.ordered_claims.len()
     }
 
-    /// Computes the compact prefix-packing reduction:
-    /// `W(r_pack) = sum_i eq(prefix_i, r_pack[..|prefix_i|]) * P_i(r_pack[|prefix_i|..])`.
-    ///
-    /// The statement is accepted only after suffix compatibility has forced all
-    /// logical claims to agree on overlapping packed coordinates.
-    pub(crate) fn reduced_eval(&self, packed_point: &[F]) -> F {
+    /// Batched sumcheck input claim `Σ_i α_i · v_i`.
+    pub(crate) fn batched_claim(&self, alpha: &[F]) -> F {
+        debug_assert_eq!(self.ordered_claims.len(), alpha.len());
         self.ordered_claims
             .iter()
-            .fold(F::zero(), |acc, (claim, slot)| {
-                acc + eq_index_msb(
-                    &packed_point[..slot.prefix.len()],
-                    slot.prefix_index() as u128,
-                ) * claim.evaluation.value
+            .zip(alpha)
+            .fold(F::zero(), |acc, ((evaluation, _), alpha_i)| {
+                acc + *alpha_i * evaluation.value
             })
+    }
+
+    /// Boolean-cube table of the batched selector
+    /// `E(z) = Σ_i α_i · eq(z, prefix_i || point_i)`.
+    ///
+    /// Slot subcubes are disjoint, so each claim writes `α_i`-scaled eq
+    /// evaluations of its logical point into its own index range; every other
+    /// entry is zero.
+    pub(crate) fn selector_table(&self, alpha: &[F]) -> Vec<F> {
+        debug_assert_eq!(self.ordered_claims.len(), alpha.len());
+        let mut table = unsafe_allocate_zero_vec(1usize << self.packed_num_vars);
+        for ((evaluation, slot), alpha_i) in self.ordered_claims.iter().zip(alpha) {
+            let offset = slot.packed_index(0);
+            let evals = EqPolynomial::evals(evaluation.point.as_slice(), Some(*alpha_i));
+            table[offset..offset + evals.len()].copy_from_slice(&evals);
+        }
+        table
+    }
+
+    /// Evaluates the batched selector `E` at an arbitrary packed point.
+    pub(crate) fn selector_eval(&self, alpha: &[F], packed_point: &[F]) -> F {
+        debug_assert_eq!(self.ordered_claims.len(), alpha.len());
+        self.ordered_claims.iter().zip(alpha).fold(
+            F::zero(),
+            |acc, ((evaluation, slot), alpha_i)| {
+                let prefix_len = slot.prefix.len();
+                acc + *alpha_i
+                    * eq_index_msb(&packed_point[..prefix_len], slot.prefix_index() as u128)
+                    * EqPolynomial::<F>::mle(
+                        &packed_point[prefix_len..],
+                        evaluation.point.as_slice(),
+                    )
+            },
+        )
     }
 }
 
-impl<F, Id, C> AppendToTranscript for PreparedPrefixPackedStatement<'_, F, Id, C>
+impl<F, C> AppendToTranscript for PreparedPrefixPackedStatement<'_, F, C>
 where
     F: Field,
     C: AppendToTranscript,
@@ -436,7 +449,7 @@ where
             b"prefix_pack_claims",
             self.ordered_claims.len() as u64,
         ));
-        for (claim, slot) in &self.ordered_claims {
+        for (evaluation, slot) in &self.ordered_claims {
             transcript.append(&U64Word(slot.num_vars as u64));
             transcript.append(&LabelWithCount(
                 b"prefix_pack_prefix",
@@ -450,13 +463,131 @@ where
             transcript.append_bytes(&prefix_bytes);
             transcript.append(&LabelWithCount(
                 b"prefix_pack_point",
-                claim.evaluation.point.len() as u64,
+                evaluation.point.len() as u64,
             ));
-            for value in claim.evaluation.point.as_slice() {
+            for value in evaluation.point.as_slice() {
                 value.append_to_transcript(transcript);
             }
-            claim.evaluation.value.append_to_transcript(transcript);
+            evaluation.value.append_to_transcript(transcript);
         }
+    }
+}
+
+/// Proof of a prefix-packed batch opening: the claim-reduction sumcheck plus
+/// one native PCS opening at its challenge point (see the [module
+/// docs](self) for the protocol).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "F: Serialize, P: Serialize",
+    deserialize = "F: Deserialize<'de>, P: Deserialize<'de>"
+))]
+#[serde(deny_unknown_fields)]
+pub struct PackedBatchProof<F, P> {
+    /// Coefficients `[c_0, c_1, c_2]` of each round polynomial
+    /// `g_j(X) = c_0 + c_1·X + c_2·X²`, one per packed variable.
+    pub round_polynomials: Vec<[F; 3]>,
+    /// Claimed evaluation of the packed polynomial at the sumcheck point.
+    pub opening_eval: F,
+    /// Native PCS opening proof for `opening_eval`.
+    pub pcs_proof: P,
+}
+
+/// Runs the claim-reduction sumcheck over `Σ_z E(z)·W(z)`, binding the
+/// most-significant packed variable each round.
+///
+/// Returns the round polynomials, the opening point (high-to-low), and
+/// `W(point)`.
+pub(crate) fn prove_reduction_sumcheck<F, T>(
+    selector: Vec<F>,
+    witness: Vec<F>,
+    transcript: &mut T,
+) -> (Vec<[F; 3]>, Vec<F>, F)
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    debug_assert_eq!(selector.len(), witness.len());
+    debug_assert!(selector.len().is_power_of_two());
+    let mut selector = Polynomial::new(selector);
+    let mut witness = Polynomial::new(witness);
+    let num_rounds = selector.num_vars();
+    let mut round_polynomials = Vec::with_capacity(num_rounds);
+    let mut point = Vec::with_capacity(num_rounds);
+
+    for _ in 0..num_rounds {
+        let half = selector.evaluations().len() / 2;
+        let (selector_low, selector_high) = selector.evaluations().split_at(half);
+        let (witness_low, witness_high) = witness.evaluations().split_at(half);
+
+        let mut eval_zero = F::zero();
+        let mut eval_one = F::zero();
+        let mut quadratic = F::zero();
+        for ((s_low, s_high), (w_low, w_high)) in selector_low
+            .iter()
+            .zip(selector_high)
+            .zip(witness_low.iter().zip(witness_high))
+        {
+            eval_zero += *s_low * *w_low;
+            eval_one += *s_high * *w_high;
+            quadratic += (*s_high - *s_low) * (*w_high - *w_low);
+        }
+        let coefficients = [eval_zero, eval_one - eval_zero - quadratic, quadratic];
+        append_round_polynomial(&coefficients, transcript);
+        let challenge: F = transcript.challenge_scalar();
+        point.push(challenge);
+        selector.bind(challenge);
+        witness.bind(challenge);
+        round_polynomials.push(coefficients);
+    }
+
+    let opening_eval = witness.evaluations()[0];
+    (round_polynomials, point, opening_eval)
+}
+
+/// Verifies the claim-reduction sumcheck rounds against `input_claim`.
+///
+/// Returns the opening point and the final claim, which the caller must check
+/// against `E(point) · W(point)`.
+pub(crate) fn verify_reduction_sumcheck<F, T>(
+    round_polynomials: &[[F; 3]],
+    num_rounds: usize,
+    input_claim: F,
+    transcript: &mut T,
+) -> Result<(Vec<F>, F), OpeningsError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    if round_polynomials.len() != num_rounds {
+        return Err(OpeningsError::InvalidBatch(format!(
+            "packed reduction proof has {} round polynomials but packing has {num_rounds} variables",
+            round_polynomials.len()
+        )));
+    }
+    let mut claim = input_claim;
+    let mut point = Vec::with_capacity(num_rounds);
+    for coefficients in round_polynomials {
+        let eval_zero = coefficients[0];
+        let eval_one = coefficients[0] + coefficients[1] + coefficients[2];
+        if eval_zero + eval_one != claim {
+            return Err(OpeningsError::VerificationFailed);
+        }
+        append_round_polynomial(coefficients, transcript);
+        let challenge: F = transcript.challenge_scalar();
+        point.push(challenge);
+        claim = coefficients[0] + challenge * (coefficients[1] + challenge * coefficients[2]);
+    }
+    Ok((point, claim))
+}
+
+fn append_round_polynomial<F, T>(coefficients: &[F; 3], transcript: &mut T)
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.append(&Label(b"packed_reduction_round"));
+    for coefficient in coefficients {
+        coefficient.append_to_transcript(transcript);
     }
 }
 
@@ -479,29 +610,11 @@ pub struct PrefixPackedVerifierSetup<PCS: CommitmentScheme, Id = u64> {
     pub packing: PrefixPacking<Id>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct DomainSize(usize);
-
-impl DomainSize {
-    fn cells(self) -> usize {
-        self.0
+fn coefficient_count(num_vars: usize) -> Result<usize, OpeningsError> {
+    if num_vars >= usize::BITS as usize {
+        return Err(OpeningsError::InvalidSetup(format!(
+            "polynomial with {num_vars} variables exceeds addressable domain"
+        )));
     }
-}
-
-impl TryFrom<usize> for DomainSize {
-    type Error = OpeningsError;
-
-    fn try_from(num_vars: usize) -> Result<Self, Self::Error> {
-        if num_vars >= usize::BITS as usize {
-            return Err(OpeningsError::InvalidSetup(format!(
-                "polynomial with {num_vars} variables exceeds addressable domain"
-            )));
-        }
-        1usize
-            .checked_shl(num_vars as u32)
-            .map(Self)
-            .ok_or_else(|| {
-                OpeningsError::InvalidSetup("polynomial domain size overflow".to_owned())
-            })
-    }
+    Ok(1usize << num_vars)
 }

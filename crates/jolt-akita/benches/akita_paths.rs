@@ -55,9 +55,8 @@ use jolt_akita::{
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, PackedBatch, PackedWitness,
-    PrefixPackedClaim, PrefixPackedProverSetup, PrefixPackedStatement, PrefixPacking,
-    VerifierOpeningClaim,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, PackedBatch, PrefixPackedProverSetup,
+    PrefixPackedStatement, PrefixPacking, VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -156,7 +155,7 @@ struct AkitaBatchCase {
     native_setup: <AkitaScheme as CommitmentScheme>::ProverSetup,
     packed_setup: PrefixPackedProverSetup<AkitaScheme, BatchId>,
     packed_polynomial: Polynomial<AkitaField>,
-    packed_claims: Vec<PrefixPackedClaim<AkitaField, BatchId>>,
+    packed_claims: Vec<(BatchId, EvaluationClaim<AkitaField>)>,
 }
 
 fn configure_group(
@@ -392,9 +391,7 @@ fn akita_batch_case(logical_num_vars: usize) -> AkitaBatchCase {
     let packed_claims = BatchId::ALL
         .iter()
         .zip(&evaluations)
-        .map(|(&id, &evaluation)| {
-            PrefixPackedClaim::new(id, EvaluationClaim::new(logical_point.clone(), evaluation))
-        })
+        .map(|(&id, &evaluation)| (id, EvaluationClaim::new(logical_point.clone(), evaluation)))
         .collect::<Vec<_>>();
     let (native_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
         logical_num_vars,
@@ -437,17 +434,11 @@ fn native_batch_statement(
         .collect()
 }
 
-fn native_batch_witness(
-    case: &AkitaBatchCase,
-    hint: AkitaProverHint,
-) -> jolt_akita::AkitaNativeBatchWitness<'_> {
-    (
-        case.polynomials
-            .iter()
-            .map(|polynomial| polynomial as &(dyn MultilinearPoly<AkitaField> + '_))
-            .collect(),
-        hint,
-    )
+fn native_batch_polynomials(case: &AkitaBatchCase) -> jolt_akita::AkitaNativeBatchPolynomials<'_> {
+    case.polynomials
+        .iter()
+        .map(|polynomial| polynomial as &(dyn MultilinearPoly<AkitaField> + '_))
+        .collect()
 }
 
 fn native_batch_commit(case: &AkitaBatchCase) -> (jolt_akita::AkitaCommitment, AkitaProverHint) {
@@ -468,7 +459,8 @@ fn native_batch_open(
     <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &case.native_setup,
         native_batch_statement(case, commitment),
-        native_batch_witness(case, hint),
+        native_batch_polynomials(case),
+        hint,
         &mut transcript,
     )
     .expect("black-box batch proof should succeed")
@@ -489,12 +481,13 @@ fn packed_batch_open(
     case: &AkitaBatchCase,
     commitment: jolt_akita::AkitaCommitment,
     hint: AkitaProverHint,
-) -> jolt_akita::AkitaBatchProof {
+) -> <AkitaPackedBatch as BatchOpeningScheme>::Proof {
     let mut transcript = Blake2bTranscript::new(b"jolt-akita/packed-batch-bench");
     <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &case.packed_setup,
         packed_batch_statement(case, commitment),
-        PackedWitness::new(&case.packed_polynomial, hint),
+        &case.packed_polynomial,
+        hint,
         &mut transcript,
     )
     .expect("packed batch proof should succeed")

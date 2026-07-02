@@ -80,9 +80,7 @@ impl StreamingCommitment for crate::DoryScheme {
         let (tier_2, _) = commit_rows_tier_2::<dory::Transparent>(&ark_rows, setup);
         DoryCommitment(ark_to_jolt_gt(&tier_2))
     }
-}
 
-impl ZkStreamingCommitment for crate::DoryScheme {
     type OneHotChunkCommitment = Vec<Bn254G1>;
     type OneHotStreamContext = Vec<ark_bn254::G1Affine>;
 
@@ -255,7 +253,9 @@ impl ZkStreamingCommitment for crate::DoryScheme {
     ) -> (Self::Output, Self::OpeningHint) {
         finish_one_hot_column_major_chunks::<dory::Transparent>(setup, one_hot_k, chunks)
     }
+}
 
+impl ZkStreamingCommitment for crate::DoryScheme {
     fn finish_zk_with_hint(
         partial: Self::PartialCommitment,
         setup: &Self::ProverSetup,

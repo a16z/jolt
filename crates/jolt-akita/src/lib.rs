@@ -13,7 +13,7 @@ pub use adapters::{
     AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K,
 };
 pub use native_batching::{
-    AkitaNativeBatchStatement, AkitaNativeBatchWitness, AkitaNativeBatching,
+    AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
 pub use scheme::AkitaScheme;
 

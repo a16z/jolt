@@ -17,7 +17,7 @@ use crate::adapters::{
     AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotBackendScheme, AkitaProverHint,
     AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_LOG_K,
 };
-use crate::native_batching::{AkitaNativeBatchWitness, AkitaNativeBatching};
+use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -130,7 +130,6 @@ impl CommitmentScheme for AkitaScheme {
     type Proof = AkitaBatchProof;
     type ProverSetup = AkitaProverSetup;
     type VerifierSetup = AkitaVerifierSetup;
-    type Polynomial = Polynomial<AkitaField>;
     type OpeningHint = AkitaProverHint;
     type SetupParams = AkitaSetupParams;
 
@@ -261,10 +260,14 @@ impl CommitmentScheme for AkitaScheme {
             commitment: hint.commitment.clone(),
             evaluation: EvaluationClaim::new(point.to_vec(), eval),
         }];
-        let witness: AkitaNativeBatchWitness<'_> =
-            (vec![&poly as &(dyn MultilinearPoly<AkitaField> + '_)], hint);
+        let polynomials: AkitaNativeBatchPolynomials<'_> =
+            vec![&poly as &(dyn MultilinearPoly<AkitaField> + '_)];
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
-            setup, statement, witness, transcript,
+            setup,
+            statement,
+            polynomials,
+            hint,
+            transcript,
         )
     }
 
@@ -328,16 +331,14 @@ impl ZkBatchOpeningScheme for AkitaNativeBatching {
     type Commitment = AkitaCommitment;
     type HidingCommitment = AkitaHidingCommitment;
     type Blind = ();
-    type ZkBatchingWitness<'a>
-        = AkitaNativeBatchWitness<'a>
-    where
-        Self: 'a;
 
     fn prove_batch_zk<'a, T>(
         _setup: &Self::ProverSetup,
         _point: jolt_poly::Point<{ jolt_poly::HIGH_TO_LOW }, Self::Field>,
         _commitments: Vec<Self::Commitment>,
-        _witness: Self::ZkBatchingWitness<'a>,
+        _polynomials: Self::Polynomials<'a>,
+        _hints: Self::Hints,
+        _evaluations: Vec<Self::Field>,
         _transcript: &mut T,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
     where
@@ -436,7 +437,8 @@ mod tests {
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
-            (vec![&polynomial], hint),
+            vec![&polynomial],
+            hint,
             &mut prover_transcript,
         )
         .expect("direct proof should prove");

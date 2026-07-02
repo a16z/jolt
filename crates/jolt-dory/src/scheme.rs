@@ -138,7 +138,6 @@ impl CommitmentScheme for DoryScheme {
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
-    type Polynomial = jolt_poly::Polynomial<Fr>;
     type OpeningHint = DoryHint;
     type SetupParams = usize;
 

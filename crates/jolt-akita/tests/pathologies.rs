@@ -20,7 +20,7 @@ use jolt_openings::{
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Point, Polynomial, HIGH_TO_LOW};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use serde_json::{json, Value};
-use support::{batch_witness, f, layout, native_setup, polynomial, setup_for};
+use support::{batch_polynomials, f, layout, native_setup, polynomial, setup_for};
 
 type VerifierSetup = <AkitaScheme as CommitmentScheme>::VerifierSetup;
 
@@ -244,7 +244,9 @@ fn akita_zk_interfaces_are_explicitly_unsupported() {
             &prover_setup,
             zk_point.clone(),
             vec![commitment.clone()],
-            batch_witness([&poly], hint),
+            batch_polynomials([&poly]),
+            hint,
+            vec![eval],
             &mut transcript,
         ),
     );
@@ -279,7 +281,8 @@ fn native_proof_fixture(
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        batch_witness([&poly_a, &poly_b], hint),
+        batch_polynomials([&poly_a, &poly_b]),
+        hint,
         &mut transcript,
     )
     .expect("black-box proof should be produced");

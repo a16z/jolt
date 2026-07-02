@@ -5,89 +5,29 @@
 )]
 
 use jolt_crypto::{Bn254, Commitment};
-use jolt_field::{Fr, FromPrimitiveInt};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
+use jolt_field::Fr;
+use jolt_hyperkzg::HyperKZGScheme;
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, PackedBatch,
-    PackedWitness, PrefixPackedClaim, PrefixPackedProverSetup, PrefixPackedStatement,
-    PrefixPackedVerifierSetup, PrefixPacking,
+    BatchOpeningScheme, CommitmentScheme, OpeningsError, PackedBatch, PrefixPackedProverSetup,
+    PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
 
+#[path = "support/common.rs"]
+pub mod common;
 #[path = "support/packed.rs"]
-mod packed_support;
+pub mod packed_support;
 
-use packed_support::{materialize_packed, MaterializedPackedWitness};
+use common::{fr, kzg_setup};
+use packed_support::{
+    build_packed, packed_claims, packed_polynomials, MaterializedPackedWitness, PackedId,
+};
 
 type KzgPCS = HyperKZGScheme<Bn254>;
 type PackedKzgBatch = PackedBatch<KzgPCS, PackedId>;
 type KzgOutput = <KzgPCS as Commitment>::Output;
 type PackedStatement = PrefixPackedStatement<Fr, PackedId, KzgOutput>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum PackedId {
-    Constant,
-    NarrowA,
-    NarrowB,
-    Medium,
-    Wide,
-    Unused,
-}
-
-fn fr(value: u64) -> Fr {
-    Fr::from_u64(value)
-}
-
-fn kzg_setup(max_num_vars: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
-    let mut rng = ChaCha20Rng::seed_from_u64(0xdead_beef);
-    let prover = KzgPCS::setup(
-        &mut rng,
-        1usize << max_num_vars,
-        Bn254::g1_generator(),
-        Bn254::g2_generator(),
-    );
-    let verifier = KzgPCS::verifier_setup(&prover);
-    (prover, verifier)
-}
-
-fn packed_polynomials() -> Vec<(PackedId, Polynomial<Fr>)> {
-    let mut rng = ChaCha20Rng::seed_from_u64(0xca_fe_ba_be);
-    vec![
-        (PackedId::Wide, Polynomial::<Fr>::random(3, &mut rng)),
-        (PackedId::Medium, Polynomial::<Fr>::random(2, &mut rng)),
-        (PackedId::NarrowB, Polynomial::<Fr>::random(1, &mut rng)),
-        (PackedId::NarrowA, Polynomial::<Fr>::random(1, &mut rng)),
-        (PackedId::Constant, Polynomial::new(vec![fr(73)])),
-    ]
-}
-
-fn build_packed(
-    polynomials: &[(PackedId, Polynomial<Fr>)],
-) -> MaterializedPackedWitness<PackedId, Fr> {
-    materialize_packed(polynomials).expect("packed witness should build")
-}
-
-fn packed_claims(
-    polynomials: &[(PackedId, Polynomial<Fr>)],
-    packing: &PrefixPacking<PackedId>,
-    packed_point: &[Fr],
-) -> Vec<PrefixPackedClaim<Fr, PackedId>> {
-    polynomials
-        .iter()
-        .map(|(id, polynomial)| {
-            let logical_point = packing
-                .logical_point(id, packed_point)
-                .expect("packed point should produce logical suffix");
-            PrefixPackedClaim::new(
-                *id,
-                EvaluationClaim::new(logical_point.clone(), polynomial.evaluate(&logical_point)),
-            )
-        })
-        .collect()
-}
 
 fn packed_setup(
     packing: PrefixPacking<PackedId>,
@@ -119,7 +59,8 @@ fn prove_packed(
     <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         setup,
         statement,
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     )
     .expect("HyperKZG prefix-packed batch proof should be produced")
@@ -143,7 +84,8 @@ fn hyperkzg_prefix_packed_batch_roundtrip_complex_mixed_arities() {
     let proof = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut prover_transcript,
     )
     .expect("HyperKZG prefix-packed batch proof should be produced");
@@ -175,7 +117,8 @@ fn hyperkzg_prefix_packed_batch_rejects_missing_logical_slot() {
     let result = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -192,17 +135,18 @@ fn hyperkzg_prefix_packed_batch_rejects_wrong_logical_arity() {
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let wide = claims
         .iter_mut()
-        .find(|claim| claim.id == PackedId::Wide)
+        .find(|claim| claim.0 == PackedId::Wide)
         .expect("wide claim should exist");
-    let mut point = wide.evaluation.point.clone().into_vec();
+    let mut point = wide.1.point.clone().into_vec();
     let _removed = point.pop();
-    wide.evaluation.point = point.into();
+    wide.1.point = point.into();
 
     let mut transcript = Blake2bTranscript::new(b"hyperkzg-packed-wrong-arity");
     let result = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -217,13 +161,14 @@ fn hyperkzg_prefix_packed_batch_rejects_unknown_id() {
         <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
-    claims[0].id = PackedId::Unused;
+    claims[0].0 = PackedId::Unused;
 
     let mut transcript = Blake2bTranscript::new(b"hyperkzg-packed-unknown-id");
     let result = <PackedKzgBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -247,7 +192,7 @@ fn hyperkzg_prefix_packed_batch_rejects_tampered_value() {
     );
 
     let mut tampered = claims;
-    tampered[0].evaluation.value += fr(1);
+    tampered[0].1.value += fr(1);
     let mut verifier_transcript = Blake2bTranscript::new(b"hyperkzg-packed-tamper");
     let result = <PackedKzgBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,

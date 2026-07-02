@@ -54,7 +54,6 @@ where
     type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
-    type Polynomial = Polynomial<F>;
     type OpeningHint = ();
     type SetupParams = ();
 
@@ -68,10 +67,7 @@ where
         poly: &P,
         _setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, ()), OpeningsError> {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = poly.to_dense().into_owned();
         Ok((MockCommitment { evaluations }, ()))
     }
 
@@ -83,10 +79,7 @@ where
         _hint: Option<()>,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = poly.to_dense().into_owned();
         Ok(MockProof { evaluations })
     }
 
@@ -181,10 +174,7 @@ where
         _hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = poly.to_dense().into_owned();
         Ok((MockProof { evaluations }, MockHidingCommitment { eval }, ()))
     }
 

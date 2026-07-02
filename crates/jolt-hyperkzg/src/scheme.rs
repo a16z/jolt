@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::{FromPrimitiveInt, RandomSampling};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
-use jolt_poly::{MultilinearPoly, Polynomial};
+use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
@@ -257,7 +257,6 @@ where
     type Proof = HyperKZGProof<P>;
     type ProverSetup = HyperKZGProverSetup<P>;
     type VerifierSetup = HyperKZGVerifierSetup<P>;
-    type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
     type SetupParams = (usize, P::G1, P::G2);
 
@@ -279,11 +278,9 @@ where
         poly: &S,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        // HyperKZG always works on dense evaluations.
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        // HyperKZG always works on dense evaluations; `to_dense` borrows them
+        // when the source is already dense.
+        let evaluations = poly.to_dense();
         let point = kzg::kzg_commit::<P>(&evaluations, setup)
             .map_err(|e| OpeningsError::CommitFailed(format!("HyperKZG commit failed: {e:?}")))?;
         Ok((HyperKZGCommitment { point }, ()))
@@ -297,10 +294,7 @@ where
         _hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        let mut evaluations = Vec::with_capacity(1usize << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = poly.to_dense();
         Self::open(setup, &evaluations, point, transcript)
             .map_err(|e| OpeningsError::ProveFailed(format!("HyperKZG open failed: {e:?}")))
     }

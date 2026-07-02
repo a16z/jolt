@@ -9,13 +9,13 @@ mod support;
 use jolt_akita::{AkitaCommitment, AkitaField, AkitaNativeBatching, AkitaScheme};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, PackedBatch,
-    PackedWitness, PrefixPackedStatement,
+    PrefixPackedStatement,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{
-    batch_witness, f, layout, materialize_packed, native_statement, packed_claims, packed_setup,
-    polynomial, setup_for, MaterializedPackedWitness,
+    batch_polynomials, f, layout, materialize_packed, native_statement, packed_claims,
+    packed_setup, polynomial, setup_for, MaterializedPackedWitness,
 };
 
 type AkitaPackedBatch = PackedBatch<AkitaScheme, PackedId>;
@@ -97,7 +97,8 @@ fn akita_prefix_packed_batch_roundtrips_mixed_arities() {
     let proof = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut prover_transcript,
     )
     .expect("Akita prefix-packed batch proof should be produced");
@@ -126,29 +127,32 @@ fn akita_prefix_packed_batch_rejects_statement_shape_errors() {
     let result = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment.clone(), claims[1..].to_vec()),
-        PackedWitness::new(&packed.polynomial, hint.clone()),
+        &packed.polynomial,
+        hint.clone(),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
 
     let mut unknown_id = claims.clone();
-    unknown_id[0].id = PackedId::Unused;
+    unknown_id[0].0 = PackedId::Unused;
     let mut transcript = Blake2bTranscript::new(b"akita-packed-unknown-id");
     let result = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment.clone(), unknown_id),
-        PackedWitness::new(&packed.polynomial, hint.clone()),
+        &packed.polynomial,
+        hint.clone(),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
 
     let mut duplicate_id = claims.clone();
-    duplicate_id[0].id = duplicate_id[1].id;
+    duplicate_id[0].0 = duplicate_id[1].0;
     let mut transcript = Blake2bTranscript::new(b"akita-packed-duplicate-id");
     let result = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment.clone(), duplicate_id),
-        PackedWitness::new(&packed.polynomial, hint.clone()),
+        &packed.polynomial,
+        hint.clone(),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -156,34 +160,56 @@ fn akita_prefix_packed_batch_rejects_statement_shape_errors() {
     let mut wrong_arity = claims.clone();
     let constant = wrong_arity
         .iter_mut()
-        .find(|claim| claim.id == PackedId::Constant)
+        .find(|claim| claim.0 == PackedId::Constant)
         .expect("constant claim should exist");
-    constant.evaluation = EvaluationClaim::new(vec![f(1)], constant.evaluation.value);
+    constant.1 = EvaluationClaim::new(vec![f(1)], constant.1.value);
     let mut transcript = Blake2bTranscript::new(b"akita-packed-wrong-arity");
     let result = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment.clone(), wrong_arity),
-        PackedWitness::new(&packed.polynomial, hint.clone()),
+        &packed.polynomial,
+        hint.clone(),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
+}
 
-    let mut suffix_incompatible = claims;
-    let medium = suffix_incompatible
+/// A malicious prover proving a stale value: the claim point moves but the
+/// value is left at the old point's evaluation. The reduction sumcheck
+/// accepts claims at independent points, so proving succeeds and the lie is
+/// caught at verification.
+#[test]
+fn akita_prefix_packed_batch_rejects_stale_value_at_shifted_point() {
+    let polynomials = packed_polynomials();
+    let packed = build_packed(&polynomials);
+    let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone(), layout(7));
+    let (commitment, hint) = AkitaScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
+    let point = packed_point();
+    let mut claims = packed_claims(&polynomials, &packed.packing, &point);
+    let medium = claims
         .iter_mut()
-        .find(|claim| claim.id == PackedId::Medium)
+        .find(|claim| claim.0 == PackedId::Medium)
         .expect("medium claim should exist");
-    let mut point = medium.evaluation.point.clone().into_vec();
-    point[0] += f(1);
-    medium.evaluation = EvaluationClaim::new(point, medium.evaluation.value);
-    let mut transcript = Blake2bTranscript::new(b"akita-packed-suffix-incompat");
-    let result = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
+    let mut shifted = medium.1.point.clone().into_vec();
+    shifted[0] += f(1);
+    medium.1 = EvaluationClaim::new(shifted, medium.1.value);
+    let statement = PrefixPackedStatement::new(commitment, claims);
+
+    let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-stale-value");
+    let proof = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
-        PrefixPackedStatement::new(commitment, suffix_incompatible),
-        PackedWitness::new(&packed.polynomial, hint),
-        &mut transcript,
+        statement.clone(),
+        &packed.polynomial,
+        hint,
+        &mut prover_transcript,
+    )
+    .expect("shifted-point claims are provable under the reduction sumcheck");
+    assert_packed_verify_rejects(
+        &verifier_setup,
+        statement,
+        &proof,
+        b"akita-packed-stale-value",
     );
-    assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
 }
 
 #[test]
@@ -200,13 +226,14 @@ fn akita_prefix_packed_batch_rejects_tampered_verifier_inputs() {
     let proof = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement,
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut prover_transcript,
     )
     .expect("Akita prefix-packed batch proof should be produced");
 
     let mut tampered_value = claims.clone();
-    tampered_value[0].evaluation.value += f(1);
+    tampered_value[0].1.value += f(1);
     assert_packed_verify_rejects(
         &verifier_setup,
         PrefixPackedStatement::new(commitment.clone(), tampered_value),
@@ -225,7 +252,7 @@ fn akita_prefix_packed_batch_rejects_tampered_verifier_inputs() {
 
     let mut swapped_same_arity = claims.clone();
     for claim in &mut swapped_same_arity {
-        claim.id = match claim.id {
+        claim.0 = match claim.0 {
             PackedId::NarrowA => PackedId::NarrowB,
             PackedId::NarrowB => PackedId::NarrowA,
             id => id,
@@ -269,7 +296,8 @@ fn akita_prefix_packed_batch_rejects_wrong_witness_dimension() {
     let result = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement,
-        PackedWitness::new(&wrong_witness, hint),
+        &wrong_witness,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -295,7 +323,8 @@ fn akita_packing_and_native_batching_can_coexist_for_same_logical_claims() {
     let native_proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &native_prover_setup,
         native_statement.clone(),
-        batch_witness([&poly_a, &poly_b], native_hint),
+        batch_polynomials([&poly_a, &poly_b]),
+        native_hint,
         &mut native_prover_transcript,
     )
     .expect("black-box proof should be produced");
@@ -333,7 +362,8 @@ fn akita_packing_and_native_batching_can_coexist_for_same_logical_claims() {
     let packed_proof = <AkitaPackedBatch as BatchOpeningScheme>::prove_batch(
         &packed_prover_setup,
         packed_statement.clone(),
-        PackedWitness::new(&packed.polynomial, packed_hint),
+        &packed.polynomial,
+        packed_hint,
         &mut packed_prover_transcript,
     )
     .expect("packed proof should be produced");

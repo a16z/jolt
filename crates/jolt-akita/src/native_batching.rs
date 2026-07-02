@@ -43,10 +43,7 @@ pub struct AkitaNativeBatching;
 
 pub type AkitaNativeBatchStatement = Vec<VerifierOpeningClaim<AkitaField, AkitaCommitment>>;
 
-pub type AkitaNativeBatchWitness<'a> = (
-    Vec<&'a (dyn MultilinearPoly<AkitaField> + 'a)>,
-    AkitaProverHint,
-);
+pub type AkitaNativeBatchPolynomials<'a> = Vec<&'a (dyn MultilinearPoly<AkitaField> + 'a)>;
 
 struct ValidatedStatement<'a> {
     commitment: &'a AkitaCommitment,
@@ -275,23 +272,24 @@ impl BatchOpeningScheme for AkitaNativeBatching {
     type ProverSetup = AkitaProverSetup;
     type VerifierSetup = AkitaVerifierSetup;
     type Statement = AkitaNativeBatchStatement;
-    type BatchingWitness<'a>
-        = AkitaNativeBatchWitness<'a>
+    type Polynomials<'a>
+        = AkitaNativeBatchPolynomials<'a>
     where
         Self: 'a;
+    type Hints = AkitaProverHint;
     type Proof = AkitaBatchProof;
 
     fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         statement: Self::Statement,
-        witness: Self::BatchingWitness<'a>,
+        polynomials: Self::Polynomials<'a>,
+        hint: Self::Hints,
         transcript: &mut T,
     ) -> Result<Self::Proof, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>,
     {
-        let (polynomials, hint) = witness;
         let ValidatedStatement { commitment, point } = validate_statement(
             &statement,
             setup.max_num_vars(),

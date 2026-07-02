@@ -8,7 +8,7 @@ use jolt_openings::{
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{
-    batch_witness, f, layout, native_setup, native_statement, polynomial, setup_for,
+    batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
     single_statement,
 };
 
@@ -29,7 +29,8 @@ fn akita_native_batching_roundtrips_grouped_commitment() {
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        batch_witness([&poly_a, &poly_b], hint),
+        batch_polynomials([&poly_a, &poly_b]),
+        hint,
         &mut prover_transcript,
     )
     .expect("black-box proof should be produced");
@@ -65,7 +66,8 @@ fn akita_native_batching_rejects_malformed_statements() {
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             Vec::new(),
-            (Vec::new(), AkitaProverHint::default()),
+            Vec::new(),
+            AkitaProverHint::default(),
             &mut transcript,
         ),
         Err(OpeningsError::InvalidBatch(_))
@@ -86,7 +88,8 @@ fn akita_native_batching_rejects_malformed_statements() {
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             mixed_commitments,
-            batch_witness([&poly_a, &poly_b], group_hint.clone()),
+            batch_polynomials([&poly_a, &poly_b]),
+            group_hint.clone(),
             &mut transcript,
         ),
         Err(OpeningsError::InvalidBatch(_))
@@ -99,7 +102,8 @@ fn akita_native_batching_rejects_malformed_statements() {
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             mixed_points,
-            batch_witness([&poly_a, &poly_b], group_hint.clone()),
+            batch_polynomials([&poly_a, &poly_b]),
+            group_hint.clone(),
             &mut transcript,
         ),
         Err(OpeningsError::InvalidBatch(_))
@@ -111,7 +115,8 @@ fn akita_native_batching_rejects_malformed_statements() {
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             one_claim_for_two_slots,
-            batch_witness([&poly_a, &poly_b], group_hint),
+            batch_polynomials([&poly_a, &poly_b]),
+            group_hint,
             &mut transcript,
         ),
         Err(OpeningsError::InvalidBatch(_))
@@ -143,7 +148,8 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
             <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
                 &prover_setup,
                 statement.clone(),
-                batch_witness([&poly_a, &poly_b], other_hint),
+                batch_polynomials([&poly_a, &poly_b]),
+            other_hint,
                 &mut transcript,
             ),
             Err(OpeningsError::InvalidBatch(message)) if message.contains("hint")
@@ -156,7 +162,8 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
-            batch_witness([&poly_a], hint.clone()),
+            batch_polynomials([&poly_a]),
+            hint.clone(),
             &mut transcript,
         ),
         Err(OpeningsError::InvalidBatch(_))
@@ -168,7 +175,8 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement,
-            batch_witness([&poly_a, &wrong_dimension], hint),
+            batch_polynomials([&poly_a, &wrong_dimension]),
+            hint,
             &mut transcript,
         ),
         Err(OpeningsError::InvalidBatch(_))
@@ -192,7 +200,8 @@ fn akita_native_batching_rejects_tampered_verifier_inputs() {
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        batch_witness([&poly_a, &poly_b], hint),
+        batch_polynomials([&poly_a, &poly_b]),
+        hint,
         &mut prover_transcript,
     )
     .expect("black-box proof should be produced");
