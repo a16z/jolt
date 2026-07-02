@@ -58,7 +58,8 @@
 //!   one combined claim (max `(num_vars, degree)`, absorb each `input_claim`, draw
 //!   the batching coefficients, random-linear-combine the padded sums) and reduce it
 //!   through the single-instance `SumcheckProof::verify_compressed_boolean`. The
-//!   batching lives here rather than in `jolt-sumcheck`'s `BatchedSumcheckVerifier`.
+//!   batching lives in this generated driver; `jolt-sumcheck` provides only the
+//!   single-instance verifier, not a batched one.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
 //!   `SumcheckProof::verify_committed_consistency_dims`.
@@ -451,6 +452,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // through `SumcheckProof::verify_committed_consistency_dims`. Committed proofs
     // never reveal claim scalars, so no claimed sums are absorbed. Opt-in via
     // `#[sumcheck_batch(verify_zk)]`.
+    //
+    // Soundness ordering: because the batching coefficients are squeezed here
+    // (before the consistency rounds) and no claim scalars are absorbed, the
+    // caller MUST have already absorbed commitments to those claim scalars into
+    // the transcript before invoking this driver. Without that prior binding a
+    // malicious prover could choose its claim openings adaptively after seeing
+    // the batching challenge.
     let verify_zk_method = if options.verify_zk {
         let max_fold = max_fold();
 

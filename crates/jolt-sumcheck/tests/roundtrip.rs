@@ -6,15 +6,13 @@
 
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
+use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::ClearSumcheckProof;
 use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
-use jolt_sumcheck::{
-    BatchedSumcheckVerifier, BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_sumcheck::{BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
+use jolt_transcript::{Blake2bTranscript, Transcript};
 
 type F = Fr;
 
@@ -222,110 +220,6 @@ fn eq_weighted_sumcheck() {
     assert!(
         result.is_ok(),
         "eq-weighted verify failed: {:?}",
-        result.err()
-    );
-}
-
-#[test]
-fn batched_heterogeneous_degrees() {
-    // Batch a degree-2 claim (3 vars) with a degree-1 claim (2 vars)
-    let f: Vec<F> = (1..=8).map(F::from_u64).collect();
-    let g: Vec<F> = (1..=8u64).map(|i| F::from_u64(i * 2)).collect();
-    let h: Vec<F> = (1..=4u64).map(|i| F::from_u64(i * 5)).collect();
-
-    let sum_fg: F = f.iter().zip(&g).map(|(&a, &b)| a * b).sum();
-    let sum_h: F = h.iter().copied().sum();
-
-    let claims = vec![
-        SumcheckClaim {
-            num_vars: 3,
-            degree: 2,
-            claimed_sum: sum_fg,
-        },
-        SumcheckClaim {
-            num_vars: 2,
-            degree: 1,
-            claimed_sum: sum_h,
-        },
-    ];
-
-    // Build combined polynomial for honest proof
-    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    sum_fg.append_to_transcript(&mut pt);
-    sum_h.append_to_transcript(&mut pt);
-    let alpha: F = pt.challenge();
-
-    let max_vars = 3;
-    let n = 1 << max_vars;
-
-    // claim_a's polynomial: f * g (degree 2 over 3 vars)
-    let fg: Vec<F> = f.iter().zip(&g).map(|(&a, &b)| a * b).collect();
-
-    // claim_b's polynomial: h extended to 3 vars (HighToLow: first var is dummy)
-    // h has 4 evals = 2 vars. Extend to 8 evals = 3 vars by duplicating:
-    // h_ext[i] = h_ext[i + 4] = h[i] for i in 0..4
-    let h_ext: Vec<F> = h.iter().chain(h.iter()).copied().collect();
-
-    // Combined = fg + alpha * h_ext
-    let combined: Vec<F> = (0..n).map(|i| fg[i] + alpha * h_ext[i]).collect();
-    let combined_sum = combined.iter().copied().sum::<F>();
-
-    // Verify combined sum matches the batched formula
-    let expected_combined = sum_fg + alpha * sum_h.mul_pow_2(max_vars - 2);
-    assert_eq!(combined_sum, expected_combined);
-
-    // Now prove the combined polynomial as degree 2
-    // We need to build the round polynomials at degree max(2,1)=2 → 3 eval points
-    let degree = 2;
-    let mut buf = combined;
-    let mut round_polys = Vec::new();
-
-    for _round in 0..max_vars {
-        let half = buf.len() / 2;
-        let evals: Vec<F> = (0..=degree)
-            .map(|t| {
-                let ft = F::from_u64(t as u64);
-                let mut sum = F::from_u64(0);
-                for i in 0..half {
-                    let lo = buf[i];
-                    let hi = buf[i + half];
-                    sum += lo + ft * (hi - lo);
-                }
-                sum
-            })
-            .collect();
-
-        let points: Vec<(F, F)> = evals
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| (F::from_u64(i as u64), v))
-            .collect();
-        let round_poly = UnivariatePoly::interpolate(&points);
-
-        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, &mut pt);
-        let r: F = pt.challenge();
-        round_polys.push(round_poly);
-
-        for i in 0..half {
-            buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
-        }
-        buf.truncate(half);
-    }
-
-    let proof = ClearSumcheckProof {
-        round_polynomials: round_polys,
-    };
-
-    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result = BatchedSumcheckVerifier::verify(
-        &claims,
-        &proof.round_polynomials,
-        BooleanHypercube,
-        &mut vt,
-    );
-    assert!(
-        result.is_ok(),
-        "batched heterogeneous verify failed: {:?}",
         result.err()
     );
 }
