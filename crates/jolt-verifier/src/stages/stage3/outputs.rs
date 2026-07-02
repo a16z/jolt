@@ -37,14 +37,7 @@ pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 /// but the batch commits/absorbs only 13 (the three aliases are absorbed once), so
 /// the committed-output-claim count stays hand-written in `verify`.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    custom_opening_values,
-    verify_clear,
-    verify_zk,
-    derive_opening_points,
-    expected_final_claim,
-    empty_input_points
-)]
+#[sumcheck_batch(custom_opening_values, empty_input_points)]
 pub struct Stage3Sumchecks<F: Field> {
     pub shift: SpartanShift<F>,
     pub instruction_input: InstructionInput<F>,

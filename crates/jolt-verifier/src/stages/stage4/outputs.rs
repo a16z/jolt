@@ -35,13 +35,7 @@ use super::registers_read_write_checking::RegistersReadWriteChecking;
 /// hand-written in `verify` and claim presence is validated by
 /// `ram_val_check_initial_evaluation`.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    custom_opening_values,
-    verify_clear,
-    verify_zk,
-    derive_opening_points,
-    expected_final_claim
-)]
+#[sumcheck_batch(custom_opening_values)]
 pub struct Stage4Sumchecks<F: Field> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     pub ram_val_check: RamValCheck<F>,

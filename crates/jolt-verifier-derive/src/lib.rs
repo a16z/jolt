@@ -40,20 +40,15 @@
 //! normalizes to the concrete per-relation claim struct, so the plain derives
 //! apply.
 //!
-//! The set of generated *delegated impls* is intentionally minimal and grows as
-//! the migration requires. Currently emitted for every stage:
+//! Emitted for every stage:
 //!
 //! - the Fiat-Shamir opening plumbing (`opening_values` / `append_to_transcript`
 //!   on the `OutputClaims` (values) aggregate, delegating to each member in
-//!   declaration order); and
+//!   declaration order);
 //! - the per-instance driver method on the source `StageNSumchecks` struct —
 //!   `draw_challenges` (draw each member's challenges into `StageNChallenges`),
 //!   suppressible via `#[sumcheck_batch(no_draw_challenges)]` for a stage whose
-//!   member challenges have stage-level provenance and are hand-assembled.
-//!
-//! Opt-in per method via `#[sumcheck_batch(...)]` flags, emitted on the source
-//! `StageNSumchecks` struct only for stages that request them:
-//!
+//!   member challenges have stage-level provenance and are hand-assembled;
 //! - `verify_clear` — the clear-path batched-verify driver: fold the members into
 //!   one combined claim (max `(num_vars, degree)`, absorb each `input_claim`, draw
 //!   the batching coefficients, random-linear-combine the padded sums) and reduce it
@@ -72,6 +67,10 @@
 //!   with the batch coefficients (`StageNBatchingCoefficients`) into the final claim
 //!   the reduction is checked against. `verify_clear` returns the coefficients inside
 //!   `StageNClearBatch { reduction, coefficients }`.
+//!
+//! Opt-in per method via `#[sumcheck_batch(...)]` flags, emitted on the source
+//! `StageNSumchecks` struct only for stages that request them:
+//!
 //! - `output_shape` — `output_claim_count` (total produced openings, e.g. the ZK
 //!   commitment count) and `validate_output_claims` (assert the proof's output claims
 //!   match the dims-derived shape), both via each member's
@@ -287,9 +286,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // The clear-path batched-verify driver: compute the combined `(max_num_vars,
     // max_degree, claimed_sum)` from the members (absorb sums, draw coefficients,
     // random-linear-combine), then reduce through the single-instance
-    // `SumcheckProof::verify_compressed_boolean`. Opt-in via
-    // `#[sumcheck_batch(verify_clear)]`.
-    let verify_clear_method = if options.verify_clear {
+    // `SumcheckProof::verify_compressed_boolean`.
+    let verify_clear_method = {
         let max_fold = max_fold();
         let sum_idents = plans
             .iter()
@@ -451,15 +449,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 })
             }
         }
-    } else {
-        quote!()
     };
 
     // The ZK-path batched-verify driver: compute the combined `(max_num_vars,
     // max_degree)`, draw the batching coefficients, then check committed consistency
     // through `SumcheckProof::verify_committed_consistency_dims`. Committed proofs
-    // never reveal claim scalars, so no claimed sums are absorbed. Opt-in via
-    // `#[sumcheck_batch(verify_zk)]`.
+    // never reveal claim scalars, so no claimed sums are absorbed.
     //
     // Soundness ordering: because the batching coefficients are squeezed here
     // (before the consistency rounds) and no claim scalars are absorbed, the
@@ -467,7 +462,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // the transcript before invoking this driver. Without that prior binding a
     // malicious prover could choose its claim openings adaptively after seeing
     // the batching challenge.
-    let verify_zk_method = if options.verify_zk {
+    let verify_zk_method = {
         let max_fold = max_fold();
 
         // Draw one batching coefficient per present member (ZK path): no claimed sums
@@ -522,8 +517,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 })
             }
         }
-    } else {
-        quote!()
     };
 
     // Map each member's opening point through its
@@ -531,9 +524,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // aggregate. Takes the batch challenge vector directly: under the front-loaded
     // batching layout an instance's point is the length-`rounds` suffix of that
     // vector, so no batch-result abstraction is needed and one method serves both the
-    // clear and ZK paths (each supplies its own challenge vector). Opt-in via
-    // `#[sumcheck_batch(derive_opening_points)]`.
-    let derive_points_method = if options.derive_opening_points {
+    // clear and ZK paths (each supplies its own challenge vector).
+    let derive_points_method = {
         let field_bindings = plans.iter().map(|plan| {
             let id = &plan.ident;
             let field = format_ident!("__points_{}", id);
@@ -624,16 +616,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 })
             }
         }
-    } else {
-        quote!()
     };
 
     // Fold the members' expected output claims with the batch coefficients into the
     // final claim the reduction is checked against: `Σ coeff_m * expected_output_m`.
     // A present `Option` member with any absent cell errors rather than silently
     // dropping its term (which would surface as an opaque final-claim mismatch).
-    // Opt-in via `#[sumcheck_batch(expected_final_claim)]`.
-    let expected_final_claim_method = if options.expected_final_claim {
+    let expected_final_claim_method = {
         let output_terms = plans.iter().map(|plan| {
             let id = &plan.ident;
             if plan.is_option {
@@ -696,8 +685,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 ::core::result::Result::Ok(__expected)
             }
         }
-    } else {
-        quote!()
     };
 
     // An all-default `InputPoints` constructor for a stage whose relations read no
@@ -977,17 +964,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // derives serde; the empty serde bound suffices because `F: Field` already
     // implies `Serialize + DeserializeOwned` through the member structs.
     // `verify_clear`'s result: the single-instance reduction plus the named batching
-    // coefficients. Emitted only when `verify_clear` is generated (its return type).
-    let clear_batch_struct = if options.verify_clear {
-        quote! {
-            #[derive(Clone, Debug, PartialEq, Eq)]
-            #vis struct #clear_batch_name<#f: ::jolt_field::Field> {
-                pub reduction: ::jolt_sumcheck::EvaluationClaim<#f>,
-                pub coefficients: #batching_coefficients_name<#f>,
-            }
+    // coefficients.
+    let clear_batch_struct = quote! {
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        #vis struct #clear_batch_name<#f: ::jolt_field::Field> {
+            pub reduction: ::jolt_sumcheck::EvaluationClaim<#f>,
+            pub coefficients: #batching_coefficients_name<#f>,
         }
-    } else {
-        quote!()
     };
 
     Ok(quote! {
@@ -1039,24 +1022,6 @@ struct StageOptions {
     /// `OutputClaims` `opening_values` / `append_to_transcript` inherent impl so the
     /// stage can curate its own (e.g. skipping cross-relation aliased openings).
     custom_opening_values: bool,
-    /// `#[sumcheck_batch(verify_clear)]`: emit the clear-path batched-verify driver
-    /// (`verify_clear`) that folds the members into one combined claim (absorb sums,
-    /// draw coefficients, RLC) and reduces it through the single-instance verifier.
-    verify_clear: bool,
-    /// `#[sumcheck_batch(verify_zk)]`: emit the ZK-path batched-verify driver
-    /// (`verify_zk`) that folds the members' dimensions and checks committed
-    /// consistency through the single-instance verifier.
-    verify_zk: bool,
-    /// `#[sumcheck_batch(derive_opening_points)]`: emit `derive_opening_points`,
-    /// which slices each member's opening point from the batch challenge vector (its
-    /// length-`rounds` suffix) and maps it through the member's
-    /// `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
-    /// aggregate.
-    derive_opening_points: bool,
-    /// `#[sumcheck_batch(expected_final_claim)]`: emit `expected_final_claim`, which
-    /// folds the members' `expected_output` with the batch coefficients into the
-    /// final claim the reduction is checked against.
-    expected_final_claim: bool,
     /// `#[sumcheck_batch(output_shape)]`: emit `output_claim_count` and
     /// `validate_output_claims`, which derive the expected output-claim shape from each
     /// member's `expected_output_openings` (its output `Expr`).
@@ -1101,14 +1066,6 @@ impl StageOptions {
                 };
                 if path.is_ident("custom_opening_values") {
                     options.custom_opening_values = true;
-                } else if path.is_ident("verify_clear") {
-                    options.verify_clear = true;
-                } else if path.is_ident("verify_zk") {
-                    options.verify_zk = true;
-                } else if path.is_ident("derive_opening_points") {
-                    options.derive_opening_points = true;
-                } else if path.is_ident("expected_final_claim") {
-                    options.expected_final_claim = true;
                 } else if path.is_ident("output_shape") {
                     options.output_shape = true;
                 } else if path.is_ident("empty_input_points") {
@@ -1121,9 +1078,8 @@ impl StageOptions {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
-                         `verify_clear`, `verify_zk`, `derive_opening_points`, \
-                         `expected_final_claim`, `output_shape`, `empty_input_points`, \
-                         `validate_claim_presence`, `no_draw_challenges`)",
+                         `output_shape`, `empty_input_points`, `validate_claim_presence`, \
+                         `no_draw_challenges`)",
                     ));
                 }
             }

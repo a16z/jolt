@@ -20,13 +20,7 @@ use super::registers_val_evaluation::RegistersValEvaluation;
 /// opening order absorbed into the transcript, which must match the prover's
 /// commitment order.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    verify_clear,
-    verify_zk,
-    derive_opening_points,
-    expected_final_claim,
-    output_shape
-)]
+#[sumcheck_batch(output_shape)]
 pub struct Stage5Sumchecks<F: Field> {
     pub instruction_read_raf: InstructionReadRaf<F>,
     pub ram_ra_claim_reduction: RamRaClaimReduction<F>,

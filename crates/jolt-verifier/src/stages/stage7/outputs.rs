@@ -32,14 +32,7 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 /// `trusted_advice` / `untrusted_advice` idiom. Each member is its own per-kind
 /// relation type whose produced claims carry a single non-`Option` slot.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    verify_clear,
-    verify_zk,
-    derive_opening_points,
-    expected_final_claim,
-    output_shape,
-    empty_input_points
-)]
+#[sumcheck_batch(output_shape, empty_input_points)]
 pub struct Stage7Sumchecks<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
     /// Final `TrustedAdvice` claim from the trusted advice reduction's address

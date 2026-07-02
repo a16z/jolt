@@ -29,17 +29,11 @@ pub struct Stage1OutputClaims<F: Field> {
 /// `OuterRemainderOutputClaims` in `dimensions.variables()` order (the canonical 35
 /// R1CS-input order), byte-identical to the previous explicit append loop.
 ///
-/// The full driver-flag set applies. `expected_final_claim` additionally requires
+/// `expected_final_claim` additionally requires
 /// the member's late [`bind_coefficients`](OuterRemainder::bind_coefficients)
 /// (its coefficient table depends on the batch's own bound point).
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    verify_clear,
-    verify_zk,
-    derive_opening_points,
-    expected_final_claim,
-    output_shape
-)]
+#[sumcheck_batch(output_shape)]
 pub struct Stage1BatchSumchecks<F: Field> {
     pub outer_remainder: OuterRemainder<F>,
 }

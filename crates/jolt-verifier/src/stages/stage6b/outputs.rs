@@ -65,10 +65,6 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 #[sumcheck_batch(
     custom_opening_values,
     no_draw_challenges,
-    verify_clear,
-    verify_zk,
-    derive_opening_points,
-    expected_final_claim,
     empty_input_points,
     validate_claim_presence
 )]

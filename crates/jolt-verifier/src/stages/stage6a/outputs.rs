@@ -31,7 +31,6 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// (`2 + NUM_BYTECODE_VAL_STAGES`) and the val-stage presence check stay
 /// hand-written in `verify`.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(verify_clear, verify_zk, derive_opening_points, expected_final_claim)]
 pub struct Stage6aSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,

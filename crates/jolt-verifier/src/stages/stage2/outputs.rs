@@ -50,14 +50,7 @@ pub struct Stage2OutputClaims<F: Field> {
 /// and `expected_final_claim` must be fed the alias-filled
 /// [`effective_aggregates`](Stage2BatchOutputClaims::effective_aggregates).
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    custom_opening_values,
-    verify_clear,
-    verify_zk,
-    derive_opening_points,
-    empty_input_points,
-    expected_final_claim
-)]
+#[sumcheck_batch(custom_opening_values, empty_input_points)]
 pub struct Stage2BatchSumchecks<F: Field> {
     pub ram_read_write: RamReadWriteChecking<F>,
     pub product_remainder: ProductRemainder<F>,
