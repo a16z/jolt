@@ -2,93 +2,31 @@
 
 use jolt_crypto::Commitment;
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::Fr;
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, PackedBatch,
-    PrefixPackedProverSetup, PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
+    BatchOpeningScheme, CommitmentScheme, OpeningsError, PackedBatch, PrefixPackedProverSetup,
+    PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
+#[path = "support/common.rs"]
+pub mod common;
 #[path = "support/packed.rs"]
-mod packed_support;
+pub mod packed_support;
 
-use packed_support::{materialize_packed, MaterializedPackedWitness};
+use common::fr;
+use packed_support::{
+    build_packed, independent_claims, packed_claims, packed_polynomials, MaterializedPackedWitness,
+    PackedId,
+};
 
 type PackedDoryBatch = PackedBatch<DoryScheme, PackedId>;
 type DoryOutput = <DoryScheme as Commitment>::Output;
 type DoryOpeningHint = <DoryScheme as CommitmentScheme>::OpeningHint;
 type PackedStatement = PrefixPackedStatement<Fr, PackedId, DoryOutput>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum PackedId {
-    Constant,
-    NarrowA,
-    NarrowB,
-    Medium,
-    Wide,
-    Unused,
-}
-
-fn fr(value: u64) -> Fr {
-    Fr::from_u64(value)
-}
-
-fn packed_polynomials() -> Vec<(PackedId, Polynomial<Fr>)> {
-    let mut rng = ChaCha20Rng::seed_from_u64(0x0a_11_ce);
-    vec![
-        (PackedId::Wide, Polynomial::<Fr>::random(3, &mut rng)),
-        (PackedId::Medium, Polynomial::<Fr>::random(2, &mut rng)),
-        (PackedId::NarrowB, Polynomial::<Fr>::random(1, &mut rng)),
-        (PackedId::NarrowA, Polynomial::<Fr>::random(1, &mut rng)),
-        (PackedId::Constant, Polynomial::new(vec![fr(41)])),
-    ]
-}
-
-fn build_packed(
-    polynomials: &[(PackedId, Polynomial<Fr>)],
-) -> MaterializedPackedWitness<PackedId, Fr> {
-    materialize_packed(polynomials).expect("packed witness should build")
-}
-
-fn packed_claims(
-    polynomials: &[(PackedId, Polynomial<Fr>)],
-    packing: &PrefixPacking<PackedId>,
-    packed_point: &[Fr],
-) -> Vec<(PackedId, EvaluationClaim<Fr>)> {
-    polynomials
-        .iter()
-        .map(|(id, polynomial)| {
-            let logical_point = packing
-                .logical_point(id, packed_point)
-                .expect("packed point should produce logical suffix");
-            (
-                *id,
-                EvaluationClaim::new(logical_point.clone(), polynomial.evaluate(&logical_point)),
-            )
-        })
-        .collect()
-}
-
-fn independent_claims(
-    polynomials: &[(PackedId, Polynomial<Fr>)],
-    rng: &mut ChaCha20Rng,
-) -> Vec<(PackedId, EvaluationClaim<Fr>)> {
-    polynomials
-        .iter()
-        .map(|(id, polynomial)| {
-            let logical_point = (0..polynomial.num_vars())
-                .map(|_| Fr::random(rng))
-                .collect::<Vec<_>>();
-            (
-                *id,
-                EvaluationClaim::new(logical_point.clone(), polynomial.evaluate(&logical_point)),
-            )
-        })
-        .collect()
-}
 
 fn packed_setup(
     packing: PrefixPacking<PackedId>,

@@ -76,9 +76,12 @@ where
     }
 }
 
-/// Incremental commitment without full materialization.
+/// Incremental commitment without full materialization, plus the one-hot
+/// column-major and primitive-typed feed paths used by the streaming prover.
 pub trait StreamingCommitment: CommitmentScheme {
     type PartialCommitment: Clone + Send + Sync;
+    type OneHotChunkCommitment: Clone + Send + Sync;
+    type OneHotStreamContext: Send + Sync;
 
     fn begin(setup: &Self::ProverSetup) -> Self::PartialCommitment;
 
@@ -89,68 +92,6 @@ pub trait StreamingCommitment: CommitmentScheme {
     );
 
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output;
-}
-
-/// Opening proofs that hide the evaluation behind a commitment.
-///
-/// Two commitments with different subjects are in play. The inherited
-/// [`Commitment::Output`](jolt_crypto::Commitment) commits to the
-/// *polynomial* — it is what the verifier already holds when an opening
-/// starts. [`HidingCommitment`](Self::HidingCommitment) commits to the
-/// *evaluation value* at the opening point (e.g. Dory's `y_com`): instead of
-/// revealing the cleartext evaluation, the opening proof binds it inside this
-/// commitment. That is why [`verify_zk`](Self::verify_zk) takes no `eval`
-/// argument and returns the hiding commitment — downstream protocol layers
-/// (e.g. BlindFold) verify relations over the still-hidden evaluation.
-pub trait ZkOpeningScheme: CommitmentScheme {
-    /// Commitment to the evaluation value that an opening proof binds
-    /// internally, in contrast to `Output`, which commits to the polynomial.
-    type HidingCommitment: Clone
-        + Debug
-        + Eq
-        + Send
-        + Sync
-        + 'static
-        + Serialize
-        + DeserializeOwned
-        + AppendToTranscript;
-
-    type Blind: Clone + Send + Sync;
-
-    /// Commit in the scheme's ZK/hiding mode.
-    fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint);
-
-    /// Open a ZK/hiding commitment using the opening hint returned by
-    /// [`commit_zk`](Self::commit_zk).
-    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        point: &[Self::Field],
-        eval: Self::Field,
-        setup: &Self::ProverSetup,
-        hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
-
-    /// Verify a ZK opening proof and return the hiding commitment to the
-    /// evaluation that the proof binds internally.
-    fn verify_zk(
-        commitment: &Self::Output,
-        point: &[Self::Field],
-        proof: &Self::Proof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<Self::HidingCommitment, OpeningsError>;
-}
-
-/// Incremental commitment support for schemes whose hiding/ZK commitment mode
-/// is distinct from the transparent streaming path, plus the one-hot
-/// column-major and primitive-typed feed paths used by the streaming prover.
-pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
-    type OneHotChunkCommitment: Clone + Send + Sync;
-    type OneHotStreamContext: Send + Sync;
 
     fn feed_zeros(
         partial: &mut Self::PartialCommitment,
@@ -209,7 +150,65 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
         one_hot_k: usize,
         chunks: &[Self::OneHotChunkCommitment],
     ) -> (Self::Output, Self::OpeningHint);
+}
 
+/// Opening proofs that hide the evaluation behind a commitment.
+///
+/// Two commitments with different subjects are in play. The inherited
+/// [`Commitment::Output`](jolt_crypto::Commitment) commits to the
+/// *polynomial* — it is what the verifier already holds when an opening
+/// starts. [`HidingCommitment`](Self::HidingCommitment) commits to the
+/// *evaluation value* at the opening point (e.g. Dory's `y_com`): instead of
+/// revealing the cleartext evaluation, the opening proof binds it inside this
+/// commitment. That is why [`verify_zk`](Self::verify_zk) takes no `eval`
+/// argument and returns the hiding commitment — downstream protocol layers
+/// (e.g. BlindFold) verify relations over the still-hidden evaluation.
+pub trait ZkOpeningScheme: CommitmentScheme {
+    /// Commitment to the evaluation value that an opening proof binds
+    /// internally, in contrast to `Output`, which commits to the polynomial.
+    type HidingCommitment: Clone
+        + Debug
+        + Eq
+        + Send
+        + Sync
+        + 'static
+        + Serialize
+        + DeserializeOwned
+        + AppendToTranscript;
+
+    type Blind: Clone + Send + Sync;
+
+    /// Commit in the scheme's ZK/hiding mode.
+    fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint);
+
+    /// Open a ZK/hiding commitment using the opening hint returned by
+    /// [`commit_zk`](Self::commit_zk).
+    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        point: &[Self::Field],
+        eval: Self::Field,
+        setup: &Self::ProverSetup,
+        hint: Self::OpeningHint,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
+
+    /// Verify a ZK opening proof and return the hiding commitment to the
+    /// evaluation that the proof binds internally.
+    fn verify_zk(
+        commitment: &Self::Output,
+        point: &[Self::Field],
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<Self::HidingCommitment, OpeningsError>;
+}
+
+/// Hiding/ZK finish paths for streaming commitments whose ZK commitment mode
+/// is distinct from the transparent streaming path.
+pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
     fn finish_zk_with_hint(
         partial: Self::PartialCommitment,
         setup: &Self::ProverSetup,
@@ -317,20 +316,8 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HomomorphicBatch<PCS>(PhantomData<PCS>);
 
-impl<PCS> HomomorphicBatch<PCS> {
-    pub fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PackedBatch<PCS, Id = u64>(PhantomData<(PCS, Id)>);
-
-impl<PCS, Id> PackedBatch<PCS, Id> {
-    pub fn new() -> Self {
-        Self(PhantomData)
-    }
-}
 
 type HomomorphicRlcSource<'a, F> = RlcSource<F, &'a (dyn MultilinearPoly<F> + 'a)>;
 
@@ -532,10 +519,7 @@ where
         statement.append_to_transcript(transcript);
         let alpha = transcript.challenge_scalar_powers(statement.num_claims());
         let selector = statement.selector_table(&alpha);
-        let mut packed_evaluations = Vec::with_capacity(selector.len());
-        polynomial.for_each_row(packing.packed_num_vars, &mut |_, row| {
-            packed_evaluations.extend_from_slice(row);
-        });
+        let packed_evaluations = polynomial.to_dense().into_owned();
         let (round_polynomials, opening_point, opening_eval) =
             prove_reduction_sumcheck(selector, packed_evaluations, transcript);
         EvaluationClaim::new(opening_point.clone(), opening_eval).append_to_transcript(transcript);
@@ -629,15 +613,6 @@ where
                 commitments.len()
             )));
         }
-        for polynomial in &polynomials {
-            if polynomial.num_vars() != point.len() {
-                return Err(OpeningsError::InvalidBatch(format!(
-                    "polynomial has {} variables but opening point has {}",
-                    polynomial.num_vars(),
-                    point.len()
-                )));
-            }
-        }
         let scalars = transcript.challenge_scalar_powers(commitments.len());
 
         let joint_eval = evaluations
@@ -646,7 +621,7 @@ where
             .fold(PCS::Field::from_u64(0), |acc, (eval, scalar)| {
                 acc + *scalar * *eval
             });
-        let joint_polynomial = RlcSource::new(polynomials, scalars.clone());
+        let joint_polynomial = Self::combine_polynomials(polynomials, &scalars, point.len())?;
         let combined_hint = PCS::combine_hints(hints, &scalars);
         let (proof, hiding_commitment, blind) = PCS::open_zk(
             &joint_polynomial,

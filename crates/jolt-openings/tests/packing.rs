@@ -1,19 +1,18 @@
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Fr, RandomSampling};
 use jolt_openings::{OpeningsError, PrefixPacking};
 use jolt_poly::{boolean_point_msb, eq_index_msb, Polynomial};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
+#[path = "support/common.rs"]
+pub mod common;
 #[path = "support/packed.rs"]
-mod packed_support;
+pub mod packed_support;
 
+use common::fr;
 use packed_support::{materialize_packed, MaterializedPackedWitness};
-
-fn fr(value: u64) -> Fr {
-    Fr::from_u64(value)
-}
 
 fn build_packed(polynomials: &[(u64, Polynomial<Fr>)]) -> MaterializedPackedWitness<u64, Fr> {
     materialize_packed(polynomials).expect("packed polynomial should build")

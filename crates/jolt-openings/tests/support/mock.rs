@@ -67,10 +67,7 @@ where
         poly: &P,
         _setup: &Self::ProverSetup,
     ) -> (Self::Output, ()) {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = poly.to_dense().into_owned();
         (MockCommitment { evaluations }, ())
     }
 
@@ -82,10 +79,7 @@ where
         _hint: Option<()>,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = poly.to_dense().into_owned();
         MockProof { evaluations }
     }
 
@@ -180,10 +174,7 @@ where
         _hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = poly.to_dense().into_owned();
         (MockProof { evaluations }, MockHidingCommitment { eval }, ())
     }
 

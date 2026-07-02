@@ -80,7 +80,10 @@ use std::{
 };
 
 use jolt_field::Field;
-use jolt_poly::{boolean_bits_msb, eq_index_msb, EqPolynomial};
+use jolt_poly::{
+    boolean_bits_msb, eq_index_msb, math::Math, thread::unsafe_allocate_zero_vec, EqPolynomial,
+    Polynomial,
+};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
@@ -92,12 +95,6 @@ use crate::{CommitmentScheme, EvaluationClaim, OpeningsError};
 pub struct PackedPolynomial<Id> {
     pub id: Id,
     pub num_vars: usize,
-}
-
-impl<Id> PackedPolynomial<Id> {
-    pub fn new(id: Id, num_vars: usize) -> Self {
-        Self { id, num_vars }
-    }
 }
 
 impl<Id> From<(Id, usize)> for PackedPolynomial<Id> {
@@ -126,10 +123,16 @@ impl PrefixSlot {
         }
     }
 
-    pub(crate) fn prefix_index(&self) -> usize {
+    /// Prefix bits as an integer (MSB-first).
+    pub fn prefix_index(&self) -> usize {
         self.prefix
             .iter()
             .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
+    }
+
+    /// First packed index of this slot's subcube.
+    pub fn packed_offset(&self) -> usize {
+        self.prefix_index() << self.num_vars
     }
 }
 
@@ -184,8 +187,7 @@ where
                     OpeningsError::InvalidSetup("prefix packing domain size overflow".to_owned())
                 })?;
         }
-        let packed_num_vars =
-            usize::BITS as usize - (total_coefficients - 1).leading_zeros() as usize;
+        let packed_num_vars = total_coefficients.log_2();
         let packed_coefficients = coefficient_count(packed_num_vars)?;
 
         polynomials.sort_by(|left, right| {
@@ -282,7 +284,7 @@ where
     pub(crate) fn prepare_statement<'a, F, C>(
         &'a self,
         statement: &'a PrefixPackedStatement<F, Id, C>,
-    ) -> Result<PreparedPrefixPackedStatement<'a, F, Id, C>, OpeningsError>
+    ) -> Result<PreparedPrefixPackedStatement<'a, F, C>, OpeningsError>
     where
         F: Field,
         Id: Debug,
@@ -316,14 +318,7 @@ where
             ordered_claims.push((id, evaluation, slot));
         }
 
-        if seen.len() != self.slots.len() {
-            let missing = self
-                .slots
-                .keys()
-                .find(|id| !seen.contains(*id))
-                .ok_or_else(|| {
-                    OpeningsError::InvalidBatch("packed batch has duplicate claim ids".to_owned())
-                })?;
+        if let Some(missing) = self.slots.keys().find(|id| !seen.contains(*id)) {
             return Err(OpeningsError::InvalidBatch(format!(
                 "missing claim for packed polynomial id {missing:?}"
             )));
@@ -334,7 +329,10 @@ where
         Ok(PreparedPrefixPackedStatement {
             packed_num_vars: self.packed_num_vars,
             commitment: &statement.commitment,
-            ordered_claims,
+            ordered_claims: ordered_claims
+                .into_iter()
+                .map(|(_, evaluation, slot)| (evaluation, slot))
+                .collect(),
         })
     }
 }
@@ -376,13 +374,13 @@ impl<F, Id, C> PrefixPackedStatement<F, Id, C> {
     }
 }
 
-pub(crate) struct PreparedPrefixPackedStatement<'a, F: Field, Id, C> {
+pub(crate) struct PreparedPrefixPackedStatement<'a, F: Field, C> {
     packed_num_vars: usize,
     pub(crate) commitment: &'a C,
-    ordered_claims: Vec<(&'a Id, &'a EvaluationClaim<F>, &'a PrefixSlot)>,
+    ordered_claims: Vec<(&'a EvaluationClaim<F>, &'a PrefixSlot)>,
 }
 
-impl<F, Id, C> PreparedPrefixPackedStatement<'_, F, Id, C>
+impl<F, C> PreparedPrefixPackedStatement<'_, F, C>
 where
     F: Field,
 {
@@ -396,7 +394,7 @@ where
         self.ordered_claims
             .iter()
             .zip(alpha)
-            .fold(F::zero(), |acc, ((_, evaluation, _), alpha_i)| {
+            .fold(F::zero(), |acc, ((evaluation, _), alpha_i)| {
                 acc + *alpha_i * evaluation.value
             })
     }
@@ -409,9 +407,9 @@ where
     /// entry is zero.
     pub(crate) fn selector_table(&self, alpha: &[F]) -> Vec<F> {
         debug_assert_eq!(self.ordered_claims.len(), alpha.len());
-        let mut table = vec![F::zero(); 1usize << self.packed_num_vars];
-        for ((_, evaluation, slot), alpha_i) in self.ordered_claims.iter().zip(alpha) {
-            let offset = slot.prefix_index() << slot.num_vars;
+        let mut table = unsafe_allocate_zero_vec(1usize << self.packed_num_vars);
+        for ((evaluation, slot), alpha_i) in self.ordered_claims.iter().zip(alpha) {
+            let offset = slot.packed_offset();
             let evals = EqPolynomial::evals(evaluation.point.as_slice(), Some(*alpha_i));
             table[offset..offset + evals.len()].copy_from_slice(&evals);
         }
@@ -423,7 +421,7 @@ where
         debug_assert_eq!(self.ordered_claims.len(), alpha.len());
         self.ordered_claims.iter().zip(alpha).fold(
             F::zero(),
-            |acc, ((_, evaluation, slot), alpha_i)| {
+            |acc, ((evaluation, slot), alpha_i)| {
                 let prefix_len = slot.prefix.len();
                 acc + *alpha_i
                     * eq_index_msb(&packed_point[..prefix_len], slot.prefix_index() as u128)
@@ -436,7 +434,7 @@ where
     }
 }
 
-impl<F, Id, C> AppendToTranscript for PreparedPrefixPackedStatement<'_, F, Id, C>
+impl<F, C> AppendToTranscript for PreparedPrefixPackedStatement<'_, F, C>
 where
     F: Field,
     C: AppendToTranscript,
@@ -449,7 +447,7 @@ where
             b"prefix_pack_claims",
             self.ordered_claims.len() as u64,
         ));
-        for (_, evaluation, slot) in &self.ordered_claims {
+        for (evaluation, slot) in &self.ordered_claims {
             transcript.append(&U64Word(slot.num_vars as u64));
             transcript.append(&LabelWithCount(
                 b"prefix_pack_prefix",
@@ -498,8 +496,8 @@ pub struct PackedBatchProof<F, P> {
 /// Returns the round polynomials, the opening point (high-to-low), and
 /// `W(point)`.
 pub(crate) fn prove_reduction_sumcheck<F, T>(
-    mut selector: Vec<F>,
-    mut witness: Vec<F>,
+    selector: Vec<F>,
+    witness: Vec<F>,
     transcript: &mut T,
 ) -> (Vec<[F; 3]>, Vec<F>, F)
 where
@@ -508,14 +506,16 @@ where
 {
     debug_assert_eq!(selector.len(), witness.len());
     debug_assert!(selector.len().is_power_of_two());
-    let num_rounds = selector.len().ilog2() as usize;
+    let mut selector = Polynomial::new(selector);
+    let mut witness = Polynomial::new(witness);
+    let num_rounds = selector.num_vars();
     let mut round_polynomials = Vec::with_capacity(num_rounds);
     let mut point = Vec::with_capacity(num_rounds);
 
     for _ in 0..num_rounds {
-        let half = selector.len() / 2;
-        let (selector_low, selector_high) = selector.split_at(half);
-        let (witness_low, witness_high) = witness.split_at(half);
+        let half = selector.evaluations().len() / 2;
+        let (selector_low, selector_high) = selector.evaluations().split_at(half);
+        let (witness_low, witness_high) = witness.evaluations().split_at(half);
 
         let mut eval_zero = F::zero();
         let mut eval_one = F::zero();
@@ -533,12 +533,12 @@ where
         append_round_polynomial(&coefficients, transcript);
         let challenge: F = transcript.challenge_scalar();
         point.push(challenge);
-        bind_top_variable(&mut selector, challenge);
-        bind_top_variable(&mut witness, challenge);
+        selector.bind(challenge);
+        witness.bind(challenge);
         round_polynomials.push(coefficients);
     }
 
-    let opening_eval = witness[0];
+    let opening_eval = witness.evaluations()[0];
     (round_polynomials, point, opening_eval)
 }
 
@@ -587,15 +587,6 @@ where
     for coefficient in coefficients {
         coefficient.append_to_transcript(transcript);
     }
-}
-
-fn bind_top_variable<F: Field>(table: &mut Vec<F>, challenge: F) {
-    let half = table.len() / 2;
-    let (low, high) = table.split_at_mut(half);
-    for (low, high) in low.iter_mut().zip(high.iter()) {
-        *low += challenge * (*high - *low);
-    }
-    table.truncate(half);
 }
 
 /// Prover setup for opening a prefix-packed witness with a concrete PCS.

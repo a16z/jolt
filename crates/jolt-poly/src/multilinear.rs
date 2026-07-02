@@ -11,6 +11,8 @@
 //! without materializing the combined table. Its [`fold_rows`](MultilinearPoly::fold_rows)
 //! distributes across constituents, avoiding allocation of the combined table.
 
+use std::borrow::Cow;
+
 use jolt_field::Field;
 
 use crate::Polynomial;
@@ -151,6 +153,21 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
         None
     }
 
+    /// Dense evaluation table: borrowed when the source exposes
+    /// [`dense_evaluations`](Self::dense_evaluations), materialized via
+    /// [`for_each_row`](Self::for_each_row) otherwise.
+    fn to_dense(&self) -> Cow<'_, [F]> {
+        if let Some(evaluations) = self.dense_evaluations() {
+            Cow::Borrowed(evaluations)
+        } else {
+            let mut table = Vec::with_capacity(1usize << self.num_vars());
+            self.for_each_row(self.num_vars(), &mut |_, row| {
+                table.extend_from_slice(row);
+            });
+            Cow::Owned(table)
+        }
+    }
+
     /// Iterates over positions whose value is exactly `F::one()`.
     ///
     /// Only implementations that return true from [`is_one_hot`](Self::is_one_hot)
@@ -270,146 +287,59 @@ impl<F: Field> MultilinearPoly<F> for Vec<F> {
     }
 }
 
-impl<F, P> MultilinearPoly<F> for &P
-where
-    F: Field,
-    P: MultilinearPoly<F> + ?Sized,
-{
-    #[inline]
-    fn num_vars(&self) -> usize {
-        (**self).num_vars()
-    }
+/// Forwards every `MultilinearPoly` method through a pointer-like wrapper.
+macro_rules! forward_multilinear_poly {
+    ($($wrapper:ty),* $(,)?) => {$(
+        impl<F, P> MultilinearPoly<F> for $wrapper
+        where
+            F: Field,
+            P: MultilinearPoly<F> + ?Sized,
+        {
+            #[inline]
+            fn num_vars(&self) -> usize {
+                (**self).num_vars()
+            }
 
-    fn evaluate(&self, point: &[F]) -> F {
-        (**self).evaluate(point)
-    }
+            fn evaluate(&self, point: &[F]) -> F {
+                (**self).evaluate(point)
+            }
 
-    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        (**self).for_each_row(sigma, f);
-    }
+            fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+                (**self).for_each_row(sigma, f);
+            }
 
-    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        (**self).fold_rows(left, sigma)
-    }
+            fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+                (**self).fold_rows(left, sigma)
+            }
 
-    fn is_one_hot(&self) -> bool {
-        (**self).is_one_hot()
-    }
+            fn is_one_hot(&self) -> bool {
+                (**self).is_one_hot()
+            }
 
-    fn one_hot_k(&self) -> Option<usize> {
-        (**self).one_hot_k()
-    }
+            fn one_hot_k(&self) -> Option<usize> {
+                (**self).one_hot_k()
+            }
 
-    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
-        (**self).one_hot_indices()
-    }
+            fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
+                (**self).one_hot_indices()
+            }
 
-    fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
-        (**self).one_hot_index_order()
-    }
+            fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
+                (**self).one_hot_index_order()
+            }
 
-    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
-        (**self).for_each_one(f);
-    }
+            fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
+                (**self).for_each_one(f);
+            }
 
-    fn dense_evaluations(&self) -> Option<&[F]> {
-        (**self).dense_evaluations()
-    }
+            fn dense_evaluations(&self) -> Option<&[F]> {
+                (**self).dense_evaluations()
+            }
+        }
+    )*};
 }
 
-impl<F, P> MultilinearPoly<F> for Box<P>
-where
-    F: Field,
-    P: MultilinearPoly<F> + ?Sized,
-{
-    #[inline]
-    fn num_vars(&self) -> usize {
-        (**self).num_vars()
-    }
-
-    fn evaluate(&self, point: &[F]) -> F {
-        (**self).evaluate(point)
-    }
-
-    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        (**self).for_each_row(sigma, f);
-    }
-
-    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        (**self).fold_rows(left, sigma)
-    }
-
-    fn is_one_hot(&self) -> bool {
-        (**self).is_one_hot()
-    }
-
-    fn one_hot_k(&self) -> Option<usize> {
-        (**self).one_hot_k()
-    }
-
-    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
-        (**self).one_hot_indices()
-    }
-
-    fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
-        (**self).one_hot_index_order()
-    }
-
-    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
-        (**self).for_each_one(f);
-    }
-
-    fn dense_evaluations(&self) -> Option<&[F]> {
-        (**self).dense_evaluations()
-    }
-}
-
-impl<F, P> MultilinearPoly<F> for std::sync::Arc<P>
-where
-    F: Field,
-    P: MultilinearPoly<F> + ?Sized,
-{
-    #[inline]
-    fn num_vars(&self) -> usize {
-        (**self).num_vars()
-    }
-
-    fn evaluate(&self, point: &[F]) -> F {
-        (**self).evaluate(point)
-    }
-
-    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        (**self).for_each_row(sigma, f);
-    }
-
-    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        (**self).fold_rows(left, sigma)
-    }
-
-    fn is_one_hot(&self) -> bool {
-        (**self).is_one_hot()
-    }
-
-    fn one_hot_k(&self) -> Option<usize> {
-        (**self).one_hot_k()
-    }
-
-    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
-        (**self).one_hot_indices()
-    }
-
-    fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
-        (**self).one_hot_index_order()
-    }
-
-    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
-        (**self).for_each_one(f);
-    }
-
-    fn dense_evaluations(&self) -> Option<&[F]> {
-        (**self).dense_evaluations()
-    }
-}
+forward_multilinear_poly!(&P, Box<P>, std::sync::Arc<P>);
 
 // ---------------------------------------------------------------------------
 // RlcSource — lazy random linear combination

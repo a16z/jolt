@@ -8,7 +8,7 @@
     reason = "KZG operations return Result for API symmetry; with a correctly-sized SRS and well-formed inputs these errors are unreachable"
 )]
 
-use std::{borrow::Cow, marker::PhantomData};
+use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::{FromPrimitiveInt, RandomSampling};
@@ -242,24 +242,6 @@ impl<P: PairingGroup> DeriveSetup<HyperKZGProverSetup<P>> for PedersenSetup<P::G
     }
 }
 
-/// HyperKZG always works on dense evaluations: borrow them when the source is
-/// already dense, materialize a copy only for lazy sources.
-fn dense_table<F, S>(poly: &S) -> Cow<'_, [F]>
-where
-    F: jolt_field::Field,
-    S: MultilinearPoly<F> + ?Sized,
-{
-    if let Some(evaluations) = poly.dense_evaluations() {
-        Cow::Borrowed(evaluations)
-    } else {
-        let mut table = Vec::with_capacity(1usize << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            table.extend_from_slice(row);
-        });
-        Cow::Owned(table)
-    }
-}
-
 impl<P: PairingGroup> Commitment for HyperKZGScheme<P> {
     type Output = HyperKZGCommitment<P>;
 }
@@ -294,7 +276,9 @@ where
         poly: &S,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        let evaluations = dense_table(poly);
+        // HyperKZG always works on dense evaluations; `to_dense` borrows them
+        // when the source is already dense.
+        let evaluations = poly.to_dense();
         let point = kzg::kzg_commit::<P>(&evaluations, setup)
             .expect("SRS must be large enough for the polynomial");
         (HyperKZGCommitment { point }, ())
@@ -308,7 +292,7 @@ where
         _hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        let evaluations = dense_table(poly);
+        let evaluations = poly.to_dense();
         Self::open(setup, &evaluations, point, transcript)
             .expect("HyperKZG open should not fail with valid inputs")
     }
