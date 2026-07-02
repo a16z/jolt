@@ -756,8 +756,10 @@ mod tests {
         type OpeningHint = ();
         type SetupParams = ();
 
-        fn setup(_params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
-            ((), ())
+        fn setup(
+            _params: Self::SetupParams,
+        ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
+            Ok(((), ()))
         }
 
         fn verifier_setup(_prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
@@ -765,8 +767,8 @@ mod tests {
         fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
             _poly: &P,
             _setup: &Self::ProverSetup,
-        ) -> (Self::Output, Self::OpeningHint) {
-            (TestCommitment, ())
+        ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+            Ok((TestCommitment, ()))
         }
 
         fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
@@ -776,7 +778,8 @@ mod tests {
             _setup: &Self::ProverSetup,
             _hint: Option<Self::OpeningHint>,
             _transcript: &mut impl Transcript<Challenge = Self::Field>,
-        ) -> Self::Proof {
+        ) -> Result<Self::Proof, OpeningsError> {
+            Ok(())
         }
 
         fn verify(

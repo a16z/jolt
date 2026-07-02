@@ -4,7 +4,7 @@
 )]
 
 use jolt_akita::{
-    AkitaBlackBoxBatchStatement, AkitaBlackBoxBatchWitness, AkitaCommitment, AkitaField,
+    AkitaCommitment, AkitaField, AkitaNativeBatchStatement, AkitaNativeBatchWitness,
     AkitaProverHint, AkitaScheme, AkitaSetupParams,
 };
 use jolt_openings::{
@@ -49,9 +49,10 @@ pub fn setup_for(
         max_num_polys_per_commitment_group,
         layout_digest,
     ))
+    .expect("Akita setup should succeed")
 }
 
-pub fn black_box_setup() -> (
+pub fn native_setup() -> (
     <AkitaScheme as CommitmentScheme>::ProverSetup,
     <AkitaScheme as CommitmentScheme>::VerifierSetup,
 ) {
@@ -78,11 +79,11 @@ pub fn packed_setup<Id: Clone>(
     )
 }
 
-pub fn black_box_statement(
+pub fn native_statement(
     commitment: AkitaCommitment,
     point: &[AkitaField],
     evaluations: impl IntoIterator<Item = AkitaField>,
-) -> AkitaBlackBoxBatchStatement {
+) -> AkitaNativeBatchStatement {
     evaluations
         .into_iter()
         .map(|evaluation| VerifierOpeningClaim {
@@ -96,14 +97,14 @@ pub fn single_statement(
     commitment: AkitaCommitment,
     point: &[AkitaField],
     eval: AkitaField,
-) -> AkitaBlackBoxBatchStatement {
-    black_box_statement(commitment, point, [eval])
+) -> AkitaNativeBatchStatement {
+    native_statement(commitment, point, [eval])
 }
 
 pub fn batch_witness<'a>(
     polynomials: impl IntoIterator<Item = &'a Polynomial<AkitaField>>,
     hint: AkitaProverHint,
-) -> AkitaBlackBoxBatchWitness<'a> {
+) -> AkitaNativeBatchWitness<'a> {
     (
         polynomials
             .into_iter()
@@ -165,15 +166,6 @@ where
             )
         })
         .collect()
-}
-
-pub fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(test)
-        .expect("test thread should spawn")
-        .join()
-        .expect("test thread should complete");
 }
 
 fn prefix_index(prefix: &[bool]) -> usize {

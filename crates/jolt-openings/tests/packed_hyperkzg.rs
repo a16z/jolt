@@ -1,4 +1,8 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof paths")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use jolt_crypto::{Bn254, Commitment};
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -130,7 +134,7 @@ fn hyperkzg_prefix_packed_batch_roundtrip_complex_mixed_arities() {
 
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
     let (commitment, hint) =
-        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs);
+        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let statement = PrefixPackedStatement::new(commitment, claims);
@@ -162,7 +166,7 @@ fn hyperkzg_prefix_packed_batch_rejects_missing_logical_slot() {
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
     let (commitment, hint) =
-        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs);
+        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let _dropped = claims.pop();
@@ -183,7 +187,7 @@ fn hyperkzg_prefix_packed_batch_rejects_wrong_logical_arity() {
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
     let (commitment, hint) =
-        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs);
+        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let wide = claims
@@ -210,7 +214,7 @@ fn hyperkzg_prefix_packed_batch_rejects_unknown_id() {
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
     let (commitment, hint) =
-        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs);
+        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     claims[0].id = PackedId::Unused;
@@ -231,7 +235,7 @@ fn hyperkzg_prefix_packed_batch_rejects_tampered_value() {
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
     let (commitment, hint) =
-        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs);
+        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
@@ -260,12 +264,12 @@ fn hyperkzg_prefix_packed_batch_rejects_wrong_packed_commitment() {
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
     let (commitment, hint) =
-        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs);
+        <KzgPCS as CommitmentScheme>::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let mut other_evals = packed.polynomial.evaluations().to_vec();
     other_evals[0] += fr(1);
     let other_polynomial = Polynomial::new(other_evals);
     let (other_commitment, ()) =
-        <KzgPCS as CommitmentScheme>::commit(&other_polynomial, &prover_setup.pcs);
+        <KzgPCS as CommitmentScheme>::commit(&other_polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(11), fr(13), fr(17), fr(19), fr(23)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(

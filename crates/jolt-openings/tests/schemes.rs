@@ -2,6 +2,10 @@
     clippy::expect_used,
     reason = "tests assert successful batch proof results"
 )]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_openings::{
@@ -40,7 +44,7 @@ fn clear_claims(
     polynomials
         .iter()
         .map(|polynomial| {
-            let (commitment, ()) = MockPCS::commit(polynomial, &());
+            let (commitment, ()) = MockPCS::commit(polynomial, &()).unwrap();
             VerifierOpeningClaim {
                 commitment,
                 evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(point)),
@@ -155,7 +159,11 @@ fn homomorphic_batch_opening_rejects_mismatched_witness_count() {
 fn zk_commitments(polynomials: &[Polynomial<Fr>]) -> Vec<MockCommitment<Fr>> {
     polynomials
         .iter()
-        .map(|polynomial| <MockPCS as ZkOpeningScheme>::commit_zk(polynomial, &()).0)
+        .map(|polynomial| {
+            <MockPCS as ZkOpeningScheme>::commit_zk(polynomial, &())
+                .unwrap()
+                .0
+        })
         .collect()
 }
 

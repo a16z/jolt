@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, io::Cursor, sync::Arc};
 
 use akita_config::CommitmentConfig;
 use akita_field::PseudoMersenneField;
-use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
+use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize, RootPolyShape};
 use akita_prover::{CpuPreparedSetup, DensePoly, OneHotPoly, SparseRingPoly};
 use akita_transcript::Transcript as AkitaBackendTranscript;
 use akita_types::{
@@ -76,9 +76,6 @@ impl AkitaSetupParams {
 
 #[derive(Clone, Debug)]
 pub struct AkitaProverSetup {
-    pub(crate) max_num_vars: usize,
-    pub(crate) max_num_polys_per_commitment_group: usize,
-    pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) backend_prover_setup: akita_prover::AkitaProverSetup<AkitaField, AKITA_D>,
     pub(crate) prepared_backend_setup: AkitaBackendPreparedSetup,
     pub(crate) one_hot_backend_prover_setup:
@@ -89,15 +86,15 @@ pub struct AkitaProverSetup {
 
 impl AkitaProverSetup {
     pub fn max_num_vars(&self) -> usize {
-        self.max_num_vars
+        self.verifier.max_num_vars
     }
 
     pub fn max_num_polys_per_commitment_group(&self) -> usize {
-        self.max_num_polys_per_commitment_group
+        self.verifier.max_num_polys_per_commitment_group
     }
 
     pub fn default_layout_digest(&self) -> [u8; 32] {
-        self.default_layout_digest
+        self.verifier.default_layout_digest
     }
 }
 
@@ -324,10 +321,13 @@ pub struct AkitaProverHint {
     pub(crate) commitment: AkitaCommitment,
     pub(crate) backend_commitment: Option<AkitaBackendCommitment>,
     pub(crate) backend_hint: Option<AkitaBackendHint>,
-    pub(crate) backend_polynomials: Option<AkitaHintPolynomials>,
-    pub(crate) source_kind: AkitaSourceKind,
+    pub(crate) polynomials: AkitaHintPolynomials,
 }
 
+/// Backend representation of the committed polynomials, produced at commit
+/// time and reused when opening. The variant doubles as the source-kind
+/// discriminator, so a hint can never pair one kind's metadata with another
+/// kind's polynomials.
 #[derive(Clone, Debug)]
 pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
@@ -335,19 +335,33 @@ pub(crate) enum AkitaHintPolynomials {
     SparseUnit(Arc<[AkitaBackendSparsePoly]>),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum AkitaSourceKind {
-    #[default]
-    Dense,
-    OneHot,
-    SparseUnit,
+impl Default for AkitaHintPolynomials {
+    fn default() -> Self {
+        Self::Dense(Vec::new().into())
+    }
 }
 
-impl AkitaSourceKind {
-    pub(crate) const fn backend_flavor(self) -> AkitaBackendFlavor {
+impl AkitaHintPolynomials {
+    pub(crate) const fn backend_flavor(&self) -> AkitaBackendFlavor {
         match self {
-            Self::Dense | Self::SparseUnit => AkitaBackendFlavor::Full,
-            Self::OneHot => AkitaBackendFlavor::OneHot,
+            Self::Dense(_) | Self::SparseUnit(_) => AkitaBackendFlavor::Full,
+            Self::OneHot(_) => AkitaBackendFlavor::OneHot,
+        }
+    }
+
+    pub(crate) const fn kind(&self) -> &'static str {
+        match self {
+            Self::Dense(_) => "dense",
+            Self::OneHot(_) => "one_hot",
+            Self::SparseUnit(_) => "sparse_unit",
+        }
+    }
+
+    pub(crate) fn poly_dims(&self) -> Vec<usize> {
+        match self {
+            Self::Dense(polys) => polys.iter().map(|poly| poly.num_vars()).collect(),
+            Self::OneHot(polys) => polys.iter().map(|poly| poly.num_vars()).collect(),
+            Self::SparseUnit(polys) => polys.iter().map(|poly| poly.num_vars()).collect(),
         }
     }
 }
@@ -531,13 +545,13 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
     )
 }
 
-pub(crate) struct AkitaBlackBoxBatchStatementTranscript<'a> {
+pub(crate) struct AkitaNativeBatchStatementTranscript<'a> {
     statement: &'a [VerifierOpeningClaim<AkitaField, AkitaCommitment>],
     commitment: &'a AkitaCommitment,
     point: &'a [AkitaField],
 }
 
-impl<'a> AkitaBlackBoxBatchStatementTranscript<'a> {
+impl<'a> AkitaNativeBatchStatementTranscript<'a> {
     pub(crate) fn new(
         statement: &'a [VerifierOpeningClaim<AkitaField, AkitaCommitment>],
         commitment: &'a AkitaCommitment,
@@ -551,7 +565,7 @@ impl<'a> AkitaBlackBoxBatchStatementTranscript<'a> {
     }
 }
 
-impl AppendToTranscript for AkitaBlackBoxBatchStatementTranscript<'_> {
+impl AppendToTranscript for AkitaNativeBatchStatementTranscript<'_> {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         transcript.append(&Label(b"akita_batch_statement"));
         self.commitment.append_to_transcript(transcript);

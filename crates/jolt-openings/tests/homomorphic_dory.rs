@@ -1,4 +1,8 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof paths")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use jolt_crypto::Commitment;
 use jolt_dory::DoryScheme;
@@ -48,7 +52,7 @@ fn clear_claims<'a>(
     let mut claims = Vec::with_capacity(polynomials.len());
     let mut witness = Vec::with_capacity(polynomials.len());
     for polynomial in polynomials {
-        let (commitment, hint) = DoryScheme::commit(polynomial, setup);
+        let (commitment, hint) = DoryScheme::commit(polynomial, setup).unwrap();
         claims.push(VerifierOpeningClaim {
             commitment,
             evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(point)),
@@ -160,7 +164,7 @@ fn dory_homomorphic_zk_batch_roundtrip() {
         Vec::with_capacity(polynomials.len());
     for polynomial in &polynomials {
         let (commitment, hint) =
-            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup);
+            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup).unwrap();
         commitments.push(commitment);
         witness.push((
             polynomial as &dyn MultilinearPoly<Fr>,
@@ -203,7 +207,7 @@ fn dory_homomorphic_zk_batch_rejects_witness_count_mismatch() {
         Vec::with_capacity(polynomials.len());
     for polynomial in &polynomials {
         let (commitment, hint) =
-            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup);
+            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup).unwrap();
         commitments.push(commitment);
         witness.push((
             polynomial as &dyn MultilinearPoly<Fr>,

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_crypto::Bn254;
@@ -94,7 +99,7 @@ fn bench_verify(c: &mut Criterion) {
                         let poly = Polynomial::<Fr>::random(nv, &mut rng);
                         let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
-                        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+                        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify");
                         let proof = <TestScheme as CommitmentScheme>::open(
@@ -104,7 +109,8 @@ fn bench_verify(c: &mut Criterion) {
                             &pk,
                             None,
                             &mut transcript,
-                        );
+                        )
+                        .unwrap();
                         (commitment, point, eval, proof)
                     },
                     |(commitment, point, eval, proof)| {
@@ -138,7 +144,7 @@ fn bench_combine(c: &mut Criterion) {
         let commitments: Vec<_> = (0..count)
             .map(|_| {
                 let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-                let (c, ()) = TestScheme::commit(poly.evaluations(), &pk);
+                let (c, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
                 c
             })
             .collect();

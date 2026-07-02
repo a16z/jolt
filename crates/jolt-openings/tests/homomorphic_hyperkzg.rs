@@ -1,4 +1,8 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof paths")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use jolt_crypto::{Bn254, Commitment};
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
@@ -60,7 +64,7 @@ fn clear_claims<'a>(
     let mut claims = Vec::with_capacity(polynomials.len());
     let mut witness = Vec::with_capacity(polynomials.len());
     for polynomial in polynomials {
-        let (commitment, hint) = <KzgPCS as CommitmentScheme>::commit(polynomial, setup);
+        let (commitment, hint) = <KzgPCS as CommitmentScheme>::commit(polynomial, setup).unwrap();
         claims.push(VerifierOpeningClaim {
             commitment,
             evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(point)),

@@ -1,4 +1,8 @@
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::{
@@ -257,7 +261,7 @@ fn materialized_packed_witness_rejects_duplicate_ids_and_empty_builds() {
 fn prefix_packed_batch_roundtrip_with_statement() {
     let polynomials = same_arity_polynomials();
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     let statement = PrefixPackedStatement::new(commitment, claims);
 
@@ -295,7 +299,7 @@ fn prefix_packed_batch_roundtrip_mixed_arities_without_padding() {
     assert_eq!(packed.packing.packed_num_vars, 4);
 
     let packed_point = vec![fr(2), fr(3), fr(5), fr(7)];
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let claims = claims_for_packed_point(&polynomials, &packed.packing, &packed_point);
     let statement = PrefixPackedStatement::new(commitment, claims);
 
@@ -322,7 +326,7 @@ fn prefix_packed_batch_rejects_missing_packed_slot() {
         (2, Polynomial::new(vec![fr(23), fr(29)])),
     ];
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
 
     let claims_arity_two = claims_for(&polynomials, &[0, 1], vec![fr(3), fr(5)]);
     let statement = PrefixPackedStatement::new(commitment, claims_arity_two);
@@ -357,7 +361,7 @@ fn prefix_packed_batch_rejects_empty_claims() {
 fn prefix_packed_batch_rejects_unknown_id() {
     let polynomials = same_arity_polynomials();
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let mut claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     let proof = prove_packed(
         &packed,
@@ -383,7 +387,7 @@ fn prefix_packed_batch_rejects_suffix_incompatible_mixed_arity_claims() {
         (1, Polynomial::new(vec![fr(13), fr(17)])),
     ];
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let claims = vec![
         PrefixPackedClaim::new(
             0,
@@ -414,7 +418,7 @@ fn prefix_packed_batch_rejects_suffix_incompatible_mixed_arity_claims() {
 fn prefix_packed_batch_rejects_mismatched_logical_points() {
     let polynomials = same_arity_polynomials();
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let mut claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     claims[1].evaluation.point = vec![fr(8), fr(13)].into();
     let statement = PrefixPackedStatement::new(commitment, claims);
@@ -435,8 +439,8 @@ fn prefix_packed_batch_rejects_wrong_packed_commitment() {
     let polynomials = same_arity_polynomials();
     let packed = build_packed(&polynomials);
     let other_packed = build_packed(&[(0, Polynomial::new(vec![fr(1), fr(1), fr(1), fr(1)]))]);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
-    let (other_commitment, ()) = MockPCS::commit(&other_packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
+    let (other_commitment, ()) = MockPCS::commit(&other_packed.polynomial, &()).unwrap();
     let claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     let proof = prove_packed(
         &packed,
@@ -457,7 +461,7 @@ fn prefix_packed_batch_rejects_wrong_packed_commitment() {
 fn prefix_packed_batch_rejects_tampered_id_even_when_id_is_known() {
     let polynomials = same_arity_polynomials();
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     let proof = prove_packed(
         &packed,
@@ -481,7 +485,7 @@ fn prefix_packed_batch_rejects_tampered_id_even_when_id_is_known() {
 fn prefix_packed_batch_rejects_tampered_value() {
     let polynomials = same_arity_polynomials();
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     let proof = prove_packed(
         &packed,
@@ -505,7 +509,7 @@ fn prefix_packed_batch_rejects_tampered_value() {
 fn prefix_packed_batch_rejects_wrong_witness_dimension() {
     let polynomials = same_arity_polynomials();
     let packed = build_packed(&polynomials);
-    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &());
+    let (commitment, hint) = MockPCS::commit(&packed.polynomial, &()).unwrap();
     let claims = claims_for(&polynomials, &[0, 1], vec![fr(2), fr(5)]);
     let statement = PrefixPackedStatement::new(commitment, claims);
     let (prover_setup, _) = packed_setup(packed.packing);

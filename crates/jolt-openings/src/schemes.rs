@@ -34,14 +34,16 @@ pub trait CommitmentScheme: Commitment {
 
     type SetupParams;
 
-    fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup);
+    fn setup(
+        params: Self::SetupParams,
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint);
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
     fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
@@ -50,7 +52,7 @@ pub trait CommitmentScheme: Commitment {
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof;
+    ) -> Result<Self::Proof, OpeningsError>;
 
     fn verify(
         commitment: &Self::Output,
@@ -110,10 +112,14 @@ pub trait ZkOpeningScheme: CommitmentScheme {
     fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint);
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
     /// Open a ZK/hiding commitment using the opening hint returned by
     /// [`commit_zk`](Self::commit_zk).
+    #[expect(
+        clippy::type_complexity,
+        reason = "ZK openings return the native proof, hiding commitment, and blind"
+    )]
     fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         point: &[Self::Field],
@@ -121,7 +127,7 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
+    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>;
 
     /// Verify a ZK opening proof and return the hiding commitment to the
     /// evaluation that the proof binds internally.
@@ -347,7 +353,7 @@ where
             setup,
             Some(combined_hint),
             transcript,
-        );
+        )?;
         EvaluationClaim::new(statement.point.clone(), joint_eval).append_to_transcript(transcript);
         Ok(proof)
     }
@@ -508,7 +514,7 @@ where
             &setup.pcs,
             Some(witness.hint),
             transcript,
-        );
+        )?;
         EvaluationClaim::new(opening_point, opening_eval).append_to_transcript(transcript);
         Ok(native)
     }
@@ -603,7 +609,7 @@ where
             setup,
             combined_hint,
             transcript,
-        );
+        )?;
         ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment)
             .append_to_transcript(transcript);
         Ok((proof, hiding_commitment, blind))
