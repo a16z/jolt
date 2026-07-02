@@ -27,7 +27,7 @@ use crate::{challenge, derived, opening, OutputClaims, SumcheckChallenges, Symbo
 ///
 /// The selector is the existing `OpFlags(Store)` virtual polynomial, so its
 /// opening is bound to the actual bytecode Store flag by the same read-raf
-/// val-stage machinery that discharges every other flag consumer — no
+/// val-stage machinery that binds every other flag consumer — no
 /// dedicated store-binding relation is needed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(

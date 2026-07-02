@@ -1,7 +1,7 @@
 //! Semantic integration tests for the lattice module: build concrete one-hot
 //! witness data, pack it, and check the *identities* the relations and views
-//! claim — sizes, slot placement, the fused-inc chunk reconstruction, and the
-//! decode views — against real multilinear evaluations.
+//! claim — sizes, slot placement, the fused-inc chunk reconstruction, and
+//! the packed-column reconstructions — against real multilinear evaluations.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     committed_lane_vars, committed_lanes, BYTECODE_LANE_LAYOUT,
@@ -9,8 +9,8 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::{
-    advice_word_decode_terms, bytecode_chunk_decode_terms, proof_packing, DecodeTerm,
-    LatticeColumn, ProofPackingShape, UnsignedIncChunking,
+    advice_word_reconstruction_terms, bytecode_chunk_reconstruction_terms, proof_packing,
+    LatticeColumn, ProofPackingShape, ReconstructionTerm, UnsignedIncChunking,
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::{Fr, FromPrimitiveInt, RingCore};
@@ -225,14 +225,14 @@ fn chunk_decomposition_reconstructs_signed_increments() {
     assert_eq!(reconstructed, fused + Fr::pow2(64) * (fr(1) - msb));
 }
 
-/// The bytecode lane decode view: a committed `BytecodeChunk` polynomial
+/// The bytecode lane reconstruction: a committed `BytecodeChunk` polynomial
 /// built row-by-row from the lane layout must equal the weighted sum of its
 /// decomposed sub-columns at every `(lane_point ‖ row_point)` — pinning the
 /// lane offsets, the byte decodes, the plain-0/1 flag encoding, and the
 /// zeroing of capacity-padding lanes and padded lookup symbols.
 #[test]
 #[expect(clippy::unwrap_used, clippy::panic)]
-fn bytecode_lane_decode_matches_committed_chunk() {
+fn bytecode_lane_reconstruction_matches_committed_chunk() {
     let log_rows = 2;
     let rows = 1 << log_rows;
     let chunk = 0;
@@ -293,7 +293,7 @@ fn bytecode_lane_decode_matches_committed_chunk() {
         lane(layout.raf_flag_idx, row, fr(u64::from(data.raf)));
     }
 
-    // The decomposed sub-columns, keyed the way the decode terms address
+    // The decomposed sub-columns, keyed the way the reconstruction terms address
     // them: cell index over the (symbol ‖ limb) prefix, row as suffix.
     let sub_column = |column: &LatticeColumn| -> Vec<Fr> {
         match *column {
@@ -354,8 +354,8 @@ fn bytecode_lane_decode_matches_committed_chunk() {
     let row_point = point(log_rows, 4);
     let eq_row = EqPolynomial::<Fr>::evals(&row_point, None);
 
-    let terms: Vec<DecodeTerm<Fr>> =
-        bytecode_chunk_decode_terms(chunk, &lane_point, imm_byte_width).unwrap();
+    let terms: Vec<ReconstructionTerm<Fr>> =
+        bytecode_chunk_reconstruction_terms(chunk, &lane_point, imm_byte_width).unwrap();
 
     // Materialize each referenced sub-column once, partially evaluated over
     // the row variables.
@@ -390,15 +390,15 @@ fn bytecode_lane_decode_matches_committed_chunk() {
     assert_eq!(
         eval_mle(&chunk_data, &full_point),
         decoded,
-        "lane decode terms must reconstruct the committed chunk evaluation"
+        "lane reconstruction terms must rebuild the committed chunk evaluation"
     );
 }
 
-/// The advice word decode view and the byte-validity hamming leg over
+/// The advice word reconstruction and the byte-validity hamming leg over
 /// concrete words, including a zero "padding" word (one-hot of zero, so the
 /// per-position hamming sum stays 1).
 #[test]
-fn advice_byte_view_decodes_words_and_keeps_hamming_one() {
+fn advice_byte_column_reconstructs_words_and_keeps_hamming_one() {
     let word_vars = 2;
     let words = [0x0123_4567_89ab_cdef, 42, 0, u64::MAX];
     let column = word_byte_column(&words, word_vars);
@@ -416,7 +416,7 @@ fn advice_byte_view_decodes_words_and_keeps_hamming_one() {
         })
         .collect();
 
-    let decoded: Fr = advice_word_decode_terms::<Fr>(JoltAdviceKind::Untrusted)
+    let decoded: Fr = advice_word_reconstruction_terms::<Fr>(JoltAdviceKind::Untrusted)
         .iter()
         .map(|term| term.weight * partials[term.cell])
         .sum();

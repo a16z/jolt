@@ -372,8 +372,8 @@ where
                 | JoltCommittedPolynomial::UnsignedIncMsb
                 | JoltCommittedPolynomial::TrustedAdviceBytes
                 | JoltCommittedPolynomial::UntrustedAdviceBytes => {
-                    // Lattice-mode columns discharge through the packed
-                    // opening (`lattice::packing::final_opening`), never the
+                    // Lattice-mode columns open through the packed opening
+                    // (`lattice::packing::final_opening`), never the
                     // homomorphic stage 8 RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(

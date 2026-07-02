@@ -4,8 +4,8 @@
 //!
 //! This module names facts only — the packed column set and its canonical
 //! registration with `jolt-openings::PrefixPacking` (the single source of
-//! truth for slot assignment), decode-view term lists, the extra relations,
-//! and the final-opening discharge map. Witness materialization, transcripts,
+//! truth for slot assignment), reconstruction term lists, the extra
+//! relations, and the final-opening map. Witness materialization, transcripts,
 //! and stage orchestration live in the verifier/prover crates.
 
 pub mod geometry;
@@ -16,7 +16,8 @@ pub use geometry::{
     LatticeGeometryError, UnsignedIncChunking, LATTICE_BYTECODE_VAL_STAGES, UNSIGNED_INC_BITS,
 };
 pub use packing::{
-    advice_word_decode_terms, byte_decode_terms, bytecode_chunk_decode_terms, final_opening,
-    precommitted_packing, program_image_word_decode_terms, proof_packing, BytecodeRegisterLane,
-    DecodeTerm, LatticeColumn, LatticeFinalOpening, PrecommittedPackingShape, ProofPackingShape,
+    advice_word_reconstruction_terms, byte_reconstruction_terms,
+    bytecode_chunk_reconstruction_terms, final_opening, precommitted_packing,
+    program_image_word_reconstruction_terms, proof_packing, BytecodeRegisterLane, LatticeColumn,
+    LatticeFinalOpening, PrecommittedPackingShape, ProofPackingShape, ReconstructionTerm,
 };

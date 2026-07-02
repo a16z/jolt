@@ -1,6 +1,6 @@
 //! The packed-witness semantics in one place: the column ids, the canonical
-//! packing registration, the decode views over decomposed columns, and the
-//! final-opening discharge map.
+//! packing registration, the reconstruction term lists for decomposed columns,
+//! and the final-opening map.
 //!
 //! `jolt-openings::PrefixPacking` is the single source of truth for slot
 //! assignment — [`proof_packing`]/[`precommitted_packing`] register the
@@ -45,7 +45,7 @@ impl BytecodeRegisterLane {
 ///
 /// A column with in-protocol openings is a (lattice-mode) committed
 /// polynomial and wraps its [`JoltCommittedPolynomial`] id; a precommitted
-/// sub-column is only ever reached through a decode view and gets its own
+/// sub-column is only ever reached through a reconstruction and gets its own
 /// variant with no opening-id identity.
 ///
 /// WARNING: `Ord` is protocol data — `PrefixPacking` assigns slots by
@@ -97,7 +97,7 @@ impl From<JoltCommittedPolynomial> for LatticeColumn {
 }
 
 /// Shape of the per-proof packed commitment: every prover-supplied column is
-/// a slot of one packed witness, so a single Akita opening discharges the
+/// a slot of one packed witness, so a single Akita opening covers the
 /// whole set (Akita has no commitment homomorphism to RLC separate
 /// commitments with).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,23 +225,23 @@ fn precommitted_columns(
     Ok(columns)
 }
 
-/// One weighted cell of a decode view: the logical value being decoded equals
+/// One weighted cell of a reconstruction: the logical value being rebuilt equals
 /// `Σ_terms weight · Column(cell ‖ row_point)`, where `cell` indexes the
 /// column's `(symbol ‖ limb)` prefix (msb-first, limbs rounded to a power of
 /// two).
 ///
 /// A weighted sum with non-`eq` weights is not a single packed evaluation
-/// claim, so views are discharged by a reduction over the cell variables (or
-/// folded into an existing reduction) on the verifier side; the term list is
-/// the semantics both sides must agree on.
+/// claim, so reconstructions are resolved by a reduction over the cell
+/// variables (or folded into an existing reduction) on the verifier side; the
+/// term list is the semantics both sides must agree on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DecodeTerm<F> {
+pub struct ReconstructionTerm<F> {
     pub column: LatticeColumn,
     pub cell: usize,
     pub weight: F,
 }
 
-impl<F> DecodeTerm<F> {
+impl<F> ReconstructionTerm<F> {
     pub fn new(column: LatticeColumn, cell: usize, weight: F) -> Self {
         Self {
             column,
@@ -251,20 +251,20 @@ impl<F> DecodeTerm<F> {
     }
 }
 
-/// Little-endian byte decode: `Σ_{limb, symbol} 256^limb · symbol ·
+/// Little-endian byte reconstruction: `Σ_{limb, symbol} 256^limb · symbol ·
 /// Column(symbol ‖ limb ‖ row)`, each term additionally scaled by `scale`.
 /// The zero symbol carries weight zero and is omitted.
-fn scaled_byte_decode_terms<F: Field + FromPrimitiveInt>(
+fn scaled_byte_reconstruction_terms<F: Field + FromPrimitiveInt>(
     column: LatticeColumn,
     limbs: usize,
     scale: F,
-) -> Vec<DecodeTerm<F>> {
+) -> Vec<ReconstructionTerm<F>> {
     let limb_bits = limbs.log_2();
     let mut terms = Vec::with_capacity(limbs * 256);
     let mut place = scale;
     for limb in 0..limbs {
         for symbol in 1..256usize {
-            terms.push(DecodeTerm::new(
+            terms.push(ReconstructionTerm::new(
                 column,
                 (symbol << limb_bits) | limb,
                 place * F::from_u64(symbol as u64),
@@ -275,11 +275,11 @@ fn scaled_byte_decode_terms<F: Field + FromPrimitiveInt>(
     terms
 }
 
-pub fn byte_decode_terms<F: Field + FromPrimitiveInt>(
+pub fn byte_reconstruction_terms<F: Field + FromPrimitiveInt>(
     column: LatticeColumn,
     limbs: usize,
-) -> Vec<DecodeTerm<F>> {
-    scaled_byte_decode_terms(column, limbs, F::one())
+) -> Vec<ReconstructionTerm<F>> {
+    scaled_byte_reconstruction_terms(column, limbs, F::one())
 }
 
 /// `Σ_symbol weight[symbol] · Column(symbol ‖ row)` for a single-limb one-hot
@@ -287,34 +287,35 @@ pub fn byte_decode_terms<F: Field + FromPrimitiveInt>(
 fn weighted_symbol_terms<F>(
     column: LatticeColumn,
     weights: impl IntoIterator<Item = F>,
-) -> Vec<DecodeTerm<F>> {
+) -> Vec<ReconstructionTerm<F>> {
     weights
         .into_iter()
         .enumerate()
-        .map(|(symbol, weight)| DecodeTerm::new(column, symbol, weight))
+        .map(|(symbol, weight)| ReconstructionTerm::new(column, symbol, weight))
         .collect()
 }
 
-/// The advice word view: `advice(word) = Σ_limb 256^limb · byte(word, limb)`.
-pub fn advice_word_decode_terms<F: Field + FromPrimitiveInt>(
+/// The advice word reconstruction: `advice(word) = Σ_limb 256^limb · byte(word, limb)`.
+pub fn advice_word_reconstruction_terms<F: Field + FromPrimitiveInt>(
     kind: JoltAdviceKind,
-) -> Vec<DecodeTerm<F>> {
-    byte_decode_terms(LatticeColumn::advice_bytes(kind), WORD_BYTE_LIMBS)
+) -> Vec<ReconstructionTerm<F>> {
+    byte_reconstruction_terms(LatticeColumn::advice_bytes(kind), WORD_BYTE_LIMBS)
 }
 
-pub fn program_image_word_decode_terms<F: Field + FromPrimitiveInt>() -> Vec<DecodeTerm<F>> {
-    byte_decode_terms(LatticeColumn::ProgramImageBytes, WORD_BYTE_LIMBS)
+pub fn program_image_word_reconstruction_terms<F: Field + FromPrimitiveInt>(
+) -> Vec<ReconstructionTerm<F>> {
+    byte_reconstruction_terms(LatticeColumn::ProgramImageBytes, WORD_BYTE_LIMBS)
 }
 
-/// The lane decode of one committed bytecode chunk: reconstructs
+/// The lane reconstruction of one committed bytecode chunk: rebuilds
 /// `BytecodeChunk(chunk)(lane_point ‖ row_point)` as a weighted sum over the
 /// chunk's sub-columns, weighting each lane by the `eq` evaluation of
 /// `lane_point` at its lane index.
-pub fn bytecode_chunk_decode_terms<F: Field + FromPrimitiveInt>(
+pub fn bytecode_chunk_reconstruction_terms<F: Field + FromPrimitiveInt>(
     chunk: usize,
     lane_point: &[F],
     imm_byte_width: usize,
-) -> Result<Vec<DecodeTerm<F>>, JoltFormulaPointError> {
+) -> Result<Vec<ReconstructionTerm<F>>, JoltFormulaPointError> {
     let lane_vars = committed_lane_vars();
     if lane_point.len() != lane_vars {
         return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
@@ -344,25 +345,25 @@ pub fn bytecode_chunk_decode_terms<F: Field + FromPrimitiveInt>(
             lane_weights[start..start + register_count].iter().copied(),
         ));
     }
-    terms.extend(scaled_byte_decode_terms(
+    terms.extend(scaled_byte_reconstruction_terms(
         LatticeColumn::BytecodeUnexpandedPcBytes { chunk },
         WORD_BYTE_LIMBS,
         lane_weights[layout.unexp_pc_idx],
     ));
-    terms.extend(scaled_byte_decode_terms(
+    terms.extend(scaled_byte_reconstruction_terms(
         LatticeColumn::BytecodeImmBytes { chunk },
         imm_byte_width,
         lane_weights[layout.imm_idx],
     ));
     for flag in 0..NUM_CIRCUIT_FLAGS {
-        terms.push(DecodeTerm::new(
+        terms.push(ReconstructionTerm::new(
             LatticeColumn::BytecodeCircuitFlag { chunk, flag },
             0,
             lane_weights[layout.circuit_start + flag],
         ));
     }
     for flag in 0..NUM_INSTRUCTION_FLAGS {
-        terms.push(DecodeTerm::new(
+        terms.push(ReconstructionTerm::new(
             LatticeColumn::BytecodeInstructionFlag { chunk, flag },
             0,
             lane_weights[layout.instr_start + flag],
@@ -374,7 +375,7 @@ pub fn bytecode_chunk_decode_terms<F: Field + FromPrimitiveInt>(
             .iter()
             .copied(),
     ));
-    terms.push(DecodeTerm::new(
+    terms.push(ReconstructionTerm::new(
         LatticeColumn::BytecodeRafFlag { chunk },
         0,
         lane_weights[layout.raf_flag_idx],
@@ -383,36 +384,36 @@ pub fn bytecode_chunk_decode_terms<F: Field + FromPrimitiveInt>(
     Ok(terms)
 }
 
-/// How one committed polynomial's final claim is discharged in lattice mode —
+/// How one committed polynomial's final opening is resolved in lattice mode —
 /// the replacement for the base stage-8 RLC batch (which needs the commitment
 /// homomorphism Akita lacks).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LatticeFinalOpening {
     /// One `PrefixPackedClaim` on the packed witness. `leaf` names the
     /// relation output the claim's value comes from; `None` means the claim
-    /// is produced by the view-discharge reduction rather than a relation
+    /// is produced by the reconstruction reduction rather than a relation
     /// (trusted-advice bytes and the precommitted sub-columns).
     Packed {
         column: LatticeColumn,
         leaf: Option<JoltOpeningId>,
     },
-    /// A word-valued advice polynomial, decoded through
-    /// [`advice_word_decode_terms`].
-    AdviceWordView { kind: JoltAdviceKind },
-    /// A committed `BytecodeChunk(chunk)`, decoded through
-    /// [`bytecode_chunk_decode_terms`].
-    BytecodeChunkLanesView { chunk: usize },
-    /// A program-image word, decoded through
-    /// [`program_image_word_decode_terms`].
-    ProgramImageWordView,
+    /// A word-valued advice polynomial, rebuilt through
+    /// [`advice_word_reconstruction_terms`].
+    AdviceWordReconstruction { kind: JoltAdviceKind },
+    /// A committed `BytecodeChunk(chunk)`, rebuilt through
+    /// [`bytecode_chunk_reconstruction_terms`].
+    BytecodeChunkReconstruction { chunk: usize },
+    /// A program-image word, rebuilt through
+    /// [`program_image_word_reconstruction_terms`].
+    ProgramImageWordReconstruction,
     /// Never PCS-opened: the polynomial's consumer claims leave the base PIOP
     /// through lattice relations (the `IncVirtualization` chain).
     Virtualized,
 }
 
-/// The discharge for each committed polynomial's final opening. Total over
+/// The final-opening resolution for each committed polynomial. Total over
 /// `JoltCommittedPolynomial` so a new committed polynomial cannot land in
-/// lattice mode without a discharge decision.
+/// lattice mode without a resolution decision.
 pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening {
     match polynomial {
         JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
@@ -428,21 +429,23 @@ pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening
             column: LatticeColumn::from(polynomial),
             leaf: packed_column_leaf(LatticeColumn::from(polynomial)),
         },
-        JoltCommittedPolynomial::TrustedAdvice => LatticeFinalOpening::AdviceWordView {
+        JoltCommittedPolynomial::TrustedAdvice => LatticeFinalOpening::AdviceWordReconstruction {
             kind: JoltAdviceKind::Trusted,
         },
-        JoltCommittedPolynomial::UntrustedAdvice => LatticeFinalOpening::AdviceWordView {
+        JoltCommittedPolynomial::UntrustedAdvice => LatticeFinalOpening::AdviceWordReconstruction {
             kind: JoltAdviceKind::Untrusted,
         },
         JoltCommittedPolynomial::BytecodeChunk(chunk) => {
-            LatticeFinalOpening::BytecodeChunkLanesView { chunk }
+            LatticeFinalOpening::BytecodeChunkReconstruction { chunk }
         }
-        JoltCommittedPolynomial::ProgramImageInit => LatticeFinalOpening::ProgramImageWordView,
+        JoltCommittedPolynomial::ProgramImageInit => {
+            LatticeFinalOpening::ProgramImageWordReconstruction
+        }
     }
 }
 
 /// The relation output supplying a packed column's claim value, or `None`
-/// when the view-discharge reduction produces it (view-only sub-columns and
+/// when the reconstruction reduction produces it (reconstruction-only sub-columns and
 /// trusted-advice bytes, which have no in-protocol validity relation).
 ///
 /// The polynomial→relation mapping itself is owned by the base
@@ -574,20 +577,20 @@ mod tests {
     }
 
     #[test]
-    fn decomposed_polynomials_discharge_through_views() {
+    fn decomposed_polynomials_resolve_through_reconstructions() {
         assert_eq!(
             final_opening(JoltCommittedPolynomial::BytecodeChunk(3)),
-            LatticeFinalOpening::BytecodeChunkLanesView { chunk: 3 }
+            LatticeFinalOpening::BytecodeChunkReconstruction { chunk: 3 }
         );
         assert_eq!(
             final_opening(JoltCommittedPolynomial::UntrustedAdvice),
-            LatticeFinalOpening::AdviceWordView {
+            LatticeFinalOpening::AdviceWordReconstruction {
                 kind: JoltAdviceKind::Untrusted
             }
         );
         assert_eq!(
             final_opening(JoltCommittedPolynomial::ProgramImageInit),
-            LatticeFinalOpening::ProgramImageWordView
+            LatticeFinalOpening::ProgramImageWordReconstruction
         );
     }
 
@@ -610,11 +613,11 @@ mod tests {
     }
 
     #[test]
-    fn view_only_columns_have_no_relation_leaf() {
+    fn reconstruction_only_columns_have_no_relation_leaf() {
         assert_eq!(packed_column_leaf(LatticeColumn::ProgramImageBytes), None);
         // Trusted-advice bytes intentionally have no relation leaf: their
-        // packed claim is view-produced (the base map's arm is only a
-        // scheduling hint).
+        // packed claim is reconstruction-produced (the base map's arm is only
+        // a scheduling hint).
         assert_eq!(
             packed_column_leaf(LatticeColumn::Committed(
                 JoltCommittedPolynomial::TrustedAdviceBytes
@@ -631,8 +634,8 @@ mod tests {
     }
 
     #[test]
-    fn byte_decode_terms_weight_little_endian_places() {
-        let terms = byte_decode_terms::<Fr>(LatticeColumn::ProgramImageBytes, 8);
+    fn byte_reconstruction_terms_weight_little_endian_places() {
+        let terms = byte_reconstruction_terms::<Fr>(LatticeColumn::ProgramImageBytes, 8);
 
         // 255 nonzero symbols per limb; the zero symbol contributes nothing.
         assert_eq!(terms.len(), 8 * 255);
@@ -646,9 +649,9 @@ mod tests {
     }
 
     #[test]
-    fn byte_decode_reconstructs_words() {
+    fn byte_reconstruction_recovers_words() {
         let word: u64 = 0x0123_4567_89ab_cdef;
-        let terms = advice_word_decode_terms::<Fr>(JoltAdviceKind::Untrusted);
+        let terms = advice_word_reconstruction_terms::<Fr>(JoltAdviceKind::Untrusted);
 
         // Evaluate the view against the one-hot indicator of `word`'s bytes.
         let value = terms
@@ -663,11 +666,11 @@ mod tests {
     }
 
     #[test]
-    fn bytecode_chunk_decode_covers_every_lane_exactly_once() {
+    fn bytecode_chunk_reconstruction_covers_every_lane_exactly_once() {
         let lane_point = (0..committed_lane_vars())
             .map(|i| Fr::from_u64(3 + i as u64))
             .collect::<Vec<_>>();
-        let terms = bytecode_chunk_decode_terms::<Fr>(1, &lane_point, 16).unwrap();
+        let terms = bytecode_chunk_reconstruction_terms::<Fr>(1, &lane_point, 16).unwrap();
 
         let register_count = 1usize << REGISTER_ADDRESS_BITS;
         let expected = 3 * register_count
@@ -691,10 +694,10 @@ mod tests {
     }
 
     #[test]
-    fn bytecode_chunk_decode_rejects_wrong_lane_arity() {
+    fn bytecode_chunk_reconstruction_rejects_wrong_lane_arity() {
         let lane_point = vec![Fr::from_u64(1); 3];
         assert_eq!(
-            bytecode_chunk_decode_terms::<Fr>(0, &lane_point, 16),
+            bytecode_chunk_reconstruction_terms::<Fr>(0, &lane_point, 16),
             Err(JoltFormulaPointError::OpeningPointLengthMismatch {
                 expected: committed_lane_vars(),
                 got: 3,

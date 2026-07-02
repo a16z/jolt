@@ -1,6 +1,6 @@
 //! Untrusted-advice byte validity: proves the prover-supplied advice byte
 //! column is a well-formed byte one-hot encoding. This is simultaneously the
-//! range check behind the advice decode view — byte one-hot cells force every
+//! range check behind the advice word reconstruction — byte one-hot cells force every
 //! decoded byte below 256 and every decoded word below 2^64.
 //!
 //! One sumcheck over the column's `(symbol ‖ limb ‖ word)` cell domain
