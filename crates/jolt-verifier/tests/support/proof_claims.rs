@@ -1540,8 +1540,7 @@ fn claim_from_stage6_outputs<F: Field>(
     stage6b: &Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .bytecode_read_raf
         .bytecode_ra
         .iter()
@@ -1556,8 +1555,7 @@ fn claim_from_stage6_outputs<F: Field>(
             return Some(*opening_claim);
         }
     }
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .booleanity
         .instruction_ra
         .iter()
@@ -1596,8 +1594,7 @@ fn claim_from_stage6_outputs<F: Field>(
     if id == ram_hamming_weight {
         return Some(stage6b.ram_hamming_booleanity.ram_hamming_weight);
     }
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .ram_ra_virtualization
         .ram_ra
         .iter()
@@ -1607,8 +1604,7 @@ fn claim_from_stage6_outputs<F: Field>(
             return Some(*opening_claim);
         }
     }
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .instruction_ra_virtualization
         .committed_instruction_ra
         .iter()
@@ -1631,8 +1627,7 @@ fn claim_from_stage6_outputs<F: Field>(
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
-            claims
-                .cycle_phase
+            stage6b
                 .trusted_advice
                 .as_ref()
                 .and_then(|claim| claim.trusted)
@@ -1640,8 +1635,7 @@ fn claim_from_stage6_outputs<F: Field>(
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
-            claims
-                .cycle_phase
+            stage6b
                 .untrusted_advice
                 .as_ref()
                 .and_then(|claim| claim.untrusted)
@@ -1651,13 +1645,12 @@ fn claim_from_stage6_outputs<F: Field>(
 }
 
 #[cfg(any(feature = "prover-fixtures", test))]
-fn claim_mut_from_stage6_outputs<F: Field>(
-    stage6a: &mut Stage6aOutputClaims<F>,
-    stage6b: &mut Stage6bOutputClaims<F>,
+fn claim_mut_from_stage6_outputs<'a, F: Field>(
+    stage6a: &'a mut Stage6aOutputClaims<F>,
+    stage6b: &'a mut Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
-) -> Option<&mut F> {
-    for (index, opening_claim) in claims
-        .cycle_phase
+) -> Option<&'a mut F> {
+    for (index, opening_claim) in stage6b
         .bytecode_read_raf
         .bytecode_ra
         .iter_mut()
@@ -1672,8 +1665,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
             return Some(opening_claim);
         }
     }
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .booleanity
         .instruction_ra
         .iter_mut()
@@ -1688,8 +1680,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
             return Some(opening_claim);
         }
     }
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .booleanity
         .bytecode_ra
         .iter_mut()
@@ -1718,8 +1709,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
     if id == ram_hamming_weight {
         return Some(&mut stage6b.ram_hamming_booleanity.ram_hamming_weight);
     }
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .ram_ra_virtualization
         .ram_ra
         .iter_mut()
@@ -1729,8 +1719,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
             return Some(opening_claim);
         }
     }
-    for (index, opening_claim) in claims
-        .cycle_phase
+    for (index, opening_claim) in stage6b
         .instruction_ra_virtualization
         .committed_instruction_ra
         .iter_mut()
@@ -1753,8 +1742,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
-            claims
-                .cycle_phase
+            stage6b
                 .trusted_advice
                 .as_mut()
                 .and_then(|claim| claim.trusted.as_mut())
@@ -1762,8 +1750,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
-            claims
-                .cycle_phase
+            stage6b
                 .untrusted_advice
                 .as_mut()
                 .and_then(|claim| claim.untrusted.as_mut())
