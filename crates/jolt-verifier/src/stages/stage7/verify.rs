@@ -131,32 +131,9 @@ where
     let stage6 = stage6.clear()?;
     let claims = &proof.clear_claims()?.stage7;
 
-    // Reject opening claims supplied for phases that did not run (the generated
-    // `validate_output_claims` accepts a claim for an absent `Option` member; this
-    // preserves the specific `UnexpectedOpeningClaim` ids).
-    if sumchecks.trusted_advice.is_none() && claims.trusted_advice.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::final_advice_opening(JoltAdviceKind::Trusted),
-        });
-    }
-    if sumchecks.untrusted_advice.is_none() && claims.untrusted_advice.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::final_advice_opening(JoltAdviceKind::Untrusted),
-        });
-    }
-    if sumchecks.bytecode_address_phase.is_none() && claims.bytecode_address_phase.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: bytecode_reduction::final_bytecode_chunk_opening(0),
-        });
-    }
-    if sumchecks.program_image_address_phase.is_none()
-        && claims.program_image_address_phase.is_some()
-    {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: program_image::final_program_image_opening(),
-        });
-    }
-
+    // Also rejects claims supplied for phases that did not run, with the same
+    // `UnexpectedOpeningClaim` ids the former hand-written guards used (the id is
+    // derived from the supplied claims' canonical order).
     sumchecks.validate_output_claims(claims)?;
 
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;

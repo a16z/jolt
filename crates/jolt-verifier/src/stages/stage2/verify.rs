@@ -355,12 +355,6 @@ where
     let uniskip_rounds = selected_product_uniskip_rounds();
     let uniskip_degree = selected_product_uniskip_degree();
     let uniskip_domain = selected_product_uniskip_domain();
-    if uniskip_degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage,
-            degree: uniskip_degree,
-        });
-    }
     let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_domain else {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage,

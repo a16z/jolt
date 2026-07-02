@@ -703,6 +703,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
         let validate_checks = plans.iter().map(|plan| {
             let id = &plan.ident;
+            let instance = &plan.instance;
             let check = quote! {
                 let __expected = __member.symbolic().expected_output_openings::<#f>();
                 let __provided: ::std::collections::BTreeSet<_> =
@@ -721,6 +722,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 }
             };
             if plan.is_option {
+                // Wire claims supplied for an instance that did not run are
+                // rejected, attributed to the first supplied opening id (or, for an
+                // all-absent claims cell, to the member's statically-known relation
+                // id — the instance is `None`, so no runtime receiver exists).
                 quote! {
                     match (self.#id.as_ref(), claims.#id.as_ref()) {
                         (
@@ -737,7 +742,26 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                                 },
                             );
                         }
-                        (::core::option::Option::None, ::core::option::Option::Some(_)) => {}
+                        (::core::option::Option::None, ::core::option::Option::Some(__claims)) => {
+                            return ::core::result::Result::Err(
+                                match __claims.canonical_order().into_iter().next() {
+                                    ::core::option::Option::Some(__opening) => {
+                                        crate::VerifierError::UnexpectedOpeningClaim {
+                                            id: __opening,
+                                        }
+                                    }
+                                    ::core::option::Option::None => {
+                                        crate::VerifierError::StageClaimPublicInputFailed {
+                                            stage: <<#instance as #relations::ConcreteSumcheck<
+                                                #f,
+                                            >>::Symbolic as ::jolt_claims::SymbolicSumcheck>::id(),
+                                            reason: "output claims supplied for an absent instance"
+                                                .to_string(),
+                                        }
+                                    }
+                                },
+                            );
+                        }
                     }
                 }
             } else {
@@ -763,7 +787,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             /// Assert the proof-supplied output claims match the expected shape: per
             /// member, the provided `canonical_order` id-set equals the relation's
-            /// dims-derived `expected_output_openings`.
+            /// dims-derived `expected_output_openings`; claims supplied for an
+            /// absent `Option` member are rejected.
             pub fn validate_output_claims(
                 &self,
                 claims: &#output_claims_name<#f>,
