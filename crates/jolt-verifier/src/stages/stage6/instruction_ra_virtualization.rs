@@ -23,35 +23,26 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage5::Stage5ClearOutput;
+use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
 
 /// Wire the per-virtual reduced `InstructionRa` opening *values* from the stage-5
-/// instruction read-RAF. (Verifier-side constructor for the moved
-/// [`InstructionRaVirtualizationInputClaims`].)
+/// instruction read-RAF. Clear-only.
 pub fn instruction_ra_virtualization_input_values_from_upstream<F: Field>(
-    stage5: &Stage5ClearOutput<F>,
+    stage5: &Stage5OutputClaims<F>,
 ) -> InstructionRaVirtualizationInputClaims<F> {
     InstructionRaVirtualizationInputClaims {
-        instruction_ra: stage5
-            .output_values
-            .instruction_read_raf
-            .instruction_ra
-            .clone(),
+        instruction_ra: stage5.instruction_read_raf.instruction_ra.clone(),
     }
 }
 
 /// Wire the per-virtual reduced `InstructionRa` opening *points* from the stage-5
-/// instruction read-RAF.
+/// instruction read-RAF. ZK-agnostic.
 pub fn instruction_ra_virtualization_input_points_from_upstream<F: Field>(
-    stage5: &Stage5ClearOutput<F>,
+    stage5: &Stage5OutputPoints<F>,
 ) -> InstructionRaVirtualizationInputClaims<Vec<F>> {
     InstructionRaVirtualizationInputClaims {
-        instruction_ra: stage5
-            .output_points
-            .instruction_read_raf
-            .instruction_ra()
-            .to_vec(),
+        instruction_ra: stage5.instruction_read_raf.instruction_ra().to_vec(),
     }
 }
 

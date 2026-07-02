@@ -20,31 +20,26 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage5::Stage5ClearOutput;
+use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
 
 /// Wire the single reduced `RamRa` opening *value* from the stage-5 RAM RA claim
-/// reduction. (Verifier-side constructor for the moved
-/// [`RamRaVirtualizationInputClaims`].)
+/// reduction. Clear-only (the values aggregate exists only in clear mode).
 pub fn ram_ra_virtualization_input_values_from_upstream<F: Field>(
-    stage5: &Stage5ClearOutput<F>,
+    stage5: &Stage5OutputClaims<F>,
 ) -> RamRaVirtualizationInputClaims<F> {
     RamRaVirtualizationInputClaims {
-        ram_ra_reduced: stage5.output_values.ram_ra_claim_reduction.ram_ra,
+        ram_ra_reduced: stage5.ram_ra_claim_reduction.ram_ra,
     }
 }
 
 /// Wire the single reduced `RamRa` opening *point* from the stage-5 RAM RA claim
-/// reduction.
+/// reduction. ZK-agnostic: both proving modes expose the stage-5 output points.
 pub fn ram_ra_virtualization_input_points_from_upstream<F: Field>(
-    stage5: &Stage5ClearOutput<F>,
+    stage5: &Stage5OutputPoints<F>,
 ) -> RamRaVirtualizationInputClaims<Vec<F>> {
     RamRaVirtualizationInputClaims {
-        ram_ra_reduced: stage5
-            .output_points
-            .ram_ra_claim_reduction
-            .ram_ra()
-            .to_vec(),
+        ram_ra_reduced: stage5.ram_ra_claim_reduction.ram_ra().to_vec(),
     }
 }
 

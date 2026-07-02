@@ -11,41 +11,5 @@ pub mod ram_hamming_booleanity;
 pub mod ram_ra_virtualization;
 pub mod verify;
 
-pub use booleanity::{
-    Booleanity, BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
-    BooleanityAddressPhaseOutputClaims, BooleanityInputClaims, BooleanityOutputClaims,
-};
-pub use bytecode_read_raf::{
-    BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
-    BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCommitted,
-    BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
-    BytecodeReadRafOutputClaims,
-};
-pub use committed_reduction_cycle_phase::{
-    AdviceCyclePhase, AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
-    BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseInputClaims,
-    BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhase,
-    ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
-};
-pub use inc_claim_reduction::{
-    IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
-};
-pub use instruction_ra_virtualization::{
-    InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
-    InstructionRaVirtualizationOutputClaims,
-};
 pub use outputs::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput};
-pub use ram_hamming_booleanity::{
-    RamHammingBooleanity, RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
-};
-pub use ram_ra_virtualization::{
-    RamRaVirtualization, RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
-};
-pub use verify::{
-    stage6_bytecode_cycle_points, stage6_bytecode_read_raf_expected_output,
-    stage6_bytecode_register_points, stage6_inc_claim_reduction_cycle_points,
-    stage6_instruction_read_raf_point, stage6_stage1_cycle_binding,
-    stage6_stage5_ram_reduced_opening_point, verify, Stage6BytecodeReadRafExpectedOutputInputs,
-    Stage6BytecodeRegisterPoints, Stage6IncClaimReductionCyclePoints,
-    Stage6InstructionReadRafPoint, Stage6RamReducedOpeningPoint,
-};
+pub use verify::verify;
