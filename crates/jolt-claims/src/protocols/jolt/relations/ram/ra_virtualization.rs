@@ -22,7 +22,7 @@ pub struct RamRaVirtualizationOutputClaims<C> {
 }
 
 /// The single reduced `RamRa` opening from the stage-5 RAM RA claim reduction.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamRaVirtualizationInputClaims<C> {
     #[opening(RamRa, from = RamRaClaimReduction)]
     pub ram_ra_reduced: C,

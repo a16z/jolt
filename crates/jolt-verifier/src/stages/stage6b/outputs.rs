@@ -67,7 +67,9 @@ use super::ram_ra_virtualization::RamRaVirtualization;
     verify_clear,
     verify_zk,
     derive_opening_points,
-    expected_final_claim
+    expected_final_claim,
+    empty_input_points,
+    validate_claim_presence
 )]
 pub struct Stage6bSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,

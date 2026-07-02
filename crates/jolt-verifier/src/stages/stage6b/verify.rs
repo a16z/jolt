@@ -3,7 +3,6 @@ use jolt_claims::protocols::jolt::{
         booleanity::{self, BooleanityDimensions},
         bytecode::{self},
         claim_reductions::{
-            advice,
             bytecode::{self as bytecode_reduction, BytecodeLaneWeightInputs},
             program_image,
         },
@@ -29,8 +28,7 @@ use super::{
     committed_reduction_cycle_phase::{
         advice_cycle_phase_input_values_from_upstream,
         program_image_reduction_cycle_phase_input_values_from_upstream,
-        AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhaseChallenges,
-        BytecodeReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseInputClaims,
+        BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
     },
     inc_claim_reduction::{
         inc_claim_reduction_input_points_from_upstream,
@@ -416,30 +414,14 @@ where
     let claims_6a = &proof.clear_claims()?.stage6a;
     let claims = &proof.clear_claims()?.stage6b;
 
-    // Reject opening claims supplied for cycle-phase members whose reduction did
-    // not run (an absent `Option` member is silently skipped by
-    // `expected_final_claim`, so a present claim for an uncommitted layout must be
-    // rejected explicitly with the historical error ids). No transcript effect.
-    if trusted_advice_layout.is_none() && claims.trusted_advice.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted),
-        });
-    }
-    if untrusted_advice_layout.is_none() && claims.untrusted_advice.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
-        });
-    }
-    if bytecode_reduction_layout.is_none() && claims.bytecode_reduction.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        });
-    }
-    if program_image_reduction_layout.is_none() && claims.program_image_reduction.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
-        });
-    }
+    // Reject cycle-phase output claims whose presence disagrees with the member's
+    // layout: a present reduction missing its claims, or claims supplied for a
+    // reduction that did not run. Instance presence mirrors layout presence (see
+    // `Stage6bSumchecks::build`), so this generated guard subsumes the former
+    // per-member absent-layout checks. Transcript-free (runs before the batched
+    // verify). Error variants for these malformed-proof cases differ from the former
+    // hand guards; the tampering suite asserts generic rejection.
+    sumchecks.validate_claim_presence(claims)?;
 
     let input_values = stage6b_input_values_from_upstream(
         &sumchecks,
@@ -455,14 +437,7 @@ where
         transcript,
     )?;
 
-    validate_cycle_phase_claim_presence(
-        formula_dimensions,
-        claims,
-        trusted_advice_layout,
-        untrusted_advice_layout,
-        bytecode_reduction_layout,
-        program_image_reduction_layout,
-    )?;
+    validate_cycle_phase_claim_shape(formula_dimensions, claims, bytecode_reduction_layout)?;
 
     let cycle_points =
         sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
@@ -498,21 +473,15 @@ where
     }))
 }
 
-/// The wire-shape and presence checks over the cycle-phase output claims that
-/// the generated drivers cannot express: the bytecode RA claim count, the
-/// per-member missing-claim guards (an absent `Option` member is silently
-/// skipped by `expected_final_claim`, so a present member with missing claims
-/// must be rejected explicitly with the historical error ids), and the bytecode
-/// reduction's intermediate-vs-chunks shape.
-fn validate_cycle_phase_claim_presence<F: Field>(
+/// The wire-shape checks over the cycle-phase output claims that the generated
+/// drivers cannot express: the bytecode RA claim count and the bytecode reduction's
+/// intermediate-vs-chunks shape. Member presence is enforced separately by the
+/// generated `validate_claim_presence`; a missing advice inner opening is caught by
+/// `expected_final_claim` (`AdviceCyclePhase::expected_output`).
+fn validate_cycle_phase_claim_shape<F: Field>(
     formula_dimensions: &JoltFormulaDimensions,
     claims: &Stage6bOutputClaims<F>,
-    trusted_advice_layout: Option<&jolt_claims::protocols::jolt::AdviceClaimReductionLayout>,
-    untrusted_advice_layout: Option<&jolt_claims::protocols::jolt::AdviceClaimReductionLayout>,
     bytecode_reduction_layout: Option<&BytecodeClaimReductionLayout>,
-    program_image_reduction_layout: Option<
-        &jolt_claims::protocols::jolt::ProgramImageClaimReductionLayout,
-    >,
 ) -> Result<(), VerifierError> {
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
@@ -527,44 +496,10 @@ fn validate_cycle_phase_claim_presence<F: Field>(
         });
     }
 
-    for (kind, layout, claim) in [
-        (
-            JoltAdviceKind::Trusted,
-            trusted_advice_layout,
-            &claims.trusted_advice,
-        ),
-        (
-            JoltAdviceKind::Untrusted,
-            untrusted_advice_layout,
-            &claims.untrusted_advice,
-        ),
-    ] {
-        let Some(layout) = layout else { continue };
-        let claim = claim.as_ref().ok_or(VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_output_openings(kind, layout.dimensions())[0],
-        })?;
-        let opening_value = match kind {
-            JoltAdviceKind::Trusted => claim.trusted,
-            JoltAdviceKind::Untrusted => claim.untrusted,
-        };
-        if opening_value.is_none() {
-            return Err(VerifierError::MissingOpeningClaim {
-                id: advice::cycle_phase_advice_opening(kind),
-            });
-        }
-    }
-
-    if let Some(layout) = bytecode_reduction_layout {
-        let output_claims =
-            claims
-                .bytecode_reduction
-                .as_ref()
-                .ok_or(VerifierError::MissingOpeningClaim {
-                    id: bytecode_reduction::cycle_phase_output_openings(
-                        layout.dimensions(),
-                        layout.chunk_count(),
-                    )[0],
-                })?;
+    if let (Some(layout), Some(output_claims)) = (
+        bytecode_reduction_layout,
+        claims.bytecode_reduction.as_ref(),
+    ) {
         let has_address_phase = layout.dimensions().has_address_phase();
         // The wire shape must match the reduction mode: an `intermediate` (no
         // chunks) when an address phase follows, else exactly `chunk_count`
@@ -584,14 +519,6 @@ fn validate_cycle_phase_claim_presence<F: Field>(
                 reason: format!(
                     "bytecode reduction cycle output shape mismatch (address phase: {has_address_phase})"
                 ),
-            });
-        }
-    }
-
-    if let Some(layout) = program_image_reduction_layout {
-        if claims.program_image_reduction.is_none() {
-            return Err(VerifierError::MissingOpeningClaim {
-                id: program_image::cycle_phase_output_openings(layout.dimensions())[0],
             });
         }
     }
@@ -656,11 +583,12 @@ fn stage6b_input_values_from_upstream<F: Field>(
     })
 }
 
-/// Assemble the stage-6b consumed opening *points*. ZK-agnostic: the RA / inc
-/// members read the upstream output-points aggregates (which both modes expose);
-/// the remaining members derive their produced points from their own sumcheck
-/// point and read no input point, so their cells are empty — but present for
-/// present `Option` members, as the generated `derive_opening_points` requires.
+/// Assemble the stage-6b consumed opening *points*. ZK-agnostic: only the RA / inc
+/// members read the upstream output-points aggregates (which both modes expose); the
+/// remaining seven members derive their produced points from their own sumcheck point
+/// and read no input point, so their cells come from the generated
+/// `empty_input_points` (empty, and present for present `Option` members exactly as
+/// the generated `derive_opening_points` requires).
 fn stage6b_input_points_from_upstream<F: Field>(
     sumchecks: &Stage6bSumchecks<F>,
     stage2: &Stage2BatchOutputPoints<F>,
@@ -668,41 +596,12 @@ fn stage6b_input_points_from_upstream<F: Field>(
     stage5: &Stage5OutputPoints<F>,
 ) -> Stage6bInputPoints<F> {
     Stage6bInputPoints {
-        bytecode_read_raf: BytecodeReadRafInputClaims {
-            address_phase: Vec::new(),
-        },
-        booleanity: BooleanityInputClaims {
-            address_phase: Vec::new(),
-        },
-        ram_hamming_booleanity: RamHammingBooleanityInputClaims::default(),
         ram_ra_virtualization: ram_ra_virtualization_input_points_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_points_from_upstream(
             stage5,
         ),
         inc_claim_reduction: inc_claim_reduction_input_points_from_upstream(stage2, stage4, stage5),
-        trusted_advice: sumchecks
-            .trusted_advice
-            .as_ref()
-            .map(|_| AdviceCyclePhaseInputClaims {
-                trusted: None,
-                untrusted: None,
-            }),
-        untrusted_advice: sumchecks.untrusted_advice.as_ref().map(|_| {
-            AdviceCyclePhaseInputClaims {
-                trusted: None,
-                untrusted: None,
-            }
-        }),
-        bytecode_reduction: sumchecks.bytecode_reduction.as_ref().map(|_| {
-            BytecodeReductionCyclePhaseInputClaims {
-                val_stages: Vec::new(),
-            }
-        }),
-        program_image_reduction: sumchecks.program_image_reduction.as_ref().map(|_| {
-            ProgramImageReductionCyclePhaseInputClaims {
-                contribution: Vec::new(),
-            }
-        }),
+        ..sumchecks.empty_input_points()
     }
 }
 

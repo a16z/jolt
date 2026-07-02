@@ -25,8 +25,8 @@ use super::hamming_weight_claim_reduction::{
     HammingWeightClaimReduction, HammingWeightClaimReductionInputClaims,
 };
 use super::outputs::{
-    PrecommittedFinalOpening, Stage7ClearOutput, Stage7InputClaims, Stage7InputPoints,
-    Stage7Output, Stage7OutputClaims, Stage7OutputPoints, Stage7Sumchecks, Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7ClearOutput, Stage7InputClaims, Stage7Output,
+    Stage7OutputClaims, Stage7OutputPoints, Stage7Sumchecks, Stage7ZkOutput,
 };
 use crate::{
     proof::JoltProof,
@@ -104,7 +104,7 @@ where
         // points; the address-phase opening points come off `output_points`, replacing
         // the ad-hoc per-relation ZK point recoveries. BlindFold recomputes each
         // relation's sumcheck point and publics independently from `batch_consistency`.
-        let input_points = stage7_input_points_from_upstream(&sumchecks);
+        let input_points = sumchecks.empty_input_points();
         let output_points =
             sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
         let hamming_weight_opening_point = hamming_weight_opening_point(&output_points)?;
@@ -133,7 +133,7 @@ where
     sumchecks.validate_output_claims(claims)?;
 
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
-    let input_points = stage7_input_points_from_upstream(&sumchecks);
+    let input_points = sumchecks.empty_input_points();
 
     let batch = sumchecks.verify_clear(
         &input_values,
@@ -363,49 +363,6 @@ fn stage7_input_values_from_upstream<F: Field>(
             .map(|_| clear_program_image_input_values(stage6))
             .transpose()?,
     })
-}
-
-/// Assemble the stage-7 consumed opening *points*. Every stage-7 relation derives
-/// its produced points from its own sumcheck point and reads no input point, so all
-/// input point cells are empty; presence tracks each `Stage7Sumchecks` member,
-/// serving the clear and ZK paths alike.
-fn stage7_input_points_from_upstream<F: Field>(
-    sumchecks: &Stage7Sumchecks<F>,
-) -> Stage7InputPoints<F> {
-    Stage7InputPoints {
-        hamming_weight_claim_reduction: HammingWeightClaimReductionInputClaims {
-            ram_hamming_weight: Vec::new(),
-            instruction_booleanity: Vec::new(),
-            bytecode_booleanity: Vec::new(),
-            ram_booleanity: Vec::new(),
-            instruction_virtualization: Vec::new(),
-            bytecode_virtualization: Vec::new(),
-            ram_virtualization: Vec::new(),
-        },
-        trusted_advice: sumchecks
-            .trusted_advice
-            .as_ref()
-            .map(|_| AdviceAddressPhaseInputClaims {
-                trusted: None,
-                untrusted: None,
-            }),
-        untrusted_advice: sumchecks.untrusted_advice.as_ref().map(|_| {
-            AdviceAddressPhaseInputClaims {
-                trusted: None,
-                untrusted: None,
-            }
-        }),
-        bytecode_address_phase: sumchecks.bytecode_address_phase.as_ref().map(|_| {
-            BytecodeReductionAddressPhaseInputClaims {
-                cycle_phase_intermediate: Vec::new(),
-            }
-        }),
-        program_image_address_phase: sumchecks.program_image_address_phase.as_ref().map(|_| {
-            ProgramImageReductionAddressPhaseInputClaims {
-                cycle_phase: Vec::new(),
-            }
-        }),
-    }
 }
 
 /// The hamming reduction's consumed opening *values*, wired from stage 6. The

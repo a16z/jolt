@@ -44,7 +44,7 @@ pub struct InstructionClaimReductionOutputClaims<C> {
 /// its own sumcheck point), so the input points are left empty. Generic over the
 /// cell. Field order matches
 /// [`instruction_claim_reduction::claim_reduction_input_openings`].
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionClaimReductionInputClaims<C> {
     #[opening(LookupOutput, from = SpartanOuter)]
     pub lookup_output: C,

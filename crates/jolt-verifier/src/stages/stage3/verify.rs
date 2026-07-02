@@ -7,20 +7,14 @@ use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
 use super::{
-    instruction_input::{
-        instruction_input_input_values_from_upstream, InstructionInput, InstructionInputInputClaims,
-    },
+    instruction_input::{instruction_input_input_values_from_upstream, InstructionInput},
     outputs::{
-        Stage3ClearOutput, Stage3InputClaims, Stage3InputPoints, Stage3Output, Stage3Sumchecks,
-        Stage3ZkOutput,
+        Stage3ClearOutput, Stage3InputClaims, Stage3Output, Stage3Sumchecks, Stage3ZkOutput,
     },
     registers_claim_reduction::{
         registers_claim_reduction_input_values_from_upstream, RegistersClaimReduction,
-        RegistersClaimReductionInputClaims,
     },
-    spartan_shift::{
-        spartan_shift_input_values_from_upstream, SpartanShift, SpartanShiftInputClaims,
-    },
+    spartan_shift::{spartan_shift_input_values_from_upstream, SpartanShift},
 };
 use crate::{
     proof::JoltProof,
@@ -52,30 +46,6 @@ fn stage3_input_values_from_upstream<F: Field>(
         shift: spartan_shift_input_values_from_upstream(stage1, stage2),
         instruction_input: instruction_input_input_values_from_upstream(stage2),
         registers_claim_reduction: registers_claim_reduction_input_values_from_upstream(stage1),
-    }
-}
-
-/// Assemble the stage-3 consumed opening *points*. Every member's input points are
-/// empty (each derives its output points from its own sumcheck point), so this
-/// takes no upstream data and serves the clear and ZK paths alike.
-fn stage3_input_points_from_upstream<F: Field>() -> Stage3InputPoints<F> {
-    Stage3InputPoints {
-        shift: SpartanShiftInputClaims {
-            next_unexpanded_pc: Vec::new(),
-            next_pc: Vec::new(),
-            next_is_virtual: Vec::new(),
-            next_is_first_in_sequence: Vec::new(),
-            next_is_noop: Vec::new(),
-        },
-        instruction_input: InstructionInputInputClaims {
-            right_instruction_input: Vec::new(),
-            left_instruction_input: Vec::new(),
-        },
-        registers_claim_reduction: RegistersClaimReductionInputClaims {
-            rd_write_value: Vec::new(),
-            rs1_value: Vec::new(),
-            rs2_value: Vec::new(),
-        },
     }
 }
 
@@ -124,10 +94,8 @@ where
             STAGE3_BATCH_OUTPUT_CLAIMS,
             JoltRelationId::SpartanShift,
         )?;
-        let output_points = sumchecks.derive_opening_points(
-            &consistency.challenges(),
-            &stage3_input_points_from_upstream(),
-        )?;
+        let output_points = sumchecks
+            .derive_opening_points(&consistency.challenges(), &sumchecks.empty_input_points())?;
 
         return Ok(Stage3Output::Zk(Stage3ZkOutput {
             challenges,
@@ -143,7 +111,7 @@ where
 
     let input_values =
         stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);
-    let input_points = stage3_input_points_from_upstream();
+    let input_points = sumchecks.empty_input_points();
 
     let batch = sumchecks.verify_clear(
         &input_values,

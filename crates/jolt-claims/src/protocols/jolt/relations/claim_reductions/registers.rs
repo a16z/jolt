@@ -36,7 +36,7 @@ pub struct RegistersClaimReductionOutputClaims<C> {
 /// Consumed register openings reduced by this sumcheck, wired from stage 1's outer
 /// sumcheck. The relation reads only these values, so the input points are left
 /// empty. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RegistersClaimReductionInputClaims<C> {
     #[opening(RdWriteValue, from = SpartanOuter)]
     pub rd_write_value: C,

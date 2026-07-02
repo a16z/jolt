@@ -22,25 +22,16 @@ use jolt_transcript::Transcript;
 use super::{
     instruction_claim_reduction::{
         instruction_claim_reduction_input_values_from_upstream, InstructionClaimReduction,
-        InstructionClaimReductionInputClaims,
     },
     outputs::{
-        Stage2BatchInputClaims, Stage2BatchInputPoints, Stage2BatchSumchecks, Stage2ClearOutput,
-        Stage2Output, Stage2ZkOutput,
+        Stage2BatchInputClaims, Stage2BatchSumchecks, Stage2ClearOutput, Stage2Output,
+        Stage2ZkOutput,
     },
-    product_remainder::{
-        product_remainder_input_values_from_uniskip_output, ProductRemainder,
-        ProductRemainderInputClaims,
-    },
+    product_remainder::{product_remainder_input_values_from_uniskip_output, ProductRemainder},
     product_uniskip::{product_uniskip_input_values_from_stage1, ProductUniskip},
     ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims},
-    ram_raf_evaluation::{
-        ram_raf_evaluation_input_values_from_upstream, RamRafEvaluation,
-        RamRafEvaluationInputClaims,
-    },
-    ram_read_write_checking::{
-        ram_read_write_input_values_from_upstream, RamReadWriteChecking, RamReadWriteInputClaims,
-    },
+    ram_raf_evaluation::{ram_raf_evaluation_input_values_from_upstream, RamRafEvaluation},
+    ram_read_write_checking::{ram_read_write_input_values_from_upstream, RamReadWriteChecking},
 };
 use crate::{
     proof::JoltProof,
@@ -197,26 +188,7 @@ where
 
     // Every member's input points are empty (each derives its output points from its
     // own sumcheck point).
-    let input_points = Stage2BatchInputPoints {
-        ram_read_write: RamReadWriteInputClaims {
-            ram_read_value: Vec::new(),
-            ram_write_value: Vec::new(),
-        },
-        product_remainder: ProductRemainderInputClaims {
-            product_uniskip: Vec::new(),
-        },
-        instruction_claim_reduction: InstructionClaimReductionInputClaims {
-            lookup_output: Vec::new(),
-            left_lookup_operand: Vec::new(),
-            right_lookup_operand: Vec::new(),
-            left_instruction_input: Vec::new(),
-            right_instruction_input: Vec::new(),
-        },
-        ram_raf_evaluation: RamRafEvaluationInputClaims {
-            ram_address: Vec::new(),
-        },
-        ram_output_check: RamOutputCheckInputClaims::default(),
-    };
+    let input_points = sumchecks.empty_input_points();
 
     if checked.zk {
         let ProductUniskipVerified::Zk {

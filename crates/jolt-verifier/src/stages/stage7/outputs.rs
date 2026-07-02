@@ -37,7 +37,8 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
     verify_zk,
     derive_opening_points,
     expected_final_claim,
-    output_shape
+    output_shape,
+    empty_input_points
 )]
 pub struct Stage7Sumchecks<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,

@@ -46,7 +46,7 @@ pub struct InstructionInputOutputClaims<C> {
 /// Consumed instruction-input openings: the left/right virtualized instruction
 /// inputs reduced by stage 2's product remainder. The relation reads only these
 /// values, so the input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionInputInputClaims<C> {
     #[opening(RightInstructionInput, from = SpartanProductVirtualization)]
     pub right_instruction_input: C,

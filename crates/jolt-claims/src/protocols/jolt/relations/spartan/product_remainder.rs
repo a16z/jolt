@@ -47,7 +47,7 @@ pub struct ProductRemainderOutputClaims<C> {
 /// Consumed product-remainder input: the product uni-skip's reduced opening. The
 /// relation reads only this value (its output point comes from its own sumcheck
 /// point), so the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct ProductRemainderInputClaims<C> {
     #[opening(UnivariateSkip, from = SpartanProductVirtualization)]
     pub product_uniskip: C,

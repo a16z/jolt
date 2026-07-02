@@ -76,6 +76,14 @@
 //!   commitment count) and `validate_output_claims` (assert the proof's output claims
 //!   match the dims-derived shape), both via each member's
 //!   `SymbolicSumcheck::expected_output_openings` (derived from its output `Expr`).
+//! - `empty_input_points` — `empty_input_points`, an all-default `StageNInputPoints`
+//!   constructor for a stage whose relations consume no input opening points (each
+//!   non-`Option` cell `Default::default()`, each `Option` cell tracking its member's
+//!   presence). Requires each cell's concrete `InputClaims<Vec<F>>` to be `Default`.
+//! - `validate_claim_presence` — `validate_claim_presence`, the presence-only subset
+//!   of `validate_output_claims` (the `Option`-member present-instance/absent-instance
+//!   claim guards, with no output-`Expr` shape check) for a stage that curates its own
+//!   shape checks but wants the shared presence guards.
 //!
 //! The `verify_*` drivers never name `SumcheckClaim` / `SumcheckStatement`; those
 //! stay internal to `jolt-sumcheck`.
@@ -692,6 +700,79 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote!()
     };
 
+    // An all-default `InputPoints` constructor for a stage whose relations read no
+    // input opening points: each non-`Option` cell is `Default::default()`, each
+    // `Option` cell tracks its member's presence (exactly the invariant the generated
+    // drivers require). Opt-in via `#[sumcheck_batch(empty_input_points)]`.
+    let empty_input_points_method = if options.empty_input_points {
+        let cell_inits = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote!(#id: self.#id.as_ref().map(|_| ::core::default::Default::default()))
+            } else {
+                quote!(#id: ::core::default::Default::default())
+            }
+        });
+        quote! {
+            /// An all-default consumed-`InputPoints` aggregate for a stage whose
+            /// relations read no input opening points: each non-`Option` cell is
+            /// `Default::default()`, each `Option` cell tracks its member's presence.
+            pub fn empty_input_points(&self) -> #input_points_name<#f> {
+                #input_points_name {
+                    #(#cell_inits,)*
+                }
+            }
+        }
+    } else {
+        quote!()
+    };
+
+    // The `Option`-member claim-presence match shared by `validate_output_claims`
+    // (output_shape) and `validate_claim_presence`: reject a present instance whose
+    // claims cell is absent, and reject claims supplied for an absent instance;
+    // `some_some_arm` handles a present instance with present claims (the shape check
+    // for `output_shape`, an empty arm for the presence-only validator). Factoring the
+    // three guard arms keeps both validators' presence handling token-identical.
+    let presence_match = |plan: &InstanceField, some_some_arm: TokenStream2| {
+        let id = &plan.ident;
+        let instance = &plan.instance;
+        quote! {
+            match (self.#id.as_ref(), claims.#id.as_ref()) {
+                #some_some_arm
+                (::core::option::Option::None, ::core::option::Option::None) => {}
+                (::core::option::Option::Some(__member), ::core::option::Option::None) => {
+                    return ::core::result::Result::Err(
+                        crate::VerifierError::StageClaimPublicInputFailed {
+                            stage: __member.id(),
+                            reason: "present instance is missing its output claims"
+                                .to_string(),
+                        },
+                    );
+                }
+                (::core::option::Option::None, ::core::option::Option::Some(__claims)) => {
+                    return ::core::result::Result::Err(
+                        match __claims.canonical_order().into_iter().next() {
+                            ::core::option::Option::Some(__opening) => {
+                                crate::VerifierError::UnexpectedOpeningClaim {
+                                    id: __opening,
+                                }
+                            }
+                            ::core::option::Option::None => {
+                                crate::VerifierError::StageClaimPublicInputFailed {
+                                    stage: <<#instance as #relations::ConcreteSumcheck<
+                                        #f,
+                                    >>::Symbolic as ::jolt_claims::SymbolicSumcheck>::id(),
+                                    reason: "output claims supplied for an absent instance"
+                                        .to_string(),
+                                }
+                            }
+                        },
+                    );
+                }
+            }
+        }
+    };
+
     // The output-claim shape helpers: the total produced-opening count (for the ZK
     // commitment count) and a validator that the proof-supplied output claims match
     // the dims-derived expected shape (per member, comparing `canonical_order` id-sets
@@ -711,7 +792,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
         let validate_checks = plans.iter().map(|plan| {
             let id = &plan.ident;
-            let instance = &plan.instance;
             let check = quote! {
                 let __expected = __member.symbolic().expected_output_openings::<#f>();
                 let __provided: ::std::collections::BTreeSet<_> =
@@ -730,48 +810,17 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 }
             };
             if plan.is_option {
-                // Wire claims supplied for an instance that did not run are
-                // rejected, attributed to the first supplied opening id (or, for an
-                // all-absent claims cell, to the member's statically-known relation
-                // id — the instance is `None`, so no runtime receiver exists).
-                quote! {
-                    match (self.#id.as_ref(), claims.#id.as_ref()) {
+                // A present instance with present claims runs the shape check;
+                // `presence_match` supplies the three guard arms (missing / absent).
+                presence_match(
+                    plan,
+                    quote! {
                         (
                             ::core::option::Option::Some(__member),
                             ::core::option::Option::Some(__claims),
                         ) => { #check }
-                        (::core::option::Option::None, ::core::option::Option::None) => {}
-                        (::core::option::Option::Some(__member), ::core::option::Option::None) => {
-                            return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimPublicInputFailed {
-                                    stage: __member.id(),
-                                    reason: "present instance is missing its output claims"
-                                        .to_string(),
-                                },
-                            );
-                        }
-                        (::core::option::Option::None, ::core::option::Option::Some(__claims)) => {
-                            return ::core::result::Result::Err(
-                                match __claims.canonical_order().into_iter().next() {
-                                    ::core::option::Option::Some(__opening) => {
-                                        crate::VerifierError::UnexpectedOpeningClaim {
-                                            id: __opening,
-                                        }
-                                    }
-                                    ::core::option::Option::None => {
-                                        crate::VerifierError::StageClaimPublicInputFailed {
-                                            stage: <<#instance as #relations::ConcreteSumcheck<
-                                                #f,
-                                            >>::Symbolic as ::jolt_claims::SymbolicSumcheck>::id(),
-                                            reason: "output claims supplied for an absent instance"
-                                                .to_string(),
-                                        }
-                                    }
-                                },
-                            );
-                        }
-                    }
-                }
+                    },
+                )
             } else {
                 quote! {
                     {
@@ -805,6 +854,42 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 use ::jolt_claims::OutputClaims as _;
                 use ::jolt_claims::SymbolicSumcheck as _;
                 #(#validate_checks)*
+                ::core::result::Result::Ok(())
+            }
+        }
+    } else {
+        quote!()
+    };
+
+    // The presence-only subset of `validate_output_claims`: only the `Option`-member
+    // present-instance/absent-instance guards (no output-`Expr` shape check), for a
+    // stage that curates its own shape/count checks. The `(Some, Some)` arm is empty
+    // (`_` bindings, since no shape check reads the instance or claims). Opt-in via
+    // `#[sumcheck_batch(validate_claim_presence)]`.
+    let validate_claim_presence_method = if options.validate_claim_presence {
+        let presence_checks = plans.iter().filter(|plan| plan.is_option).map(|plan| {
+            presence_match(
+                plan,
+                quote! {
+                    (
+                        ::core::option::Option::Some(_),
+                        ::core::option::Option::Some(_),
+                    ) => {}
+                },
+            )
+        });
+        quote! {
+            /// Assert each optional member's output-claims presence agrees with the
+            /// instance: reject a present instance missing its claims, and reject
+            /// claims supplied for an absent instance. The presence-only subset of
+            /// `validate_output_claims` (no output-`Expr` shape check).
+            pub fn validate_claim_presence(
+                &self,
+                claims: &#output_claims_name<#f>,
+            ) -> ::core::result::Result<(), crate::VerifierError> {
+                use #relations::ConcreteSumcheck as _;
+                use ::jolt_claims::OutputClaims as _;
+                #(#presence_checks)*
                 ::core::result::Result::Ok(())
             }
         }
@@ -847,6 +932,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #derive_points_method
             #expected_final_claim_method
             #output_shape_methods
+            #empty_input_points_method
+            #validate_claim_presence_method
         }
     };
 
@@ -974,6 +1061,16 @@ struct StageOptions {
     /// `validate_output_claims`, which derive the expected output-claim shape from each
     /// member's `expected_output_openings` (its output `Expr`).
     output_shape: bool,
+    /// `#[sumcheck_batch(empty_input_points)]`: emit `empty_input_points`, an
+    /// all-default `InputPoints` constructor for a stage whose relations read no input
+    /// opening points (each non-`Option` cell `Default::default()`, each `Option` cell
+    /// tracking its member's presence). Requires each cell's concrete
+    /// `InputClaims<Vec<F>>` to be `Default`.
+    empty_input_points: bool,
+    /// `#[sumcheck_batch(validate_claim_presence)]`: emit `validate_claim_presence`,
+    /// the presence-only subset of `validate_output_claims` (the `Option`-member
+    /// present-instance/absent-instance claim guards, no output-`Expr` shape check).
+    validate_claim_presence: bool,
     /// `#[sumcheck_batch(no_draw_challenges)]`: skip emitting the generated
     /// `draw_challenges` for a stage whose member challenges have stage-level
     /// provenance (shared squeezes, pre-batch draws, value re-rolls) — calling a
@@ -1014,6 +1111,10 @@ impl StageOptions {
                     options.expected_final_claim = true;
                 } else if path.is_ident("output_shape") {
                     options.output_shape = true;
+                } else if path.is_ident("empty_input_points") {
+                    options.empty_input_points = true;
+                } else if path.is_ident("validate_claim_presence") {
+                    options.validate_claim_presence = true;
                 } else if path.is_ident("no_draw_challenges") {
                     options.no_draw_challenges = true;
                 } else {
@@ -1021,7 +1122,8 @@ impl StageOptions {
                         path,
                         "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
                          `verify_clear`, `verify_zk`, `derive_opening_points`, \
-                         `expected_final_claim`, `output_shape`, `no_draw_challenges`)",
+                         `expected_final_claim`, `output_shape`, `empty_input_points`, \
+                         `validate_claim_presence`, `no_draw_challenges`)",
                     ));
                 }
             }

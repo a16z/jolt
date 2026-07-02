@@ -34,7 +34,7 @@ pub struct RamReadWriteOutputClaims<C> {
 /// by the read-write checking sumcheck. The relation reads only these values (its
 /// output points come from its own sumcheck point and `product_tau_low`), so the
 /// input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamReadWriteInputClaims<C> {
     #[opening(RamReadValue, from = SpartanOuter)]
     pub ram_read_value: C,

@@ -27,7 +27,7 @@ pub struct RamRafEvaluationOutputClaims<C> {
 /// The consumed RAM address opening from stage 1's outer sumcheck. The relation
 /// reads only this value (its output point comes from its own sumcheck point), so
 /// the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamRafEvaluationInputClaims<C> {
     #[opening(RamAddress, from = SpartanOuter)]
     pub ram_address: C,

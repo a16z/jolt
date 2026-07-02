@@ -27,7 +27,7 @@ pub struct InstructionRaVirtualizationOutputClaims<C> {
 
 /// The per-virtual reduced `InstructionRa` openings from the stage-5 instruction
 /// read-RAF.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionRaVirtualizationInputClaims<C> {
     #[opening(InstructionRa, from = InstructionReadRaf)]
     pub instruction_ra: Vec<C>,

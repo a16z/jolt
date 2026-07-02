@@ -41,7 +41,7 @@ pub struct SpartanShiftOutputClaims<C> {
 /// Consumed shift openings: the `Next*` PC/flag columns from stage 1's outer
 /// sumcheck and `next_is_noop` from stage 2's product remainder. Shift reads only
 /// these values, so the input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct SpartanShiftInputClaims<C> {
     #[opening(NextUnexpandedPC, from = SpartanOuter)]
     pub next_unexpanded_pc: C,

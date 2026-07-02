@@ -55,6 +55,7 @@ pub struct Stage2OutputClaims<F: Field> {
     verify_clear,
     verify_zk,
     derive_opening_points,
+    empty_input_points,
     expected_final_claim
 )]
 pub struct Stage2BatchSumchecks<F: Field> {

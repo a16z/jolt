@@ -30,7 +30,7 @@ pub struct IncClaimReductionOutputClaims<C> {
 
 /// The four reduced `Inc` openings consumed from the read-write / value
 /// relations of RAM and registers.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct IncClaimReductionInputClaims<C> {
     #[opening(committed = RamInc, from = RamReadWriteChecking)]
     pub ram_inc_read_write: C,

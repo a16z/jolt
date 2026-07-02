@@ -30,7 +30,7 @@ pub struct AdviceAddressPhaseOutputClaims<C> {
 }
 
 /// Consumed cycle-phase advice openings, keyed by kind.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct AdviceAddressPhaseInputClaims<C> {
     #[opening(trusted_advice, from = AdviceClaimReductionCyclePhase)]
     pub trusted: Option<C>,

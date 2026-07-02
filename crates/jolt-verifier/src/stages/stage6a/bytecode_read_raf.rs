@@ -83,6 +83,12 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
 /// Wire the prior-proof opening *points* the address-phase input claim binds. The
 /// input claim reads only opening *values*, so the points are unused; every field
 /// is an empty point.
+///
+/// WARNING: this must NOT be replaced by a generated
+/// `#[sumcheck_batch(empty_input_points)]` constructor. Unlike the other stages'
+/// all-empty input points, `outer_op_flags` is a length-`CIRCUIT_FLAGS.len()` outer
+/// vec of empty points (one per circuit flag), which `Default::default()` would
+/// shrink to a length-0 vec — desynchronizing the per-flag opening wiring.
 pub fn bytecode_read_raf_address_phase_input_points_from_upstream<F: Field>(
 ) -> BytecodeReadRafAddressPhaseInputClaims<Vec<F>> {
     BytecodeReadRafAddressPhaseInputClaims {

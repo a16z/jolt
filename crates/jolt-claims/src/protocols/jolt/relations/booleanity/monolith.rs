@@ -25,7 +25,7 @@ pub struct BooleanityOutputClaims<C> {
 }
 
 /// The `BooleanityAddrClaim` intermediate consumed from the address phase.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BooleanityInputClaims<C> {
     #[opening(BooleanityAddrClaim, from = Booleanity)]
     pub address_phase: C,

@@ -38,7 +38,7 @@ pub struct HammingWeightClaimReductionOutputClaims<C> {
 /// claim (from RAM hamming booleanity) plus the per-family booleanity and
 /// virtualization claims (each wired from its producing stage-6 relation).
 /// Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct HammingWeightClaimReductionInputClaims<C> {
     #[opening(RamHammingWeight, from = RamHammingBooleanity)]
     pub ram_hamming_weight: C,

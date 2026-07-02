@@ -42,7 +42,8 @@ pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
     verify_clear,
     verify_zk,
     derive_opening_points,
-    expected_final_claim
+    expected_final_claim,
+    empty_input_points
 )]
 pub struct Stage3Sumchecks<F: Field> {
     pub shift: SpartanShift<F>,
