@@ -1,0 +1,37 @@
+[package]
+name = "jolt-akita"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Akita batch opening adapter for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+akita-config = { workspace = true, features = ["schedules-default"] }
+akita-field = { workspace = true, features = ["parallel"] }
+akita-pcs = { workspace = true, features = ["parallel", "schedules-default"] }
+akita-prover = { workspace = true, features = [
+  "parallel",
+  "schedules-default",
+] }
+akita-transcript.workspace = true
+akita-types.workspace = true
+jolt-crypto.workspace = true
+jolt-field = { workspace = true, features = ["akita"] }
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-transcript.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+jolt-dory = { workspace = true }
+jolt-profiling = { path = "../jolt-profiling" }
+serde_json = { workspace = true, features = ["std"] }
+
+[[bench]]
+name = "akita_paths"
+harness = false

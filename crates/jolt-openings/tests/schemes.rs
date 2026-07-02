@@ -1,5 +1,6 @@
 #![expect(
     clippy::expect_used,
+    clippy::unwrap_used,
     reason = "tests assert successful batch proof results"
 )]
 
@@ -138,7 +139,11 @@ fn homomorphic_batch_opening_rejects_mismatched_witness_count() {
 fn zk_commitments(polynomials: &[Polynomial<Fr>]) -> Vec<MockCommitment<Fr>> {
     polynomials
         .iter()
-        .map(|polynomial| <MockPCS as ZkOpeningScheme>::commit_zk(polynomial, &()).0)
+        .map(|polynomial| {
+            <MockPCS as ZkOpeningScheme>::commit_zk(polynomial, &())
+                .unwrap()
+                .0
+        })
         .collect()
 }
 

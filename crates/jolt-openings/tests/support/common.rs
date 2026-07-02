@@ -48,7 +48,7 @@ pub fn clear_claims<PCS: CommitmentScheme<Field = Fr>>(
     let mut claims = Vec::with_capacity(polynomials.len());
     let mut hints = Vec::with_capacity(polynomials.len());
     for polynomial in polynomials {
-        let (commitment, hint) = PCS::commit(polynomial, setup);
+        let (commitment, hint) = PCS::commit(polynomial, setup).expect("commit should succeed");
         claims.push(VerifierOpeningClaim {
             commitment,
             evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(point)),
