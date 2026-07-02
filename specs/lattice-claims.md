@@ -50,7 +50,8 @@ V1 scope (full prototype parity):
 canonical packed-witness description (per-proof + precommitted), consumed by
     jolt-openings::PrefixPacking — jolt-claims defines ids + arities only
 inc fusion (RamInc/RdInc -> one Inc stream selected by the bytecode Store flag)
-unsigned shift (+2^64) and base-2^b one-hot chunk decomposition + msb column
+base-2^b one-hot chunk decomposition + msb column (the +2^64 unsigned shift is
+    a constant, folded into the chunk reconstruction)
 booleanity + hamming-weight coverage of the new one-hot columns
 chunk reconstruction relation tying decoded chunks back to the fused Inc claim
 store-selector binding to the bytecode Store circuit flag
@@ -113,13 +114,13 @@ crates/jolt-claims/src/protocols/jolt/lattice/
 ├── packing.rs      proof_packed_columns(..) / precommitted_packed_columns(..)
 │                   -> Vec<(LatticeColumn, usize)>
 ├── views.rs        decode-weight term lists: bytecode-chunk lane decode,
-│                   little-endian byte decode, inc lower-value decode — pure
-│                   functions point -> Vec<(LatticeColumn, F)>
+│                   little-endian byte decode — pure functions
+│                   -> Vec<DecodeTerm<F>> (the inc lower-value decode lives in
+│                   the reconstruction relation, not a view)
 ├── discharge.rs    LatticeFinalOpening map:
 │                   leaf opening -> packed claim | decoded view | virtualized
 └── relations/
     ├── inc_virtualization.rs
-    ├── unsigned_inc_reduction.rs
     ├── chunk_reconstruction.rs
     ├── booleanity.rs            lattice-mode Booleanity (same relation id)
     └── advice_bytes.rs          untrusted-advice byte validity relation
@@ -145,19 +146,25 @@ index-based serde codecs stable for existing proofs):
 ```rust
 // JoltRelationId — appended variants
 IncVirtualization,
-UnsignedIncClaimReduction,
 UnsignedIncChunkReconstruction,
+AdviceBytesValidity,
 
 // JoltCommittedPolynomial — appended variants (committed only in lattice mode,
 // as slots of the packed witness; base mode never constructs them)
 UnsignedIncChunk(usize),   // one-hot column j of the fused unsigned inc
 UnsignedIncMsb,            // boolean msb column
+TrustedAdviceBytes,        // byte one-hot advice encodings
+UntrustedAdviceBytes,
 
-// JoltVirtualPolynomial — appended variants
-FusedInc,                  // gamma-batched RamInc/RdInc stream (virtual)
-IncStoreSelector,          // per-cycle store/rd destination selector (virtual)
-UnsignedInc,               // FusedInc + 2^64 (virtual)
+// JoltVirtualPolynomial — appended variant
+FusedInc,                  // gamma-batched RamInc/RdInc stream; its selector
+                           // is the existing OpFlags(Store), its +2^64 shift
+                           // is folded into the chunk reconstruction
 ```
+
+WARNING: enum `Ord` is protocol data too — `PrefixPacking` assigns slots by
+`(arity, Id)` order, so *reordering* variants (not just inserting) changes the
+packed witness layout silently.
 
 Per-relation leaf enums live in `lattice/ids.rs` and are aggregated as
 appended `JoltChallengeId`/`JoltDerivedId` variants:
@@ -310,16 +317,12 @@ suffices — this halves the one-hot column count ("fused polys").
   `rd_coeff = EqRegistersReadWrite + γ·EqRegistersValEvaluation` (deriveds).
 - degree 3, `log_T` rounds.
 
-### 2. `UnsignedIncClaimReduction`
+There is no separate unsigned-shift relation: `+2^64` is a constant, hence
+free at any opening point, and is folded into the reconstruction's value leg
+below. (The prototype spent a `log_T`-round sumcheck on it, with no eq
+factor in its output — structurally unsound as written; dropped.)
 
-Shifts to the unsigned range so one-hot chunks can decode it, and re-binds the
-cycle point to the booleanity/hamming cycle point (see invariant below).
-
-- **Input**: `FusedInc@IncVirtualization + 2^64` (constant term).
-- **Output**: `UnsignedInc` (virtual) at the shared cycle point.
-- degree 2, `log_T` rounds.
-
-### 3. Lattice `Booleanity` (same `JoltRelationId::Booleanity`)
+### 2. Lattice `Booleanity` (same `JoltRelationId::Booleanity`)
 
 Same relation id, lattice-mode shape: the base output sum over `Ra` columns is
 extended with the `UnsignedIncChunk(0..N)` columns and the `UnsignedIncMsb`
@@ -329,7 +332,7 @@ relation ids across variant sumcheck structs. The base
 base geometry helpers. Produces chunk openings at the booleanity
 `(r_address, r_cycle)` point.
 
-### 4. `UnsignedIncChunkReconstruction`
+### 3. `UnsignedIncChunkReconstruction`
 
 One sumcheck over the `b` address bits of a chunk, γ-batching three duties:
 
@@ -338,19 +341,22 @@ One sumcheck over the `b` address bits of a chunk, γ-batching three duties:
 - **claim reduction**: reduces the chunk openings produced by lattice
   Booleanity to the reconstruction's bound address point (the `γ^{2i+1}` legs
   against the `EqBooleanityAddress` derived),
-- **value reconstruction**: `Σ_j place_j · decode(chunk_j) = UnsignedInc −
-  2^64·msb` (the `δ = γ^{2N}` leg against the `IdentityAtAddress` derived).
+- **value reconstruction**: `Σ_j place_j · decode(chunk_j) = FusedInc +
+  2^64·(1 − msb)` — the folded unsigned shift (the `δ = γ^{2N}` leg against
+  the `IdentityAtAddress` derived).
 
-- **Inputs**: `UnsignedInc@UnsignedIncClaimReduction`,
-  `UnsignedIncMsb@Booleanity`, `UnsignedIncChunk(j)@Booleanity`.
+- **Inputs**: `FusedInc@IncVirtualization`, `UnsignedIncMsb@Booleanity`,
+  `UnsignedIncChunk(j)@Booleanity`.
 - **Outputs**: `UnsignedIncChunk(j)` at the final shared address point.
-- degree 3, `b` rounds. Draws `Gamma`.
+- degree 2, `b` rounds. Draws `Gamma`. (Per bound variable every leg is at
+  most a product of two multilinears — `eq·chunk`, `id·chunk` — so the round
+  polynomials are quadratic; the prototype's degree 3 was slack.)
 
 The prototype reused one flat opening id for a chunk's claims at *two
 different points* (booleanity-bound and reconstruction-bound). The typed
 `from =` attributes make that distinction structural here.
 
-### 5. Store binding (via the existing flag plumbing)
+### 4. Store binding (via the existing flag plumbing)
 
 The selector must equal the bytecode `Store` circuit-flag column, else a
 malicious prover could route increments to the wrong destination. Because the
@@ -363,7 +369,7 @@ store/rd-disjointness check on the public bytecode (`Store` and rd-writing
 selectors never co-occur) completes the argument that per cycle exactly one of
 RAM/registers receives the fused increment.
 
-### 6. Untrusted advice byte validity (`AdviceBytesValidity`)
+### 5. Untrusted advice byte validity (`AdviceBytesValidity`)
 
 The untrusted advice byte column is prover-supplied, so its one-hot structure
 is proven in-protocol; this is simultaneously the range check that makes the
@@ -400,6 +406,21 @@ precisely to arrange this:
 - Advice/byte columns live in other arity classes; their reductions must land
   each class on one point whose overlap with the trace tail agrees (the same
   anchoring the base advice reduction already performs for the unified point).
+
+**Who arranges this**: `jolt-claims` only names the point equalities; the
+relations carry no stage assignments. `jolt-verifier` owns batching, staging,
+and constraint ordering, and is responsible for co-batching the lattice
+relations so their bound points coincide where the invariant demands (e.g.
+`IncVirtualization`'s cycle point with the booleanity cycle tail, the
+reconstruction's address rounds with the hamming-weight reduction's).
+
+**Padding invariant**: the hamming legs claim "exactly one hot cell per row"
+summed over the *full* Boolean hypercube, so padding rows must be encoded as
+the one-hot of value 0 — never as all-zero cells. This applies to inc-chunk
+rows beyond the trace length and advice byte positions beyond the actual
+advice size (and, by the offline checks, to padded bytecode/program-image
+rows). All-zero padding would falsify the claimed input sums (`1` per chunk
+row, `γ` for the advice column).
 
 `lattice/discharge.rs` is the single source of truth for the endgame:
 

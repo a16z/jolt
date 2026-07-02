@@ -46,7 +46,6 @@ pub enum JoltRelationId {
     // Lattice-mode relations (see protocols/jolt/lattice). Appended so
     // index-based codecs of base-mode proofs stay stable.
     IncVirtualization,
-    UnsignedIncClaimReduction,
     UnsignedIncChunkReconstruction,
     AdviceBytesValidity,
 }
@@ -378,12 +377,11 @@ pub enum JoltVirtualPolynomial {
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
     ProgramImageInitContributionRw,
-    // Lattice-mode virtual polynomials. `FusedInc` is the gamma-batched
-    // RamInc/RdInc stream (its destination selector is the existing
-    // `OpFlags(Store)`); `UnsignedInc` is `FusedInc + 2^64`. Appended for
-    // codec stability.
+    // Lattice-mode: the gamma-batched RamInc/RdInc stream (its destination
+    // selector is the existing `OpFlags(Store)`; its unsigned shift is a
+    // constant folded into the chunk reconstruction). Appended for codec
+    // stability.
     FusedInc,
-    UnsignedInc,
 }
 
 #[derive(

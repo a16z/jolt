@@ -7,12 +7,20 @@
 //!   booleanity sumcheck at `r_booleanity_address` to this relation's bound
 //!   address point (`EqBooleanityAddress` derived),
 //! - **reconstruction**: `Σ_j place_j · Σ_addr id(addr) · chunk_j(addr,
-//!   r_cycle) = UnsignedInc − 2^64 · msb` — the decoded chunks equal the low
-//!   64 bits of the unsigned fused increment (`IdentityAtAddress` derived).
+//!   r_cycle) = FusedInc + 2^64 · (1 − msb)` — the decoded chunks equal the
+//!   low 64 bits of the unsigned fused increment (`IdentityAtAddress`
+//!   derived). The `+2^64` unsigned shift is a constant, so it is free at any
+//!   opening point and folded directly into this leg — there is no separate
+//!   shift relation.
 //!
-//! All three legs share the fixed cycle point `r_cycle` that the lattice
-//! booleanity and unsigned-inc reduction sumchecks bound, so the produced
-//! chunk openings land on the shared `(r_address ‖ r_cycle)` packed point.
+//! All legs share the fixed cycle point `r_cycle` bound by the lattice
+//! booleanity / inc-virtualization sumchecks, so the produced chunk openings
+//! land on the shared `(r_address ‖ r_cycle)` packed point. jolt-verifier's
+//! staging is responsible for arranging that point equality.
+//!
+//! Every leg is at most quadratic per bound variable (`eq · chunk` and
+//! `id · chunk` are products of two multilinears; the hamming leg is linear),
+//! hence `degree() == 2`.
 
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
@@ -27,10 +35,10 @@ use crate::{
 };
 
 use super::super::geometry::{UnsignedIncChunking, UNSIGNED_INC_BITS};
-use super::super::relations::unsigned_inc_reduction::unsigned_inc_opening;
 use super::booleanity::{
     booleanity_unsigned_inc_chunk_opening, booleanity_unsigned_inc_msb_opening,
 };
+use super::inc_virtualization::fused_inc_opening;
 
 /// The chunk openings at the final shared address point — the leaf claims the
 /// packed opening consumes for the `UnsignedIncChunk` columns.
@@ -51,8 +59,8 @@ pub struct ChunkReconstructionInputClaims<C> {
     pub chunks: Vec<C>,
     #[opening(committed = UnsignedIncMsb, from = Booleanity)]
     pub msb: C,
-    #[opening(UnsignedInc, from = UnsignedIncClaimReduction)]
-    pub unsigned_inc: C,
+    #[opening(FusedInc, from = IncVirtualization)]
+    pub fused_inc: C,
 }
 
 #[derive(Clone, Copy, Debug, SumcheckChallenges)]
@@ -107,8 +115,10 @@ impl SymbolicSumcheck for ChunkReconstruction {
                 + gamma.clone().pow(2 * index + 1)
                     * opening(booleanity_unsigned_inc_chunk_opening(index));
         }
-        let lower_value = opening(unsigned_inc_opening())
-            - constant(F::pow2(UNSIGNED_INC_BITS)) * opening(booleanity_unsigned_inc_msb_opening());
+        // The unsigned low bits: `FusedInc + 2^64 − 2^64·msb`.
+        let lower_value = opening(fused_inc_opening())
+            + constant(F::pow2(UNSIGNED_INC_BITS))
+                * (JoltExpr::one() - opening(booleanity_unsigned_inc_msb_opening()));
         input + self.value_leg_scale() * lower_value
     }
 
@@ -159,7 +169,7 @@ mod tests {
         let count = chunking().chunk_count();
 
         let gamma = Fr::from_u64(37);
-        let unsigned_inc = Fr::from_u64(41);
+        let fused_inc = Fr::from_u64(41);
         let msb = Fr::from_u64(43);
         let eq_addr = Fr::from_u64(47);
         let id_addr = Fr::from_u64(53);
@@ -172,7 +182,7 @@ mod tests {
                 (0..count)
                     .find(|&index| *id == booleanity_unsigned_inc_chunk_opening(index))
                     .map(chunk_in)
-                    .or((*id == unsigned_inc_opening()).then_some(unsigned_inc))
+                    .or((*id == fused_inc_opening()).then_some(fused_inc))
                     .or((*id == booleanity_unsigned_inc_msb_opening()).then_some(msb))
                     .unwrap_or(zero)
             },
@@ -180,7 +190,7 @@ mod tests {
             |_| zero,
         );
         let delta = pow(gamma, 2 * count);
-        let mut expected = delta * (unsigned_inc - Fr::pow2(64) * msb);
+        let mut expected = delta * (fused_inc + Fr::pow2(64) * (Fr::from_u64(1) - msb));
         for index in 0..count {
             expected += pow(gamma, 2 * index) + pow(gamma, 2 * index + 1) * chunk_in(index);
         }
@@ -214,6 +224,25 @@ mod tests {
         assert_eq!(output, expected);
     }
 
+    /// The shift fold: a signed increment `v` round-trips through the
+    /// unsigned decomposition. For `v >= 0` the msb is hot and the chunks
+    /// carry `v`; for `v < 0` the msb is cold and the chunks carry
+    /// `2^64 - |v|`.
+    #[test]
+    fn shift_fold_matches_unsigned_decomposition() {
+        let value: i128 = -41;
+        let fused_inc = Fr::from_i128(value);
+        let unsigned = (value + (1i128 << 64)) as u128;
+        let msb = Fr::from_u128(unsigned >> 64);
+        let lower = Fr::from_u128(unsigned & ((1u128 << 64) - 1));
+
+        assert_eq!(
+            fused_inc + Fr::pow2(64) * (Fr::from_u64(1) - msb),
+            lower,
+            "lower-bits identity must match the msb split"
+        );
+    }
+
     #[test]
     fn reconstruction_exposes_expected_dependencies() {
         let relation = ChunkReconstruction::new(chunking());
@@ -229,7 +258,7 @@ mod tests {
         let mut expected_inputs = (0..count)
             .map(booleanity_unsigned_inc_chunk_opening)
             .collect::<Vec<_>>();
-        expected_inputs.push(unsigned_inc_opening());
+        expected_inputs.push(fused_inc_opening());
         expected_inputs.push(booleanity_unsigned_inc_msb_opening());
         assert_eq!(
             relation.input_expression::<Fr>().required_openings(),

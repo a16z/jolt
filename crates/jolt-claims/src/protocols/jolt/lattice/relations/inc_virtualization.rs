@@ -21,12 +21,17 @@ use crate::{
 /// (`store = 0`), never both, so one committed one-hot decomposition serves
 /// both consumers — this halves the packed inc columns.
 ///
+/// The per-cycle disjointness comes from `jolt-program`'s memory expansion:
+/// ISA S-type stores carry no `rd`, and every read-modify-write instruction
+/// (the RV64A atomics, `crates/jolt-program/src/expand/memory/`) is lowered
+/// into a virtual sequence whose RAM-writing step is a plain store, with the
+/// `rd` write on a separate cycle. The offline store/rd disjointness check on
+/// the public bytecode re-verifies this per row.
+///
 /// The selector is the existing `OpFlags(Store)` virtual polynomial, so its
 /// opening is bound to the actual bytecode Store flag by the same read-raf
 /// val-stage machinery that discharges every other flag consumer — no
-/// dedicated store-binding relation is needed. The offline store/rd
-/// disjointness check on the public bytecode completes the argument that
-/// exactly one destination receives each increment.
+/// dedicated store-binding relation is needed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

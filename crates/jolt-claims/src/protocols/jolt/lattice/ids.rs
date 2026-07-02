@@ -68,6 +68,10 @@ impl BytecodeRegisterLane {
 /// polynomial and wraps its [`JoltCommittedPolynomial`] id; a precommitted
 /// sub-column is only ever reached through a decode view and gets its own
 /// variant with no opening-id identity.
+///
+/// WARNING: `Ord` is protocol data — `PrefixPacking` assigns slots by
+/// `(arity, Id)` order, so reordering variants here (or in
+/// `JoltCommittedPolynomial`) silently changes the packed witness layout.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LatticeColumn {
     Committed(JoltCommittedPolynomial),
