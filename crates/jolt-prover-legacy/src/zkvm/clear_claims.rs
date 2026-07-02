@@ -43,13 +43,16 @@ use jolt_verifier::{
             Stage6aOutputClaims,
         },
         stage6b::outputs::{
-            AdviceCyclePhaseOutputClaims, BooleanityOutputClaims, BytecodeReadRafOutputClaims,
+            BooleanityOutputClaims, BytecodeReadRafOutputClaims,
             BytecodeReductionCyclePhaseOutputClaims, IncClaimReductionOutputClaims,
             InstructionRaVirtualizationOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
             RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
+            TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
         },
         stage7::{
-            advice_address_phase::AdviceAddressPhaseOutputClaims,
+            advice_address_phase::{
+                TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
+            },
             committed_reduction_address_phase::{
                 BytecodeReductionAddressPhaseOutputClaims,
                 ProgramImageReductionAddressPhaseOutputClaims,
@@ -404,8 +407,8 @@ fn stage6b_claims_from_openings<F: Field>(
             ram_inc: claims.require(increments::ram_inc_reduced())?,
             rd_inc: claims.require(increments::rd_inc_reduced())?,
         },
-        trusted_advice: advice_cycle_phase_claim_from_openings(claims, JoltAdviceKind::Trusted),
-        untrusted_advice: advice_cycle_phase_claim_from_openings(claims, JoltAdviceKind::Untrusted),
+        trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
+        untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),
         bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
         program_image_reduction: claims
             .get(program_image::cycle_phase_program_image_opening())
@@ -414,22 +417,27 @@ fn stage6b_claims_from_openings<F: Field>(
     })
 }
 
-fn advice_cycle_phase_claim_from_openings<F: Field>(
+fn trusted_advice_cycle_phase_claim_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-    kind: JoltAdviceKind,
-) -> Option<AdviceCyclePhaseOutputClaims<F>> {
+) -> Option<TrustedAdviceCyclePhaseOutputClaims<F>> {
     let opening_claim = claims
-        .get(advice::cycle_phase_advice_opening(kind))
-        .or_else(|| claims.get(advice::final_advice_opening(kind)))?;
-    Some(match kind {
-        JoltAdviceKind::Trusted => AdviceCyclePhaseOutputClaims {
-            trusted: Some(opening_claim),
-            untrusted: None,
-        },
-        JoltAdviceKind::Untrusted => AdviceCyclePhaseOutputClaims {
-            trusted: None,
-            untrusted: Some(opening_claim),
-        },
+        .get(advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted))
+        .or_else(|| claims.get(advice::final_advice_opening(JoltAdviceKind::Trusted)))?;
+    Some(TrustedAdviceCyclePhaseOutputClaims {
+        trusted: opening_claim,
+    })
+}
+
+fn untrusted_advice_cycle_phase_claim_from_openings<F: Field>(
+    claims: &OpeningClaimMap<F>,
+) -> Option<UntrustedAdviceCyclePhaseOutputClaims<F>> {
+    let opening_claim = claims
+        .get(advice::cycle_phase_advice_opening(
+            JoltAdviceKind::Untrusted,
+        ))
+        .or_else(|| claims.get(advice::final_advice_opening(JoltAdviceKind::Untrusted)))?;
+    Some(UntrustedAdviceCyclePhaseOutputClaims {
+        untrusted: opening_claim,
     })
 }
 
@@ -533,18 +541,12 @@ fn stage7_claims_from_openings<F: Field>(
             ram_ra,
         },
         trusted_advice: advice_address_phase_claim_from_openings(claims, JoltAdviceKind::Trusted)
-            .map(|opening| AdviceAddressPhaseOutputClaims {
-                trusted: Some(opening),
-                untrusted: None,
-            }),
+            .map(|opening| TrustedAdviceAddressPhaseOutputClaims { trusted: opening }),
         untrusted_advice: advice_address_phase_claim_from_openings(
             claims,
             JoltAdviceKind::Untrusted,
         )
-        .map(|opening| AdviceAddressPhaseOutputClaims {
-            trusted: None,
-            untrusted: Some(opening),
-        }),
+        .map(|opening| UntrustedAdviceAddressPhaseOutputClaims { untrusted: opening }),
         bytecode_address_phase: bytecode_address_phase_claims_from_openings(claims),
         program_image_address_phase: program_image_address_phase_claim_from_openings(claims),
     })

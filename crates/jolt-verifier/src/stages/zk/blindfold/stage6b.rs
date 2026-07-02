@@ -28,8 +28,14 @@ where
         formula_dimensions.instruction_ra_virtualization,
     );
     let inc_claims = relations::claim_reductions::increments::ClaimReduction::new(trace_dimensions);
-    let (trusted_layout, trusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Trusted);
-    let (untrusted_layout, untrusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Untrusted);
+    let trusted_layout = advice_layout(input, JoltAdviceKind::Trusted);
+    let trusted_claims = trusted_layout.as_ref().map(|layout| {
+        relations::claim_reductions::advice::TrustedCyclePhase::new(layout.dimensions())
+    });
+    let untrusted_layout = advice_layout(input, JoltAdviceKind::Untrusted);
+    let untrusted_claims = untrusted_layout.as_ref().map(|layout| {
+        relations::claim_reductions::advice::UntrustedCyclePhase::new(layout.dimensions())
+    });
     let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().map(|layout| {
         relations::claim_reductions::bytecode::CyclePhase::new((
             layout.dimensions(),

@@ -7,7 +7,7 @@ use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::advice_address_phase::AdviceAddressPhase;
+use super::advice_address_phase::{TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase};
 use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
@@ -29,8 +29,8 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 /// The trusted / untrusted advice reductions are two batch members (each absorbs
 /// its own claimed sum and draws its own batching coefficient), so they are split
 /// into two `Option` fields rather than one — matching the stage-6 cycle-phase
-/// `trusted_advice` / `untrusted_advice` idiom. Each member's produced claims are
-/// the shared `AdviceAddressPhaseOutputClaims` with only its own kind's slot filled.
+/// `trusted_advice` / `untrusted_advice` idiom. Each member is its own per-kind
+/// relation type whose produced claims carry a single non-`Option` slot.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(
     verify_clear,
@@ -44,10 +44,10 @@ pub struct Stage7Sumchecks<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
     /// Final `TrustedAdvice` claim from the trusted advice reduction's address
     /// phase; present only when that phase runs.
-    pub trusted_advice: Option<AdviceAddressPhase<F>>,
+    pub trusted_advice: Option<TrustedAdviceAddressPhase<F>>,
     /// Final `UntrustedAdvice` claim from the untrusted advice reduction's address
     /// phase; present only when that phase runs.
-    pub untrusted_advice: Option<AdviceAddressPhase<F>>,
+    pub untrusted_advice: Option<UntrustedAdviceAddressPhase<F>>,
     /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
     /// address phase; present only when that phase runs.
     pub bytecode_address_phase: Option<BytecodeReductionAddressPhase<F>>,
@@ -76,8 +76,8 @@ impl<F: Field> Stage7OutputPoints<F> {
     /// that kind's address phase ran.
     pub fn advice_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
         match kind {
-            JoltAdviceKind::Trusted => self.trusted_advice.as_ref().and_then(|c| c.trusted()),
-            JoltAdviceKind::Untrusted => self.untrusted_advice.as_ref().and_then(|c| c.untrusted()),
+            JoltAdviceKind::Trusted => self.trusted_advice.as_ref().map(|c| c.trusted()),
+            JoltAdviceKind::Untrusted => self.untrusted_advice.as_ref().map(|c| c.untrusted()),
         }
     }
 
@@ -150,7 +150,9 @@ impl<F: Field, C> Stage7Output<F, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_claims::protocols::jolt::relations::claim_reductions::advice::AdviceAddressPhaseOutputClaims;
+    use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
+        TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
+    };
     use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionAddressPhaseOutputClaims;
     use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::ProgramImageReductionAddressPhaseOutputClaims;
@@ -175,14 +177,8 @@ mod tests {
             bytecode_ra: vec![fr(3)],
             ram_ra: vec![fr(4)],
         };
-        let trusted_advice = AdviceAddressPhaseOutputClaims {
-            trusted: Some(fr(5)),
-            untrusted: None,
-        };
-        let untrusted_advice = AdviceAddressPhaseOutputClaims {
-            trusted: None,
-            untrusted: Some(fr(6)),
-        };
+        let trusted_advice = TrustedAdviceAddressPhaseOutputClaims { trusted: fr(5) };
+        let untrusted_advice = UntrustedAdviceAddressPhaseOutputClaims { untrusted: fr(6) };
 
         let without_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming.clone(),
@@ -226,7 +222,7 @@ mod tests {
         };
         use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
         use jolt_claims::protocols::jolt::relations::claim_reductions;
-        use jolt_claims::protocols::jolt::{JoltAdviceKind, PrecommittedReductionDimensions};
+        use jolt_claims::protocols::jolt::PrecommittedReductionDimensions;
         use jolt_claims::SymbolicSumcheck;
 
         let ra_layout = JoltRaPolynomialLayout::new(2, 1, 1).unwrap();
@@ -240,10 +236,11 @@ mod tests {
         );
 
         let advice_dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        for kind in [JoltAdviceKind::Trusted, JoltAdviceKind::Untrusted] {
-            let advice = claim_reductions::advice::AddressPhase::new((kind, advice_dimensions));
-            assert_eq!(advice.expected_output_openings::<Fr>().len(), 1);
-        }
+        let trusted_advice = claim_reductions::advice::TrustedAddressPhase::new(advice_dimensions);
+        assert_eq!(trusted_advice.expected_output_openings::<Fr>().len(), 1);
+        let untrusted_advice =
+            claim_reductions::advice::UntrustedAddressPhase::new(advice_dimensions);
+        assert_eq!(untrusted_advice.expected_output_openings::<Fr>().len(), 1);
 
         let chunk_count = 4;
         let bytecode =

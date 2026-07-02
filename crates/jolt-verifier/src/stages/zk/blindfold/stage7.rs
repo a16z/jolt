@@ -17,9 +17,18 @@ where
     );
     let hamming_claims =
         relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);
-    let (trusted_layout, trusted_claims) = advice_address_claim(input, JoltAdviceKind::Trusted);
-    let (untrusted_layout, untrusted_claims) =
-        advice_address_claim(input, JoltAdviceKind::Untrusted);
+    let trusted_layout = advice_layout(input, JoltAdviceKind::Trusted);
+    let trusted_claims = trusted_layout.as_ref().and_then(|layout| {
+        layout.dimensions().has_address_phase().then(|| {
+            relations::claim_reductions::advice::TrustedAddressPhase::new(layout.dimensions())
+        })
+    });
+    let untrusted_layout = advice_layout(input, JoltAdviceKind::Untrusted);
+    let untrusted_claims = untrusted_layout.as_ref().and_then(|layout| {
+        layout.dimensions().has_address_phase().then(|| {
+            relations::claim_reductions::advice::UntrustedAddressPhase::new(layout.dimensions())
+        })
+    });
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
     let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().and_then(|layout| {

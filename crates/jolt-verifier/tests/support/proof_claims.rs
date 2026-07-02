@@ -25,7 +25,10 @@ use jolt_verifier::{
         stage4::Stage4OutputClaims,
         stage5::Stage5OutputClaims,
         stage6a::outputs::Stage6aOutputClaims,
-        stage6b::outputs::{AdviceCyclePhaseOutputClaims, Stage6bOutputClaims},
+        stage6b::outputs::{
+            Stage6bOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
+            UntrustedAdviceCyclePhaseOutputClaims,
+        },
         stage7::outputs::Stage7OutputClaims,
     },
 };
@@ -367,18 +370,16 @@ fn set_optional_stage6_output<F: Field>(
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
-            stage6b.trusted_advice = Some(AdviceCyclePhaseOutputClaims {
-                trusted: Some(opening_claim),
-                untrusted: None,
+            stage6b.trusted_advice = Some(TrustedAdviceCyclePhaseOutputClaims {
+                trusted: opening_claim,
             });
             true
         }
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
-            stage6b.untrusted_advice = Some(AdviceCyclePhaseOutputClaims {
-                trusted: None,
-                untrusted: Some(opening_claim),
+            stage6b.untrusted_advice = Some(UntrustedAdviceCyclePhaseOutputClaims {
+                untrusted: opening_claim,
             });
             true
         }
@@ -590,7 +591,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
             stage6b
                 .trusted_advice
                 .as_mut()
-                .and_then(|claim| claim.trusted.as_mut())
+                .map(|claim| &mut claim.trusted)
         }
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
@@ -598,7 +599,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
             stage6b
                 .untrusted_advice
                 .as_mut()
-                .and_then(|claim| claim.untrusted.as_mut())
+                .map(|claim| &mut claim.untrusted)
         }
         _ => None,
     }
@@ -658,11 +659,11 @@ fn claim_mut_from_stage7_outputs<F: Field>(
         id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
             .trusted_advice
             .as_mut()
-            .and_then(|claims| claims.trusted.as_mut()),
+            .map(|claims| &mut claims.trusted),
         id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
             .untrusted_advice
             .as_mut()
-            .and_then(|claims| claims.untrusted.as_mut()),
+            .map(|claims| &mut claims.untrusted),
         _ => None,
     }
 }

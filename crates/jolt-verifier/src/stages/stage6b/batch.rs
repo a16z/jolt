@@ -29,8 +29,8 @@ use super::bytecode_read_raf::{
     BytecodeReadRafTableFoldInputs,
 };
 use super::committed_reduction_cycle_phase::{
-    bytecode_reduction_weights, AdviceCyclePhase, BytecodeReductionCyclePhase,
-    ProgramImageReductionCyclePhase,
+    bytecode_reduction_weights, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
+    TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -292,20 +292,10 @@ impl<F: Field> Stage6bSumchecks<F> {
             registers_val_evaluation_cycle,
         );
 
-        let trusted_advice = trusted_advice_layout.map(|layout| {
-            AdviceCyclePhase::new(
-                JoltAdviceKind::Trusted,
-                layout,
-                trusted_advice_reference_point,
-            )
-        });
-        let untrusted_advice = untrusted_advice_layout.map(|layout| {
-            AdviceCyclePhase::new(
-                JoltAdviceKind::Untrusted,
-                layout,
-                untrusted_advice_reference_point,
-            )
-        });
+        let trusted_advice = trusted_advice_layout
+            .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
+        let untrusted_advice = untrusted_advice_layout
+            .map(|layout| UntrustedAdviceCyclePhase::new(layout, untrusted_advice_reference_point));
         let bytecode_reduction = match (bytecode_reduction_layout, cycle_bytecode_reduction_weights)
         {
             (Some(layout), Some(weights)) => {

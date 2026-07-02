@@ -877,22 +877,6 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "advice fixture test offsets the untrusted advice cycle-phase output claim",
     ),
     checked_standard(
-        "stage6.claims.trusted_advice.untrusted",
-        "claims.stage6b.trusted_advice.untrusted",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "trusted advice cycle-phase claim carries only the trusted kind; the untrusted field is structurally always absent",
-    ),
-    checked_standard(
-        "stage6.claims.untrusted_advice.trusted",
-        "claims.stage6b.untrusted_advice.trusted",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "untrusted advice cycle-phase claim carries only the untrusted kind; the trusted field is structurally always absent",
-    ),
-    checked_standard(
         "stage6.claims.address_phase.bytecode_val_stages",
         "claims.stage6a.bytecode_read_raf.val_stages",
         VerifierPhase::Stage6,
@@ -990,22 +974,6 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice address-phase output claim",
-    ),
-    checked_standard(
-        "stage7.claims.trusted_advice.untrusted",
-        "claims.stage7.trusted_advice.untrusted",
-        VerifierPhase::Stage7,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "trusted advice address-phase claim carries only the trusted kind; the untrusted field is structurally always absent",
-    ),
-    checked_standard(
-        "stage7.claims.untrusted_advice.trusted",
-        "claims.stage7.untrusted_advice.trusted",
-        VerifierPhase::Stage7,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "untrusted advice address-phase claim carries only the untrusted kind; the trusted field is structurally always absent",
     ),
     checked_standard(
         "stage7.claims.bytecode_address_phase.chunks",
@@ -1456,16 +1424,10 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rd_inc: zero,
             },
             trusted_advice: fill_optionals.then_some(
-                stage6b::outputs::AdviceCyclePhaseOutputClaims {
-                    trusted: Some(zero),
-                    untrusted: None,
-                },
+                stage6b::outputs::TrustedAdviceCyclePhaseOutputClaims { trusted: zero },
             ),
             untrusted_advice: fill_optionals.then_some(
-                stage6b::outputs::AdviceCyclePhaseOutputClaims {
-                    trusted: None,
-                    untrusted: Some(zero),
-                },
+                stage6b::outputs::UntrustedAdviceCyclePhaseOutputClaims { untrusted: zero },
             ),
             bytecode_reduction: fill_optionals.then_some(
                 stage6b::outputs::BytecodeReductionCyclePhaseOutputClaims {
@@ -1487,15 +1449,13 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     ram_ra: vec![zero],
                 },
             trusted_advice: fill_optionals.then_some(
-                stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
-                    trusted: Some(zero),
-                    untrusted: None,
+                stage7::advice_address_phase::TrustedAdviceAddressPhaseOutputClaims {
+                    trusted: zero,
                 },
             ),
             untrusted_advice: fill_optionals.then_some(
-                stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
-                    trusted: None,
-                    untrusted: Some(zero),
+                stage7::advice_address_phase::UntrustedAdviceAddressPhaseOutputClaims {
+                    untrusted: zero,
                 },
             ),
             bytecode_address_phase: fill_optionals.then_some(

@@ -180,14 +180,11 @@ fn advice_address_value<F: Field>(
     kind: JoltAdviceKind,
 ) -> Option<F> {
     match kind {
-        JoltAdviceKind::Trusted => claims
-            .trusted_advice
-            .as_ref()
-            .and_then(|claims| claims.trusted),
+        JoltAdviceKind::Trusted => claims.trusted_advice.as_ref().map(|claims| claims.trusted),
         JoltAdviceKind::Untrusted => claims
             .untrusted_advice
             .as_ref()
-            .and_then(|claims| claims.untrusted),
+            .map(|claims| claims.untrusted),
     }
 }
 

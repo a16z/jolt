@@ -1,6 +1,6 @@
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
-    BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout,
+    BytecodeClaimReductionLayout, JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
@@ -13,8 +13,9 @@ use super::{
     booleanity::{BooleanityCyclePhaseChallenges, BooleanityInputClaims},
     bytecode_read_raf::{BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims},
     committed_reduction_cycle_phase::{
-        advice_cycle_phase_input_values_from_upstream,
         program_image_reduction_cycle_phase_input_values_from_upstream,
+        trusted_advice_cycle_phase_input_values_from_upstream,
+        untrusted_advice_cycle_phase_input_values_from_upstream,
         BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
     },
     inc_claim_reduction::{
@@ -273,7 +274,7 @@ where
 /// drivers cannot express: the bytecode RA claim count and the bytecode reduction's
 /// intermediate-vs-chunks shape. Member presence is enforced separately by the
 /// generated `validate_claim_presence`; a missing advice inner opening is caught by
-/// `expected_final_claim` (`AdviceCyclePhase::expected_output`).
+/// `expected_final_claim` (the advice cycle phase's `expected_output`).
 fn validate_cycle_phase_claim_shape<F: Field>(
     formula_dimensions: &JoltFormulaDimensions,
     claims: &Stage6bOutputClaims<F>,
@@ -350,18 +351,20 @@ fn stage6b_input_values_from_upstream<F: Field>(
             &stage4.output_values,
             stage5,
         ),
-        trusted_advice: sumchecks.trusted_advice.as_ref().map(|_| {
-            advice_cycle_phase_input_values_from_upstream(
-                &stage4.ram_val_check_init,
-                JoltAdviceKind::Trusted,
-            )
-        }),
-        untrusted_advice: sumchecks.untrusted_advice.as_ref().map(|_| {
-            advice_cycle_phase_input_values_from_upstream(
-                &stage4.ram_val_check_init,
-                JoltAdviceKind::Untrusted,
-            )
-        }),
+        trusted_advice: sumchecks
+            .trusted_advice
+            .as_ref()
+            .map(|_| {
+                trusted_advice_cycle_phase_input_values_from_upstream(&stage4.ram_val_check_init)
+            })
+            .transpose()?,
+        untrusted_advice: sumchecks
+            .untrusted_advice
+            .as_ref()
+            .map(|_| {
+                untrusted_advice_cycle_phase_input_values_from_upstream(&stage4.ram_val_check_init)
+            })
+            .transpose()?,
         bytecode_reduction: sumchecks.bytecode_reduction.as_ref().map(|_| {
             BytecodeReductionCyclePhaseInputClaims {
                 val_stages: address_claims.bytecode_read_raf.val_stages.clone(),
@@ -437,15 +440,12 @@ fn append_opening_claims<F, T>(
         .append_openings(transcript);
     claims.inc_claim_reduction.append_openings(transcript);
     // The optional members single-source their per-field Fiat-Shamir order from the
-    // `OutputClaims` derive too. Unlike the removed hand loops (which appended only
-    // each advice member's on-kind slot), an off-kind advice `Some` is now absorbed
-    // — rejecting the proof via transcript divergence — rather than silently
-    // skipped; canonical proofs always carry `None` there, so the byte output is
-    // unchanged.
-    for advice in [&claims.trusted_advice, &claims.untrusted_advice]
-        .into_iter()
-        .flatten()
-    {
+    // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
+    // struct, so it absorbs exactly its own kind's opening.
+    if let Some(advice) = &claims.trusted_advice {
+        advice.append_openings(transcript);
+    }
+    if let Some(advice) = &claims.untrusted_advice {
         advice.append_openings(transcript);
     }
     if let Some(reduction) = &claims.bytecode_reduction {

@@ -14,7 +14,10 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
-use super::advice_address_phase::{advice_input_values_from_upstream, AdviceAddressPhase};
+use super::advice_address_phase::{
+    trusted_advice_input_values_from_upstream, untrusted_advice_input_values_from_upstream,
+    TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
+};
 use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, BytecodeReductionAddressPhaseInputClaims,
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseInputClaims,
@@ -198,8 +201,7 @@ fn build_stage7_sumchecks<F: Field>(
             stage6_points.advice_cycle_phase_variables(JoltAdviceKind::Trusted),
             advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted),
             |layout, cycle_phase_variables| {
-                AdviceAddressPhase::new(
-                    JoltAdviceKind::Trusted,
+                TrustedAdviceAddressPhase::new(
                     layout,
                     advice_reference(JoltAdviceKind::Trusted),
                     cycle_phase_variables,
@@ -211,8 +213,7 @@ fn build_stage7_sumchecks<F: Field>(
             stage6_points.advice_cycle_phase_variables(JoltAdviceKind::Untrusted),
             advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
             |layout, cycle_phase_variables| {
-                AdviceAddressPhase::new(
-                    JoltAdviceKind::Untrusted,
+                UntrustedAdviceAddressPhase::new(
                     layout,
                     advice_reference(JoltAdviceKind::Untrusted),
                     cycle_phase_variables,
@@ -287,11 +288,13 @@ fn stage7_input_values_from_upstream<F: Field>(
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
-            .map(|_| advice_input_values_from_upstream(cycle_phase, JoltAdviceKind::Trusted)),
+            .map(|_| trusted_advice_input_values_from_upstream(cycle_phase))
+            .transpose()?,
         untrusted_advice: sumchecks
             .untrusted_advice
             .as_ref()
-            .map(|_| advice_input_values_from_upstream(cycle_phase, JoltAdviceKind::Untrusted)),
+            .map(|_| untrusted_advice_input_values_from_upstream(cycle_phase))
+            .transpose()?,
         bytecode_address_phase: sumchecks
             .bytecode_address_phase
             .as_ref()

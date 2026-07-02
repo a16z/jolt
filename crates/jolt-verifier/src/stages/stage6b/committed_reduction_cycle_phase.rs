@@ -16,12 +16,14 @@
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     lane_weights, BytecodeLaneWeightInputs,
 };
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
-    AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
+    TrustedAdviceCyclePhaseInputClaims, TrustedAdviceCyclePhaseOutputClaims,
+    UntrustedAdviceCyclePhaseInputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
     BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
@@ -42,73 +44,32 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage4::RamValCheckInitialEvaluation;
 use crate::VerifierError;
 
-/// Wire the consumed RAM value-check advice opening *value* for `kind`, in the
-/// shared [`AdviceCyclePhaseInputClaims`] with only that kind's slot filled (the
-/// relation's input `Expr` reads only its own kind's opening). Clear-only.
-pub fn advice_cycle_phase_input_values_from_upstream<F: Field>(
+/// Wire the consumed RAM value-check trusted-advice opening *value* off the RAM
+/// value-check initial evaluation. Clear-only. Errors if the RAM value-check
+/// produced no trusted-advice contribution (the reduction runs only when it did).
+pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
-    kind: JoltAdviceKind,
-) -> AdviceCyclePhaseInputClaims<F> {
-    let value = ram_val_check_init
-        .advice_contribution(kind)
-        .map(|contribution| contribution.opening_value);
-    match kind {
-        JoltAdviceKind::Trusted => AdviceCyclePhaseInputClaims {
-            trusted: value,
-            untrusted: None,
-        },
-        JoltAdviceKind::Untrusted => AdviceCyclePhaseInputClaims {
-            trusted: None,
-            untrusted: value,
-        },
-    }
+) -> Result<TrustedAdviceCyclePhaseInputClaims<F>, VerifierError> {
+    let trusted = ram_val_check_init
+        .advice_contribution(JoltAdviceKind::Trusted)
+        .map(|contribution| contribution.opening_value)
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: ram_val_check_advice_opening(JoltAdviceKind::Trusted),
+        })?;
+    Ok(TrustedAdviceCyclePhaseInputClaims { trusted })
 }
 
-pub struct AdviceCyclePhase<F: Field> {
-    symbolic: relations::claim_reductions::advice::CyclePhase,
-    kind: JoltAdviceKind,
-    layout: AdviceClaimReductionLayout,
-    /// The RAM address point of the staged advice opening from RAM value-check;
-    /// the `FinalScale` public compares the produced opening point against it.
-    /// `None` in ZK, where `expected_output` (its only reader) never runs.
-    reference_opening_point: Option<Vec<F>>,
-}
-
-impl<F: Field> AdviceCyclePhase<F> {
-    pub fn new(
-        kind: JoltAdviceKind,
-        layout: &AdviceClaimReductionLayout,
-        reference_opening_point: Option<Vec<F>>,
-    ) -> Self {
-        Self {
-            symbolic: relations::claim_reductions::advice::CyclePhase::new((
-                kind,
-                layout.dimensions(),
-            )),
-            kind,
-            layout: layout.clone(),
-            reference_opening_point,
-        }
-    }
-
-    /// The produced advice opening for this kind: its value and point, or an error
-    /// if the cycle phase produced no opening.
-    fn output<'a>(
-        &self,
-        output_values: &AdviceCyclePhaseOutputClaims<F>,
-        output_points: &'a AdviceCyclePhaseOutputClaims<Vec<F>>,
-    ) -> Result<(F, &'a [F]), VerifierError> {
-        let (value, point) = match self.kind {
-            JoltAdviceKind::Trusted => (output_values.trusted, output_points.trusted()),
-            JoltAdviceKind::Untrusted => (output_values.untrusted, output_points.untrusted()),
-        };
-        match (value, point) {
-            (Some(value), Some(point)) => Ok((value, point)),
-            _ => Err(advice_public_failed(
-                "advice cycle phase produced no opening",
-            )),
-        }
-    }
+/// Wire the consumed RAM value-check untrusted-advice opening *value*. Clear-only.
+pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
+) -> Result<UntrustedAdviceCyclePhaseInputClaims<F>, VerifierError> {
+    let untrusted = ram_val_check_init
+        .advice_contribution(JoltAdviceKind::Untrusted)
+        .map(|contribution| contribution.opening_value)
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: ram_val_check_advice_opening(JoltAdviceKind::Untrusted),
+        })?;
+    Ok(UntrustedAdviceCyclePhaseInputClaims { untrusted })
 }
 
 fn advice_public_failed(reason: impl ToString) -> VerifierError {
@@ -118,8 +79,32 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
-    type Symbolic = relations::claim_reductions::advice::CyclePhase;
+pub struct TrustedAdviceCyclePhase<F: Field> {
+    symbolic: relations::claim_reductions::advice::TrustedCyclePhase,
+    layout: AdviceClaimReductionLayout,
+    /// The RAM address point of the staged advice opening from RAM value-check;
+    /// the `FinalScale` public compares the produced opening point against it.
+    /// `None` in ZK, where `expected_output` (its only reader) never runs.
+    reference_opening_point: Option<Vec<F>>,
+}
+
+impl<F: Field> TrustedAdviceCyclePhase<F> {
+    pub fn new(
+        layout: &AdviceClaimReductionLayout,
+        reference_opening_point: Option<Vec<F>>,
+    ) -> Self {
+        Self {
+            symbolic: relations::claim_reductions::advice::TrustedCyclePhase::new(
+                layout.dimensions(),
+            ),
+            layout: layout.clone(),
+            reference_opening_point,
+        }
+    }
+}
+
+impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
+    type Symbolic = relations::claim_reductions::advice::TrustedCyclePhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -134,32 +119,25 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _input_points: &AdviceCyclePhaseInputClaims<Vec<F>>,
-    ) -> Result<AdviceCyclePhaseOutputClaims<Vec<F>>, VerifierError> {
+        _input_points: &TrustedAdviceCyclePhaseInputClaims<Vec<F>>,
+    ) -> Result<TrustedAdviceCyclePhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
             .cycle_phase_opening_point(sumcheck_point)
             .map_err(advice_public_failed)?;
-        Ok(match self.kind {
-            JoltAdviceKind::Trusted => AdviceCyclePhaseOutputClaims {
-                trusted: Some(opening_point),
-                untrusted: None,
-            },
-            JoltAdviceKind::Untrusted => AdviceCyclePhaseOutputClaims {
-                trusted: None,
-                untrusted: Some(opening_point),
-            },
+        Ok(TrustedAdviceCyclePhaseOutputClaims {
+            trusted: opening_point,
         })
     }
 
     fn expected_output(
         &self,
-        _input_points: &AdviceCyclePhaseInputClaims<Vec<F>>,
-        output_values: &AdviceCyclePhaseOutputClaims<F>,
-        output_points: &AdviceCyclePhaseOutputClaims<Vec<F>>,
+        _input_points: &TrustedAdviceCyclePhaseInputClaims<Vec<F>>,
+        output_values: &TrustedAdviceCyclePhaseOutputClaims<F>,
+        output_points: &TrustedAdviceCyclePhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let (value, point) = self.output(output_values, output_points)?;
+        let value = output_values.trusted;
         if self.layout.dimensions().has_address_phase() {
             Ok(value)
         } else {
@@ -169,7 +147,86 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
                 })?;
             let scale = self
                 .layout
-                .cycle_phase_scale_at_opening_point(reference_opening_point, point)
+                .cycle_phase_scale_at_opening_point(
+                    reference_opening_point,
+                    output_points.trusted(),
+                )
+                .map_err(advice_public_failed)?;
+            Ok(scale * value)
+        }
+    }
+}
+
+pub struct UntrustedAdviceCyclePhase<F: Field> {
+    symbolic: relations::claim_reductions::advice::UntrustedCyclePhase,
+    layout: AdviceClaimReductionLayout,
+    /// The RAM address point of the staged advice opening from RAM value-check;
+    /// the `FinalScale` public compares the produced opening point against it.
+    /// `None` in ZK, where `expected_output` (its only reader) never runs.
+    reference_opening_point: Option<Vec<F>>,
+}
+
+impl<F: Field> UntrustedAdviceCyclePhase<F> {
+    pub fn new(
+        layout: &AdviceClaimReductionLayout,
+        reference_opening_point: Option<Vec<F>>,
+    ) -> Self {
+        Self {
+            symbolic: relations::claim_reductions::advice::UntrustedCyclePhase::new(
+                layout.dimensions(),
+            ),
+            layout: layout.clone(),
+            reference_opening_point,
+        }
+    }
+}
+
+impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
+    type Symbolic = relations::claim_reductions::advice::UntrustedCyclePhase;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
+
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
+    fn derive_opening_points(
+        &self,
+        sumcheck_point: &[F],
+        _input_points: &UntrustedAdviceCyclePhaseInputClaims<Vec<F>>,
+    ) -> Result<UntrustedAdviceCyclePhaseOutputClaims<Vec<F>>, VerifierError> {
+        let opening_point = self
+            .layout
+            .cycle_phase_opening_point(sumcheck_point)
+            .map_err(advice_public_failed)?;
+        Ok(UntrustedAdviceCyclePhaseOutputClaims {
+            untrusted: opening_point,
+        })
+    }
+
+    fn expected_output(
+        &self,
+        _input_points: &UntrustedAdviceCyclePhaseInputClaims<Vec<F>>,
+        output_values: &UntrustedAdviceCyclePhaseOutputClaims<F>,
+        output_points: &UntrustedAdviceCyclePhaseOutputClaims<Vec<F>>,
+        _challenges: &NoChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let value = output_values.untrusted;
+        if self.layout.dimensions().has_address_phase() {
+            Ok(value)
+        } else {
+            let reference_opening_point =
+                self.reference_opening_point.as_ref().ok_or_else(|| {
+                    advice_public_failed("advice reference opening point unavailable")
+                })?;
+            let scale = self
+                .layout
+                .cycle_phase_scale_at_opening_point(
+                    reference_opening_point,
+                    output_points.untrusted(),
+                )
                 .map_err(advice_public_failed)?;
             Ok(scale * value)
         }

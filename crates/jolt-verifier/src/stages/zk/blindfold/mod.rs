@@ -527,42 +527,15 @@ where
     advice_selector(input, kind, &r_address).map(|(_, point)| point)
 }
 
-fn advice_cycle_claim<PCS, VC, ZkProof>(
+fn advice_layout<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     kind: JoltAdviceKind,
-) -> (
-    Option<AdviceClaimReductionLayout>,
-    Option<relations::claim_reductions::advice::CyclePhase>,
-)
+) -> Option<AdviceClaimReductionLayout>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let layout = input.checked.precommitted.advice(kind).cloned();
-    let claim = layout.as_ref().map(|layout| {
-        relations::claim_reductions::advice::CyclePhase::new((kind, layout.dimensions()))
-    });
-    (layout, claim)
-}
-
-fn advice_address_claim<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    kind: JoltAdviceKind,
-) -> (
-    Option<AdviceClaimReductionLayout>,
-    Option<relations::claim_reductions::advice::AddressPhase>,
-)
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let layout = input.checked.precommitted.advice(kind).cloned();
-    let claim = layout.as_ref().and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            relations::claim_reductions::advice::AddressPhase::new((kind, layout.dimensions()))
-        })
-    });
-    (layout, claim)
+    input.checked.precommitted.advice(kind).cloned()
 }
 
 #[expect(

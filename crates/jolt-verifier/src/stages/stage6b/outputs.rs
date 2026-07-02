@@ -14,8 +14,8 @@ use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 pub use super::booleanity::BooleanityOutputClaims;
 pub use super::bytecode_read_raf::BytecodeReadRafOutputClaims;
 pub use super::committed_reduction_cycle_phase::{
-    AdviceCyclePhaseOutputClaims, BytecodeReductionCyclePhaseOutputClaims,
-    ProgramImageReductionCyclePhaseOutputClaims,
+    BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
+    TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
@@ -25,7 +25,8 @@ pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::BytecodeReadRafCycle;
 use super::committed_reduction_cycle_phase::{
-    AdviceCyclePhase, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
+    BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
+    UntrustedAdviceCyclePhase,
 };
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -78,8 +79,8 @@ pub struct Stage6bSumchecks<F: Field> {
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
     pub inc_claim_reduction: IncClaimReduction<F>,
-    pub trusted_advice: Option<AdviceCyclePhase<F>>,
-    pub untrusted_advice: Option<AdviceCyclePhase<F>>,
+    pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
+    pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
     pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
 }
@@ -115,15 +116,13 @@ impl<F: Field> Stage6bOutputPoints<F> {
         kind: jolt_claims::protocols::jolt::JoltAdviceKind,
     ) -> Option<&[F]> {
         use jolt_claims::protocols::jolt::JoltAdviceKind;
-        let member = match kind {
-            JoltAdviceKind::Trusted => self.trusted_advice.as_ref()?,
-            JoltAdviceKind::Untrusted => self.untrusted_advice.as_ref()?,
-        };
-        let opening = match kind {
-            JoltAdviceKind::Trusted => member.trusted.as_ref(),
-            JoltAdviceKind::Untrusted => member.untrusted.as_ref(),
-        }?;
-        Some(opening.as_slice())
+        match kind {
+            JoltAdviceKind::Trusted => self.trusted_advice.as_ref().map(|claims| claims.trusted()),
+            JoltAdviceKind::Untrusted => self
+                .untrusted_advice
+                .as_ref()
+                .map(|claims| claims.untrusted()),
+        }
     }
 
     /// The program-image claim-reduction cycle-phase opening point, present only in
@@ -171,11 +170,6 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// runtime bytecode/booleanity point-alias dedup from it to size the committed
     /// output claims.
     pub fn point_count(&self) -> usize {
-        let advice_count = |member: &Option<AdviceCyclePhaseOutputClaims<Vec<F>>>| {
-            member.as_ref().map_or(0, |claims| {
-                usize::from(claims.trusted.is_some()) + usize::from(claims.untrusted.is_some())
-            })
-        };
         self.bytecode_read_raf.bytecode_ra.len()
             + self.booleanity.instruction_ra.len()
             + self.booleanity.bytecode_ra.len()
@@ -187,8 +181,8 @@ impl<F: Field> Stage6bOutputPoints<F> {
                 .committed_instruction_ra
                 .len()
             + 2
-            + advice_count(&self.trusted_advice)
-            + advice_count(&self.untrusted_advice)
+            + usize::from(self.trusted_advice.is_some())
+            + usize::from(self.untrusted_advice.is_some())
             + self.bytecode_reduction.as_ref().map_or(0, |reduction| {
                 usize::from(reduction.intermediate.is_some()) + reduction.chunks.len()
             })
@@ -207,11 +201,10 @@ impl<F: Field> Stage6bOutputClaims<F> {
     ) -> Option<F> {
         use jolt_claims::protocols::jolt::JoltAdviceKind;
         match kind {
-            JoltAdviceKind::Trusted => self.trusted_advice.as_ref().and_then(|claim| claim.trusted),
-            JoltAdviceKind::Untrusted => self
-                .untrusted_advice
-                .as_ref()
-                .and_then(|claim| claim.untrusted),
+            JoltAdviceKind::Trusted => self.trusted_advice.as_ref().map(|claim| claim.trusted),
+            JoltAdviceKind::Untrusted => {
+                self.untrusted_advice.as_ref().map(|claim| claim.untrusted)
+            }
         }
     }
 }
