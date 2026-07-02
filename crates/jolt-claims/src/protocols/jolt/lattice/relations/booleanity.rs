@@ -1,0 +1,237 @@
+//! Lattice-mode booleanity: the base booleanity sumcheck (same
+//! `JoltRelationId::Booleanity`) extended so the packed one-hot inc columns
+//! are covered by the same boolean check as the `Ra` columns. Precedent for
+//! sharing a relation id across mode variants: the full/committed bytecode
+//! read-raf pair.
+
+use jolt_field::RingCore;
+use serde::{Deserialize, Serialize};
+
+use crate::protocols::jolt::geometry::booleanity::{
+    booleanity_output_openings, BooleanityDimensions,
+};
+use crate::protocols::jolt::{
+    BooleanityChallenge, BooleanityPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId,
+    JoltRelationId,
+};
+use crate::{challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+
+use super::super::geometry::UnsignedIncChunking;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LatticeBooleanityDimensions {
+    pub base: BooleanityDimensions,
+    pub chunking: UnsignedIncChunking,
+}
+
+impl LatticeBooleanityDimensions {
+    pub const fn new(base: BooleanityDimensions, chunking: UnsignedIncChunking) -> Self {
+        Self { base, chunking }
+    }
+}
+
+/// Every boolean-checked opening at the booleanity point: the base `Ra`
+/// families at `(r_address ‖ r_cycle)`, the unsigned-inc chunk columns at the
+/// same point, and the msb column at `r_cycle` (it has no address variables).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(Booleanity)]
+pub struct LatticeBooleanityOutputClaims<C> {
+    #[opening(committed = InstructionRa)]
+    pub instruction_ra: Vec<C>,
+    #[opening(committed = BytecodeRa)]
+    pub bytecode_ra: Vec<C>,
+    #[opening(committed = RamRa)]
+    pub ram_ra: Vec<C>,
+    #[opening(committed = UnsignedIncChunk)]
+    pub unsigned_inc_chunks: Vec<C>,
+    #[opening(committed = UnsignedIncMsb)]
+    pub unsigned_inc_msb: C,
+}
+
+#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+pub struct LatticeBooleanityChallenges<F> {
+    #[challenge(BooleanityChallenge::Gamma)]
+    pub gamma: F,
+}
+
+/// The base booleanity output sum (`eq · Σ_i γ^{2i} (x_i² − x_i)`) extended
+/// past the `Ra` families with the unsigned-inc chunk columns and the msb
+/// column.
+pub struct LatticeBooleanity {
+    shape: LatticeBooleanityDimensions,
+}
+
+impl SymbolicSumcheck for LatticeBooleanity {
+    type RelationId = JoltRelationId;
+    type OpeningId = JoltOpeningId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
+    type ChallengeId = crate::protocols::jolt::JoltChallengeId;
+    type Shape = LatticeBooleanityDimensions;
+    type Challenges<F> = LatticeBooleanityChallenges<F>;
+    type Inputs<C> = crate::NoInputs<C>;
+    type Outputs<C> = LatticeBooleanityOutputClaims<C>;
+
+    fn new(shape: LatticeBooleanityDimensions) -> Self {
+        Self { shape }
+    }
+
+    fn id() -> JoltRelationId {
+        JoltRelationId::Booleanity
+    }
+
+    fn rounds(&self) -> usize {
+        self.shape.base.sumcheck_rounds()
+    }
+
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        JoltExpr::zero()
+    }
+
+    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        let gamma = challenge(BooleanityChallenge::Gamma);
+        let mut output = JoltExpr::zero();
+        for (i, opening_id) in lattice_booleanity_output_openings(self.shape)
+            .into_iter()
+            .enumerate()
+        {
+            let x = opening(opening_id);
+            output = output + gamma.clone().pow(2 * i) * (x.clone() * x.clone() - x);
+        }
+        derived(BooleanityPublic::EqAddressCycle) * output
+    }
+}
+
+/// The boolean-checked openings in canonical order: base `Ra` families, then
+/// the chunk columns, then the msb.
+pub fn lattice_booleanity_output_openings(
+    dimensions: LatticeBooleanityDimensions,
+) -> Vec<JoltOpeningId> {
+    let mut openings = booleanity_output_openings(dimensions.base.layout);
+    openings
+        .extend((0..dimensions.chunking.chunk_count()).map(booleanity_unsigned_inc_chunk_opening));
+    openings.push(booleanity_unsigned_inc_msb_opening());
+    openings
+}
+
+pub fn booleanity_unsigned_inc_chunk_opening(index: usize) -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::UnsignedIncChunk(index),
+        JoltRelationId::Booleanity,
+    )
+}
+
+pub fn booleanity_unsigned_inc_msb_opening() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::UnsignedIncMsb,
+        JoltRelationId::Booleanity,
+    )
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn dimensions() -> LatticeBooleanityDimensions {
+        let layout = JoltRaPolynomialLayout::new(1, 0, 0).unwrap();
+        LatticeBooleanityDimensions::new(
+            BooleanityDimensions::new(layout, 5, 32),
+            UnsignedIncChunking::new(32).unwrap(),
+        )
+    }
+
+    #[test]
+    fn lattice_booleanity_extends_base_output_with_inc_columns() {
+        let relation = LatticeBooleanity::new(dimensions());
+
+        let instruction_ra = Fr::from_u64(3);
+        let chunk_0 = Fr::from_u64(5);
+        let chunk_1 = Fr::from_u64(7);
+        let msb = Fr::from_u64(11);
+        let gamma = Fr::from_u64(13);
+        let eq_address_cycle = Fr::from_u64(17);
+        let zero = Fr::from_u64(0);
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id
+                    == JoltOpeningId::committed(
+                        JoltCommittedPolynomial::InstructionRa(0),
+                        JoltRelationId::Booleanity,
+                    ) =>
+                {
+                    instruction_ra
+                }
+                id if id == booleanity_unsigned_inc_chunk_opening(0) => chunk_0,
+                id if id == booleanity_unsigned_inc_chunk_opening(1) => chunk_1,
+                id if id == booleanity_unsigned_inc_msb_opening() => msb,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::Booleanity(BooleanityChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) => eq_address_cycle,
+                _ => zero,
+            },
+        );
+
+        let square = |x: Fr| x * x - x;
+        let gamma_2 = gamma * gamma;
+        let gamma_4 = gamma_2 * gamma_2;
+        let gamma_6 = gamma_4 * gamma_2;
+        assert_eq!(
+            output,
+            eq_address_cycle
+                * (square(instruction_ra)
+                    + gamma_2 * square(chunk_0)
+                    + gamma_4 * square(chunk_1)
+                    + gamma_6 * square(msb))
+        );
+    }
+
+    #[test]
+    fn lattice_booleanity_exposes_expected_dependencies() {
+        let relation = LatticeBooleanity::new(dimensions());
+
+        assert_eq!(LatticeBooleanity::id(), JoltRelationId::Booleanity);
+        assert_eq!(relation.rounds(), 5 + 32);
+        assert_eq!(relation.degree(), 3);
+        assert!(relation
+            .input_expression::<Fr>()
+            .required_openings()
+            .is_empty());
+        assert_eq!(
+            relation.output_expression::<Fr>().required_openings(),
+            lattice_booleanity_output_openings(dimensions())
+        );
+        assert_eq!(
+            lattice_booleanity_output_openings(dimensions()),
+            vec![
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::InstructionRa(0),
+                    JoltRelationId::Booleanity,
+                ),
+                booleanity_unsigned_inc_chunk_opening(0),
+                booleanity_unsigned_inc_chunk_opening(1),
+                booleanity_unsigned_inc_msb_opening(),
+            ]
+        );
+        assert_eq!(
+            relation.required_challenges::<Fr>(),
+            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
+        );
+    }
+}

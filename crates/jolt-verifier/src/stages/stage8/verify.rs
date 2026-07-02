@@ -368,6 +368,18 @@ where
                         .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
+                JoltCommittedPolynomial::UnsignedIncChunk(_)
+                | JoltCommittedPolynomial::UnsignedIncMsb
+                | JoltCommittedPolynomial::TrustedAdviceBytes
+                | JoltCommittedPolynomial::UntrustedAdviceBytes => {
+                    // Lattice-mode columns discharge through the packed
+                    // opening, never the homomorphic stage 8 batch.
+                    return Err(VerifierError::FinalOpeningBatchFailed {
+                        reason: format!(
+                            "lattice column {polynomial:?} is not part of the stage 8 batch"
+                        ),
+                    });
+                }
             };
         entries.push(Stage8BatchEntry {
             id: id.into(),

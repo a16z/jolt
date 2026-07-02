@@ -356,6 +356,19 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
                 ),
             })
         }
+        JoltCommittedPolynomial::UnsignedIncChunk(_)
+        | JoltCommittedPolynomial::UnsignedIncMsb
+        | JoltCommittedPolynomial::TrustedAdviceBytes
+        | JoltCommittedPolynomial::UntrustedAdviceBytes => {
+            // Lattice-mode columns discharge through the packed opening
+            // (jolt_claims::protocols::jolt::lattice::discharge), never the
+            // homomorphic stage 8 RLC batch.
+            Err(VerifierError::FinalOpeningBatchFailed {
+                reason: format!(
+                    "lattice column {polynomial:?} is not part of the stage 8 prover order"
+                ),
+            })
+        }
     }
 }
 

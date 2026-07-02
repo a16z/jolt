@@ -126,7 +126,10 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_)
+                | JoltChallengeId::AdviceBytesValidity(_) => zero,
             },
             |id| match *id {
                 JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {

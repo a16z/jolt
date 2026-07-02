@@ -21,3 +21,6 @@ jolt-poly.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true
+
+[dev-dependencies]
+jolt-openings.workspace = true

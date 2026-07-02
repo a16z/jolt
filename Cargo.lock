@@ -3162,6 +3162,7 @@ dependencies = [
  "jolt-claims-derive",
  "jolt-field",
  "jolt-lookup-tables",
+ "jolt-openings",
  "jolt-poly",
  "jolt-riscv",
  "serde",

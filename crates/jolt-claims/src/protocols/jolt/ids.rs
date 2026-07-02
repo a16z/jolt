@@ -2,6 +2,11 @@ use derive_more::From;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
+use super::lattice::{
+    AdviceBytesValidityChallenge, AdviceBytesValidityPublic, IncVirtualizationChallenge,
+    IncVirtualizationPublic, UnsignedIncChunkReconstructionChallenge,
+    UnsignedIncChunkReconstructionPublic,
+};
 use crate::Expr;
 
 /// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
@@ -38,6 +43,12 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
+    // Lattice-mode relations (see protocols/jolt/lattice). Appended so
+    // index-based codecs of base-mode proofs stay stable.
+    IncVirtualization,
+    UnsignedIncClaimReduction,
+    UnsignedIncChunkReconstruction,
+    AdviceBytesValidity,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -297,6 +308,9 @@ pub enum JoltChallengeId {
     InstructionInput(InstructionInputChallenge),
     InstructionReadRaf(InstructionReadRafChallenge),
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
+    IncVirtualization(IncVirtualizationChallenge),
+    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionChallenge),
+    AdviceBytesValidity(AdviceBytesValidityChallenge),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -310,6 +324,12 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
+    // Lattice-mode committed columns (slots of the packed witness); base mode
+    // never constructs these. Appended for codec stability.
+    UnsignedIncChunk(usize),
+    UnsignedIncMsb,
+    TrustedAdviceBytes,
+    UntrustedAdviceBytes,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -358,6 +378,12 @@ pub enum JoltVirtualPolynomial {
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
     ProgramImageInitContributionRw,
+    // Lattice-mode virtual polynomials. `FusedInc` is the gamma-batched
+    // RamInc/RdInc stream (its destination selector is the existing
+    // `OpFlags(Store)`); `UnsignedInc` is `FusedInc + 2^64`. Appended for
+    // codec stability.
+    FusedInc,
+    UnsignedInc,
 }
 
 #[derive(
@@ -439,6 +465,9 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
+    IncVirtualization(IncVirtualizationPublic),
+    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
+    AdviceBytesValidity(AdviceBytesValidityPublic),
     #[from(ignore)]
     PublicInput(usize),
     #[from(ignore)]

@@ -92,6 +92,14 @@ pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelati
         }
         JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
+        // Lattice-mode columns; must agree with `lattice::discharge` (tested
+        // there).
+        JoltCommittedPolynomial::UnsignedIncChunk(_) => {
+            JoltRelationId::UnsignedIncChunkReconstruction
+        }
+        JoltCommittedPolynomial::UnsignedIncMsb => JoltRelationId::Booleanity,
+        JoltCommittedPolynomial::UntrustedAdviceBytes => JoltRelationId::AdviceBytesValidity,
+        JoltCommittedPolynomial::TrustedAdviceBytes => JoltRelationId::AdviceClaimReduction,
     }
 }
 

@@ -1,4 +1,5 @@
 pub mod geometry;
+pub mod lattice;
 pub mod relations;
 
 mod ids;
@@ -18,6 +19,12 @@ pub use geometry::{
     },
     error::{JoltFormulaDimensionsError, JoltFormulaPointError},
 };
+pub use lattice::{
+    AdviceBytesValidityChallenge, AdviceBytesValidityPublic, IncVirtualizationChallenge,
+    IncVirtualizationPublic, UnsignedIncChunkReconstructionChallenge,
+    UnsignedIncChunkReconstructionPublic,
+};
+
 pub use ids::{
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
     BytecodeClaimReductionChallenge, BytecodeClaimReductionPublic, BytecodeReadRafChallenge,
