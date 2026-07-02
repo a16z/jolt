@@ -47,7 +47,9 @@
 //!   on the `OutputClaims` (values) aggregate, delegating to each member in
 //!   declaration order); and
 //! - the per-instance driver method on the source `StageNSumchecks` struct —
-//!   `draw_challenges` (draw each member's challenges into `StageNChallenges`).
+//!   `draw_challenges` (draw each member's challenges into `StageNChallenges`),
+//!   suppressible via `#[sumcheck_batch(no_draw_challenges)]` for a stage whose
+//!   member challenges have stage-level provenance and are hand-assembled.
 //!
 //! Opt-in per method via `#[sumcheck_batch(...)]` flags, emitted on the source
 //! `StageNSumchecks` struct only for stages that request them:
@@ -777,8 +779,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote!()
     };
 
-    let driver_impl = quote! {
-        impl<#f: ::jolt_field::Field> #name<#f> {
+    // Suppressed by `#[sumcheck_batch(no_draw_challenges)]`: a stage whose member
+    // challenges have stage-level provenance (shared squeezes, pre-batch draws,
+    // value re-rolls) hand-assembles its challenge aggregate, and a generated
+    // per-member draw would squeeze at the wrong transcript position if ever
+    // called — so it must not exist to be miscalled.
+    let draw_challenges_method = if options.no_draw_challenges {
+        quote!()
+    } else {
+        quote! {
             /// Draw each instance's Fiat-Shamir challenges in declaration order,
             /// assembling the stage's challenge aggregate. Members with no
             /// challenges draw nothing; `Option` members draw only when present.
@@ -793,6 +802,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     #(#draw_fields,)*
                 })
             }
+        }
+    };
+
+    let driver_impl = quote! {
+        impl<#f: ::jolt_field::Field> #name<#f> {
+            #draw_challenges_method
 
             #verify_clear_method
             #verify_zk_method
@@ -926,6 +941,12 @@ struct StageOptions {
     /// `validate_output_claims`, which derive the expected output-claim shape from each
     /// member's `expected_output_openings` (its output `Expr`).
     output_shape: bool,
+    /// `#[sumcheck_batch(no_draw_challenges)]`: skip emitting the generated
+    /// `draw_challenges` for a stage whose member challenges have stage-level
+    /// provenance (shared squeezes, pre-batch draws, value re-rolls) — calling a
+    /// per-member draw there would squeeze at the wrong transcript position, so
+    /// the method must not exist to be miscalled.
+    no_draw_challenges: bool,
 }
 
 impl StageOptions {
@@ -960,12 +981,14 @@ impl StageOptions {
                     options.expected_final_claim = true;
                 } else if path.is_ident("output_shape") {
                     options.output_shape = true;
+                } else if path.is_ident("no_draw_challenges") {
+                    options.no_draw_challenges = true;
                 } else {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
                          `verify_clear`, `verify_zk`, `derive_opening_points`, \
-                         `expected_final_claim`, `output_shape`)",
+                         `expected_final_claim`, `output_shape`, `no_draw_challenges`)",
                     ));
                 }
             }

@@ -82,12 +82,14 @@ impl<F: Field> Stage6AddressPhaseOutputPoints<F> {
 /// invariant on that impl); the aggregates project through the anchor, which both
 /// variants share cell-for-cell.
 ///
-/// The generated `draw_challenges` must NOT be called on this struct: the
+/// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
 /// members' challenges have stage-level provenance (the bytecode gamma shares
 /// stage 6a's squeeze, the booleanity gamma is drawn pre-6a with a
 /// prover-matched zero-replacement, and the instruction-RA gamma keeps
 /// `powers(n)[1].unwrap_or(one)`), so `verify` hand-assembles
-/// `Stage6CyclePhaseChallenges` from the stage-level draws.
+/// `Stage6CyclePhaseChallenges` from the stage-level draws — a generated
+/// per-member draw would squeeze at the wrong transcript position if it
+/// existed to be called.
 ///
 /// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
 /// `opening_values` / `append_to_transcript`: booleanity's `bytecode_ra` openings
@@ -99,6 +101,7 @@ impl<F: Field> Stage6AddressPhaseOutputPoints<F> {
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(
     custom_opening_values,
+    no_draw_challenges,
     verify_clear,
     verify_zk,
     derive_opening_points,

@@ -981,4 +981,24 @@ mod sumcheck_batch_derive_tests {
             vec![fr(4), fr(5), fr(1), fr(2), fr(3)]
         );
     }
+
+    // The draw opt-out fixture: `#[sumcheck_batch(no_draw_challenges)]` must emit
+    // NO `draw_challenges` on the source struct (a stage whose member challenges
+    // have stage-level provenance hand-assembles its aggregate; the generated draw
+    // would squeeze at the wrong transcript position if it existed). The inherent
+    // `draw_challenges` below — with a deliberately incompatible signature — would
+    // collide with a generated one, so this module compiling at all proves the
+    // opt-out suppressed it.
+    #[derive(SumcheckBatch)]
+    #[sumcheck_batch(no_draw_challenges)]
+    #[expect(dead_code)]
+    struct FixtureNoDrawSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: RegistersValEvaluation<F>,
+    }
+
+    impl<F: Field> FixtureNoDrawSumchecks<F> {
+        #[expect(dead_code, clippy::unused_self)]
+        fn draw_challenges(&self) {}
+    }
 }
