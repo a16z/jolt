@@ -10,7 +10,6 @@ workspace = true
 
 [dependencies]
 akita-config = { workspace = true, features = ["schedules-default"] }
-akita-field = { workspace = true, features = ["parallel"] }
 akita-pcs = { workspace = true, features = ["parallel", "schedules-default"] }
 akita-prover = { workspace = true, features = [
   "parallel",
