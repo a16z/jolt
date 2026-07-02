@@ -2,6 +2,13 @@ use derive_more::From;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
+use crate::Expr;
+
+/// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
+/// families (openings, deriveds, challenges). Each relation's `input`/`output`
+/// expression is a `JoltExpr<F>`.
+pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltRelationId {
     SpartanOuter,
@@ -51,6 +58,15 @@ pub enum RamValCheckChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamValCheckPublic {
     LtCyclePlusGamma,
+    /// `Val_init(r_address)`'s public portion — the part of the initial RAM
+    /// evaluation not carried by committed advice / program-image openings.
+    InitEval,
+    /// The negated block selector (`-selector`) weighting one committed advice
+    /// contribution (`untrusted`/`trusted`) in the `Val_init` decomposition.
+    InitSelector(JoltAdviceKind),
+    /// The negated selector (`-1`) weighting the committed program-image
+    /// contribution in the `Val_init` decomposition (committed program mode).
+    InitSelectorProgramImage,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -394,7 +410,7 @@ impl JoltOpeningId {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-pub enum JoltPublicId {
+pub enum JoltDerivedId {
     TraceLength,
     PaddedTraceLength,
     BytecodeLength,

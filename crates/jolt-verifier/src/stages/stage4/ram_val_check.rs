@@ -14,129 +14,108 @@
 //! fields and in the serialized `Stage4OutputClaims` aggregate. Only their values feed
 //! the input claim; their staged points are carried for completeness.
 
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamValCheckAdviceClaims, RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
+};
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         claim_reductions::program_image,
         dimensions::TraceDimensions,
         ram::{self, RamValCheckInit, RamValCheckInitContribution},
     },
-    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    RamValCheckChallenge, RamValCheckPublic,
+    relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
+    JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltRelationId, RamValCheckChallenge,
+    RamValCheckPublic,
 };
+use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
+use jolt_transcript::Transcript;
 
 use crate::proof::JoltProof;
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage2::outputs::Stage2ClearOutput;
+use crate::stages::stage4::verify::append_ram_val_check_gamma_domain_separator;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
 use super::outputs::Stage4OutputClaims;
 
-/// Produced RAM value-check openings (`ram_ra`, `ram_inc`) sharing one opening
-/// point. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamValCheck)]
-pub struct RamValCheckOutputClaims<C> {
-    #[opening(RamRa)]
-    pub ram_ra: C,
-    #[opening(committed = RamInc)]
-    pub ram_inc: C,
-}
-
-/// The staged advice openings contributing to `Val_init`: untrusted/trusted
-/// advice block evaluations, each present only when its commitment is. Appended
-/// before the register openings (see the `Stage4OutputClaims` field order).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamValCheck)]
-pub struct RamValCheckAdviceClaims<C> {
-    #[opening(untrusted_advice)]
-    pub untrusted: Option<C>,
-    #[opening(trusted_advice)]
-    pub trusted: Option<C>,
-}
-
-/// Consumed openings of the RAM value-check claim: the read-write `val` (stage 2)
-/// and output-check `val_final` (stage 2), reduced against `Val_init`, whose
-/// committed pieces (advice / program image) are present only in some proof
-/// configurations. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamValCheckInputClaims<C> {
-    #[opening(RamVal, from = RamReadWriteChecking)]
-    pub ram_val: C,
-    #[opening(RamValFinal, from = RamOutputCheck)]
-    pub ram_val_final: C,
-    #[opening(untrusted_advice, from = RamValCheck)]
-    pub untrusted_advice: Option<C>,
-    #[opening(trusted_advice, from = RamValCheck)]
-    pub trusted_advice: Option<C>,
-    #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
-    pub program_image: Option<C>,
-}
-
-impl<F: Field> RamValCheckInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed openings from stage 2's RAM read-write `val` and
-    /// output-check `val_final`, plus the reconstructed init contributions (the
-    /// same advice / program-image openings the init evaluation is decomposed
-    /// into). The init pieces carry their staged opening points for completeness,
-    /// though only their values feed the input claim.
-    pub fn from_upstream(
-        stage2: &Stage2ClearOutput<F>,
-        init: &RamValCheckInitialEvaluation<F>,
-    ) -> Self {
-        let advice =
-            |kind: JoltAdviceKind| init.advice_contribution(kind).map(|c| c.opening.clone());
-        Self {
-            ram_val: OpeningClaim {
-                point: stage2.output_claims.ram_read_write_point().to_vec(),
-                value: stage2.output_claims.ram_read_write.val.value,
-            },
-            ram_val_final: OpeningClaim {
-                point: stage2.output_claims.ram_output_check_point().to_vec(),
-                value: stage2.output_claims.ram_output_check.val_final.value,
-            },
-            untrusted_advice: advice(JoltAdviceKind::Untrusted),
-            trusted_advice: advice(JoltAdviceKind::Trusted),
-            program_image: init.program_image_contribution.clone(),
-        }
+/// Wire the consumed openings from stage 2's RAM read-write `val` and
+/// output-check `val_final`, plus the reconstructed init contributions (the
+/// same advice / program-image openings the init evaluation is decomposed
+/// into). The init pieces carry their staged opening points for completeness,
+/// though only their values feed the input claim. (Verifier-side constructor for
+/// the moved [`RamValCheckInputClaims`] — it reads the verifier-only
+/// [`Stage2ClearOutput`] and [`RamValCheckInitialEvaluation`].)
+pub fn ram_val_check_inputs_from_upstream<F: Field>(
+    stage2: &Stage2ClearOutput<F>,
+    init: &RamValCheckInitialEvaluation<F>,
+) -> RamValCheckInputClaims<OpeningClaim<F>> {
+    let advice = |kind: JoltAdviceKind| init.advice_contribution(kind).map(|c| c.opening.clone());
+    RamValCheckInputClaims {
+        ram_val: OpeningClaim {
+            point: stage2.output_claims.ram_read_write_point().to_vec(),
+            value: stage2.output_claims.ram_read_write.val.value,
+        },
+        ram_val_final: OpeningClaim {
+            point: stage2.output_claims.ram_output_check_point().to_vec(),
+            value: stage2.output_claims.ram_output_check.val_final.value,
+        },
+        untrusted_advice: advice(JoltAdviceKind::Untrusted),
+        trusted_advice: advice(JoltAdviceKind::Trusted),
+        program_image: init.program_image_contribution.clone(),
     }
 }
 
 pub struct RamValCheck<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: RamValCheckSymbolic,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
-    gamma: F,
+    /// `Val_init(r_address)`'s public portion — resolves the `InitEval` input public.
+    public_eval: F,
+    /// The negated block selector for each present `Val_init` contribution —
+    /// resolves the `InitSelector`/`InitSelectorProgramImage` input publics.
+    init_selectors: Vec<(RamValCheckPublic, F)>,
 }
 
 impl<F: Field> RamValCheck<F> {
     /// Build the relation from its per-proof init decomposition. `init` carries
     /// the public initial-RAM evaluation plus the present advice/program-image
-    /// contributions, baked into the formula's input `Expr`.
+    /// contributions; their *structure* feeds the symbolic input `Expr` and their
+    /// *values* are supplied as `Derived` symbols via [`derive_input_term`].
+    ///
+    /// [`derive_input_term`]: ConcreteSumcheck::derive_input_term
     pub fn new(
         trace_dimensions: TraceDimensions,
         ram_log_k: usize,
-        gamma: F,
         init: RamValCheckInit<F>,
     ) -> Self {
+        let public_eval = init.public_eval;
+        let init_selectors = init
+            .contributions
+            .iter()
+            .map(|contribution| (contribution.selector, contribution.neg_selector))
+            .collect();
+        let symbolic = RamValCheckSymbolic::new(RamValCheckShape {
+            dimensions: trace_dimensions,
+            contributions: init
+                .contributions
+                .iter()
+                .map(|contribution| RamValContribution {
+                    selector: contribution.selector,
+                    opening: contribution.opening,
+                })
+                .collect(),
+        });
         Self {
-            claims: ram::val_check(trace_dimensions, init),
+            symbolic,
             trace_dimensions,
             ram_log_k,
-            gamma,
+            public_eval,
+            init_selectors,
         }
     }
 }
@@ -148,12 +127,25 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamValCheck<F> {
-    type Inputs<C> = RamValCheckInputClaims<C>;
-    type Outputs<C> = RamValCheckOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
+    type Symbolic = RamValCheckSymbolic;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
+
+    /// Reproduces the stage-4 inline RAM value-check gamma draw: the
+    /// `b"ram_val_check_gamma"` domain separator (an empty labeled append) followed
+    /// by `ram_val_check_gamma = challenge_scalar()`. The separator's empty append
+    /// is part of the soundness-critical byte stream, so it is replayed here too.
+    fn draw_challenges<T: Transcript<Challenge = F>>(
+        &self,
+        transcript: &mut T,
+    ) -> Result<RamValCheckChallenges<F>, VerifierError> {
+        append_ram_val_check_gamma_domain_separator(transcript);
+        Ok(RamValCheckChallenges {
+            gamma: transcript.challenge_scalar(),
+        })
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -186,29 +178,61 @@ impl<F: Field> SumcheckInstance<F> for RamValCheck<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RamValCheck(RamValCheckChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+    fn derive_input_term<C: GetPoint<F>>(
+        &self,
+        id: &JoltDerivedId,
+        _inputs: &RamValCheckInputClaims<C>,
+        _challenges: &RamValCheckChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let JoltDerivedId::RamValCheck(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+        };
+        match public_id {
+            // The `Val_init` decomposition publics are input publics: the public
+            // initial-RAM evaluation and the negated committed-contribution selectors.
+            RamValCheckPublic::InitEval => Ok(self.public_eval),
+            RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => {
+                self.init_selectors
+                    .iter()
+                    .find_map(|(selector, value)| (selector == public_id).then_some(*value))
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+            }
+            // Output public — resolved in `derive_output_term`, never in the input expr.
+            RamValCheckPublic::LtCyclePlusGamma => {
+                Err(VerifierError::MissingStageClaimDerived { id: *id })
+            }
         }
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         inputs: &RamValCheckInputClaims<C>,
         outputs: &RamValCheckOutputClaims<OpeningClaim<F>>,
+        challenges: &RamValCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::RamValCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::RamValCheck(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
-            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation
-            // of the produced cycle point against the fixed read-write cycle.
+            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation of
+            // the produced cycle point against the fixed read-write cycle. Gamma comes
+            // from the drawn `challenges` (the value `draw_challenges` produced).
             RamValCheckPublic::LtCyclePlusGamma => {
                 let output_cycle = &outputs.ram_ra.point()[self.ram_log_k..];
                 let fixed_cycle = &inputs.ram_val.point()[self.ram_log_k..];
-                Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + self.gamma)
+                let gamma = challenges
+                    .resolve_challenge(&JoltChallengeId::from(RamValCheckChallenge::Gamma))
+                    .ok_or(VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(RamValCheckChallenge::Gamma),
+                    })?;
+                Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + gamma)
+            }
+            // Input publics — resolved in `derive_input_term`, never in the output expr.
+            RamValCheckPublic::InitEval
+            | RamValCheckPublic::InitSelector(_)
+            | RamValCheckPublic::InitSelectorProgramImage => {
+                Err(VerifierError::MissingStageClaimDerived { id: *id })
             }
         }
     }
@@ -414,4 +438,43 @@ fn collect_advice_contribution<F: Field>(
         },
     });
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+
+    // Overrides the default to prepend the `b"ram_val_check_gamma"` domain separator
+    // (an empty labeled append) before the gamma squeeze; the append is part of the
+    // soundness-critical byte stream, so it must appear in `draw_challenges` too.
+    #[test]
+    fn draw_challenges_appends_domain_separator_then_draws_gamma() {
+        let relation = RamValCheck::<Fr>::new(
+            TraceDimensions::new(4),
+            3,
+            RamValCheckInit::from(Fr::from(0u64)),
+        );
+
+        // Inline (stage4/verify.rs L125-126): domain-separator append, then
+        // `ram_val_check_gamma = challenge_scalar()`.
+        let (inline_events, inline_gamma) = record(|t| {
+            append_ram_val_check_gamma_domain_separator(t);
+            t.challenge_scalar()
+        });
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        // The draw is the domain-separator append(s) followed by exactly one squeeze;
+        // no challenge is squeezed before the gamma.
+        assert!(draw_events.len() >= 2);
+        let (separator, last) = draw_events.split_at(draw_events.len() - 1);
+        assert_eq!(last, [DrawEvent::Squeeze(1)]);
+        assert!(separator
+            .iter()
+            .all(|event| matches!(event, DrawEvent::Append(_))));
+        assert_eq!(challenges.gamma, inline_gamma);
+    }
 }

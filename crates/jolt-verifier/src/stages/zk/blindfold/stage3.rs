@@ -12,12 +12,10 @@ where
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     let dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
-    let shift = spartan::shift::<PCS::Field>(dimensions);
-    let instruction_input = instruction::input_virtualization::<PCS::Field>(dimensions);
+    let shift = relations::spartan::Shift::new(dimensions);
+    let instruction_input = relations::instruction::InputVirtualization::new(dimensions);
     let registers_reduction =
-        jolt_claims::protocols::jolt::formulas::claim_reductions::registers::claim_reduction::<
-            PCS::Field,
-        >(dimensions);
+        relations::claim_reductions::registers::ClaimReduction::new(dimensions);
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(SpartanShiftChallenge::Gamma)),
@@ -37,19 +35,18 @@ where
     let shift_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(shift.sumcheck.rounds)
+        .try_instance_point(shift.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_plus_one_outer = EqPlusOnePolynomial::new(input.stage2.public.product_tau_low.clone())
-        .evaluate(&shift_opening_point);
+    // Stage 1's remainder cycle point, recomputed from `stage1.remainder_consistency`
+    // (the stage-2 carrier no longer stores it as a `product_tau_low` field).
+    let product_tau_low = stage1_remainder_cycle(input);
+    let eq_plus_one_outer =
+        EqPlusOnePolynomial::new(product_tau_low.clone()).evaluate(&shift_opening_point);
     let product_point = input
         .stage2
         .batch_consistency
-        .try_instance_point(
-            SpartanProductDimensions::new(log_t)
-                .remainder_sumcheck()
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
         })?;
@@ -57,24 +54,24 @@ where
     let eq_plus_one_product =
         EqPlusOnePolynomial::new(product_opening_point.clone()).evaluate(&shift_opening_point);
     values.public(
-        JoltPublicId::from(SpartanShiftPublic::EqPlusOneOuter),
+        JoltDerivedId::from(SpartanShiftPublic::EqPlusOneOuter),
         eq_plus_one_outer,
     )?;
     values.public(
-        JoltPublicId::from(SpartanShiftPublic::EqPlusOneProduct),
+        JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
         eq_plus_one_product,
     )?;
 
     let instruction_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(instruction_input.sumcheck.rounds)
+        .try_instance_point(instruction_input.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::InstructionInputVirtualization, error)
         })?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(
-        JoltPublicId::from(InstructionInputPublic::EqProduct),
+        JoltDerivedId::from(InstructionInputPublic::EqProduct),
         try_eq_mle(&instruction_opening_point, &product_opening_point)
             .map_err(|error| public_error(JoltRelationId::InstructionInputVirtualization, error))?,
     )?;
@@ -82,45 +79,60 @@ where
     let registers_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(registers_reduction.sumcheck.rounds)
+        .try_instance_point(registers_reduction.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(
-        JoltPublicId::from(RegistersClaimReductionPublic::EqSpartan),
-        try_eq_mle(
-            &registers_opening_point,
-            &input.stage2.public.product_tau_low,
-        )
-        .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
+        JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan),
+        try_eq_mle(&registers_opening_point, &product_tau_low)
+            .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
     )?;
 
-    let instruction_outputs = instruction::input_virtualization_output_openings();
-    let register_outputs =
-        jolt_claims::protocols::jolt::formulas::claim_reductions::registers::claim_reduction_output_openings();
     let output_ids = vec![
-        shift_output_openings()[0],
-        shift_output_openings()[1],
-        shift_output_openings()[2],
-        shift_output_openings()[3],
-        shift_output_openings()[4],
-        instruction_outputs[4],
-        instruction_outputs[5],
-        instruction_outputs[6],
-        instruction_outputs[0],
-        instruction_outputs[1],
-        instruction_outputs[2],
-        instruction_outputs[3],
-        register_outputs[0],
+        spartan::unexpanded_pc_shift(),
+        spartan::pc_shift(),
+        spartan::is_virtual_shift(),
+        spartan::is_first_in_sequence_shift(),
+        spartan::is_noop_shift(),
+        instruction::left_operand_is_rs1(),
+        instruction::rs1_value(),
+        instruction::left_operand_is_pc(),
+        instruction::right_operand_is_rs2(),
+        instruction::rs2_value(),
+        instruction::right_operand_is_imm(),
+        instruction::imm(),
+        registers_claim_reduction::rd_write_value_reduced(),
     ];
     let aliases = vec![
-        OpeningAlias::new(instruction_outputs[7], shift_output_openings()[0]),
-        OpeningAlias::new(register_outputs[1], instruction_outputs[5]),
-        OpeningAlias::new(register_outputs[2], instruction_outputs[1]),
+        OpeningAlias::new(instruction::unexpanded_pc(), spartan::unexpanded_pc_shift()),
+        OpeningAlias::new(
+            registers_claim_reduction::rs1_value_reduced(),
+            instruction::rs1_value(),
+        ),
+        OpeningAlias::new(
+            registers_claim_reduction::rs2_value_reduced(),
+            instruction::rs2_value(),
+        ),
     ];
     add_batched_stage(
         builder,
         "stage3.batch",
-        &[shift, instruction_input, registers_reduction],
+        shift.domain(),
+        &[
+            shift.rounds(),
+            instruction_input.rounds(),
+            registers_reduction.rounds(),
+        ],
+        &[
+            shift.input_expression::<PCS::Field>(),
+            instruction_input.input_expression::<PCS::Field>(),
+            registers_reduction.input_expression::<PCS::Field>(),
+        ],
+        &[
+            shift.output_expression::<PCS::Field>(),
+            instruction_input.output_expression::<PCS::Field>(),
+            registers_reduction.output_expression::<PCS::Field>(),
+        ],
         &input.stage3.batch_consistency,
         &input.stage3.batch_output_claims,
         values,

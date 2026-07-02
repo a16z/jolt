@@ -1,7 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 3 verification.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{bytecode, claim_reductions::registers as registers_claim_reduction, instruction},
+    geometry::{bytecode, claim_reductions::registers as registers_claim_reduction, instruction},
     JoltRelationId,
 };
 use jolt_field::Field;
@@ -90,22 +90,18 @@ impl<F: Field> Stage3OutputClaims<F> {
             });
         }
 
-        let [_, rs2_value_instruction, _, _, _, rs1_value_instruction, _, _] =
-            instruction::input_virtualization_output_openings();
-        let [_, rs1_value_reduced, rs2_value_reduced] =
-            registers_claim_reduction::claim_reduction_output_openings();
         if self.registers_claim_reduction.rs1_value != self.instruction_input.rs1_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: JoltRelationId::RegistersReadWriteChecking,
-                left: rs1_value_reduced,
-                right: rs1_value_instruction,
+                left: registers_claim_reduction::rs1_value_reduced(),
+                right: instruction::rs1_value(),
             });
         }
         if self.registers_claim_reduction.rs2_value != self.instruction_input.rs2_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: JoltRelationId::RegistersReadWriteChecking,
-                left: rs2_value_reduced,
-                right: rs2_value_instruction,
+                left: registers_claim_reduction::rs2_value_reduced(),
+                right: instruction::rs2_value(),
             });
         }
         Ok(())
@@ -228,5 +224,62 @@ mod tests {
             claims.opening_values(),
             (1..=13).map(fr).collect::<Vec<_>>()
         );
+    }
+
+    /// A stage-3 output with the three cross-relation aliases satisfied: shift and
+    /// instruction-input `unexpanded_pc` equal, and register-reduction `rs1`/`rs2`
+    /// equal the instruction-input ones. `validate` (value-cell `<F>`) accepts it;
+    /// the tests below perturb one alias each to assert rejection.
+    fn consistent() -> Stage3OutputClaims<Fr> {
+        Stage3OutputClaims {
+            shift: SpartanShiftOutputClaims {
+                unexpanded_pc: fr(1),
+                pc: fr(2),
+                is_virtual: fr(3),
+                is_first_in_sequence: fr(4),
+                is_noop: fr(5),
+            },
+            instruction_input: InstructionInputOutputClaims {
+                left_operand_is_rs1: fr(6),
+                rs1_value: fr(7),
+                left_operand_is_pc: fr(8),
+                unexpanded_pc: fr(1),
+                right_operand_is_rs2: fr(9),
+                rs2_value: fr(10),
+                right_operand_is_imm: fr(11),
+                imm: fr(12),
+            },
+            registers_claim_reduction: RegistersClaimReductionOutputClaims {
+                rd_write_value: fr(13),
+                rs1_value: fr(7),
+                rs2_value: fr(10),
+            },
+        }
+    }
+
+    #[test]
+    fn validate_accepts_consistent_aliases() {
+        assert!(consistent().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_unexpanded_pc_mismatch() {
+        let mut claims = consistent();
+        claims.instruction_input.unexpanded_pc = fr(99);
+        assert!(claims.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_rs1_value_mismatch() {
+        let mut claims = consistent();
+        claims.registers_claim_reduction.rs1_value = fr(99);
+        assert!(claims.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_rs2_value_mismatch() {
+        let mut claims = consistent();
+        claims.registers_claim_reduction.rs2_value = fr(99);
+        assert!(claims.validate().is_err());
     }
 }

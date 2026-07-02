@@ -7,58 +7,43 @@
 //! stage-5 instruction address point. Its only public, `EqCycle`, ties the
 //! produced cycle to the stage-5 instruction read-RAF cycle.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::committed_address_chunks, instruction,
-        instruction::InstructionRaVirtualizationDimensions,
-    },
-    InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltChallengeId,
-    JoltPublicId, JoltRelationClaims, JoltRelationId,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::instruction::{
+    InstructionRaVirtualizationChallenges, InstructionRaVirtualizationInputClaims,
+    InstructionRaVirtualizationOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::{
+        dimensions::committed_address_chunks, instruction::InstructionRaVirtualizationDimensions,
+    },
+    InstructionRaVirtualizationPublic, JoltDerivedId, JoltRelationId,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage5::Stage5ClearOutput;
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(InstructionRaVirtualization)]
-pub struct InstructionRaVirtualizationOutputClaims<C> {
-    #[opening(committed = InstructionRa)]
-    pub committed_instruction_ra: Vec<C>,
-}
-
-/// The per-virtual reduced `InstructionRa` openings from the stage-5 instruction
-/// read-RAF.
-#[derive(Clone, Debug, InputClaims)]
-pub struct InstructionRaVirtualizationInputClaims<C> {
-    #[opening(InstructionRa, from = InstructionReadRaf)]
-    pub instruction_ra: Vec<C>,
-}
-
-impl<F: Field> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage5: &Stage5ClearOutput<F>) -> Self {
-        Self {
-            instruction_ra: stage5
-                .output_claims
-                .instruction_read_raf
-                .instruction_ra
-                .clone(),
-        }
+/// Wire the per-virtual reduced `InstructionRa` openings from the stage-5
+/// instruction read-RAF. (Verifier-side constructor for the moved
+/// [`InstructionRaVirtualizationInputClaims`].)
+pub fn instruction_ra_virtualization_inputs_from_upstream<F: Field>(
+    stage5: &Stage5ClearOutput<F>,
+) -> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
+    InstructionRaVirtualizationInputClaims {
+        instruction_ra: stage5
+            .output_claims
+            .instruction_read_raf
+            .instruction_ra
+            .clone(),
     }
 }
 
 pub struct InstructionRaVirtualization<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::instruction::RaVirtualization,
     dimensions: InstructionRaVirtualizationDimensions,
-    gamma: F,
     /// The stage-5 instruction address point, chunked into the per-chunk committed
     /// opening points.
     instruction_address: Vec<F>,
@@ -70,15 +55,13 @@ pub struct InstructionRaVirtualization<F: Field> {
 impl<F: Field> InstructionRaVirtualization<F> {
     pub fn new(
         dimensions: InstructionRaVirtualizationDimensions,
-        gamma: F,
         instruction_address: Vec<F>,
         instruction_read_raf_cycle: Vec<F>,
         committed_chunk_bits: usize,
     ) -> Self {
         Self {
-            claims: instruction::ra_virtualization(dimensions),
+            symbolic: relations::instruction::RaVirtualization::new(dimensions),
             dimensions,
-            gamma,
             instruction_address,
             instruction_read_raf_cycle,
             committed_chunk_bits,
@@ -93,12 +76,11 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for InstructionRaVirtualization<F> {
-    type Inputs<C> = InstructionRaVirtualizationInputClaims<C>;
-    type Outputs<C> = InstructionRaVirtualizationOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
+    type Symbolic = relations::instruction::RaVirtualization;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -117,25 +99,17 @@ impl<F: Field> SumcheckInstance<F> for InstructionRaVirtualization<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::InstructionRaVirtualization(
-                InstructionRaVirtualizationChallenge::Gamma,
-            ) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term<C: GetPoint<F>>(
         &self,
-        id: &JoltPublicId,
+        id: &JoltDerivedId,
         _inputs: &InstructionRaVirtualizationInputClaims<C>,
         outputs: &InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>,
+        _challenges: &InstructionRaVirtualizationChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
+        let JoltDerivedId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let log_t = self.dimensions.log_t();
         let point = outputs
@@ -149,5 +123,59 @@ impl<F: Field> SumcheckInstance<F> for InstructionRaVirtualization<F> {
             public_input_failed("instruction RA opening point shorter than log_t")
         })?;
         try_eq_mle(&self.instruction_read_raf_cycle, r_cycle).map_err(public_input_failed)
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use core::num::NonZeroUsize;
+    use jolt_field::Fr;
+    use jolt_transcript::Transcript;
+
+    fn relation(num_virtual_ra_polys: usize) -> InstructionRaVirtualization<Fr> {
+        let dimensions = InstructionRaVirtualizationDimensions::new(
+            3,
+            NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
+            NonZeroUsize::new(1).unwrap(),
+        )
+        .unwrap();
+        InstructionRaVirtualization::new(dimensions, Vec::new(), Vec::new(), 1)
+    }
+
+    // Inherits the default `draw_challenges`: the inline draw is
+    // `challenge_scalar_powers(num_virtual_ra_polys())`, whose single squeeze's
+    // degree-1 power equals that squeezed scalar — exactly what the default's one
+    // `challenge_scalar` stores.
+    #[test]
+    fn default_draw_challenges_matches_inline_instruction_ra_gamma() {
+        let relation = relation(2);
+        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar_powers(2)[1]);
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
+        assert_eq!(challenges.gamma, inline_gamma);
+    }
+
+    // The only place the inline draw and the default could disagree is
+    // `num_virtual_ra_polys() == 1`, where the inline `powers.get(1).unwrap_or(one)`
+    // keeps `one` rather than the squeezed scalar. That disagreement is unobservable:
+    // with a single virtual RA poly the gamma fold is `gamma^0`, so gamma is
+    // structurally absent from both expressions and never resolved. Hence no override
+    // is needed.
+    #[test]
+    fn single_virtual_ra_poly_omits_gamma_from_expressions() {
+        let symbolic = relations::instruction::RaVirtualization::new(
+            InstructionRaVirtualizationDimensions::new(
+                3,
+                NonZeroUsize::new(1).unwrap(),
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .unwrap(),
+        );
+        assert!(symbolic.required_challenges::<Fr>().is_empty());
     }
 }

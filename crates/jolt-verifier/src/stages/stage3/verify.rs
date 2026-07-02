@@ -1,12 +1,9 @@
 //! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        claim_reductions::registers as registers_claim_reduction, dimensions::TraceDimensions,
-        instruction, spartan,
-    },
-    JoltRelationId,
+    geometry::dimensions::TraceDimensions, relations, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -14,18 +11,23 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    instruction_input::{InstructionInput, InstructionInputInputClaims},
+    instruction_input::{
+        instruction_input_inputs_from_upstream, InstructionInput, InstructionInputChallenges,
+    },
     outputs::{
         Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3OutputClaims, Stage3ZkOutput,
     },
-    registers_claim_reduction::{RegistersClaimReduction, RegistersClaimReductionInputClaims},
-    spartan_shift::{SpartanShift, SpartanShiftInputClaims},
+    registers_claim_reduction::{
+        registers_claim_reduction_inputs_from_upstream, RegistersClaimReduction,
+        RegistersClaimReductionChallenges,
+    },
+    spartan_shift::{spartan_shift_inputs_from_upstream, SpartanShift, SpartanShiftChallenges},
 };
 use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
         },
         stage1::Stage1Output,
         stage2::Stage2Output,
@@ -89,35 +91,56 @@ where
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = TraceDimensions::new(log_t);
 
-    let shift_spec = spartan::shift::<PCS::Field>(dimensions);
-    let instruction_spec = instruction::input_virtualization::<PCS::Field>(dimensions);
-    let registers_spec = registers_claim_reduction::claim_reduction::<PCS::Field>(dimensions);
+    let shift_rel = relations::spartan::Shift::new(dimensions);
+    let instruction_rel = relations::instruction::InputVirtualization::new(dimensions);
+    let registers_rel = relations::claim_reductions::registers::ClaimReduction::new(dimensions);
 
-    for claim in [&shift_spec, &instruction_spec, &registers_spec] {
-        check_relation_boolean_hypercube(claim)?;
+    for (relation, domain, degree) in [
+        (
+            relations::spartan::Shift::id(),
+            shift_rel.domain(),
+            shift_rel.degree(),
+        ),
+        (
+            relations::instruction::InputVirtualization::id(),
+            instruction_rel.domain(),
+            instruction_rel.degree(),
+        ),
+        (
+            relations::claim_reductions::registers::ClaimReduction::id(),
+            registers_rel.domain(),
+            registers_rel.degree(),
+        ),
+    ] {
+        check_relation_boolean_hypercube(relation, domain, degree)?;
     }
 
-    let shift_gamma = transcript.challenge_scalar();
-    let instruction_gamma = transcript.challenge_scalar();
-    let registers_gamma = transcript.challenge_scalar();
+    // Draw each relation's batching gamma in the inline order (shift, instruction
+    // input, register reduction). Each is a single `challenge_scalar`, matching the
+    // relation's default `draw_challenges`; building the structs here keeps the draw
+    // at the same transcript point for both the clear and ZK paths (the ZK path
+    // builds no relation objects). The scalars also populate the stage aggregate.
+    let shift_challenges = SpartanShiftChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
+    let instruction_challenges = InstructionInputChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
+    let registers_challenges = RegistersClaimReductionChallenges {
+        gamma: transcript.challenge_scalar(),
+    };
 
     let challenges = Stage3Challenges {
-        shift_gamma,
-        instruction_gamma,
-        registers_gamma,
+        shift_gamma: shift_challenges.gamma,
+        instruction_gamma: instruction_challenges.gamma,
+        registers_gamma: registers_challenges.gamma,
     };
 
     if checked.zk {
         let statements = [
-            SumcheckStatement::new(shift_spec.sumcheck.rounds, shift_spec.sumcheck.degree),
-            SumcheckStatement::new(
-                instruction_spec.sumcheck.rounds,
-                instruction_spec.sumcheck.degree,
-            ),
-            SumcheckStatement::new(
-                registers_spec.sumcheck.rounds,
-                registers_spec.sumcheck.degree,
-            ),
+            SumcheckStatement::new(shift_rel.rounds(), shift_rel.degree()),
+            SumcheckStatement::new(instruction_rel.rounds(), instruction_rel.degree()),
+            SumcheckStatement::new(registers_rel.rounds(), registers_rel.degree()),
         ];
         let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
             &statements,
@@ -150,40 +173,35 @@ where
 
     let shift_relation = SpartanShift::new(
         dimensions,
-        shift_gamma,
         stage2.product_uniskip.tau_low.clone(),
         stage2.output_claims.product_remainder_point().to_vec(),
     );
     let instruction_relation = InstructionInput::new(
         dimensions,
-        instruction_gamma,
         stage2.output_claims.product_remainder_point().to_vec(),
     );
-    let registers_relation = RegistersClaimReduction::new(
-        dimensions,
-        registers_gamma,
-        stage2.product_uniskip.tau_low.clone(),
-    );
+    let registers_relation =
+        RegistersClaimReduction::new(dimensions, stage2.product_uniskip.tau_low.clone());
 
-    let shift_inputs = SpartanShiftInputClaims::from_upstream(stage1, stage2);
-    let instruction_inputs = InstructionInputInputClaims::from_upstream(stage2);
-    let registers_inputs = RegistersClaimReductionInputClaims::from_upstream(stage1);
+    let shift_inputs = spartan_shift_inputs_from_upstream(stage1, stage2);
+    let instruction_inputs = instruction_input_inputs_from_upstream(stage2);
+    let registers_inputs = registers_claim_reduction_inputs_from_upstream(stage1);
 
     let sumcheck_claims = [
         SumcheckClaim::new(
-            shift_spec.sumcheck.rounds,
-            shift_spec.sumcheck.degree,
-            shift_relation.input_claim(&shift_inputs)?,
+            shift_rel.rounds(),
+            shift_rel.degree(),
+            shift_relation.input_claim(&shift_inputs, &shift_challenges)?,
         ),
         SumcheckClaim::new(
-            instruction_spec.sumcheck.rounds,
-            instruction_spec.sumcheck.degree,
-            instruction_relation.input_claim(&instruction_inputs)?,
+            instruction_rel.rounds(),
+            instruction_rel.degree(),
+            instruction_relation.input_claim(&instruction_inputs, &instruction_challenges)?,
         ),
         SumcheckClaim::new(
-            registers_spec.sumcheck.rounds,
-            registers_spec.sumcheck.degree,
-            registers_relation.input_claim(&registers_inputs)?,
+            registers_rel.rounds(),
+            registers_rel.degree(),
+            registers_relation.input_claim(&registers_inputs, &registers_challenges)?,
         ),
     ];
     let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
@@ -197,19 +215,20 @@ where
     })?;
 
     let shift_point = batch
-        .try_instance_point(shift_spec.sumcheck.rounds)
+        .try_instance_point(shift_rel.rounds())
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::SpartanShift,
             reason: error.to_string(),
         })?;
-    let instruction_point = batch
-        .try_instance_point(instruction_spec.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            reason: error.to_string(),
-        })?;
+    let instruction_point =
+        batch
+            .try_instance_point(instruction_rel.rounds())
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::InstructionInputVirtualization,
+                reason: error.to_string(),
+            })?;
     let registers_point = batch
-        .try_instance_point(registers_spec.sumcheck.rounds)
+        .try_instance_point(registers_rel.rounds())
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RegistersClaimReduction,
             reason: error.to_string(),
@@ -224,11 +243,18 @@ where
     };
     let output_claims = stage3_output_claims_with_points(claims, &points);
 
-    let shift_output = shift_relation.expected_output(&shift_inputs, &output_claims.shift)?;
-    let instruction_output = instruction_relation
-        .expected_output(&instruction_inputs, &output_claims.instruction_input)?;
-    let registers_output = registers_relation
-        .expected_output(&registers_inputs, &output_claims.registers_claim_reduction)?;
+    let shift_output =
+        shift_relation.expected_output(&shift_inputs, &output_claims.shift, &shift_challenges)?;
+    let instruction_output = instruction_relation.expected_output(
+        &instruction_inputs,
+        &output_claims.instruction_input,
+        &instruction_challenges,
+    )?;
+    let registers_output = registers_relation.expected_output(
+        &registers_inputs,
+        &output_claims.registers_claim_reduction,
+        &registers_challenges,
+    )?;
 
     let expected_final_claim = stage3_expected_final_claim(
         &batch.batching_coefficients,

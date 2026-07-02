@@ -1,6 +1,13 @@
 use derive_more::From;
 use serde::{Deserialize, Serialize};
 
+use crate::Expr;
+
+/// The field-inline protocol's expression type: an [`Expr`](crate::Expr) over the
+/// field-inline id families (openings, deriveds, challenges).
+pub type FieldInlineExpr<F> =
+    Expr<F, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId>;
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineRelationId {
     FieldRegistersSpartanOuter,
@@ -132,7 +139,7 @@ pub enum FieldRegistersIncClaimReductionPublic {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-pub enum FieldInlinePublicId {
+pub enum FieldInlineDerivedId {
     FieldRegistersClaimReduction(FieldRegistersClaimReductionPublic),
     FieldRegistersReadWrite(FieldRegistersReadWritePublic),
     FieldRegistersValEvaluation(FieldRegistersValEvaluationPublic),

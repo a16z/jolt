@@ -15,36 +15,53 @@
 //! `expected_output`.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{
+    geometry::{
         booleanity::BooleanityDimensions, bytecode::BytecodeReadRafDimensions,
         dimensions::TraceDimensions, instruction::InstructionRaVirtualizationDimensions,
         ram::RamRaVirtualizationDimensions,
     },
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationClaims,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
     ProgramImageClaimReductionLayout,
 };
+use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::SumcheckClaim;
 
-use super::booleanity::{Booleanity, BooleanityInputClaims};
+use super::booleanity::{
+    booleanity_inputs_from_upstream, Booleanity, BooleanityCyclePhaseChallenges,
+    BooleanityInputClaims,
+};
 use super::bytecode_read_raf::{
-    BytecodeReadRaf, BytecodeReadRafCommitted, BytecodeReadRafCommittedCycleInputs,
-    BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
+    bytecode_read_raf_inputs_from_upstream, BytecodeReadRaf, BytecodeReadRafCommitted,
+    BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs,
+    BytecodeReadRafCyclePhaseChallenges, BytecodeReadRafCyclePhaseCommittedChallenges,
+    BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
 };
 use super::committed_reduction_cycle_phase::{
-    AdviceCyclePhase, AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhase,
-    BytecodeReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhase,
-    ProgramImageReductionCyclePhaseInputClaims,
+    advice_cycle_phase_inputs_from_upstream, bytecode_reduction_cycle_phase_inputs_from_values,
+    program_image_reduction_cycle_phase_inputs_from_upstream, AdviceCyclePhase,
+    AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhase,
+    BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
+    ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseInputClaims,
 };
-use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionInputClaims};
+use super::inc_claim_reduction::{
+    inc_claim_reduction_inputs_from_upstream, IncClaimReduction, IncClaimReductionChallenges,
+    IncClaimReductionInputClaims,
+};
 use super::instruction_ra_virtualization::{
-    InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
+    instruction_ra_virtualization_inputs_from_upstream, InstructionRaVirtualization,
+    InstructionRaVirtualizationChallenges, InstructionRaVirtualizationInputClaims,
 };
 use super::outputs::BytecodeReductionWeights;
-use super::ram_hamming_booleanity::{RamHammingBooleanity, RamHammingBooleanityInputClaims};
-use super::ram_ra_virtualization::{RamRaVirtualization, RamRaVirtualizationInputClaims};
-use crate::stages::relations::{OpeningClaim, SumcheckInstance};
+use super::ram_hamming_booleanity::{
+    ram_hamming_booleanity_inputs_from_upstream, RamHammingBooleanity,
+    RamHammingBooleanityInputClaims,
+};
+use super::ram_ra_virtualization::{
+    ram_ra_virtualization_inputs_from_upstream, RamRaVirtualization, RamRaVirtualizationInputClaims,
+};
+use crate::stages::relations::{ConcreteSumcheck, OpeningClaim};
 use crate::stages::{
     stage2::Stage2ClearOutput, stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
 };
@@ -60,20 +77,37 @@ pub enum BytecodeReadRafCycle<'a, F: Field> {
 }
 
 impl<F: Field> BytecodeReadRafCycle<'_, F> {
-    pub fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
+    pub fn rounds(&self) -> usize {
         match self {
-            Self::Full(relation) => relation.sumcheck_relation(),
-            Self::Committed(relation) => relation.sumcheck_relation(),
+            Self::Full(relation) => relation.rounds(),
+            Self::Committed(relation) => relation.rounds(),
         }
     }
 
+    pub fn degree(&self) -> usize {
+        match self {
+            Self::Full(relation) => relation.degree(),
+            Self::Committed(relation) => relation.degree(),
+        }
+    }
+
+    /// The cycle-phase bytecode gamma resolves through each variant's own
+    /// `Challenges` struct (`BytecodeReadRaf*Challenges`); both wrap the single
+    /// `BytecodeReadRafChallenge::Gamma`, so the wrapper takes the scalar and builds
+    /// the variant-specific struct.
     pub fn input_claim(
         &self,
         inputs: &BytecodeReadRafInputClaims<OpeningClaim<F>>,
+        gamma: F,
     ) -> Result<F, VerifierError> {
         match self {
-            Self::Full(relation) => relation.input_claim(inputs),
-            Self::Committed(relation) => relation.input_claim(inputs),
+            Self::Full(relation) => {
+                relation.input_claim(inputs, &BytecodeReadRafCyclePhaseChallenges { gamma })
+            }
+            Self::Committed(relation) => relation.input_claim(
+                inputs,
+                &BytecodeReadRafCyclePhaseCommittedChallenges { gamma },
+            ),
         }
     }
 
@@ -92,10 +126,19 @@ impl<F: Field> BytecodeReadRafCycle<'_, F> {
         &self,
         inputs: &BytecodeReadRafInputClaims<OpeningClaim<F>>,
         outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        gamma: F,
     ) -> Result<F, VerifierError> {
         match self {
-            Self::Full(relation) => relation.expected_output(inputs, outputs),
-            Self::Committed(relation) => relation.expected_output(inputs, outputs),
+            Self::Full(relation) => relation.expected_output(
+                inputs,
+                outputs,
+                &BytecodeReadRafCyclePhaseChallenges { gamma },
+            ),
+            Self::Committed(relation) => relation.expected_output(
+                inputs,
+                outputs,
+                &BytecodeReadRafCyclePhaseCommittedChallenges { gamma },
+            ),
         }
     }
 }
@@ -167,21 +210,28 @@ pub struct Stage6RelationsParams<'a, F: Field> {
 pub struct Stage6Relations<'a, F: Field> {
     pub bytecode_read_raf: BytecodeReadRafCycle<'a, F>,
     pub bytecode_read_raf_inputs: BytecodeReadRafInputClaims<OpeningClaim<F>>,
+    /// The cycle-phase bytecode gamma, threaded into the wrapper's input/output
+    /// claims (the two cycle variants carry distinct `Challenges` types).
+    pub bytecode_gamma: F,
     pub booleanity: Booleanity<F>,
     pub booleanity_inputs: BooleanityInputClaims<OpeningClaim<F>>,
+    pub booleanity_challenges: BooleanityCyclePhaseChallenges<F>,
     pub ram_hamming: RamHammingBooleanity<F>,
     pub ram_hamming_inputs: RamHammingBooleanityInputClaims<OpeningClaim<F>>,
     pub ram_ra: RamRaVirtualization<F>,
     pub ram_ra_inputs: RamRaVirtualizationInputClaims<OpeningClaim<F>>,
     pub instruction_ra: InstructionRaVirtualization<F>,
     pub instruction_ra_inputs: InstructionRaVirtualizationInputClaims<OpeningClaim<F>>,
+    pub instruction_ra_challenges: InstructionRaVirtualizationChallenges<F>,
     pub inc: IncClaimReduction<F>,
     pub inc_inputs: IncClaimReductionInputClaims<OpeningClaim<F>>,
+    pub inc_challenges: IncClaimReductionChallenges<F>,
     pub trusted_advice: Option<AdviceCyclePhase<F>>,
     pub untrusted_advice: Option<AdviceCyclePhase<F>>,
     pub advice_inputs: AdviceCyclePhaseInputClaims<OpeningClaim<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
     pub bytecode_reduction_inputs: Option<BytecodeReductionCyclePhaseInputClaims<OpeningClaim<F>>>,
+    pub bytecode_reduction_challenges: Option<BytecodeReductionCyclePhaseChallenges<F>>,
     pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
     pub program_image_reduction_inputs:
         Option<ProgramImageReductionCyclePhaseInputClaims<OpeningClaim<F>>>,
@@ -198,7 +248,6 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             Some(bytecode) => {
                 BytecodeReadRafCycle::Full(BytecodeReadRaf::new(BytecodeReadRafCycleInputs {
                     dimensions: params.bytecode_dimensions,
-                    gamma: params.bytecode_gamma,
                     bytecode,
                     r_address: params.bytecode_r_address.clone(),
                     stage_cycle_points: params.stage_cycle_points.clone(),
@@ -212,7 +261,6 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             None => BytecodeReadRafCycle::Committed(BytecodeReadRafCommitted::new(
                 BytecodeReadRafCommittedCycleInputs {
                     dimensions: params.bytecode_dimensions,
-                    gamma: params.bytecode_gamma,
                     r_address: params.bytecode_r_address.clone(),
                     stage_cycle_points: params.stage_cycle_points.clone(),
                     entry_bytecode_index: params.entry_bytecode_index,
@@ -221,26 +269,28 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
                 },
             )),
         };
-        let bytecode_read_raf_inputs = BytecodeReadRafInputClaims::from_upstream(OpeningClaim {
+        let bytecode_read_raf_inputs = bytecode_read_raf_inputs_from_upstream(OpeningClaim {
             point: Vec::new(),
             value: params.address_bytecode_read_raf,
         });
 
         let booleanity = Booleanity::new(
             params.booleanity_dimensions,
-            params.booleanity_gamma,
             params.booleanity_r_address.clone(),
             params.booleanity_reference_address.clone(),
             params.booleanity_reference_cycle.clone(),
         );
-        let booleanity_inputs = BooleanityInputClaims::from_upstream(OpeningClaim {
+        let booleanity_inputs = booleanity_inputs_from_upstream(OpeningClaim {
             point: Vec::new(),
             value: params.address_booleanity,
         });
+        let booleanity_challenges = BooleanityCyclePhaseChallenges {
+            gamma: params.booleanity_gamma,
+        };
 
         let ram_hamming =
             RamHammingBooleanity::new(params.trace_dimensions, params.stage1_cycle_binding.clone());
-        let ram_hamming_inputs = RamHammingBooleanityInputClaims::from_upstream();
+        let ram_hamming_inputs = ram_hamming_booleanity_inputs_from_upstream();
 
         let ram_ra = RamRaVirtualization::new(
             params.ram_ra_dimensions,
@@ -248,28 +298,32 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             params.ram_reduced_cycle.clone(),
             params.committed_chunk_bits,
         );
-        let ram_ra_inputs = RamRaVirtualizationInputClaims::from_upstream(stage5);
+        let ram_ra_inputs = ram_ra_virtualization_inputs_from_upstream(stage5);
 
         let instruction_ra = InstructionRaVirtualization::new(
             params.instruction_ra_dimensions,
-            params.instruction_ra_gamma,
             params.instruction_r_address.clone(),
             params.instruction_r_cycle.clone(),
             params.committed_chunk_bits,
         );
-        let instruction_ra_inputs = InstructionRaVirtualizationInputClaims::from_upstream(stage5);
+        let instruction_ra_inputs = instruction_ra_virtualization_inputs_from_upstream(stage5);
+        let instruction_ra_challenges = InstructionRaVirtualizationChallenges {
+            gamma: params.instruction_ra_gamma,
+        };
 
         let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
             params.inc_cycle_points.clone();
         let inc = IncClaimReduction::new(
             params.trace_dimensions,
-            params.inc_gamma,
             ram_read_write_cycle,
             ram_val_check_cycle,
             registers_read_write_cycle,
             registers_val_evaluation_cycle,
         );
-        let inc_inputs = IncClaimReductionInputClaims::from_upstream(stage2, stage4, stage5);
+        let inc_inputs = inc_claim_reduction_inputs_from_upstream(stage2, stage4, stage5);
+        let inc_challenges = IncClaimReductionChallenges {
+            gamma: params.inc_gamma,
+        };
 
         let advice_relation =
             |kind: JoltAdviceKind, layout: Option<&AdviceClaimReductionLayout>| {
@@ -287,22 +341,26 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
         let trusted_advice = advice_relation(JoltAdviceKind::Trusted, params.trusted_advice_layout);
         let untrusted_advice =
             advice_relation(JoltAdviceKind::Untrusted, params.untrusted_advice_layout);
-        let advice_inputs = AdviceCyclePhaseInputClaims::from_upstream(stage4);
+        let advice_inputs = advice_cycle_phase_inputs_from_upstream(stage4);
 
         let bytecode_reduction = match (
             params.bytecode_reduction_layout,
             params.eta,
             &params.bytecode_reduction_weights,
         ) {
-            (Some(layout), Some(eta), Some(weights)) => Some(BytecodeReductionCyclePhase::new(
-                layout,
-                eta,
-                weights.clone(),
-            )),
+            (Some(layout), Some(_eta), Some(weights)) => {
+                Some(BytecodeReductionCyclePhase::new(layout, weights.clone()))
+            }
             _ => None,
         };
+        // The eta-folded reduction's `Challenges` carries the same `eta` the weights
+        // above were built from; present only when the reduction ran.
+        let bytecode_reduction_challenges = params
+            .eta
+            .filter(|_| bytecode_reduction.is_some())
+            .map(|eta| BytecodeReductionCyclePhaseChallenges { eta });
         let bytecode_reduction_inputs = bytecode_reduction.as_ref().map(|_| {
-            BytecodeReductionCyclePhaseInputClaims::from_values(
+            bytecode_reduction_cycle_phase_inputs_from_values(
                 params
                     .address_val_stages
                     .iter()
@@ -319,27 +377,32 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
         });
         let program_image_reduction_inputs = program_image_reduction
             .as_ref()
-            .map(|_| ProgramImageReductionCyclePhaseInputClaims::from_upstream(stage4))
+            .map(|_| program_image_reduction_cycle_phase_inputs_from_upstream(stage4))
             .transpose()?;
 
         Ok(Self {
             bytecode_read_raf,
             bytecode_read_raf_inputs,
+            bytecode_gamma: params.bytecode_gamma,
             booleanity,
             booleanity_inputs,
+            booleanity_challenges,
             ram_hamming,
             ram_hamming_inputs,
             ram_ra,
             ram_ra_inputs,
             instruction_ra,
             instruction_ra_inputs,
+            instruction_ra_challenges,
             inc,
             inc_inputs,
+            inc_challenges,
             trusted_advice,
             untrusted_advice,
             advice_inputs,
             bytecode_reduction,
             bytecode_reduction_inputs,
+            bytecode_reduction_challenges,
             program_image_reduction,
             program_image_reduction_inputs,
         })
@@ -351,35 +414,46 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
     /// untrusted advice, bytecode reduction, program-image reduction. The input
     /// claim of each instance is the claimed sum of its sumcheck.
     pub fn sumcheck_claims(&self) -> Result<Vec<SumcheckClaim<F>>, VerifierError> {
-        let claim = |relation: &JoltRelationClaims<F>, input: F| {
-            SumcheckClaim::new(relation.sumcheck.rounds, relation.sumcheck.degree, input)
-        };
+        let claim =
+            |rounds: usize, degree: usize, input: F| SumcheckClaim::new(rounds, degree, input);
+        // Relations that draw no challenges resolve against this empty set.
+        let no_challenges = NoChallenges::default();
         let mut claims = vec![
             claim(
-                self.bytecode_read_raf.sumcheck_relation(),
+                self.bytecode_read_raf.rounds(),
+                self.bytecode_read_raf.degree(),
                 self.bytecode_read_raf
-                    .input_claim(&self.bytecode_read_raf_inputs)?,
+                    .input_claim(&self.bytecode_read_raf_inputs, self.bytecode_gamma)?,
             ),
             claim(
-                self.booleanity.sumcheck_relation(),
-                self.booleanity.input_claim(&self.booleanity_inputs)?,
+                self.booleanity.rounds(),
+                self.booleanity.degree(),
+                self.booleanity
+                    .input_claim(&self.booleanity_inputs, &self.booleanity_challenges)?,
             ),
             claim(
-                self.ram_hamming.sumcheck_relation(),
-                self.ram_hamming.input_claim(&self.ram_hamming_inputs)?,
+                self.ram_hamming.rounds(),
+                self.ram_hamming.degree(),
+                self.ram_hamming
+                    .input_claim(&self.ram_hamming_inputs, &no_challenges)?,
             ),
             claim(
-                self.ram_ra.sumcheck_relation(),
-                self.ram_ra.input_claim(&self.ram_ra_inputs)?,
+                self.ram_ra.rounds(),
+                self.ram_ra.degree(),
+                self.ram_ra
+                    .input_claim(&self.ram_ra_inputs, &no_challenges)?,
             ),
             claim(
-                self.instruction_ra.sumcheck_relation(),
+                self.instruction_ra.rounds(),
+                self.instruction_ra.degree(),
                 self.instruction_ra
-                    .input_claim(&self.instruction_ra_inputs)?,
+                    .input_claim(&self.instruction_ra_inputs, &self.instruction_ra_challenges)?,
             ),
             claim(
-                self.inc.sumcheck_relation(),
-                self.inc.input_claim(&self.inc_inputs)?,
+                self.inc.rounds(),
+                self.inc.degree(),
+                self.inc
+                    .input_claim(&self.inc_inputs, &self.inc_challenges)?,
             ),
         ];
         for relation in [&self.trusted_advice, &self.untrusted_advice]
@@ -387,16 +461,20 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             .flatten()
         {
             claims.push(claim(
-                relation.sumcheck_relation(),
-                relation.input_claim(&self.advice_inputs)?,
+                relation.rounds(),
+                relation.degree(),
+                relation.input_claim(&self.advice_inputs, &no_challenges)?,
             ));
         }
-        if let (Some(relation), Some(inputs)) =
-            (&self.bytecode_reduction, &self.bytecode_reduction_inputs)
-        {
+        if let (Some(relation), Some(inputs), Some(challenges)) = (
+            &self.bytecode_reduction,
+            &self.bytecode_reduction_inputs,
+            &self.bytecode_reduction_challenges,
+        ) {
             claims.push(claim(
-                relation.sumcheck_relation(),
-                relation.input_claim(inputs)?,
+                relation.rounds(),
+                relation.degree(),
+                relation.input_claim(inputs, challenges)?,
             ));
         }
         if let (Some(relation), Some(inputs)) = (
@@ -404,8 +482,9 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             &self.program_image_reduction_inputs,
         ) {
             claims.push(claim(
-                relation.sumcheck_relation(),
-                relation.input_claim(inputs)?,
+                relation.rounds(),
+                relation.degree(),
+                relation.input_claim(inputs, &no_challenges)?,
             ));
         }
         Ok(claims)

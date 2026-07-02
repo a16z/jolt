@@ -9,80 +9,61 @@
 //!
 //! Because the produced opening point is the (reverse-ordered) cycle opening
 //! point while the scale is evaluated at the Dory-permuted point, each relation
-//! OVERRIDES [`SumcheckInstance::expected_output`] to recover the scale from the
+//! OVERRIDES [`ConcreteSumcheck::expected_output`] to recover the scale from the
 //! produced opening point via the layout's `cycle_phase_*_at_opening_point`
 //! helpers — see [`PrecommittedClaimReduction::cycle_phase_permuted_from_opening_point`].
-//! The output expression is bypassed (not the `resolve_public` path) because the
+//! The output expression is bypassed (not the `derive_output_term` path) because the
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 
-use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::{
-        advice, bytecode as bytecode_reduction, bytecode::BytecodeOutputWeightInputs, program_image,
-    },
-    AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
-    JoltAdviceKind, JoltChallengeId, JoltRelationClaims, JoltRelationId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
+    AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
 };
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
+    BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
+    BytecodeReductionCyclePhaseOutputClaims,
+};
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::{
+    ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
+};
+use jolt_claims::protocols::jolt::{
+    geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs, AdviceClaimReductionLayout,
+    BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout,
+};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
 use super::outputs::BytecodeReductionWeights;
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
 use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
-// ---------------------------------------------------------------------------
-// Advice cycle phase (per-kind)
-// ---------------------------------------------------------------------------
-
-/// The produced advice opening (the intermediate when an address phase follows,
-/// else the final advice opening), keyed by kind.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(AdviceClaimReductionCyclePhase)]
-pub struct AdviceCyclePhaseOutputClaims<C> {
-    #[opening(trusted_advice)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice)]
-    pub untrusted: Option<C>,
-}
-
-/// The consumed RAM value-check advice opening, keyed by kind.
-#[derive(Clone, Debug, InputClaims)]
-pub struct AdviceCyclePhaseInputClaims<C> {
-    #[opening(trusted_advice, from = RamValCheck)]
-    pub trusted: Option<C>,
-    #[opening(untrusted_advice, from = RamValCheck)]
-    pub untrusted: Option<C>,
-}
-
-impl<F: Field> AdviceCyclePhaseInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage4: &Stage4ClearOutput<F>) -> Self {
-        let opening = |kind| {
-            stage4
-                .ram_val_check_init
-                .advice_contributions
-                .iter()
-                .find(|contribution| contribution.kind == kind)
-                .map(|contribution| OpeningClaim {
-                    point: contribution.opening.point.clone(),
-                    value: contribution.opening.value,
-                })
-        };
-        Self {
-            trusted: opening(JoltAdviceKind::Trusted),
-            untrusted: opening(JoltAdviceKind::Untrusted),
-        }
+/// Wire the consumed RAM value-check advice opening, keyed by kind. (Verifier-side
+/// constructor for the moved [`AdviceCyclePhaseInputClaims`].)
+pub fn advice_cycle_phase_inputs_from_upstream<F: Field>(
+    stage4: &Stage4ClearOutput<F>,
+) -> AdviceCyclePhaseInputClaims<OpeningClaim<F>> {
+    let opening = |kind| {
+        stage4
+            .ram_val_check_init
+            .advice_contributions
+            .iter()
+            .find(|contribution| contribution.kind == kind)
+            .map(|contribution| OpeningClaim {
+                point: contribution.opening.point.clone(),
+                value: contribution.opening.value,
+            })
+    };
+    AdviceCyclePhaseInputClaims {
+        trusted: opening(JoltAdviceKind::Trusted),
+        untrusted: opening(JoltAdviceKind::Untrusted),
     }
 }
 
 pub struct AdviceCyclePhase<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::claim_reductions::advice::CyclePhase,
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
     /// The RAM address point of the staged advice opening from RAM value-check;
@@ -97,7 +78,10 @@ impl<F: Field> AdviceCyclePhase<F> {
         reference_opening_point: Vec<F>,
     ) -> Self {
         Self {
-            claims: advice::cycle_phase(kind, layout.dimensions()),
+            symbolic: relations::claim_reductions::advice::CyclePhase::new((
+                kind,
+                layout.dimensions(),
+            )),
             kind,
             layout: layout.clone(),
             reference_opening_point,
@@ -127,12 +111,11 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for AdviceCyclePhase<F> {
-    type Inputs<C> = AdviceCyclePhaseInputClaims<C>;
-    type Outputs<C> = AdviceCyclePhaseOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
+    type Symbolic = relations::claim_reductions::advice::CyclePhase;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -160,6 +143,7 @@ impl<F: Field> SumcheckInstance<F> for AdviceCyclePhase<F> {
         &self,
         _inputs: &AdviceCyclePhaseInputClaims<C>,
         outputs: &AdviceCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening = self.output(outputs)?;
         if self.layout.dimensions().has_address_phase() {
@@ -174,49 +158,28 @@ impl<F: Field> SumcheckInstance<F> for AdviceCyclePhase<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Program-image cycle phase
-// ---------------------------------------------------------------------------
-
-/// The produced `ProgramImageInit` opening (intermediate or final).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(ProgramImageClaimReductionCyclePhase)]
-pub struct ProgramImageReductionCyclePhaseOutputClaims<C> {
-    #[opening(committed = ProgramImageInit)]
-    pub program_image: C,
-}
-
-/// The consumed RAM value-check program-image contribution.
-#[derive(Clone, Debug, InputClaims)]
-pub struct ProgramImageReductionCyclePhaseInputClaims<C> {
-    #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
-    pub contribution: C,
-}
-
-impl<F: Field> ProgramImageReductionCyclePhaseInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage4: &Stage4ClearOutput<F>) -> Result<Self, VerifierError> {
-        let contribution = stage4
-            .ram_val_check_init
-            .program_image_contribution
-            .as_ref()
-            .ok_or_else(|| {
-                program_image_public_failed("missing RAM value-check program-image contribution")
-            })?;
-        Ok(Self {
-            contribution: OpeningClaim {
-                point: contribution.point.clone(),
-                value: contribution.value,
-            },
-        })
-    }
+/// Wire the consumed RAM value-check program-image contribution. (Verifier-side
+/// constructor for the moved [`ProgramImageReductionCyclePhaseInputClaims`].)
+pub fn program_image_reduction_cycle_phase_inputs_from_upstream<F: Field>(
+    stage4: &Stage4ClearOutput<F>,
+) -> Result<ProgramImageReductionCyclePhaseInputClaims<OpeningClaim<F>>, VerifierError> {
+    let contribution = stage4
+        .ram_val_check_init
+        .program_image_contribution
+        .as_ref()
+        .ok_or_else(|| {
+            program_image_public_failed("missing RAM value-check program-image contribution")
+        })?;
+    Ok(ProgramImageReductionCyclePhaseInputClaims {
+        contribution: OpeningClaim {
+            point: contribution.point.clone(),
+            value: contribution.value,
+        },
+    })
 }
 
 pub struct ProgramImageReductionCyclePhase<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::claim_reductions::program_image::CyclePhase,
     layout: ProgramImageClaimReductionLayout,
     /// The RAM address component of the `RamVal` opening from RAM read-write
     /// checking; the `FinalScale` public compares the produced opening point
@@ -227,7 +190,9 @@ pub struct ProgramImageReductionCyclePhase<F: Field> {
 impl<F: Field> ProgramImageReductionCyclePhase<F> {
     pub fn new(layout: &ProgramImageClaimReductionLayout, r_addr_rw: Vec<F>) -> Self {
         Self {
-            claims: program_image::cycle_phase(layout.dimensions()),
+            symbolic: relations::claim_reductions::program_image::CyclePhase::new(
+                layout.dimensions(),
+            ),
             layout: layout.clone(),
             r_addr_rw,
         }
@@ -241,12 +206,11 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for ProgramImageReductionCyclePhase<F> {
-    type Inputs<C> = ProgramImageReductionCyclePhaseInputClaims<C>;
-    type Outputs<C> = ProgramImageReductionCyclePhaseOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
+    type Symbolic = relations::claim_reductions::program_image::CyclePhase;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -267,6 +231,7 @@ impl<F: Field> SumcheckInstance<F> for ProgramImageReductionCyclePhase<F> {
         &self,
         _inputs: &ProgramImageReductionCyclePhaseInputClaims<C>,
         outputs: &ProgramImageReductionCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening = &outputs.program_image;
         if self.layout.dimensions().has_address_phase() {
@@ -281,43 +246,18 @@ impl<F: Field> SumcheckInstance<F> for ProgramImageReductionCyclePhase<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Bytecode reduction cycle phase
-// ---------------------------------------------------------------------------
-
-/// The produced bytecode-reduction openings: the intermediate when an address
-/// phase follows, else the per-chunk final `BytecodeChunk` openings.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(BytecodeClaimReductionCyclePhase)]
-pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
-    #[opening(BytecodeClaimReductionIntermediate)]
-    pub intermediate: Option<C>,
-    #[opening(committed = BytecodeChunk)]
-    pub chunks: Vec<C>,
-}
-
 /// The consumed staged `BytecodeValStage` openings from the bytecode read-RAF
-/// address phase.
-#[derive(Clone, Debug, InputClaims)]
-pub struct BytecodeReductionCyclePhaseInputClaims<C> {
-    #[opening(BytecodeValStage, from = BytecodeReadRaf)]
-    pub val_stages: Vec<C>,
-}
-
-impl<F: Field> BytecodeReductionCyclePhaseInputClaims<OpeningClaim<F>> {
-    pub fn from_values(val_stages: Vec<OpeningClaim<F>>) -> Self {
-        Self { val_stages }
-    }
+/// address phase. (Verifier-side constructor for the moved
+/// [`BytecodeReductionCyclePhaseInputClaims`].)
+pub fn bytecode_reduction_cycle_phase_inputs_from_values<F: Field>(
+    val_stages: Vec<OpeningClaim<F>>,
+) -> BytecodeReductionCyclePhaseInputClaims<OpeningClaim<F>> {
+    BytecodeReductionCyclePhaseInputClaims { val_stages }
 }
 
 pub struct BytecodeReductionCyclePhase<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::claim_reductions::bytecode::CyclePhase,
     layout: BytecodeClaimReductionLayout,
-    eta: F,
     weights: BytecodeReductionWeights<F>,
     chunk_count: usize,
 }
@@ -325,13 +265,14 @@ pub struct BytecodeReductionCyclePhase<F: Field> {
 impl<F: Field> BytecodeReductionCyclePhase<F> {
     pub fn new(
         layout: &BytecodeClaimReductionLayout,
-        eta: F,
         weights: BytecodeReductionWeights<F>,
     ) -> Self {
         Self {
-            claims: bytecode_reduction::cycle_phase(layout.dimensions(), layout.chunk_count()),
+            symbolic: relations::claim_reductions::bytecode::CyclePhase::new((
+                layout.dimensions(),
+                layout.chunk_count(),
+            )),
             layout: layout.clone(),
-            eta,
             weights,
             chunk_count: layout.chunk_count(),
         }
@@ -353,12 +294,11 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for BytecodeReductionCyclePhase<F> {
-    type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
-    type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
+    type Symbolic = relations::claim_reductions::bytecode::CyclePhase;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -383,19 +323,11 @@ impl<F: Field> SumcheckInstance<F> for BytecodeReductionCyclePhase<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::BytecodeClaimReduction(BytecodeClaimReductionChallenge::Eta) => {
-                Ok(self.eta)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
     fn expected_output<C: GetPoint<F>>(
         &self,
         _inputs: &BytecodeReductionCyclePhaseInputClaims<C>,
         outputs: &BytecodeReductionCyclePhaseOutputClaims<OpeningClaim<F>>,
+        _challenges: &BytecodeReductionCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         if self.layout.dimensions().has_address_phase() {
             let intermediate = outputs.intermediate.as_ref().ok_or_else(|| {

@@ -16,47 +16,69 @@ where
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
     let bytecode_address_claims =
-        bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
-    let bytecode_claims = if bytecode_reduction_layout.is_some() {
-        bytecode::read_raf_cycle_phase_committed::<PCS::Field>(formula_dimensions.bytecode_read_raf)
-    } else {
-        bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf)
-    };
+        relations::bytecode::ReadRafAddressPhase::new(formula_dimensions.bytecode_read_raf);
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
         input.proof.one_hot_config.committed_chunk_bits(),
     );
     let booleanity_address_claims =
-        booleanity::booleanity_address_phase::<PCS::Field>(booleanity_dimensions);
-    let booleanity_claims = booleanity::booleanity_cycle_phase::<PCS::Field>(booleanity_dimensions);
-    let ram_hamming_claims = ram::hamming_booleanity::<PCS::Field>(trace_dimensions);
+        relations::booleanity::BooleanityAddressPhase::new(booleanity_dimensions);
+    let booleanity_claims = relations::booleanity::BooleanityCyclePhase::new(booleanity_dimensions);
+    let ram_hamming_claims = relations::ram::HammingBooleanity::new(trace_dimensions);
     let ram_ra_claims =
-        ram::ra_virtualization::<PCS::Field>(formula_dimensions.ram_ra_virtualization);
-    let instruction_ra_claims = instruction::ra_virtualization::<PCS::Field>(
+        relations::ram::RaVirtualization::new(formula_dimensions.ram_ra_virtualization);
+    let instruction_ra_claims = relations::instruction::RaVirtualization::new(
         formula_dimensions.instruction_ra_virtualization,
     );
-    let inc_claims = increments::claim_reduction::<PCS::Field>(trace_dimensions);
+    let inc_claims = relations::claim_reductions::increments::ClaimReduction::new(trace_dimensions);
     let (trusted_layout, trusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Trusted);
     let (untrusted_layout, untrusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Untrusted);
     let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().map(|layout| {
-        bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
+        relations::claim_reductions::bytecode::CyclePhase::new((
+            layout.dimensions(),
+            layout.chunk_count(),
+        ))
     });
-    let program_image_reduction_claims = program_image_reduction_layout
-        .as_ref()
-        .map(|layout| program_image::cycle_phase::<PCS::Field>(layout.dimensions()));
+    let program_image_reduction_claims = program_image_reduction_layout.as_ref().map(|layout| {
+        relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions())
+    });
+
+    // The committed and uncommitted cycle-phase relations are distinct types, so
+    // collapse the active one into its spec and input/output expressions here.
+    let (bytecode_rounds, bytecode_domain, bytecode_input, bytecode_output) =
+        if bytecode_reduction_layout.is_some() {
+            let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new(
+                formula_dimensions.bytecode_read_raf,
+            );
+            (
+                claims.rounds(),
+                claims.domain(),
+                claims.input_expression::<PCS::Field>(),
+                claims.output_expression::<PCS::Field>(),
+            )
+        } else {
+            let claims =
+                relations::bytecode::ReadRafCyclePhase::new(formula_dimensions.bytecode_read_raf);
+            (
+                claims.rounds(),
+                claims.domain(),
+                claims.input_expression::<PCS::Field>(),
+                claims.output_expression::<PCS::Field>(),
+            )
+        };
 
     add_stage6_publics_and_challenges(
         input,
         values,
-        &bytecode_address_claims,
-        &bytecode_claims,
-        &booleanity_address_claims,
-        &booleanity_claims,
-        &ram_hamming_claims,
-        &ram_ra_claims,
-        &instruction_ra_claims,
-        &inc_claims,
+        bytecode_address_claims.rounds(),
+        bytecode_rounds,
+        booleanity_address_claims.rounds(),
+        booleanity_claims.rounds(),
+        ram_hamming_claims.rounds(),
+        ram_ra_claims.rounds(),
+        instruction_ra_claims.rounds(),
+        inc_claims.rounds(),
     )?;
     if let (Some(layout), Some(_claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted)?;
@@ -65,11 +87,13 @@ where
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted)?;
     }
     if let Some(layout) = bytecode_reduction_layout.as_ref() {
-        let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
-            VerifierError::MissingStageClaimChallenge {
+        let eta = input
+            .stage6
+            .challenges
+            .bytecode_reduction_eta
+            .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
                 id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-            }
-        })?;
+            })?;
         values.public(
             VerifierPublicId::Challenge(JoltChallengeId::from(
                 BytecodeClaimReductionChallenge::Eta,
@@ -93,7 +117,19 @@ where
     let builder = add_batched_stage(
         builder,
         "stage6.address_phase",
-        &[bytecode_address_claims, booleanity_address_claims],
+        bytecode_address_claims.domain(),
+        &[
+            bytecode_address_claims.rounds(),
+            booleanity_address_claims.rounds(),
+        ],
+        &[
+            bytecode_address_claims.input_expression::<PCS::Field>(),
+            booleanity_address_claims.input_expression::<PCS::Field>(),
+        ],
+        &[
+            bytecode_address_claims.output_expression::<PCS::Field>(),
+            booleanity_address_claims.output_expression::<PCS::Field>(),
+        ],
         &input.stage6.address_phase_consistency,
         &input.stage6.address_phase_output_claims,
         values,
@@ -101,66 +137,66 @@ where
         Vec::new(),
     )?;
 
-    let bytecode_input_expr = map_jolt_expr(bytecode_claims.input.expression().clone());
+    let bytecode_input_expr = map_jolt_expr(bytecode_input);
 
     let mut batch_claims = vec![
         (
-            bytecode_claims.sumcheck.rounds,
+            bytecode_rounds,
             bytecode_input_expr,
-            map_jolt_expr(bytecode_claims.output.expression().clone()),
+            map_jolt_expr(bytecode_output),
         ),
         (
-            booleanity_claims.sumcheck.rounds,
-            map_jolt_expr(booleanity_claims.input.expression().clone()),
-            map_jolt_expr(booleanity_claims.output.expression().clone()),
+            booleanity_claims.rounds(),
+            map_jolt_expr(booleanity_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(booleanity_claims.output_expression::<PCS::Field>()),
         ),
         (
-            ram_hamming_claims.sumcheck.rounds,
-            map_jolt_expr(ram_hamming_claims.input.expression().clone()),
-            map_jolt_expr(ram_hamming_claims.output.expression().clone()),
+            ram_hamming_claims.rounds(),
+            map_jolt_expr(ram_hamming_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(ram_hamming_claims.output_expression::<PCS::Field>()),
         ),
         (
-            ram_ra_claims.sumcheck.rounds,
-            map_jolt_expr(ram_ra_claims.input.expression().clone()),
-            map_jolt_expr(ram_ra_claims.output.expression().clone()),
+            ram_ra_claims.rounds(),
+            map_jolt_expr(ram_ra_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(ram_ra_claims.output_expression::<PCS::Field>()),
         ),
         (
-            instruction_ra_claims.sumcheck.rounds,
-            map_jolt_expr(instruction_ra_claims.input.expression().clone()),
-            map_jolt_expr(instruction_ra_claims.output.expression().clone()),
+            instruction_ra_claims.rounds(),
+            map_jolt_expr(instruction_ra_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(instruction_ra_claims.output_expression::<PCS::Field>()),
         ),
         (
-            inc_claims.sumcheck.rounds,
-            map_jolt_expr(inc_claims.input.expression().clone()),
-            map_jolt_expr(inc_claims.output.expression().clone()),
+            inc_claims.rounds(),
+            map_jolt_expr(inc_claims.input_expression::<PCS::Field>()),
+            map_jolt_expr(inc_claims.output_expression::<PCS::Field>()),
         ),
     ];
     if let Some(claim) = trusted_claims {
         batch_claims.push((
-            claim.sumcheck.rounds,
-            map_jolt_expr(claim.input.expression().clone()),
-            map_jolt_expr(claim.output.expression().clone()),
+            claim.rounds(),
+            map_jolt_expr(claim.input_expression::<PCS::Field>()),
+            map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
     }
     if let Some(claim) = untrusted_claims {
         batch_claims.push((
-            claim.sumcheck.rounds,
-            map_jolt_expr(claim.input.expression().clone()),
-            map_jolt_expr(claim.output.expression().clone()),
+            claim.rounds(),
+            map_jolt_expr(claim.input_expression::<PCS::Field>()),
+            map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
     }
     if let Some(claim) = &bytecode_reduction_claims {
         batch_claims.push((
-            claim.sumcheck.rounds,
-            map_jolt_expr(claim.input.expression().clone()),
-            map_jolt_expr(claim.output.expression().clone()),
+            claim.rounds(),
+            map_jolt_expr(claim.input_expression::<PCS::Field>()),
+            map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
     }
     if let Some(claim) = &program_image_reduction_claims {
         batch_claims.push((
-            claim.sumcheck.rounds,
-            map_jolt_expr(claim.input.expression().clone()),
-            map_jolt_expr(claim.output.expression().clone()),
+            claim.rounds(),
+            map_jolt_expr(claim.input_expression::<PCS::Field>()),
+            map_jolt_expr(claim.output_expression::<PCS::Field>()),
         ));
     }
 
@@ -178,10 +214,21 @@ where
         booleanity_opening_point,
     );
     output_ids.extend(map_jolt_opening_ids(
-        ram::hamming_booleanity_output_openings().to_vec(),
+        relations::ram::RamHammingBooleanityOutputClaims::<PCS::Field> {
+            ram_hamming_weight: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        ram::ra_virtualization_output_openings(formula_dimensions.ram_ra_virtualization),
+        relations::ram::RamRaVirtualizationOutputClaims::<PCS::Field> {
+            ram_ra: vec![
+                PCS::Field::zero();
+                formula_dimensions
+                    .ram_ra_virtualization
+                    .num_committed_ra_polys()
+            ],
+        }
+        .canonical_order(),
     ));
     output_ids.extend(map_jolt_opening_ids(
         instruction::ra_virtualization_output_openings(
@@ -190,7 +237,11 @@ where
         .all(),
     ));
     output_ids.extend(map_jolt_opening_ids(
-        increments::claim_reduction_output_openings().to_vec(),
+        relations::claim_reductions::increments::IncClaimReductionOutputClaims::<PCS::Field> {
+            ram_inc: PCS::Field::zero(),
+            rd_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     ));
     if let Some(layout) = trusted_layout {
         output_ids.extend(map_jolt_opening_ids(advice::cycle_phase_output_openings(
@@ -250,7 +301,7 @@ where
             input.stage6.batch_consistency.max_num_vars,
             input.stage6.batch_consistency.max_degree,
         ),
-        domain_spec(bytecode_claims.sumcheck),
+        domain_spec(bytecode_domain),
         input.stage6.batch_consistency.consistency.clone(),
         &input.stage6.batch_output_claims,
         values,
