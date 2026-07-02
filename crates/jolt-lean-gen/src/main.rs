@@ -19,17 +19,21 @@ use jolt_riscv::{
     SourceInstructionRow, RV64IMAC_JOLT,
 };
 
-// Symbol for a register number: sentinels 1/2/3 are the source operands
-// rd/rs1/rs2, 0 is x0, anything past the architectural registers is a virtual
-// register `vN`, else a plain `xN`.
+// Lean term for a register number. Sentinels 1/2/3 are the source operands
+// rd/rs1/rs2 (rendered as bare `def` parameters); 0 is architectural `x0`;
+// virtual registers at 40+ are the allocator temps `inlineTmp 0, 1, …`
+// (`inlineTmp0` = v40); reserved virtual registers (32..40) fall back to an
+// explicit `BitVec`, and other architectural numbers to `regidx.Regidx`.
 fn reg_symbol(reg: u8) -> String {
+    const INLINE_BASE: u8 = 40;
     match reg {
-        0 => "x0".to_string(),
+        0 => "(regidx.Regidx 0)".to_string(),
         1 => "rd".to_string(),
         2 => "rs1".to_string(),
         3 => "rs2".to_string(),
-        v if v >= RISCV_REGISTER_COUNT => format!("v{v}"),
-        x => format!("x{x}"),
+        v if v >= INLINE_BASE => format!("(inlineTmp {})", v - INLINE_BASE),
+        v if v >= RISCV_REGISTER_COUNT => format!("(BitVec.ofNat 7 {v})"),
+        x => format!("(regidx.Regidx {x})"),
     }
 }
 
@@ -235,11 +239,14 @@ fn classify(kind: SourceInstructionKind) -> Class {
     }
 }
 
-// Expand `kind` and print it as a Lean `Program`, both arms of the rd==x0 branch.
-fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
-    let n = kind.name();
-    // The top-level alignment assert reports a store/AMO align fault for any
-    // memory write or atomic, and a load align fault for a plain load.
+// Load fault class and alignment-assert exception class for a source kind. The
+// alignment assert reports a store/AMO fault for any memory write or atomic and a
+// load fault for a plain load. The internal aligned-doubleword `LD` is the read
+// side of an atomic (`.amo`) only for true atomics, a normal load otherwise: a
+// plain store's read-modify-write read is always 8-aligned, so the class is
+// unreachable at runtime (`Semantics.lean` consults it only on a misaligned
+// address) and merely selects the Sail exception class the proof layer expects.
+fn fault_info(n: &str) -> (&'static str, &'static str) {
     let write_or_atomic = n.starts_with("AMO")
         || n.starts_with("LR")
         || matches!(n, "SB" | "SH" | "SW" | "SD" | "SCD" | "SCW");
@@ -248,43 +255,62 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
     } else {
         "(ExceptionType.E_Load_Addr_Align ())"
     };
-    // The internal aligned-doubleword `LD` is the read side of an atomic (`.amo`)
-    // only for true atomics. A plain store's read-modify-write read is a normal
-    // load: its address is always 8-aligned, so the fault class is unreachable at
-    // runtime (`Semantics.lean` consults it only on a misaligned address) and
-    // merely selects the Sail exception class the proof layer expects there.
-    // Match the hand-written Lean, which uses `.normal` for plain stores.
     let atomic = n.starts_with("AMO") || n.starts_with("LR") || matches!(n, "SCD" | "SCW");
     let load_class = if atomic { "amo" } else { "normal" };
+    (load_class, align_fault)
+}
 
+// Expand `kind` with sentinel operands (rd, rs1=2, rs2=3, imm=SRC_IMM) and render
+// each final row as a Lean `.instr (…) <|` line. `rd` selects the arm: 0 is the
+// rd==x0 branch, non-zero the general branch.
+fn arm_lines(
+    kind: SourceInstructionKind,
+    rd: u8,
+    load_class: &str,
+    align_fault: &str,
+) -> Result<Vec<String>, ExpansionError> {
+    let mut allocator = ExpansionAllocator::new();
+    let row = SourceInstructionRow {
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(rd),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: SRC_IMM,
+        },
+        inline: None,
+        is_compressed: false,
+    };
+    let input = SourceInstruction::new(kind, row);
+    let mut lines = Vec::new();
+    for instruction in expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)? {
+        lines.push(lean_instr(
+            &JoltInstructionRow::from(instruction),
+            load_class,
+            align_fault,
+        ));
+    }
+    Ok(lines)
+}
+
+// Whether any rendered line references `ident` as a whole token — used to decide
+// which source operands to take as `def` parameters.
+fn lines_have_ident(lines: &[String], ident: &str) -> bool {
+    lines.iter().any(|line| {
+        line.split(|c: char| !c.is_alphanumeric() && c != '_')
+            .any(|tok| tok == ident)
+    })
+}
+
+// Expand `kind` and print it as a Lean `Program`, both arms of the rd==x0 branch.
+fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
+    let n = kind.name();
+    let (load_class, align_fault) = fault_info(n);
     println!("--- {n} ---");
-    // Feed sentinel operands (rd=1, rs1=2, rs2=3, imm=SRC_IMM), once with rd==x0
-    // and once without, so the rd==x0 branch is shown.
     for (arm, rd) in [("rd == x0", 0u8), ("rd != x0", 1u8)] {
-        let mut allocator = ExpansionAllocator::new();
-        let row = SourceInstructionRow {
-            address: 0x8000_0000,
-            operands: NormalizedOperands {
-                rd: Some(rd),
-                rs1: Some(2),
-                rs2: Some(3),
-                imm: SRC_IMM,
-            },
-            inline: None,
-            is_compressed: false,
-        };
-        let input = SourceInstruction::new(kind, row);
-        let expanded = expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)?;
         println!("{arm}:");
-        for instruction in expanded {
-            println!(
-                "  {}",
-                lean_instr(
-                    &JoltInstructionRow::from(instruction),
-                    load_class,
-                    align_fault
-                )
-            );
+        for line in arm_lines(kind, rd, load_class, align_fault)? {
+            println!("  {line}");
         }
         println!("  .done RETIRE_SUCCESS");
     }
@@ -318,12 +344,121 @@ fn emit_all() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// Print one instruction as a Lean `def …ProgramAuto`. Kinds that write `rd`
+// render the rd==x0 branch explicitly as `if isX0 rd then … else …`; stores
+// (which never write `rd`) render a single body. Source operands actually
+// referenced become `regidx` parameters, and the pass-through immediate a
+// `BitVec 12`.
+fn emit_lean_def(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
+    let n = kind.name();
+    let (load_class, align_fault) = fault_info(n);
+    let general = arm_lines(kind, 1, load_class, align_fault)?;
+    let writes_rd = lines_have_ident(&general, "rd");
+
+    let mut regs: Vec<&str> = Vec::new();
+    if writes_rd {
+        regs.push("rd");
+    }
+    if lines_have_ident(&general, "rs1") {
+        regs.push("rs1");
+    }
+    if lines_have_ident(&general, "rs2") {
+        regs.push("rs2");
+    }
+    let mut params = String::new();
+    if !regs.is_empty() {
+        params.push('(');
+        params.push_str(&regs.join(" "));
+        params.push_str(" : regidx)");
+    }
+    if lines_have_ident(&general, "imm") {
+        if !params.is_empty() {
+            params.push(' ');
+        }
+        params.push_str("(imm : BitVec 12)");
+    }
+
+    let def_name = format!("{}ProgramAuto", n.to_lowercase());
+    println!("/-- Auto-generated from the Rust `{n}` expansion. -/");
+    if params.is_empty() {
+        println!("def {def_name} : Program :=");
+    } else {
+        println!("def {def_name} {params} : Program :=");
+    }
+
+    if writes_rd {
+        println!("  if isX0 rd then");
+        for line in arm_lines(kind, 0, load_class, align_fault)? {
+            println!("    {line}");
+        }
+        println!("    .done RETIRE_SUCCESS");
+        println!("  else");
+        for line in &general {
+            println!("    {line}");
+        }
+        println!("    .done RETIRE_SUCCESS");
+    } else {
+        for line in &general {
+            println!("  {line}");
+        }
+        println!("  .done RETIRE_SUCCESS");
+    }
+    println!();
+    Ok(())
+}
+
+// Print a full compilable Lean file of `…ProgramAuto` definitions for every
+// supported (expandable) source instruction. Unsupported and native kinds are
+// skipped. Emit with `jolt-lean-gen --lean`.
+fn emit_lean_defs() -> Result<(), Box<dyn std::error::Error>> {
+    println!("import JoltBytecode.JoltISA.Instruction");
+    println!("import JoltBytecode.JoltISA.VirtualRegisters");
+    println!("import JoltBytecode.JoltISA.Expansions.ALU");
+    println!();
+    println!("/-!");
+    println!("# Auto-generated Jolt-ISA expansion programs");
+    println!();
+    println!("Generated by `jolt-lean-gen --lean` from the Rust bytecode expander");
+    println!("(`expand_instruction`), the source of truth. Do not edit by hand;");
+    println!("regenerate instead. Each `…ProgramAuto` mirrors the hand-written");
+    println!("`…Program` in `JoltISA/Expansions/`; `if isX0 rd` shows both arms of");
+    println!("the rd==x0 branch. Immediate helpers come from `Expansions.ALU`.");
+    println!("-/");
+    println!();
+    println!("open Sail PreSail LeanRV64D.Functions");
+    println!();
+    println!("namespace JoltISA");
+    println!();
+
+    let mut ok = 0usize;
+    let mut failed = Vec::new();
+    for &kind in SourceInstructionKind::ALL {
+        if !matches!(classify(kind), Class::Expand) {
+            continue;
+        }
+        match emit_lean_def(kind) {
+            Ok(()) => ok += 1,
+            Err(e) => failed.push(format!("{}: {e}", kind.name())),
+        }
+    }
+    println!("end JoltISA");
+    println!();
+    println!("-- generated {ok} expansion program(s)");
+    for f in &failed {
+        println!("-- failed: {f}");
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arg = std::env::args()
         .nth(1)
-        .ok_or("usage: gen-lean <INSTRUCTION|--all>  (e.g. LB)")?;
+        .ok_or("usage: gen-lean <INSTRUCTION|--all|--lean>  (e.g. LB)")?;
     if arg == "--all" {
         return emit_all();
+    }
+    if arg == "--lean" {
+        return emit_lean_defs();
     }
 
     let kind = kind_from_name(&arg).ok_or_else(|| format!("unknown instruction: {arg}"))?;
