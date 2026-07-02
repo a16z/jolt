@@ -377,7 +377,7 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.4", features = ["rayon", "serde"] }
+reth-primitives-traits = { version = "0.5", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
