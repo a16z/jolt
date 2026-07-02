@@ -14,6 +14,12 @@ pub enum OpeningsError {
     #[error("invalid batch opening: {0}")]
     InvalidBatch(String),
 
+    #[error("commitment failed: {0}")]
+    CommitFailed(String),
+
+    #[error("opening proof generation failed: {0}")]
+    ProveFailed(String),
+
     #[error("polynomial size {poly_size} exceeds setup max {setup_max}")]
     PolynomialTooLarge { poly_size: usize, setup_max: usize },
 }

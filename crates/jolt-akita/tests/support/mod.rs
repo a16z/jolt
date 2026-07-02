@@ -4,11 +4,11 @@
 )]
 
 use jolt_akita::{
-    AkitaBlackBoxBatchStatement, AkitaBlackBoxBatchWitness, AkitaCommitment, AkitaField,
-    AkitaProverHint, AkitaScheme, AkitaSetupParams,
+    AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
+    AkitaScheme, AkitaSetupParams,
 };
 use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, OpeningsError, PrefixPackedClaim, PrefixPackedProverSetup,
+    CommitmentScheme, EvaluationClaim, OpeningsError, PrefixPackedProverSetup,
     PrefixPackedVerifierSetup, PrefixPacking, VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
@@ -49,9 +49,10 @@ pub fn setup_for(
         max_num_polys_per_commitment_group,
         layout_digest,
     ))
+    .expect("Akita setup should succeed")
 }
 
-pub fn black_box_setup() -> (
+pub fn native_setup() -> (
     <AkitaScheme as CommitmentScheme>::ProverSetup,
     <AkitaScheme as CommitmentScheme>::VerifierSetup,
 ) {
@@ -78,11 +79,11 @@ pub fn packed_setup<Id: Clone>(
     )
 }
 
-pub fn black_box_statement(
+pub fn native_statement(
     commitment: AkitaCommitment,
     point: &[AkitaField],
     evaluations: impl IntoIterator<Item = AkitaField>,
-) -> AkitaBlackBoxBatchStatement {
+) -> AkitaNativeBatchStatement {
     evaluations
         .into_iter()
         .map(|evaluation| VerifierOpeningClaim {
@@ -96,21 +97,17 @@ pub fn single_statement(
     commitment: AkitaCommitment,
     point: &[AkitaField],
     eval: AkitaField,
-) -> AkitaBlackBoxBatchStatement {
-    black_box_statement(commitment, point, [eval])
+) -> AkitaNativeBatchStatement {
+    native_statement(commitment, point, [eval])
 }
 
-pub fn batch_witness<'a>(
+pub fn batch_polynomials<'a>(
     polynomials: impl IntoIterator<Item = &'a Polynomial<AkitaField>>,
-    hint: AkitaProverHint,
-) -> AkitaBlackBoxBatchWitness<'a> {
-    (
-        polynomials
-            .into_iter()
-            .map(|polynomial| polynomial as &(dyn MultilinearPoly<AkitaField> + 'a))
-            .collect(),
-        hint,
-    )
+) -> AkitaNativeBatchPolynomials<'a> {
+    polynomials
+        .into_iter()
+        .map(|polynomial| polynomial as &(dyn MultilinearPoly<AkitaField> + 'a))
+        .collect()
 }
 
 pub fn materialize_packed<Id>(
@@ -133,7 +130,7 @@ where
 
     for (id, polynomial) in polynomials {
         let slot = &packing[id];
-        let offset = prefix_index(&slot.prefix) << slot.num_vars;
+        let offset = slot.prefix_index() << slot.num_vars;
         for (local_index, evaluation) in polynomial.evaluations().iter().copied().enumerate() {
             packed_evaluations[offset + local_index] = evaluation;
         }
@@ -149,7 +146,7 @@ pub fn packed_claims<Id>(
     polynomials: &[(Id, Polynomial<AkitaField>)],
     packing: &PrefixPacking<Id>,
     packed_point: &[AkitaField],
-) -> Vec<PrefixPackedClaim<AkitaField, Id>>
+) -> Vec<(Id, EvaluationClaim<AkitaField>)>
 where
     Id: Copy + Ord,
 {
@@ -159,25 +156,10 @@ where
             let logical_point = packing
                 .logical_point(id, packed_point)
                 .expect("packed point should produce logical suffix");
-            PrefixPackedClaim::new(
+            (
                 *id,
                 EvaluationClaim::new(logical_point.clone(), polynomial.evaluate(&logical_point)),
             )
         })
         .collect()
-}
-
-pub fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(test)
-        .expect("test thread should spawn")
-        .join()
-        .expect("test thread should complete");
-}
-
-fn prefix_index(prefix: &[bool]) -> usize {
-    prefix
-        .iter()
-        .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
 }

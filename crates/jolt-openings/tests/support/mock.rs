@@ -54,12 +54,11 @@ where
     type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
-    type Polynomial = Polynomial<F>;
     type OpeningHint = ();
     type SetupParams = ();
 
-    fn setup(_params: Self::SetupParams) -> ((), ()) {
-        ((), ())
+    fn setup(_params: Self::SetupParams) -> Result<((), ()), OpeningsError> {
+        Ok(((), ()))
     }
 
     fn verifier_setup(_prover_setup: &()) {}
@@ -67,12 +66,9 @@ where
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         _setup: &Self::ProverSetup,
-    ) -> (Self::Output, ()) {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
-        (MockCommitment { evaluations }, ())
+    ) -> Result<(Self::Output, ()), OpeningsError> {
+        let evaluations = poly.to_dense().into_owned();
+        Ok((MockCommitment { evaluations }, ()))
     }
 
     fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
@@ -82,12 +78,9 @@ where
         _setup: &Self::ProverSetup,
         _hint: Option<()>,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
-        MockProof { evaluations }
+    ) -> Result<Self::Proof, OpeningsError> {
+        let evaluations = poly.to_dense().into_owned();
+        Ok(MockProof { evaluations })
     }
 
     fn verify(
@@ -169,7 +162,7 @@ where
     fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
         Self::commit(poly, setup)
     }
 
@@ -180,12 +173,9 @@ where
         _setup: &Self::ProverSetup,
         _hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
-        (MockProof { evaluations }, MockHidingCommitment { eval }, ())
+    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
+        let evaluations = poly.to_dense().into_owned();
+        Ok((MockProof { evaluations }, MockHidingCommitment { eval }, ()))
     }
 
     fn verify_zk(

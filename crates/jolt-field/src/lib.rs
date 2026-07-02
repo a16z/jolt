@@ -59,7 +59,7 @@ pub use additive_group::AdditiveGroup;
 pub use canonical_bit_length::CanonicalBitLength;
 pub use canonical_bytes::CanonicalBytes;
 pub use canonical_u64::CanonicalU64;
-pub use field::{Field, MaybeAllocative, OptimizedMul};
+pub use field::{Field, OptimizedMul};
 pub use field_core::FieldCore;
 pub use fixed_byte_size::FixedByteSize;
 pub use fixed_bytes::FixedBytes;

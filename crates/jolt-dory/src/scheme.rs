@@ -1,10 +1,8 @@
 //! Dory PCS implementing the `jolt-openings` trait hierarchy.
 
 #![expect(
-    clippy::expect_used,
-    clippy::panic,
     clippy::unimplemented,
-    reason = "ZK proof y_com/y_blinding are Dory-mode invariants; dory::prove/verify errors are caller-precondition violations surfaced via panic; the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
+    reason = "the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
 )]
 
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
@@ -140,14 +138,15 @@ impl CommitmentScheme for DoryScheme {
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
-    type Polynomial = jolt_poly::Polynomial<Fr>;
     type OpeningHint = DoryHint;
     type SetupParams = usize;
 
-    fn setup(max_num_vars: Self::SetupParams) -> (DoryProverSetup, DoryVerifierSetup) {
+    fn setup(
+        max_num_vars: Self::SetupParams,
+    ) -> Result<(DoryProverSetup, DoryVerifierSetup), OpeningsError> {
         let prover = Self::setup_prover(max_num_vars);
         let verifier = Self::verifier_setup(&prover);
-        (prover, verifier)
+        Ok((prover, verifier))
     }
 
     fn verifier_setup(prover_setup: &DoryProverSetup) -> DoryVerifierSetup {
@@ -158,8 +157,8 @@ impl CommitmentScheme for DoryScheme {
     fn commit<P: MultilinearPoly<Fr> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
-        Self::commit_with_mode::<P, Transparent>(poly, setup)
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Ok(Self::commit_with_mode::<P, Transparent>(poly, setup))
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
@@ -170,7 +169,7 @@ impl CommitmentScheme for DoryScheme {
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
+    ) -> Result<Self::Proof, OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
@@ -202,9 +201,9 @@ impl CommitmentScheme for DoryScheme {
                 &setup.0,
                 &mut dory_transcript,
             )
-            .unwrap_or_else(|e| panic!("dory::prove failed: {e:?}"));
+            .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove failed: {e:?}")))?;
 
-        DoryProof(proof)
+        Ok(DoryProof(proof))
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::verify")]
@@ -295,10 +294,14 @@ impl ZkOpeningScheme for DoryScheme {
     fn commit_zk<P: MultilinearPoly<Fr> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
-        Self::commit_with_mode::<P, dory::ZK>(poly, setup)
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Ok(Self::commit_with_mode::<P, dory::ZK>(poly, setup))
     }
 
+    #[expect(
+        clippy::type_complexity,
+        reason = "ZK openings return the native proof, hiding commitment, and blind"
+    )]
     #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
     fn open_zk<P: MultilinearPoly<Fr> + ?Sized>(
         poly: &P,
@@ -307,7 +310,7 @@ impl ZkOpeningScheme for DoryScheme {
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
+    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
@@ -328,12 +331,17 @@ impl ZkOpeningScheme for DoryScheme {
                 &setup.0,
                 &mut dory_transcript,
             )
-            .unwrap_or_else(|e| panic!("dory::prove (ZK) failed: {e:?}"));
+            .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove (ZK) failed: {e:?}")))?;
 
-        let y_com = ark_to_jolt_g1(proof.y_com.expect("ZK proof must contain y_com"));
-        let blinding = ark_to_jolt_fr(&y_blinding.expect("ZK proof must return y_blinding"));
+        let y_com = proof
+            .y_com
+            .map(ark_to_jolt_g1)
+            .ok_or_else(|| OpeningsError::ProveFailed("ZK proof must contain y_com".to_owned()))?;
+        let blinding = y_blinding.as_ref().map(ark_to_jolt_fr).ok_or_else(|| {
+            OpeningsError::ProveFailed("ZK proof must return y_blinding".to_owned())
+        })?;
 
-        (DoryProof(proof), y_com, blinding)
+        Ok((DoryProof(proof), y_com, blinding))
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::verify_zk")]
@@ -516,6 +524,8 @@ impl<S: MultilinearPoly<Fr> + ?Sized> MultilinearLagrange<ArkFr> for DorySourceA
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
+
     use super::*;
     use jolt_crypto::{Pedersen, VectorCommitment};
     use jolt_field::{FromPrimitiveInt, RandomSampling};
@@ -537,7 +547,7 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
         let proof = DoryScheme::open(
@@ -547,7 +557,8 @@ mod tests {
             &prover_setup,
             Some(hint),
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
         let result = DoryScheme::verify(
@@ -571,8 +582,8 @@ mod tests {
         let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
         let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-        let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
-        let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
+        let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &prover_setup).unwrap();
+        let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &prover_setup).unwrap();
 
         let sum_evals: Vec<Fr> = poly_a
             .evaluations()
@@ -580,7 +591,7 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| *a + *b)
             .collect();
-        let (commit_sum_direct, _) = DoryScheme::commit(&sum_evals, &prover_setup);
+        let (commit_sum_direct, _) = DoryScheme::commit(&sum_evals, &prover_setup).unwrap();
 
         let combined = DoryScheme::combine(
             &[commit_a, commit_b],
@@ -611,7 +622,7 @@ mod tests {
         let eval = poly.evaluate(&point);
 
         let (commitment, hint) =
-            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
+            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup).unwrap();
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
         let (proof, _eval_com, _blinding) = DoryScheme::open_zk(
@@ -621,7 +632,8 @@ mod tests {
             &prover_setup,
             hint,
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
         let result = DoryScheme::verify_zk(

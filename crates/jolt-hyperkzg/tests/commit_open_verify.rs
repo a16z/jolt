@@ -1,6 +1,10 @@
 //! Integration tests for HyperKZG commit → open → verify pipeline with BN254.
 
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
@@ -30,10 +34,10 @@ fn commit_open_verify(
     label: &'static [u8],
 ) {
     let eval = poly.evaluate(point);
-    let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), pk);
+    let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), pk).unwrap();
 
     let mut t_p = Blake2bTranscript::new(label);
-    let proof = <KzgPCS as CommitmentScheme>::open(poly, point, eval, pk, None, &mut t_p);
+    let proof = <KzgPCS as CommitmentScheme>::open(poly, point, eval, pk, None, &mut t_p).unwrap();
 
     let mut t_v = Blake2bTranscript::new(label);
     <KzgPCS as CommitmentScheme>::verify(&commitment, point, eval, &proof, vk, &mut t_v)
@@ -99,12 +103,13 @@ fn wrong_eval_rejected() {
 
     let correct_eval = poly.evaluate(&point);
     let wrong_eval = correct_eval + Fr::from_u64(1);
-    let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk);
+    let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk).unwrap();
 
     // Prover opens with correct eval
     let mut t_p = Blake2bTranscript::new(b"kzg-wrong");
     let proof =
-        <KzgPCS as CommitmentScheme>::open(&poly, &point, correct_eval, &pk, None, &mut t_p);
+        <KzgPCS as CommitmentScheme>::open(&poly, &point, correct_eval, &pk, None, &mut t_p)
+            .unwrap();
 
     // Verifier checks with wrong eval
     let mut t_v = Blake2bTranscript::new(b"kzg-wrong");
@@ -130,8 +135,8 @@ fn homomorphic_sum() {
     let a = Polynomial::<Fr>::random(nv, &mut rng);
     let b = Polynomial::<Fr>::random(nv, &mut rng);
 
-    let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
-    let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
+    let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk).unwrap();
+    let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk).unwrap();
     let combined_com = <KzgPCS as AdditivelyHomomorphic>::combine(
         &[com_a, com_b],
         &[Fr::from_u64(1), Fr::from_u64(1)],
@@ -142,7 +147,8 @@ fn homomorphic_sum() {
     let eval = sum_poly.evaluate(&point);
 
     let mut t_p = Blake2bTranscript::new(b"kzg-homo");
-    let proof = <KzgPCS as CommitmentScheme>::open(&sum_poly, &point, eval, &pk, None, &mut t_p);
+    let proof =
+        <KzgPCS as CommitmentScheme>::open(&sum_poly, &point, eval, &pk, None, &mut t_p).unwrap();
 
     let mut t_v = Blake2bTranscript::new(b"kzg-homo");
     <KzgPCS as CommitmentScheme>::verify(&combined_com, &point, eval, &proof, &vk, &mut t_v)
@@ -160,8 +166,8 @@ fn homomorphic_weighted_combination() {
     let s_a = Fr::random(&mut rng);
     let s_b = Fr::random(&mut rng);
 
-    let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
-    let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
+    let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk).unwrap();
+    let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk).unwrap();
     let combined_com = <KzgPCS as AdditivelyHomomorphic>::combine(&[com_a, com_b], &[s_a, s_b]);
 
     let weighted_poly = a * s_a + b * s_b;
@@ -170,7 +176,8 @@ fn homomorphic_weighted_combination() {
 
     let mut t_p = Blake2bTranscript::new(b"kzg-weighted");
     let proof =
-        <KzgPCS as CommitmentScheme>::open(&weighted_poly, &point, eval, &pk, None, &mut t_p);
+        <KzgPCS as CommitmentScheme>::open(&weighted_poly, &point, eval, &pk, None, &mut t_p)
+            .unwrap();
 
     let mut t_v = Blake2bTranscript::new(b"kzg-weighted");
     <KzgPCS as CommitmentScheme>::verify(&combined_com, &point, eval, &proof, &vk, &mut t_v)
@@ -192,8 +199,8 @@ fn deterministic_setup_from_secret() {
 
     // Same setup yields same commitments
     let poly = Polynomial::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
-    let (com1, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk1);
-    let (com2, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk2);
+    let (com1, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk1).unwrap();
+    let (com2, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk2).unwrap();
     assert_eq!(
         com1, com2,
         "deterministic setups must produce same commitments"
@@ -203,7 +210,8 @@ fn deterministic_setup_from_secret() {
     let point = vec![Fr::from_u64(7)];
     let eval = poly.evaluate(&point);
     let mut t = Blake2bTranscript::new(b"det-setup");
-    let proof = <KzgPCS as CommitmentScheme>::open(&poly, &point, eval, &pk1, None, &mut t);
+    let proof =
+        <KzgPCS as CommitmentScheme>::open(&poly, &point, eval, &pk1, None, &mut t).unwrap();
     let mut t = Blake2bTranscript::new(b"det-setup");
     <KzgPCS as CommitmentScheme>::verify(&com1, &point, eval, &proof, &vk2, &mut t)
         .expect("cross-setup verification must work");

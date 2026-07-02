@@ -14,8 +14,7 @@
 //! - **Statement shape is scheme-specific.** [`HomomorphicBatch`] uses
 //!   `Vec<VerifierOpeningClaim<_, _>>`, because each logical polynomial has its
 //!   own commitment. [`PackedBatch`] uses [`PrefixPackedStatement`], which
-//!   carries one packed commitment and logical [`PrefixPackedClaim`]s keyed by
-//!   polynomial id.
+//!   carries one packed commitment and logical `(id, evaluation)` claims.
 //!
 //! # Trait Hierarchy
 //!
@@ -45,12 +44,11 @@ mod schemes;
 pub use claims::{EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim};
 pub use error::OpeningsError;
 pub use packing::{
-    PackedPolynomial, PackedWitness, PrefixPackedClaim, PrefixPackedProverSetup,
-    PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking, PrefixSlot,
+    PackedBatchProof, PackedPolynomial, PrefixPackedProverSetup, PrefixPackedStatement,
+    PrefixPackedVerifierSetup, PrefixPacking, PrefixSlot,
 };
 
 pub use schemes::{
-    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, HomomorphicBatch,
-    HomomorphicBatchWitness, HomomorphicZkBatchWitness, PackedBatch, StreamingCommitment,
-    ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
+    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, HomomorphicBatch, PackedBatch,
+    StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
 };

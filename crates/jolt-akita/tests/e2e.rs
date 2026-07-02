@@ -1,4 +1,8 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 mod support;
 
@@ -6,95 +10,92 @@ use jolt_akita::{AkitaScheme, AkitaSetupParams};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{f, layout, polynomial, run_on_large_stack, setup_for};
+use support::{f, layout, polynomial, setup_for};
 
 #[test]
 fn akita_single_opening_roundtrips_across_dimensions() {
-    run_on_large_stack(|| {
-        single_opening_roundtrip(1, 10, vec![f(3)], b"akita-e2e-arity-1");
-        single_opening_roundtrip(2, 20, vec![f(3), f(5)], b"akita-e2e-arity-2");
-        single_opening_roundtrip(4, 30, vec![f(2), f(3), f(5), f(7)], b"akita-e2e-arity-4");
-    });
+    single_opening_roundtrip(1, 10, vec![f(3)], b"akita-e2e-arity-1");
+    single_opening_roundtrip(2, 20, vec![f(3), f(5)], b"akita-e2e-arity-2");
+    single_opening_roundtrip(4, 30, vec![f(2), f(3), f(5), f(7)], b"akita-e2e-arity-4");
 }
 
 #[test]
 fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
-    run_on_large_stack(|| {
-        let (prover_setup, verifier_setup) = setup_for(4, 1, layout(7));
-        let poly = polynomial(4, 100);
-        let point = vec![f(2), f(3), f(5), f(7)];
-        let eval = poly.evaluate(&point);
-        let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup);
+    let (prover_setup, verifier_setup) = setup_for(4, 1, layout(7));
+    let poly = polynomial(4, 100);
+    let point = vec![f(2), f(3), f(5), f(7)];
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup).unwrap();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
-        let proof = AkitaScheme::open(
-            &poly,
+    let mut prover_transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
+    let proof = AkitaScheme::open(
+        &poly,
+        &point,
+        eval,
+        &prover_setup,
+        Some(hint),
+        &mut prover_transcript,
+    )
+    .unwrap();
+
+    let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
+    assert!(
+        AkitaScheme::verify(
+            &commitment,
+            &point,
+            eval + f(1),
+            &proof,
+            &verifier_setup,
+            &mut transcript,
+        )
+        .is_err(),
+        "wrong evaluation should reject"
+    );
+
+    let mut wrong_point = point.clone();
+    wrong_point[2] += f(1);
+    let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
+    assert!(
+        AkitaScheme::verify(
+            &commitment,
+            &wrong_point,
+            eval,
+            &proof,
+            &verifier_setup,
+            &mut transcript,
+        )
+        .is_err(),
+        "wrong opening point should reject"
+    );
+
+    let mut wrong_transcript = Blake2bTranscript::new(b"akita-e2e-wrong-domain");
+    assert!(
+        AkitaScheme::verify(
+            &commitment,
             &point,
             eval,
-            &prover_setup,
-            Some(hint),
-            &mut prover_transcript,
-        );
+            &proof,
+            &verifier_setup,
+            &mut wrong_transcript,
+        )
+        .is_err(),
+        "different transcript domain should reject"
+    );
 
-        let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
-        assert!(
-            AkitaScheme::verify(
-                &commitment,
-                &point,
-                eval + f(1),
-                &proof,
-                &verifier_setup,
-                &mut transcript,
-            )
-            .is_err(),
-            "wrong evaluation should reject"
-        );
-
-        let mut wrong_point = point.clone();
-        wrong_point[2] += f(1);
-        let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
-        assert!(
-            AkitaScheme::verify(
-                &commitment,
-                &wrong_point,
-                eval,
-                &proof,
-                &verifier_setup,
-                &mut transcript,
-            )
-            .is_err(),
-            "wrong opening point should reject"
-        );
-
-        let mut wrong_transcript = Blake2bTranscript::new(b"akita-e2e-wrong-domain");
-        assert!(
-            AkitaScheme::verify(
-                &commitment,
-                &point,
-                eval,
-                &proof,
-                &verifier_setup,
-                &mut wrong_transcript,
-            )
-            .is_err(),
-            "different transcript domain should reject"
-        );
-
-        let (_, wrong_layout_setup) = setup_for(4, 1, layout(8));
-        let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
-        assert!(
-            AkitaScheme::verify(
-                &commitment,
-                &point,
-                eval,
-                &proof,
-                &wrong_layout_setup,
-                &mut transcript,
-            )
-            .is_err(),
-            "wrong verifier setup key should reject"
-        );
-    });
+    let (_, wrong_layout_setup) = setup_for(4, 1, layout(8));
+    let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
+    assert!(
+        AkitaScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof,
+            &wrong_layout_setup,
+            &mut transcript,
+        )
+        .is_err(),
+        "wrong verifier setup key should reject"
+    );
 }
 
 #[test]
@@ -123,7 +124,8 @@ fn akita_commit_group_rejects_shape_pathologies() {
         Err(OpeningsError::InvalidBatch(_))
     ));
 
-    let (wrong_dimension_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7)));
+    let (wrong_dimension_setup, _) =
+        AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7))).unwrap();
     assert!(matches!(
         AkitaScheme::commit_group(&wrong_dimension_setup, layout(7), &[poly_a]),
         Err(OpeningsError::InvalidBatch(_))
@@ -150,7 +152,7 @@ fn single_opening_roundtrip(
     let (prover_setup, verifier_setup) = setup_for(num_vars, 1, layout(7));
     let poly = polynomial(num_vars, offset);
     let eval = poly.evaluate(&point);
-    let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup);
+    let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup).unwrap();
 
     let mut prover_transcript = Blake2bTranscript::new(label);
     let proof = AkitaScheme::open(
@@ -160,7 +162,8 @@ fn single_opening_roundtrip(
         &prover_setup,
         Some(hint),
         &mut prover_transcript,
-    );
+    )
+    .unwrap();
 
     let mut verifier_transcript = Blake2bTranscript::new(label);
     AkitaScheme::verify(
