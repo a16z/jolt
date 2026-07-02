@@ -108,60 +108,35 @@ where
         add_program_image_reduction_address_publics(input, values, layout, &point)?;
     }
 
-    let mut rounds = vec![hamming_claims.rounds()];
-    let mut inputs = vec![hamming_claims.input_expression::<PCS::Field>()];
-    let mut outputs = vec![hamming_claims.output_expression::<PCS::Field>()];
-    if let Some(claim) = trusted_claims {
-        rounds.push(claim.rounds());
-        inputs.push(claim.input_expression::<PCS::Field>());
-        outputs.push(claim.output_expression::<PCS::Field>());
-    }
-    if let Some(claim) = untrusted_claims {
-        rounds.push(claim.rounds());
-        inputs.push(claim.input_expression::<PCS::Field>());
-        outputs.push(claim.output_expression::<PCS::Field>());
-    }
-    if let Some(claim) = bytecode_reduction_claims {
-        rounds.push(claim.rounds());
-        inputs.push(claim.input_expression::<PCS::Field>());
-        outputs.push(claim.output_expression::<PCS::Field>());
-    }
-    if let Some(claim) = program_image_reduction_claims {
-        rounds.push(claim.rounds());
-        inputs.push(claim.input_expression::<PCS::Field>());
-        outputs.push(claim.output_expression::<PCS::Field>());
-    }
     let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
     let mut output_ids = output_openings.all();
-    if let Some(layout) = trusted_layout {
-        if layout.dimensions().has_address_phase() {
-            output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted));
-        }
+    let mut claims = vec![relation_claim(&hamming_claims)];
+    if let Some(claim) = trusted_claims {
+        claims.push(relation_claim(&claim));
+        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted));
     }
-    if let Some(layout) = untrusted_layout {
-        if layout.dimensions().has_address_phase() {
-            output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted));
-        }
+    if let Some(claim) = untrusted_claims {
+        claims.push(relation_claim(&claim));
+        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted));
     }
-    if let Some(layout) = bytecode_reduction_layout.as_ref() {
-        if layout.dimensions().has_address_phase() {
-            output_ids.extend(
-                (0..layout.chunk_count()).map(bytecode_reduction::final_bytecode_chunk_opening),
-            );
-        }
+    if let (Some(layout), Some(claim)) = (
+        bytecode_reduction_layout.as_ref(),
+        bytecode_reduction_claims,
+    ) {
+        claims.push(relation_claim(&claim));
+        output_ids.extend(
+            (0..layout.chunk_count()).map(bytecode_reduction::final_bytecode_chunk_opening),
+        );
     }
-    if let Some(layout) = program_image_reduction_layout.as_ref() {
-        if layout.dimensions().has_address_phase() {
-            output_ids.push(program_image::final_program_image_opening());
-        }
+    if let Some(claim) = program_image_reduction_claims {
+        claims.push(relation_claim(&claim));
+        output_ids.push(program_image::final_program_image_opening());
     }
     add_batched_stage(
         builder,
         "stage7.batch",
         hamming_claims.domain(),
-        &rounds,
-        &inputs,
-        &outputs,
+        &claims,
         &input.stage7.batch_consistency,
         &input.stage7.batch_output_claims,
         values,

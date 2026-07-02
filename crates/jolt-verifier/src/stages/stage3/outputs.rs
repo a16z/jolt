@@ -60,12 +60,6 @@ impl<F: Field> Stage3OutputClaims<F> {
     /// [`append_to_transcript`](Self::append_to_transcript) and the prover's
     /// output-claim values.
     pub fn opening_values(&self) -> Vec<F> {
-        // `shift` delegates to its derived `opening_values()` so its per-field order
-        // is single-sourced from the `OutputClaims` derive. The instruction-input
-        // and register-reduction openings are listed explicitly because three of
-        // them alias canonical sources and are absorbed once (see `validate`):
-        // `instruction_input.unexpanded_pc` (= `shift.unexpanded_pc`) and the
-        // register-reduction `rs1`/`rs2` values are skipped here.
         self.shift
             .opening_values()
             .into_iter()
@@ -131,16 +125,10 @@ impl<F: Field> Stage3OutputPoints<F> {
     pub fn shift_opening_point(&self) -> &[F] {
         self.shift.unexpanded_pc()
     }
-
-    /// The register claim-reduction relation's shared opening point.
-    pub fn registers_opening_point(&self) -> &[F] {
-        self.registers_claim_reduction.rd_write_value()
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3ClearOutput<F: Field> {
-    pub challenges: Stage3Challenges<F>,
     /// The produced stage-3 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage3OutputClaims<F>,

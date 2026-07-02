@@ -81,12 +81,6 @@ pub enum VerifierError {
         right: JoltOpeningId,
     },
 
-    #[error("stage {stage:?} sumcheck degree {degree} is invalid")]
-    InvalidStageSumcheckDegree {
-        stage: JoltRelationId,
-        degree: usize,
-    },
-
     #[error("stage {stage:?} sumcheck verification failed: {reason}")]
     StageClaimSumcheckFailed {
         stage: JoltRelationId,

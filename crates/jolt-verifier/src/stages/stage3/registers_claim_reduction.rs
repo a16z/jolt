@@ -1,10 +1,7 @@
 //! The stage 3 `RegistersClaimReduction` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 3 batch proof) and the verifier (after checking it). It
-//! owns the register-reduction opening-point derivation and the `EqSpartan`
-//! public-value computation (against the product uni-skip `tau_low`), so the
-//! input/output claim algebra lives here once.
+//! Owns the register-reduction opening-point derivation and the `EqSpartan`
+//! public-value computation (against the product uni-skip `tau_low`).
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
@@ -33,18 +30,6 @@ pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
         rd_write_value: outer.rd_write_value,
         rs1_value: outer.rs1_value,
         rs2_value: outer.rs2_value,
-    }
-}
-
-/// Wire the consumed opening *points*. Only the values feed the input claim (the
-/// output points come from this relation's own sumcheck point), so the input
-/// points are left empty.
-pub fn registers_claim_reduction_input_points_from_upstream<F: Field>(
-) -> RegistersClaimReductionInputClaims<Vec<F>> {
-    RegistersClaimReductionInputClaims {
-        rd_write_value: Vec::new(),
-        rs1_value: Vec::new(),
-        rs2_value: Vec::new(),
     }
 }
 

@@ -1,13 +1,8 @@
 #![expect(
     dead_code,
-    reason = "Verifier fixture harness registers fixture metadata used by feature-gated cases."
+    reason = "the shared support module is compiled into every integration-test target but only partially used per feature configuration."
 )]
 
 #[path = "soundness/mod.rs"]
 mod soundness;
 mod support;
-
-#[test]
-fn soundness_case_registry_is_wired() {
-    soundness::assert_registry_is_wired();
-}

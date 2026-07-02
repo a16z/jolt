@@ -1,11 +1,8 @@
 //! The stage 2 `InstructionClaimReduction` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 2 batch proof) and the verifier (after checking it). It
-//! owns the reduced-claim opening-point derivation and the `EqSpartan` public-value
-//! computation, so the input/output claim algebra lives here once (and stays in
-//! lockstep with the BlindFold constraint, which evaluates the same
-//! `claim_reductions::instruction::claim_reduction` formula).
+//! Owns the reduced-claim opening-point derivation and the `EqSpartan` public-value
+//! computation, in lockstep with the BlindFold constraint's
+//! `claim_reductions::instruction::claim_reduction` formula.
 //!
 //! WARNING — cross-relation aliases: three of the five reduced openings
 //! (`lookup_output`, `left_instruction_input`, `right_instruction_input`) are not
@@ -46,20 +43,6 @@ pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
         right_lookup_operand: outer.right_lookup_operand,
         left_instruction_input: outer.left_instruction_input,
         right_instruction_input: outer.right_instruction_input,
-    }
-}
-
-/// Wire the consumed instruction-lookup opening *points* (all empty — these
-/// openings carry no point at this stage, so no upstream data is needed and the
-/// same wiring serves the clear and ZK paths).
-pub fn instruction_claim_reduction_input_points_from_upstream<F: Field>(
-) -> InstructionClaimReductionInputClaims<Vec<F>> {
-    InstructionClaimReductionInputClaims {
-        lookup_output: Vec::new(),
-        left_lookup_operand: Vec::new(),
-        right_lookup_operand: Vec::new(),
-        left_instruction_input: Vec::new(),
-        right_instruction_input: Vec::new(),
     }
 }
 

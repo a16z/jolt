@@ -29,6 +29,7 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
 use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage6b::outputs::BytecodeReductionWeights;
 use crate::VerifierError;
 
 pub struct BytecodeReductionAddressPhase<F: Field> {
@@ -38,14 +39,7 @@ pub struct BytecodeReductionAddressPhase<F: Field> {
     /// The stage-6b bytecode cycle-phase output weights, consumed only by the
     /// clear-only `derive_output_term` (`ChunkOutputWeight`). `None` in ZK (BlindFold
     /// recomputes the weights), where this relation's `derive_output_term` never runs.
-    weights: Option<OwnedBytecodeWeights<F>>,
-}
-
-/// Owned copy of the stage-6b bytecode cycle-phase output weights.
-struct OwnedBytecodeWeights<F: Field> {
-    r_bc: Vec<F>,
-    chunk_rbc_weights: Vec<F>,
-    lane_weights: Vec<F>,
+    weights: Option<BytecodeReductionWeights<F>>,
 }
 
 impl<F: Field> BytecodeReductionAddressPhase<F> {
@@ -55,7 +49,7 @@ impl<F: Field> BytecodeReductionAddressPhase<F> {
     /// the output check.
     pub fn new(
         layout: &BytecodeClaimReductionLayout,
-        weights: Option<BytecodeOutputWeightInputs<'_, F>>,
+        weights: Option<BytecodeReductionWeights<F>>,
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
@@ -65,25 +59,20 @@ impl<F: Field> BytecodeReductionAddressPhase<F> {
             )),
             layout: layout.clone(),
             cycle_phase_variables,
-            weights: weights.map(|weights| OwnedBytecodeWeights {
-                r_bc: weights.r_bc.to_vec(),
-                chunk_rbc_weights: weights.chunk_rbc_weights.to_vec(),
-                lane_weights: weights.lane_weights.to_vec(),
-            }),
+            weights,
         }
     }
 
     fn output_weight_inputs(&self) -> Result<BytecodeOutputWeightInputs<'_, F>, VerifierError> {
-        let weights = self.weights.as_ref().ok_or_else(|| {
-            bytecode_public_failed(
-                "bytecode address phase has no output weights (ZK-only construction)",
-            )
-        })?;
-        Ok(BytecodeOutputWeightInputs {
-            r_bc: &weights.r_bc,
-            chunk_rbc_weights: &weights.chunk_rbc_weights,
-            lane_weights: &weights.lane_weights,
-        })
+        Ok(self
+            .weights
+            .as_ref()
+            .ok_or_else(|| {
+                bytecode_public_failed(
+                    "bytecode address phase has no output weights (ZK-only construction)",
+                )
+            })?
+            .as_inputs())
     }
 }
 

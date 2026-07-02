@@ -1,11 +1,8 @@
 //! The stage 2 `RamRafEvaluation` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 2 batch proof) and the verifier (after checking it). It
-//! owns the RAM RAF address opening-point derivation and the `UnmapAddress`
-//! public-value computation, so the input/output claim algebra lives here once (and
-//! stays in lockstep with the BlindFold constraint, which evaluates the same
-//! `ram::raf_evaluation` formula). The phase-3 cycle scaling on the input is baked
+//! Owns the RAM RAF address opening-point derivation and the `UnmapAddress`
+//! public-value computation, in lockstep with the BlindFold constraint's
+//! `ram::raf_evaluation` formula. The phase-3 cycle scaling on the input is baked
 //! into that formula's constant coefficient.
 //!
 //! The produced `ram_ra` opening point is `[r_address(log_k) ‖ tau_low(log_t)]`;
@@ -34,16 +31,6 @@ pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
 ) -> RamRafEvaluationInputClaims<F> {
     RamRafEvaluationInputClaims {
         ram_address: stage1.output_values.outer_remainder.ram_address,
-    }
-}
-
-/// Wire the consumed RAM address opening *point* (empty — this input carries no
-/// point at this stage, so no upstream data is needed and the same wiring serves
-/// the clear and ZK paths).
-pub fn ram_raf_evaluation_input_points_from_upstream<F: Field>(
-) -> RamRafEvaluationInputClaims<Vec<F>> {
-    RamRafEvaluationInputClaims {
-        ram_address: Vec::new(),
     }
 }
 
@@ -87,24 +74,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         &self.symbolic
     }
 
-    /// This instance's point is embedded at the batch's phase-1 offset: the active
-    /// stage-2 window (the RAM read-write leader's `log_t + log_k` rounds) starts
-    /// at `batch_num_vars - (log_t + log_k)`, and this relation joins it after the
-    /// leader's `phase1_num_rounds` cycle rounds — the pre-port verifier's
-    /// `try_round_offset(log_t + log_k) + phase1_num_rounds()` slicing.
+    /// Delegates to [`super::phase1_instance_point_offset`] (the phase-1 sub-point
+    /// slicing shared with `RamOutputCheck`).
     fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
-        let dimensions = self.read_write_dimensions;
-        let window_offset = batch_num_vars
-            .checked_sub(dimensions.read_write_rounds())
-            .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RamRafEvaluation,
-                reason: format!(
-                    "batch challenge vector has {batch_num_vars} entries, fewer than the \
-                     active stage-2 window's {} rounds",
-                    dimensions.read_write_rounds()
-                ),
-            })?;
-        Ok(window_offset + dimensions.phase1_num_rounds())
+        super::phase1_instance_point_offset(self.read_write_dimensions, self.id(), batch_num_vars)
     }
 
     fn derive_opening_points(

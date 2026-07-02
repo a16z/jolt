@@ -9,8 +9,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
-    BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafAddressPhaseInputClaims,
-    BytecodeReadRafAddressPhaseOutputClaims,
+    BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode::BytecodeReadRafDimensions, spartan::outer_opening},

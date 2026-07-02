@@ -157,13 +157,6 @@ pub enum Stage7Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage7Output<F, C> {
-    pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, crate::VerifierError> {
-        match self {
-            Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage7" }),
-        }
-    }
-
     pub fn zk(&self) -> Result<&Stage7ZkOutput<F, C>, crate::VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),

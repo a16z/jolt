@@ -44,18 +44,6 @@ pub fn product_uniskip_input_values_from_stage1<F: Field>(
     }
 }
 
-/// Wire the three consumed Spartan-outer opening *points* (all empty — these
-/// openings carry no point at this stage).
-pub fn product_uniskip_input_points_from_stage1<F: Field>(
-    _stage1: &Stage1ClearOutput<F>,
-) -> ProductUniskipInputClaims<Vec<F>> {
-    ProductUniskipInputClaims {
-        product: Vec::new(),
-        should_branch: Vec::new(),
-        should_jump: Vec::new(),
-    }
-}
-
 pub struct ProductUniskip<F: Field> {
     symbolic: relations::spartan::ProductUniskip,
     tau_high: F,

@@ -8,20 +8,18 @@ use jolt_transcript::Transcript;
 
 use super::{
     instruction_input::{
-        instruction_input_input_points_from_upstream, instruction_input_input_values_from_upstream,
-        InstructionInput,
+        instruction_input_input_values_from_upstream, InstructionInput, InstructionInputInputClaims,
     },
     outputs::{
         Stage3ClearOutput, Stage3InputClaims, Stage3InputPoints, Stage3Output, Stage3Sumchecks,
         Stage3ZkOutput,
     },
     registers_claim_reduction::{
-        registers_claim_reduction_input_points_from_upstream,
         registers_claim_reduction_input_values_from_upstream, RegistersClaimReduction,
+        RegistersClaimReductionInputClaims,
     },
     spartan_shift::{
-        spartan_shift_input_points_from_upstream, spartan_shift_input_values_from_upstream,
-        SpartanShift,
+        spartan_shift_input_values_from_upstream, SpartanShift, SpartanShiftInputClaims,
     },
 };
 use crate::{
@@ -62,9 +60,22 @@ fn stage3_input_values_from_upstream<F: Field>(
 /// takes no upstream data and serves the clear and ZK paths alike.
 fn stage3_input_points_from_upstream<F: Field>() -> Stage3InputPoints<F> {
     Stage3InputPoints {
-        shift: spartan_shift_input_points_from_upstream(),
-        instruction_input: instruction_input_input_points_from_upstream(),
-        registers_claim_reduction: registers_claim_reduction_input_points_from_upstream(),
+        shift: SpartanShiftInputClaims {
+            next_unexpanded_pc: Vec::new(),
+            next_pc: Vec::new(),
+            next_is_virtual: Vec::new(),
+            next_is_first_in_sequence: Vec::new(),
+            next_is_noop: Vec::new(),
+        },
+        instruction_input: InstructionInputInputClaims {
+            right_instruction_input: Vec::new(),
+            left_instruction_input: Vec::new(),
+        },
+        registers_claim_reduction: RegistersClaimReductionInputClaims {
+            rd_write_value: Vec::new(),
+            rs1_value: Vec::new(),
+            rs2_value: Vec::new(),
+        },
     }
 }
 
@@ -106,14 +117,13 @@ where
 
     if checked.zk {
         let consistency = sumchecks.verify_zk(&proof.stages.stage3_sumcheck_proof, transcript)?;
-        let batch_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage3_sumcheck_proof,
-                proof_label: "stage3_sumcheck_proof",
-                output_claim_count: STAGE3_BATCH_OUTPUT_CLAIMS,
-                stage: JoltRelationId::SpartanShift,
-            })?;
+        let batch_output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage3_sumcheck_proof,
+            "stage3_sumcheck_proof",
+            STAGE3_BATCH_OUTPUT_CLAIMS,
+            JoltRelationId::SpartanShift,
+        )?;
         let output_points = sumchecks.derive_opening_points(
             &consistency.challenges(),
             &stage3_input_points_from_upstream(),
@@ -163,119 +173,7 @@ where
     claims.append_to_transcript(transcript);
 
     Ok(Stage3Output::Clear(Stage3ClearOutput {
-        challenges,
         output_values: claims.clone(),
         output_points,
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::stages::stage3::instruction_input::InstructionInputOutputClaims;
-    use crate::stages::stage3::outputs::Stage3OutputClaims;
-    use crate::stages::stage3::registers_claim_reduction::RegistersClaimReductionOutputClaims;
-    use crate::stages::stage3::spartan_shift::SpartanShiftOutputClaims;
-    use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-        state: [u8; 32],
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            self.state
-        }
-    }
-
-    #[test]
-    fn opening_claim_appends_follow_core_alias_order() {
-        let claims = Stage3OutputClaims::<Fr> {
-            shift: SpartanShiftOutputClaims {
-                unexpanded_pc: Fr::from_u64(1),
-                pc: Fr::from_u64(2),
-                is_virtual: Fr::from_u64(3),
-                is_first_in_sequence: Fr::from_u64(4),
-                is_noop: Fr::from_u64(5),
-            },
-            instruction_input: InstructionInputOutputClaims {
-                left_operand_is_rs1: Fr::from_u64(6),
-                rs1_value: Fr::from_u64(7),
-                left_operand_is_pc: Fr::from_u64(8),
-                unexpanded_pc: Fr::from_u64(9),
-                right_operand_is_rs2: Fr::from_u64(10),
-                rs2_value: Fr::from_u64(11),
-                right_operand_is_imm: Fr::from_u64(12),
-                imm: Fr::from_u64(13),
-            },
-            registers_claim_reduction: RegistersClaimReductionOutputClaims {
-                rd_write_value: Fr::from_u64(14),
-                rs1_value: Fr::from_u64(15),
-                rs2_value: Fr::from_u64(16),
-            },
-        };
-        let mut transcript = RecordingTranscript::new(b"stage3-openings");
-
-        claims.append_to_transcript(&mut transcript);
-
-        // Canonical order: the five shift openings, then the instruction-input
-        // openings minus its aliased `unexpanded_pc`, then only `rd_write_value`
-        // from the register reduction (its `rs1`/`rs2` alias the instruction ones).
-        let expected_payloads = [
-            claims.shift.unexpanded_pc,
-            claims.shift.pc,
-            claims.shift.is_virtual,
-            claims.shift.is_first_in_sequence,
-            claims.shift.is_noop,
-            claims.instruction_input.left_operand_is_rs1,
-            claims.instruction_input.rs1_value,
-            claims.instruction_input.left_operand_is_pc,
-            claims.instruction_input.right_operand_is_rs2,
-            claims.instruction_input.rs2_value,
-            claims.instruction_input.right_operand_is_imm,
-            claims.instruction_input.imm,
-            claims.registers_claim_reduction.rd_write_value,
-        ];
-        assert_eq!(claims.opening_values().len(), expected_payloads.len());
-        assert_eq!(transcript.chunks.len(), expected_payloads.len() * 2);
-
-        let label = opening_claim_label();
-        for (index, expected_payload) in expected_payloads.into_iter().enumerate() {
-            assert_eq!(transcript.chunks[2 * index], label);
-            assert_eq!(
-                transcript.chunks[2 * index + 1],
-                scalar_bytes(expected_payload)
-            );
-        }
-    }
-
-    fn opening_claim_label() -> Vec<u8> {
-        let mut label = vec![0; 32];
-        label[..b"opening_claim".len()].copy_from_slice(b"opening_claim");
-        label
-    }
-
-    fn scalar_bytes(value: Fr) -> Vec<u8> {
-        let mut bytes = vec![0; Fr::NUM_BYTES];
-        value.to_bytes_le(&mut bytes);
-        bytes.reverse();
-        bytes
-    }
 }

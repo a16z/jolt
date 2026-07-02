@@ -3,13 +3,12 @@ use jolt_claims::protocols::jolt::{
         dimensions::TraceDimensions, ram::RamRafEvaluationDimensions,
         spartan::SpartanProductDimensions,
     },
-    JoltRelationId, JoltSumcheckDomain,
+    JoltRelationId,
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_r1cs::constraints::jolt::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
@@ -22,29 +21,25 @@ use jolt_transcript::Transcript;
 
 use super::{
     instruction_claim_reduction::{
-        instruction_claim_reduction_input_points_from_upstream,
         instruction_claim_reduction_input_values_from_upstream, InstructionClaimReduction,
+        InstructionClaimReductionInputClaims,
     },
     outputs::{
         Stage2BatchInputClaims, Stage2BatchInputPoints, Stage2BatchSumchecks, Stage2ClearOutput,
-        Stage2Output, Stage2ZkOutput, VerifiedProductUniSkip,
+        Stage2Output, Stage2ZkOutput,
     },
     product_remainder::{
-        product_remainder_input_points_from_uniskip_output,
         product_remainder_input_values_from_uniskip_output, ProductRemainder,
+        ProductRemainderInputClaims,
     },
     product_uniskip::{product_uniskip_input_values_from_stage1, ProductUniskip},
-    ram_output_check::{
-        ram_output_check_input_points_from_upstream, ram_output_check_input_values_from_upstream,
-        RamOutputCheck,
-    },
+    ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims},
     ram_raf_evaluation::{
-        ram_raf_evaluation_input_points_from_upstream,
         ram_raf_evaluation_input_values_from_upstream, RamRafEvaluation,
+        RamRafEvaluationInputClaims,
     },
     ram_read_write_checking::{
-        ram_read_write_input_points_from_upstream, ram_read_write_input_values_from_upstream,
-        RamReadWriteChecking,
+        ram_read_write_input_values_from_upstream, RamReadWriteChecking, RamReadWriteInputClaims,
     },
 };
 use crate::{
@@ -58,7 +53,6 @@ use crate::{
     VerifierError,
 };
 
-const PRODUCT_UNISKIP_OUTPUT_CLAIMS: usize = 1;
 /// The number of opening claims the stage-2 batch commits/absorbs: 15, not the 16
 /// the members' output expressions reference, because the three aliased
 /// instruction-claim-reduction openings (`lookup_output`,
@@ -66,20 +60,6 @@ const PRODUCT_UNISKIP_OUTPUT_CLAIMS: usize = 1;
 /// product-remainder source (see
 /// [`Stage2BatchOutputClaims::opening_values`](super::outputs::Stage2BatchOutputClaims)).
 const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 15;
-
-fn selected_product_uniskip_rounds() -> usize {
-    1
-}
-
-fn selected_product_uniskip_degree() -> usize {
-    SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
-}
-
-fn selected_product_uniskip_domain() -> jolt_claims::protocols::jolt::JoltSumcheckDomain {
-    jolt_claims::protocols::jolt::JoltSumcheckDomain::centered_integer(
-        SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-    )
-}
 
 /// The product uni-skip step's outputs: the tau bindings and the uni-skip
 /// reduction challenge are extracted mode-agnostically (clear: the single-entry
@@ -93,7 +73,7 @@ struct ProductUniskipStep<F: Field, C> {
 }
 
 enum ProductUniskipVerified<F: Field, C> {
-    Clear(Point<HIGH_TO_LOW, F>),
+    Clear,
     Zk {
         consistency: CommittedSumcheckConsistency<F, C>,
         output_claims: committed::CommittedOutputClaimOutput<C>,
@@ -116,20 +96,7 @@ fn stage2_batch_input_values_from_upstream<F: Field>(
         ),
         instruction_claim_reduction: instruction_claim_reduction_input_values_from_upstream(stage1),
         ram_raf_evaluation: ram_raf_evaluation_input_values_from_upstream(stage1),
-        ram_output_check: ram_output_check_input_values_from_upstream(),
-    }
-}
-
-/// Assemble the stage-2 batch consumed opening *points*. Every member's input
-/// points are empty (each derives its output points from its own sumcheck point),
-/// so this takes no upstream data and serves the clear and ZK paths alike.
-fn stage2_batch_input_points_from_upstream<F: Field>() -> Stage2BatchInputPoints<F> {
-    Stage2BatchInputPoints {
-        ram_read_write: ram_read_write_input_points_from_upstream(),
-        product_remainder: product_remainder_input_points_from_uniskip_output(),
-        instruction_claim_reduction: instruction_claim_reduction_input_points_from_upstream(),
-        ram_raf_evaluation: ram_raf_evaluation_input_points_from_upstream(),
-        ram_output_check: ram_output_check_input_points_from_upstream(),
+        ram_output_check: RamOutputCheckInputClaims::default(),
     }
 }
 
@@ -228,7 +195,28 @@ where
         .ram_output_check
         .set_output_address_challenges(output_address_challenges.clone());
 
-    let input_points = stage2_batch_input_points_from_upstream();
+    // Every member's input points are empty (each derives its output points from its
+    // own sumcheck point).
+    let input_points = Stage2BatchInputPoints {
+        ram_read_write: RamReadWriteInputClaims {
+            ram_read_value: Vec::new(),
+            ram_write_value: Vec::new(),
+        },
+        product_remainder: ProductRemainderInputClaims {
+            product_uniskip: Vec::new(),
+        },
+        instruction_claim_reduction: InstructionClaimReductionInputClaims {
+            lookup_output: Vec::new(),
+            left_lookup_operand: Vec::new(),
+            right_lookup_operand: Vec::new(),
+            left_instruction_input: Vec::new(),
+            right_instruction_input: Vec::new(),
+        },
+        ram_raf_evaluation: RamRafEvaluationInputClaims {
+            ram_address: Vec::new(),
+        },
+        ram_output_check: RamOutputCheckInputClaims::default(),
+    };
 
     if checked.zk {
         let ProductUniskipVerified::Zk {
@@ -241,14 +229,13 @@ where
             });
         };
         let consistency = sumchecks.verify_zk(&proof.stages.stage2_sumcheck_proof, transcript)?;
-        let batch_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage2_sumcheck_proof,
-                proof_label: "stage2_sumcheck_proof",
-                output_claim_count: STAGE2_BATCH_OUTPUT_CLAIMS,
-                stage: JoltRelationId::RamReadWriteChecking,
-            })?;
+        let batch_output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage2_sumcheck_proof,
+            "stage2_sumcheck_proof",
+            STAGE2_BATCH_OUTPUT_CLAIMS,
+            JoltRelationId::RamReadWriteChecking,
+        )?;
         let output_points =
             sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
 
@@ -266,7 +253,7 @@ where
         }));
     }
 
-    let ProductUniskipVerified::Clear(uniskip_sumcheck_point) = uniskip.verified else {
+    let ProductUniskipVerified::Clear = uniskip.verified else {
         return Err(VerifierError::ExpectedClearProof {
             field: "stage2_uni_skip_first_round_proof",
         });
@@ -310,11 +297,7 @@ where
     Ok(Stage2Output::Clear(Stage2ClearOutput {
         output_values,
         output_points,
-        product_uniskip: VerifiedProductUniSkip {
-            tau_low: uniskip.tau_low,
-            tau_high: uniskip.tau_high,
-            sumcheck_point: uniskip_sumcheck_point,
-        },
+        product_tau_low: uniskip.tau_low,
     }))
 }
 
@@ -352,16 +335,8 @@ where
     tau_low.reverse();
 
     let tau_high = transcript.challenge();
-    let uniskip_rounds = selected_product_uniskip_rounds();
-    let uniskip_degree = selected_product_uniskip_degree();
-    let uniskip_domain = selected_product_uniskip_domain();
-    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_domain else {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: "Stage 2 product uni-skip sumcheck must use the centered-integer domain"
-                .to_string(),
-        });
-    };
+    let uniskip_rounds = 1;
+    let uniskip_degree = SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
     match stage1 {
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
@@ -377,7 +352,7 @@ where
                 .stage2_uni_skip_first_round_proof
                 .verify(
                     &SumcheckClaim::new(uniskip_rounds, uniskip_degree, uniskip_input_claim),
-                    CenteredIntegerDomain::new(domain_size),
+                    CenteredIntegerDomain::new(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE),
                     UNISKIP_ROUND_TRANSCRIPT_LABEL,
                     transcript,
                 )
@@ -401,7 +376,7 @@ where
                 tau_low,
                 tau_high,
                 challenge: *challenge,
-                verified: ProductUniskipVerified::Clear(uniskip_reduction.point),
+                verified: ProductUniskipVerified::Clear,
             })
         }
         Stage1Output::Zk(_) => {
@@ -417,13 +392,11 @@ where
                     reason: error.to_string(),
                 })?;
             let output_claims = committed::verify_output_claim_commitments(
-                committed::CommittedOutputClaimInputs {
-                    checked,
-                    proof: &proof.stages.stage2_uni_skip_first_round_proof,
-                    proof_label: "stage2_uni_skip_first_round_proof",
-                    output_claim_count: PRODUCT_UNISKIP_OUTPUT_CLAIMS,
-                    stage,
-                },
+                checked,
+                &proof.stages.stage2_uni_skip_first_round_proof,
+                "stage2_uni_skip_first_round_proof",
+                1,
+                stage,
             )?;
             let [round] = consistency.rounds.as_slice() else {
                 return Err(VerifierError::StageClaimSumcheckFailed {

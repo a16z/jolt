@@ -1,10 +1,7 @@
 //! The stage 4 `RegistersReadWriteChecking` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 4 batch proof) and the verifier (after checking it). It
-//! owns the register read-write point derivation and the `EqCycle` public-value
-//! computation, so the input/output claim algebra lives here once instead of
-//! being hand-coded on each side.
+//! Owns the register read-write point derivation and the `EqCycle` public-value
+//! computation.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::registers::{

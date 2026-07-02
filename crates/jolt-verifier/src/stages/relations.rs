@@ -20,9 +20,7 @@ pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 /// per-relation claim plumbing it composes. See `specs/sumcheck-batch-derive.md`.
 pub use jolt_verifier_derive::SumcheckBatch;
 
-use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
-};
+use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_transcript::Transcript;
@@ -59,28 +57,16 @@ impl<F: Field, C: OutputClaims<F>> OutputAppend<F> for C {}
 pub type ConcreteSumcheckChallenges<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Challenges<F>;
 
-/// The consumed-claim *values* struct (serialized wire form) of a
-/// [`ConcreteSumcheck`] instance: its symbolic relation's
-/// [`Inputs`](SymbolicSumcheck::Inputs) GAT at the value cell `F`. Implements
-/// [`InputClaims`].
+/// A [`ConcreteSumcheck`]'s consumed-claim values (wire form; implements [`InputClaims`]).
 pub type SumcheckInputClaims<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Inputs<F>;
-/// The consumed-claim *points* struct (derived opening points) of a
-/// [`ConcreteSumcheck`] instance: its symbolic relation's
-/// [`Inputs`](SymbolicSumcheck::Inputs) GAT at the point cell `Vec<F>`. Carries
-/// the per-field opening-point accessors.
+/// A [`ConcreteSumcheck`]'s consumed-claim opening points (carries per-field accessors).
 pub type SumcheckInputPoints<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Inputs<::std::vec::Vec<F>>;
-/// The produced-claim *values* struct (serialized wire form) of a
-/// [`ConcreteSumcheck`] instance: its symbolic relation's
-/// [`Outputs`](SymbolicSumcheck::Outputs) GAT at the value cell `F`. Implements
-/// [`OutputClaims`].
+/// A [`ConcreteSumcheck`]'s produced-claim values (wire form; implements [`OutputClaims`]).
 pub type SumcheckOutputClaims<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<F>;
-/// The produced-claim *points* struct (derived opening points) of a
-/// [`ConcreteSumcheck`] instance: its symbolic relation's
-/// [`Outputs`](SymbolicSumcheck::Outputs) GAT at the point cell `Vec<F>`. Carries
-/// the per-field opening-point accessors.
+/// A [`ConcreteSumcheck`]'s produced-claim opening points (carries per-field accessors).
 pub type SumcheckOutputPoints<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<::std::vec::Vec<F>>;
 
@@ -112,24 +98,16 @@ where
         ChallengeId = JoltChallengeId,
     >;
 
-    /// The symbolic relation backing this instance.
     fn symbolic(&self) -> &Self::Symbolic;
 
     fn id(&self) -> JoltRelationId {
         Self::Symbolic::id()
     }
 
-    /// The sumcheck domain, from the symbolic relation.
-    fn domain(&self) -> JoltSumcheckDomain {
-        self.symbolic().domain()
-    }
-
-    /// The sumcheck round count, from the symbolic relation.
     fn rounds(&self) -> usize {
         self.symbolic().rounds()
     }
 
-    /// The per-round degree bound, from the symbolic relation.
     fn degree(&self) -> usize {
         self.symbolic().degree()
     }
@@ -347,6 +325,41 @@ pub(crate) mod draw_recording {
     }
 }
 
+/// The append-order recorder shared by the stage `append_to_transcript` ordering
+/// locks: unlike the challenge recorder, it observes only byte appends.
+#[cfg(test)]
+pub(crate) mod append_recording {
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_transcript::Transcript;
+
+    /// A minimal `Transcript` double that records each appended byte chunk, so
+    /// that append order can be compared without depending on the digest.
+    #[derive(Clone, Default)]
+    pub(crate) struct RecordingTranscript {
+        pub(crate) chunks: Vec<Vec<u8>>,
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(_label: &'static [u8]) -> Self {
+            Self::default()
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.chunks.push(bytes.to_vec());
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::from_u64(0)
+        }
+
+        fn state(&self) -> [u8; 32] {
+            [0u8; 32]
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,32 +383,7 @@ mod tests {
         JoltOpeningId::committed(polynomial, relation)
     }
 
-    /// A minimal `Transcript` double that records each appended byte chunk, so
-    /// that append order can be compared without depending on the digest.
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
-    }
+    use super::append_recording::RecordingTranscript;
 
     /// The chunk stream produced by appending `opening_values()` one-by-one is
     /// the reference Fiat-Shamir order; `append_openings` must reproduce it.

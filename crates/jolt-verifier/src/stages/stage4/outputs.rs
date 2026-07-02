@@ -91,7 +91,6 @@ impl<F: Field> Stage4OutputPoints<F> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage4ClearOutput<F: Field> {
-    pub challenges: Stage4Challenges<F>,
     /// The produced stage-4 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage4OutputClaims<F>,
@@ -124,6 +123,14 @@ pub enum Stage4Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage4Output<F, C> {
+    /// The produced opening points, available regardless of proving mode.
+    pub fn output_points(&self) -> &Stage4OutputPoints<F> {
+        match self {
+            Self::Clear(output) => &output.output_points,
+            Self::Zk(output) => &output.output_points,
+        }
+    }
+
     pub fn clear(&self) -> Result<&Stage4ClearOutput<F>, crate::VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),

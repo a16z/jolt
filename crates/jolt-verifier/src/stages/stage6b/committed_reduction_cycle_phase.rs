@@ -28,9 +28,8 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::program_image
     ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs, AdviceClaimReductionLayout,
-    BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout,
-    ProgramImageClaimReductionLayout,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
+    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
@@ -62,16 +61,6 @@ pub fn advice_cycle_phase_input_values_from_upstream<F: Field>(
     }
 }
 
-/// The consumed advice opening *points* cell. The relation derives its produced
-/// points from its own sumcheck point and reads no input point, so the cell is
-/// empty; one constructor serves both proving modes.
-pub fn advice_cycle_phase_input_points<F: Field>() -> AdviceCyclePhaseInputClaims<Vec<F>> {
-    AdviceCyclePhaseInputClaims {
-        trusted: None,
-        untrusted: None,
-    }
-}
-
 pub struct AdviceCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::advice::CyclePhase,
     kind: JoltAdviceKind,
@@ -97,10 +86,6 @@ impl<F: Field> AdviceCyclePhase<F> {
             layout: layout.clone(),
             reference_opening_point,
         }
-    }
-
-    pub fn kind(&self) -> JoltAdviceKind {
-        self.kind
     }
 
     /// The produced advice opening for this kind: its value and point, or an error
@@ -193,24 +178,15 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
 pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<ProgramImageReductionCyclePhaseInputClaims<F>, VerifierError> {
-    let value = ram_val_check_init
-        .program_image_contribution_value
+    let (_, value) = ram_val_check_init
+        .program_image_contribution
+        .as_ref()
         .ok_or_else(|| {
             program_image_public_failed("missing RAM value-check program-image contribution")
         })?;
     Ok(ProgramImageReductionCyclePhaseInputClaims {
-        contribution: value,
+        contribution: *value,
     })
-}
-
-/// The consumed program-image contribution *point* cell. The relation derives its
-/// produced point from its own sumcheck point and reads no input point, so the
-/// cell is empty; one constructor serves both proving modes.
-pub fn program_image_reduction_cycle_phase_input_points<F: Field>(
-) -> ProgramImageReductionCyclePhaseInputClaims<Vec<F>> {
-    ProgramImageReductionCyclePhaseInputClaims {
-        contribution: Vec::new(),
-    }
 }
 
 pub struct ProgramImageReductionCyclePhase<F: Field> {
@@ -288,23 +264,6 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
     }
 }
 
-/// The consumed staged `BytecodeValStage` opening *values* from the bytecode
-/// read-RAF address phase. (Verifier-side constructor for the moved
-/// [`BytecodeReductionCyclePhaseInputClaims`].)
-pub fn bytecode_reduction_cycle_phase_input_values_from_values<F: Field>(
-    val_stages: Vec<F>,
-) -> BytecodeReductionCyclePhaseInputClaims<F> {
-    BytecodeReductionCyclePhaseInputClaims { val_stages }
-}
-
-/// The consumed staged `BytecodeValStage` opening *points* from the bytecode
-/// read-RAF address phase.
-pub fn bytecode_reduction_cycle_phase_input_points_from_points<F: Field>(
-    val_stages: Vec<Vec<F>>,
-) -> BytecodeReductionCyclePhaseInputClaims<Vec<F>> {
-    BytecodeReductionCyclePhaseInputClaims { val_stages }
-}
-
 pub struct BytecodeReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::CyclePhase,
     layout: BytecodeClaimReductionLayout,
@@ -325,14 +284,6 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
             layout: layout.clone(),
             weights,
             chunk_count: layout.chunk_count(),
-        }
-    }
-
-    fn output_weight_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
-        BytecodeOutputWeightInputs {
-            r_bc: &self.weights.r_bc,
-            chunk_rbc_weights: &self.weights.chunk_rbc_weights,
-            lane_weights: &self.weights.lane_weights,
         }
     }
 }
@@ -409,7 +360,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
         let weights = self
             .layout
             .cycle_phase_final_output_weights_at_opening_point(
-                self.output_weight_inputs(),
+                self.weights.as_inputs(),
                 opening_point,
             )
             .map_err(bytecode_public_failed)?;

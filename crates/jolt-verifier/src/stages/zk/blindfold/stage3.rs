@@ -38,10 +38,9 @@ where
         .try_instance_point(shift.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
-    // Stage 1's remainder cycle point, recomputed from `stage1.remainder_consistency`
-    // rather than read off the stage-2 carrier's `product_tau_low`, so the
-    // BakedPublicInputs derivation stays independent of the carrier field.
-    let product_tau_low = stage1_remainder_cycle(input);
+    // Stage 1's remainder cycle point (low half), read from the stage-2 carrier's
+    // `product_tau_low`.
+    let product_tau_low = input.stage2.product_tau_low.clone();
     let eq_plus_one_outer =
         EqPlusOnePolynomial::new(product_tau_low.clone()).evaluate(&shift_opening_point);
     let product_point = input
@@ -120,19 +119,9 @@ where
         "stage3.batch",
         shift.domain(),
         &[
-            shift.rounds(),
-            instruction_input.rounds(),
-            registers_reduction.rounds(),
-        ],
-        &[
-            shift.input_expression::<PCS::Field>(),
-            instruction_input.input_expression::<PCS::Field>(),
-            registers_reduction.input_expression::<PCS::Field>(),
-        ],
-        &[
-            shift.output_expression::<PCS::Field>(),
-            instruction_input.output_expression::<PCS::Field>(),
-            registers_reduction.output_expression::<PCS::Field>(),
+            relation_claim(&shift),
+            relation_claim(&instruction_input),
+            relation_claim(&registers_reduction),
         ],
         &input.stage3.batch_consistency,
         &input.stage3.batch_output_claims,

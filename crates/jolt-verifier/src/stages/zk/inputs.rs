@@ -1,7 +1,4 @@
-use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::SumcheckProof;
 
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -13,14 +10,6 @@ use crate::{
     },
     verifier::CheckedInputs,
 };
-
-pub(crate) struct CommittedOutputClaimInputs<'a, F: Field, C> {
-    pub checked: &'a CheckedInputs,
-    pub proof: &'a SumcheckProof<F, C>,
-    pub proof_label: &'static str,
-    pub output_claim_count: usize,
-    pub stage: JoltRelationId,
-}
 
 pub struct BlindFoldInputs<'a, PCS, VC, ZkProof>
 where

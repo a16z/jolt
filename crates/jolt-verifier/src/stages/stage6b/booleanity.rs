@@ -22,25 +22,6 @@ use jolt_poly::try_eq_mle;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
-/// The `BooleanityAddrClaim` intermediate *value* consumed from the address phase.
-/// (Verifier-side constructor for the moved [`BooleanityInputClaims`].)
-pub fn booleanity_input_values_from_upstream<F: Field>(
-    address_phase_value: F,
-) -> BooleanityInputClaims<F> {
-    BooleanityInputClaims {
-        address_phase: address_phase_value,
-    }
-}
-
-/// The `BooleanityAddrClaim` intermediate *point* consumed from the address phase.
-pub fn booleanity_input_points_from_upstream<F: Field>(
-    address_phase_point: Vec<F>,
-) -> BooleanityInputClaims<Vec<F>> {
-    BooleanityInputClaims {
-        address_phase: address_phase_point,
-    }
-}
-
 pub struct Booleanity<F: Field> {
     symbolic: relations::booleanity::BooleanityCyclePhase,
     dimensions: BooleanityDimensions,

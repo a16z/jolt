@@ -75,25 +75,6 @@ pub struct Stage5ClearOutput<F: Field> {
     pub instruction_r_address: Vec<F>,
 }
 
-impl<F: Field> Stage5ClearOutput<F> {
-    /// The instruction read-RAF cycle point, shared by the lookup-table-flag and
-    /// RAF-flag openings.
-    pub fn instruction_r_cycle(&self) -> &[F] {
-        self.output_points.instruction_r_cycle()
-    }
-
-    /// The reduced RAM-RA opening point (`address ++ cycle`, `log_k + log_t` vars).
-    pub fn ram_reduced_opening_point(&self) -> &[F] {
-        self.output_points.ram_reduced_opening_point()
-    }
-
-    /// The register value-evaluation opening point (`REGISTER_ADDRESS_BITS + log_t`
-    /// vars), shared by the `rd_inc` and `rd_wa` openings.
-    pub fn registers_opening_point(&self) -> &[F] {
-        self.output_points.registers_opening_point()
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5ZkOutput<F: Field, C> {
     pub challenges: Stage5Challenges<F>,
@@ -119,6 +100,23 @@ pub enum Stage5Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage5Output<F, C> {
+    /// The produced opening points, available regardless of proving mode.
+    pub fn output_points(&self) -> &Stage5OutputPoints<F> {
+        match self {
+            Self::Clear(output) => &output.output_points,
+            Self::Zk(output) => &output.output_points,
+        }
+    }
+
+    /// The contiguous stage-5 instruction address point, stored on both output
+    /// variants because the per-chunk virtual-RA cells don't hold it contiguously.
+    pub fn instruction_r_address(&self) -> &[F] {
+        match self {
+            Self::Clear(output) => &output.instruction_r_address,
+            Self::Zk(output) => &output.instruction_r_address,
+        }
+    }
+
     pub fn clear(&self) -> Result<&Stage5ClearOutput<F>, crate::VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
