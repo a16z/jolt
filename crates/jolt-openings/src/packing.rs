@@ -67,10 +67,18 @@ impl PrefixSlot {
         }
     }
 
-    pub(crate) fn prefix_index(&self) -> usize {
+    /// The slot's prefix bits as an integer (msb-first).
+    pub fn prefix_index(&self) -> usize {
         self.prefix
             .iter()
             .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))
+    }
+
+    /// Packed evaluation index of this slot's cell `local` — where witness
+    /// assembly places the cell in the packed table.
+    pub fn packed_index(&self, local: usize) -> usize {
+        debug_assert!(local < 1usize << self.num_vars);
+        (self.prefix_index() << self.num_vars) | local
     }
 }
 

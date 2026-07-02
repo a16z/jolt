@@ -8,16 +8,13 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-use jolt_claims::protocols::jolt::lattice::views::{
-    advice_word_decode_terms, bytecode_chunk_decode_terms, DecodeTerm,
-};
 use jolt_claims::protocols::jolt::lattice::{
-    proof_packed_columns, LatticeColumn, ProofPackingShape, UnsignedIncChunking,
+    advice_word_decode_terms, bytecode_chunk_decode_terms, proof_packing, DecodeTerm,
+    LatticeColumn, ProofPackingShape, UnsignedIncChunking,
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::{Fr, FromPrimitiveInt, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
-use jolt_openings::PrefixPacking;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
@@ -85,24 +82,26 @@ fn packed_witness_slots_reproduce_every_logical_column() {
         log_k_chunk,
         untrusted_advice_word_vars: Some(word_vars),
     };
-    let columns = proof_packed_columns(&shape).unwrap();
-    let packing = PrefixPacking::new(columns.clone()).unwrap();
+    let packing = proof_packing(&shape).unwrap();
 
     // Size accounting: 3 Ra columns + 16 chunk columns at 2^7 cells, the msb
     // at 2^3, the advice bytes at 2^13; 2432 + 8 + 8192 = 10632 cells round
     // up to a 2^14 packed hypercube.
     let chunk_count = UnsignedIncChunking::new(log_k_chunk).unwrap().chunk_count();
     assert_eq!(chunk_count, 16);
-    let total_cells: usize = columns.iter().map(|(_, vars)| 1usize << vars).sum();
+    let total_cells: usize = packing
+        .iter()
+        .map(|(_, slot)| 1usize << slot.num_vars)
+        .sum();
     assert_eq!(total_cells, 19 * (1 << 7) + (1 << 3) + (1 << 13));
     assert_eq!(packing.packed_num_vars, 14);
-    for (column, vars) in &columns {
-        assert_eq!(packing[column].prefix.len(), 14 - vars);
+    for (_, slot) in &packing {
+        assert_eq!(slot.prefix.len(), 14 - slot.num_vars);
     }
 
     // Concrete witness data per column.
     let mut column_data: Vec<(LatticeColumn, Vec<Fr>)> = Vec::new();
-    for (index, (column, vars)) in columns.iter().enumerate() {
+    for (index, (column, slot)) in packing.iter().enumerate() {
         let data = match column {
             LatticeColumn::Committed(JoltCommittedPolynomial::UnsignedIncMsb) => {
                 (0..1 << log_t).map(|t| fr((t % 2) as u64)).collect()
@@ -117,20 +116,19 @@ fn packed_witness_slots_reproduce_every_logical_column() {
                 one_hot_column(log_k_chunk, log_t, &hot)
             }
         };
-        assert_eq!(data.len(), 1 << vars, "declared arity must match the data");
+        assert_eq!(
+            data.len(),
+            1 << slot.num_vars,
+            "declared arity must match the data"
+        );
         column_data.push((*column, data));
     }
 
-    // Assemble the packed witness exactly as PrefixPacking's slot layout
-    // dictates: cell `local` of a slot lands at `(prefix_value << vars) | local`.
+    // Assemble the packed witness through the slot API: cell `local` of a
+    // slot lands at `slot.packed_index(local)`.
     let mut packed = vec![fr(0); 1 << packing.packed_num_vars];
     for (column, data) in &column_data {
-        let slot = &packing[column];
-        let prefix_value = slot
-            .prefix
-            .iter()
-            .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit));
-        let base = prefix_value << slot.num_vars;
+        let base = packing[column].packed_index(0);
         packed[base..base + data.len()].copy_from_slice(data);
     }
 

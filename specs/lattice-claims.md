@@ -98,11 +98,15 @@ encoding is not re-proven in-protocol.
 | `jolt-witness`/prover (future) | packed witness materialization | — |
 | `jolt-akita` | PCS transport | — |
 
-`jolt-claims` gains **no dependency** on `jolt-openings`. The packing
-description is emitted as `Vec<(Id, usize)>` pairs;
-`jolt-openings::PackedPolynomial<Id>` already implements `From<(Id, usize)>`,
-so `PrefixPacking::new(lattice::proof_packed_columns(&shape))` works directly.
-(A dev-dependency on `jolt-openings` is used for round-trip tests only.)
+`jolt-claims` depends on `jolt-openings` directly and uses its API as the
+**single source of truth** for the packing:
+`lattice::proof_packing`/`precommitted_packing` register the canonical column
+orderings with `PrefixPacking::new` and return the `PrefixPacking` object
+itself — there is no parallel jolt-claims vocabulary for slots, offsets, or
+placement (`PrefixSlot::packed_index` is where witness assembly gets cell
+positions). The boundary is unchanged in substance: jolt-claims names ids and
+arities; jolt-openings owns slot assignment and the eq-prefix reduction;
+jolt-claims' API surface remains transcript-free.
 
 ## Module Layout
 
@@ -113,14 +117,13 @@ crates/jolt-claims/src/protocols/jolt/lattice/
 │                   the jolt/ids.rs enums as appended variants)
 ├── geometry.rs     inc chunking (width, count, place values), byte-limb
 │                   counts, packed-column arity derivation; pure functions
-├── packing.rs      proof_packed_columns(..) / precommitted_packed_columns(..)
-│                   -> Vec<(LatticeColumn, usize)>
-├── views.rs        decode-weight term lists: bytecode-chunk lane decode,
-│                   little-endian byte decode — pure functions
-│                   -> Vec<DecodeTerm<F>> (the inc lower-value decode lives in
-│                   the reconstruction relation, not a view)
-├── discharge.rs    LatticeFinalOpening map:
-│                   leaf opening -> packed claim | decoded view | virtualized
+├── packing.rs      ALL packed-witness semantics in one file: LatticeColumn,
+│                   proof_packing(..)/precommitted_packing(..) ->
+│                   PrefixPacking<LatticeColumn> (the canonical registration),
+│                   the decode-view term builders (-> Vec<DecodeTerm<F>>; the
+│                   inc lower-value decode lives in the reconstruction
+│                   relation, not a view), and the LatticeFinalOpening
+│                   discharge map (packed claim | decode view | virtualized)
 └── relations/
     ├── inc_virtualization.rs
     ├── chunk_reconstruction.rs
@@ -424,15 +427,19 @@ advice size (and, by the offline checks, to padded bytecode/program-image
 rows). All-zero padding would falsify the claimed input sums (`1` per chunk
 row, `γ` for the advice column).
 
-`lattice/discharge.rs` is the single source of truth for the endgame:
+`lattice/packing.rs` is the single source of truth for the endgame:
 
 ```rust
 pub enum LatticeFinalOpening {
     /// Becomes one PrefixPackedClaim on the per-proof / precommitted W.
-    Packed { column: LatticeColumn, leaf: JoltOpeningId },
-    /// A decode view: the logical claim equals a weighted sum of packed
-    /// cells; discharged via the view's terms (see Decode Views).
-    Decoded { view: LatticeView },
+    /// `leaf` names the producing relation output; `None` means the claim is
+    /// produced by the view-discharge reduction (trusted-advice bytes).
+    Packed { column: LatticeColumn, leaf: Option<JoltOpeningId> },
+    /// Decode views: the logical claim equals a weighted sum of packed
+    /// cells, discharged via the named term builder (see Decode Views).
+    AdviceWordView { kind: JoltAdviceKind },
+    BytecodeChunkLanesView { chunk: usize },
+    ProgramImageWordView,
     /// Never PCS-opened: consumed entirely by lattice relations.
     Virtualized,
 }
@@ -442,10 +449,14 @@ pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening
 // InstructionRa/BytecodeRa/RamRa -> Packed, leaf = HammingWeightClaimReduction output
 // UnsignedIncChunk(j)            -> Packed, leaf = UnsignedIncChunkReconstruction output
 // UnsignedIncMsb                 -> Packed, leaf = Booleanity output
-// TrustedAdvice/UntrustedAdvice  -> Decoded (advice byte view)
-// BytecodeChunk(i)               -> Decoded (lane decode view over sub-columns)
-// ProgramImageInit               -> Decoded (program image byte view)
+// TrustedAdvice/UntrustedAdvice  -> AdviceWordView
+// BytecodeChunk(i)               -> BytecodeChunkLanesView (over sub-columns)
+// ProgramImageInit               -> ProgramImageWordView
 ```
+
+The base-mode map (`committed_openings::final_opening_relation`) gained
+lattice arms when the committed enum grew; a consistency test in `packing.rs`
+pins their agreement with the discharge leaves.
 
 This replaces both the prototype's `final_opening_lattice_requirement` and the
 base stage-8 RLC order for lattice mode.
@@ -472,10 +483,13 @@ contract.
   challenges` sets and opening order.
 - Reconstruction identity test: for random u64 values, `Σ place_j ·
   decode(chunk_j) + 2^64·msb − 2^64` round-trips the signed value.
-- Packing round-trip test (dev-dependency on `jolt-openings`):
-  `PrefixPacking::new(proof_packed_columns(shape))` succeeds, arity classes
-  align, and every `discharge::Packed` column has a slot.
-- Determinism: packed-column lists are a pure function of shape (golden test).
+- Semantic integration tests (`tests/lattice_semantics.rs`) over concrete
+  witness data: every packed column reads back through its slot
+  (`P_i(x) = W(prefix_i ‖ x)`); the chunk decomposition reconstructs signed
+  increments (padding rows included); the lane/advice decode terms reproduce
+  the committed evaluations.
+- Determinism: `proof_packing`/`precommitted_packing` are pure functions of
+  shape (golden test), and every packed proof column has a claim source.
 
 ## Dropped From the Prototype (jolt-claims-ref) and Why
 

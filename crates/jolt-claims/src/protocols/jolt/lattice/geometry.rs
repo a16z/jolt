@@ -23,6 +23,8 @@ pub const WORD_BYTE_LIMB_BITS: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum LatticeGeometryError {
+    #[error(transparent)]
+    PackingRegistration(#[from] jolt_openings::OpeningsError),
     #[error("unsigned inc chunk width must be nonzero")]
     ZeroChunkWidth,
     #[error("unsigned inc chunk width {chunk_width} must divide {UNSIGNED_INC_BITS}")]
