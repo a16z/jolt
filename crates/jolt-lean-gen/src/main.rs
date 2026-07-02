@@ -15,8 +15,8 @@ use jolt_program::expand::{
     expand_instruction, is_source_only, ExpansionAllocator, ExpansionError,
 };
 use jolt_riscv::{
-    JoltInstructionRow, NormalizedOperands, SourceInstruction, SourceInstructionKind,
-    SourceInstructionRow, RV64IMAC_JOLT,
+    CircuitFlags, Flags, JoltInstruction, JoltInstructionRow, NormalizedOperands,
+    SourceInstruction, SourceInstructionKind, SourceInstructionRow, RV64IMAC_JOLT,
 };
 
 // Lean term for a register number. Sentinels 1/2/3 are the source operands
@@ -111,13 +111,22 @@ fn lean_imm(name: &str, imm: i128) -> String {
 // order per opcode mirrors the `Instr` constructors in `Instruction.lean`.
 // `load_class` ("normal"/"amo") is the `LD` Sail fault class; `align_fault` is the
 // `ExceptionType` for alignment asserts. Both are derived from the source kind.
-fn lean_instr(row: &JoltInstructionRow, load_class: &str, align_fault: &str) -> String {
+// `imm_override`, when set, replaces the rendered immediate — used to inject a
+// symbolic advice parameter for `VirtualAdvice`/`VirtualAdviceLoad`, whose value
+// is an oracle input the trace supplies (the concrete number the expander emits
+// there is only a placeholder).
+fn lean_instr(
+    row: &JoltInstructionRow,
+    load_class: &str,
+    align_fault: &str,
+    imm_override: Option<&str>,
+) -> String {
     let name = row.instruction_kind.name();
     let o = &row.operands;
     let rd = operand(o.rd);
     let rs1 = operand(o.rs1);
     let rs2 = operand(o.rs2);
-    let imm = lean_imm(name, o.imm);
+    let imm = imm_override.map_or_else(|| lean_imm(name, o.imm), str::to_string);
 
     let args: String = match name {
         // dst, lhs, rhs
@@ -260,15 +269,28 @@ fn fault_info(n: &str) -> (&'static str, &'static str) {
     (load_class, align_fault)
 }
 
+// Which source operands an expansion arm actually references, so a generated
+// `def` takes exactly those parameters. `advice_count` is how many advice values
+// it consumes (each becomes a symbolic `BitVec 64` parameter).
+struct ArmInfo {
+    uses_rd: bool,
+    uses_rs1: bool,
+    uses_rs2: bool,
+    uses_imm: bool,
+    advice_count: usize,
+}
+
 // Expand `kind` with sentinel operands (rd, rs1=2, rs2=3, imm=SRC_IMM) and render
 // each final row as a Lean `.instr (…) <|` line. `rd` selects the arm: 0 is the
-// rd==x0 branch, non-zero the general branch.
+// rd==x0 branch, non-zero the general branch. Operand usage is read from the row
+// fields (which sentinels appear), and advice rows — identified by the canonical
+// `Advice` circuit flag — get a fresh symbolic `adviceN` immediate.
 fn arm_lines(
     kind: SourceInstructionKind,
     rd: u8,
     load_class: &str,
     align_fault: &str,
-) -> Result<Vec<String>, ExpansionError> {
+) -> Result<(Vec<String>, ArmInfo), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let row = SourceInstructionRow {
         address: 0x8000_0000,
@@ -283,23 +305,47 @@ fn arm_lines(
     };
     let input = SourceInstruction::new(kind, row);
     let mut lines = Vec::new();
+    let mut info = ArmInfo {
+        uses_rd: false,
+        uses_rs1: false,
+        uses_rs2: false,
+        uses_imm: false,
+        advice_count: 0,
+    };
     for instruction in expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)? {
+        let final_row = JoltInstructionRow::from(instruction);
+        let is_advice = JoltInstruction::try_from(final_row)
+            .is_ok_and(|i| i.circuit_flags().get(CircuitFlags::Advice));
+        for reg in [
+            final_row.operands.rd,
+            final_row.operands.rs1,
+            final_row.operands.rs2,
+        ] {
+            match reg {
+                Some(1) => info.uses_rd = true,
+                Some(2) => info.uses_rs1 = true,
+                Some(3) => info.uses_rs2 = true,
+                _ => {}
+            }
+        }
+        let advice_name = if is_advice {
+            let name = format!("advice{}", info.advice_count);
+            info.advice_count += 1;
+            Some(name)
+        } else {
+            if final_row.operands.imm == SRC_IMM {
+                info.uses_imm = true;
+            }
+            None
+        };
         lines.push(lean_instr(
-            &JoltInstructionRow::from(instruction),
+            &final_row,
             load_class,
             align_fault,
+            advice_name.as_deref(),
         ));
     }
-    Ok(lines)
-}
-
-// Whether any rendered line references `ident` as a whole token — used to decide
-// which source operands to take as `def` parameters.
-fn lines_have_ident(lines: &[String], ident: &str) -> bool {
-    lines.iter().any(|line| {
-        line.split(|c: char| !c.is_alphanumeric() && c != '_')
-            .any(|tok| tok == ident)
-    })
+    Ok((lines, info))
 }
 
 // Expand `kind` and print it as a Lean `Program`, both arms of the rd==x0 branch.
@@ -309,7 +355,8 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
     println!("--- {n} ---");
     for (arm, rd) in [("rd == x0", 0u8), ("rd != x0", 1u8)] {
         println!("{arm}:");
-        for line in arm_lines(kind, rd, load_class, align_fault)? {
+        let (lines, _) = arm_lines(kind, rd, load_class, align_fault)?;
+        for line in lines {
             println!("  {line}");
         }
         println!("  .done RETIRE_SUCCESS");
@@ -352,17 +399,16 @@ fn emit_all() -> Result<(), Box<dyn std::error::Error>> {
 fn emit_lean_def(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
     let n = kind.name();
     let (load_class, align_fault) = fault_info(n);
-    let general = arm_lines(kind, 1, load_class, align_fault)?;
-    let writes_rd = lines_have_ident(&general, "rd");
+    let (general, info) = arm_lines(kind, 1, load_class, align_fault)?;
 
     let mut regs: Vec<&str> = Vec::new();
-    if writes_rd {
+    if info.uses_rd {
         regs.push("rd");
     }
-    if lines_have_ident(&general, "rs1") {
+    if info.uses_rs1 {
         regs.push("rs1");
     }
-    if lines_have_ident(&general, "rs2") {
+    if info.uses_rs2 {
         regs.push("rs2");
     }
     let mut params = String::new();
@@ -371,11 +417,22 @@ fn emit_lean_def(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
         params.push_str(&regs.join(" "));
         params.push_str(" : regidx)");
     }
-    if lines_have_ident(&general, "imm") {
+    if info.uses_imm {
         if !params.is_empty() {
             params.push(' ');
         }
         params.push_str("(imm : BitVec 12)");
+    }
+    if info.advice_count > 0 {
+        if !params.is_empty() {
+            params.push(' ');
+        }
+        let names: Vec<String> = (0..info.advice_count)
+            .map(|i| format!("advice{i}"))
+            .collect();
+        params.push('(');
+        params.push_str(&names.join(" "));
+        params.push_str(" : BitVec 64)");
     }
 
     let def_name = format!("{}ProgramAuto", n.to_lowercase());
@@ -386,9 +443,10 @@ fn emit_lean_def(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
         println!("def {def_name} {params} : Program :=");
     }
 
-    if writes_rd {
+    if info.uses_rd {
+        let (x0, _) = arm_lines(kind, 0, load_class, align_fault)?;
         println!("  if isX0 rd then");
-        for line in arm_lines(kind, 0, load_class, align_fault)? {
+        for line in x0 {
             println!("    {line}");
         }
         println!("    .done RETIRE_SUCCESS");
