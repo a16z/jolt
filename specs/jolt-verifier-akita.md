@@ -130,14 +130,20 @@ Two-level gating, mirroring how `zk` works today:
   `commitment: CommitmentConfig { Homomorphic, Packed }`. It is absorbed into
   the Fiat-Shamir preamble and validated fail-closed:
   `Packed` requires the `akita`-instantiated entry point, full program mode,
-  no advice, `zk: Transparent`, and a `Packed` commitment payload —
-  every mismatch is a distinct `VerifierError`, checked before stage 1.
-- **Commitment payload**: `JoltCommitments<C>` becomes
-  `enum JoltCommitmentPayload<C> { Homomorphic(JoltCommitments<C>),
-  Packed { proof_witness: C } }` (`serde(deny_unknown_fields)` everywhere,
-  also kept from the reference). One packed commitment replaces the ~10+
-  per-polynomial commitments; the FS preamble absorbs it exactly where the
-  per-polynomial commitments are absorbed today.
+  no advice, and `zk: Transparent`; the declared `CommitmentConfig` must
+  equal the instantiation's mode (self-description only — the payload shape
+  itself is fixed by the type, see below). Every mismatch is a distinct
+  `VerifierError`, checked before stage 1.
+- **Commitment payload**: no enum. The proof is already generic over `B`
+  (`joint_opening_proof: B::Proof`), so the commitments ride the same axis:
+  the stage-8 seam trait carries `type Commitments: AppendToTranscript` —
+  `JoltCommitments<C>` for the homomorphic impl, bare `C` for the packed one
+  (a single packed commitment is just the degenerate case). A mode/payload
+  mismatch is unrepresentable at the type level, which deletes the runtime
+  payload check the reference needed for its runtime-dispatched enum. The FS
+  preamble absorbs `Commitments` exactly where the per-polynomial
+  commitments are absorbed today; `serde(deny_unknown_fields)` applies to
+  whatever structs remain.
 - **Field coupling**: selecting Akita selects the field — the whole PIOP runs
   over `AkitaField` (fp128). `verify` is already generic over `F`; the
   `akita` module pins `F = AkitaField`. No packing/layout digests travel in
