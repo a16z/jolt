@@ -124,7 +124,7 @@ use num_traits::{One, Zero};
 use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
 use crate::stages::{
     stage2::ram_output_check::ram_output_check_publics,
-    stage6b::{outputs::BytecodeReductionWeights, verify},
+    stage6b::{committed_reduction_cycle_phase, outputs::BytecodeReductionWeights},
 };
 use crate::VerifierError;
 
@@ -903,9 +903,9 @@ where
         .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
             id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
         })?;
-    verify::bytecode_reduction_weights(
+    committed_reduction_cycle_phase::bytecode_reduction_weights(
         layout,
-        verify::BytecodeReductionWeightInputs {
+        bytecode_reduction::BytecodeLaneWeightInputs {
             eta,
             stage1_gammas: &input.stage6a.challenges.stage1_gammas,
             stage2_gammas: &input.stage6a.challenges.stage2_gammas,
@@ -916,8 +916,8 @@ where
                 [..REGISTER_ADDRESS_BITS],
             register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
                 [..REGISTER_ADDRESS_BITS],
-            bytecode_r_address: &input.stage6a.output_points.bytecode_read_raf.intermediate,
         },
+        &input.stage6a.output_points.bytecode_read_raf.intermediate,
     )
 }
 

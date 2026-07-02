@@ -116,6 +116,16 @@ impl<F: Field, C> Stage1Output<F, C> {
         }
     }
 
+    /// The stage-1 Spartan-outer cycle binding: the tail (`[1..]`) of the raw
+    /// (un-reversed) [`remainder_point`](Self::remainder_point), or `None` when
+    /// that point is empty. This matches the ZK/BlindFold path, which slices
+    /// `remainder_consistency.challenges()[1..]` off the same raw point.
+    pub fn cycle_binding(&self) -> Option<Vec<F>> {
+        let raw_point = self.remainder_point();
+        let (_, cycle) = raw_point.split_first()?;
+        Some(cycle.to_vec())
+    }
+
     pub fn clear(&self) -> Result<&Stage1ClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),

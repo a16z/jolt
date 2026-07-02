@@ -16,6 +16,9 @@
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
+    lane_weights, BytecodeLaneWeightInputs,
+};
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
     AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
@@ -286,6 +289,33 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
             chunk_count: layout.chunk_count(),
         }
     }
+
+    /// The public bytecode claim-reduction weights this member was built with.
+    /// Stage 7's bytecode address phase reads them off the stage-6b clear output
+    /// rather than recomputing them.
+    pub(super) fn weights(&self) -> &BytecodeReductionWeights<F> {
+        &self.weights
+    }
+}
+
+/// Fold the stage-6a bytecode read-RAF address opening and the per-stage gamma
+/// vectors into the public [`BytecodeReductionWeights`] (the per-chunk `r_bc`
+/// weights and the gamma-folded lane weights) consumed by the bytecode
+/// claim-reduction cycle and address phases.
+pub(crate) fn bytecode_reduction_weights<F: Field>(
+    layout: &BytecodeClaimReductionLayout,
+    lane_inputs: BytecodeLaneWeightInputs<'_, F>,
+    bytecode_r_address: &[F],
+) -> Result<BytecodeReductionWeights<F>, VerifierError> {
+    let address_point = layout
+        .split_address_point(bytecode_r_address)
+        .map_err(bytecode_public_failed)?;
+    let lane_weights = lane_weights(lane_inputs).map_err(bytecode_public_failed)?;
+    Ok(BytecodeReductionWeights {
+        r_bc: address_point.r_bc,
+        chunk_rbc_weights: address_point.chunk_rbc_weights,
+        lane_weights,
+    })
 }
 
 fn bytecode_public_failed(reason: impl ToString) -> VerifierError {

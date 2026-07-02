@@ -1,24 +1,27 @@
 //! Construction of the stage-6b cycle-phase sumcheck batch.
 //!
 //! [`Stage6bSumchecks::build`] assembles the batch members ONCE, after
-//! stage 6a and the post-6a draws, from mode-agnostic constructor legs (per-stage
-//! cycle bindings, reduced points, the stage-6a address openings) plus the
-//! clear-only value aux (`table_fold`, `address_val_stages`, advice reference
-//! points — each empty/`None` in ZK, where `expected_output` never runs). The
-//! four `Option` members are present exactly when their precommitted layout is
-//! committed, in both proving modes, so the batch's instance count matches the
-//! prover's.
+//! stage 6a and the post-6a draws, directly from the upstream stage outputs. It
+//! derives the mode-agnostic constructor legs (per-stage cycle bindings, reduced
+//! points, the stage-6a address openings) plus the clear-only value aux
+//! (`table_fold`, `address_val_stages`, advice reference points — each
+//! empty/`None` in ZK, where `expected_output` never runs) as a single contiguous
+//! block, preserving the fallible-check precedence, before constructing the
+//! members. The four `Option` members are present exactly when their precommitted
+//! layout is committed, in both proving modes, so the batch's instance count
+//! matches the prover's.
 
 use jolt_claims::protocols::jolt::{
     geometry::{
-        booleanity::BooleanityDimensions, bytecode::BytecodeReadRafDimensions,
-        dimensions::TraceDimensions, instruction::InstructionRaVirtualizationDimensions,
-        ram::RamRaVirtualizationDimensions,
+        booleanity::BooleanityDimensions,
+        claim_reductions::bytecode::BytecodeLaneWeightInputs,
+        dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
     },
-    AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
-    JoltAdviceKind, JoltChallengeId, ProgramImageClaimReductionLayout,
+    JoltAdviceKind, JoltRelationId,
 };
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_openings::CommitmentScheme;
 
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::{
@@ -26,152 +29,292 @@ use super::bytecode_read_raf::{
     BytecodeReadRafTableFoldInputs,
 };
 use super::committed_reduction_cycle_phase::{
-    AdviceCyclePhase, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
+    bytecode_reduction_weights, AdviceCyclePhase, BytecodeReductionCyclePhase,
+    ProgramImageReductionCyclePhase,
 };
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
-use super::outputs::{BytecodeReductionWeights, Stage6bSumchecks};
+use super::outputs::Stage6bSumchecks;
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
+use crate::preprocessing::JoltVerifierPreprocessing;
+use crate::proof::JoltProof;
+use crate::stages::stage1::Stage1Output;
+use crate::stages::stage2::Stage2Output;
+use crate::stages::stage3::Stage3Output;
+use crate::stages::stage4::Stage4Output;
+use crate::stages::stage5::Stage5Output;
+use crate::stages::stage6a::Stage6aOutput;
+use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
-/// Construction inputs for [`Stage6bSumchecks::build`]: the formula
-/// dimensions, the stage-6a address openings, the upstream cycle/reduced points,
-/// and the committed-program reduction layouts. Clear-only fields are documented
-/// as such; everything else is available in both proving modes.
-pub(super) struct Stage6bParams<'a, F: Field> {
-    pub bytecode_dimensions: BytecodeReadRafDimensions,
-    pub booleanity_dimensions: BooleanityDimensions,
-    pub trace_dimensions: TraceDimensions,
-    pub ram_ra_dimensions: RamRaVirtualizationDimensions,
-    pub instruction_ra_dimensions: InstructionRaVirtualizationDimensions,
-    pub committed_chunk_bits: usize,
-    pub entry_bytecode_index: usize,
-    /// Clear-only, full-program mode: the bytecode-table fold aux (folded at
-    /// construction; `None` in ZK and in committed mode).
-    pub bytecode_table_fold: Option<BytecodeReadRafTableFoldInputs<'a, F>>,
-    /// The stage-6a bytecode read-RAF address opening (`bytecode_r_address`).
-    pub bytecode_r_address: Vec<F>,
-    /// The stage-6a booleanity address opening (`booleanity_r_address`).
-    pub booleanity_r_address: Vec<F>,
-    /// Clear-only, committed mode: the staged `BytecodeValStage` opening values
-    /// from the address phase (empty in ZK).
-    pub address_val_stages: Vec<F>,
-    /// Per-stage (1..=5) cycle bindings used by the bytecode read-RAF publics.
-    pub stage_cycle_points: [Vec<F>; 5],
-    pub booleanity_reference_address: Vec<F>,
-    pub booleanity_reference_cycle: Vec<F>,
-    /// The stage-1 Spartan-outer cycle binding (RAM hamming booleanity reference).
-    pub stage1_cycle_binding: Vec<F>,
-    /// The stage-5 reduced RAM address prefix / cycle suffix.
-    pub ram_reduced_address: Vec<F>,
-    pub ram_reduced_cycle: Vec<F>,
-    /// The stage-5 instruction RA reduced address prefix / cycle suffix.
-    pub instruction_r_address: Vec<F>,
-    pub instruction_r_cycle: Vec<F>,
-    /// Increment claim-reduction per-source cycle bindings, in source order:
-    /// RAM read-write, RAM value-check, register read-write, register value-eval.
-    pub inc_cycle_points: [Vec<F>; 4],
-    pub trusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
-    pub untrusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
-    pub bytecode_reduction_layout: Option<&'a BytecodeClaimReductionLayout>,
-    pub program_image_reduction_layout: Option<&'a ProgramImageClaimReductionLayout>,
-    /// The bytecode claim-reduction weights, computed by the caller from the
-    /// post-6a `eta` (present iff the bytecode layout is committed).
-    pub bytecode_reduction_weights: Option<BytecodeReductionWeights<F>>,
-    /// The RAM read-write `RamVal` address prefix (program-image `FinalScale`).
-    pub program_image_r_addr_rw: Vec<F>,
-    /// Clear-only: the stage-4 staged advice opening points (advice `FinalScale`
-    /// references); `None` in ZK.
-    pub trusted_advice_reference_point: Option<Vec<F>>,
-    pub untrusted_advice_reference_point: Option<Vec<F>>,
-}
-
 impl<F: Field> Stage6bSumchecks<F> {
-    pub(super) fn build(params: Stage6bParams<'_, F>) -> Result<Self, VerifierError> {
-        let committed_program = params.bytecode_reduction_layout.is_some();
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Stage 6b's batch is built from the stage-6a output plus all five prior stage outputs directly; bundling them would reintroduce the removed `Stage6bParams` pack/unpack indirection."
+    )]
+    pub(super) fn build<PCS, VC, ZkProof>(
+        checked: &CheckedInputs,
+        preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+        proof: &JoltProof<PCS, VC, ZkProof>,
+        formula_dimensions: &JoltFormulaDimensions,
+        stage1: &Stage1Output<F, VC::Output>,
+        stage2: &Stage2Output<F, VC::Output>,
+        stage3: &Stage3Output<F, VC::Output>,
+        stage4: &Stage4Output<F, VC::Output>,
+        stage5: &Stage5Output<F, VC::Output>,
+        stage6a: &Stage6aOutput<F, VC::Output>,
+        eta: Option<F>,
+    ) -> Result<Self, VerifierError>
+    where
+        PCS: CommitmentScheme<Field = F>,
+        VC: VectorCommitment<Field = F>,
+    {
+        let log_t = formula_dimensions.trace.log_t();
+        let log_k = checked.ram_K.ilog2() as usize;
+        let trace_dimensions = formula_dimensions.trace;
+
+        let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
+        let untrusted_advice_layout = checked.precommitted.untrusted_advice.as_ref();
+        let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
+        let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
+        let committed_program = bytecode_reduction_layout.is_some();
+
+        let booleanity_dimensions = BooleanityDimensions::new(
+            formula_dimensions.ra_layout,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+        );
+
+        // The pre-/around-6a draws consumed here ride on the stage-6a output as
+        // typed upstream values: the bytecode fold gamma (shared with stage 6a's
+        // squeeze), the per-stage folding gammas, and the booleanity address / cycle
+        // reference points.
+        let carried = stage6a.challenges();
+        let bytecode_r_address = stage6a
+            .output_points()
+            .bytecode_read_raf
+            .intermediate
+            .clone();
+        let booleanity_r_address = stage6a.output_points().booleanity.intermediate.clone();
+
+        // Cycle-phase constructor legs, wired mode-agnostically off the upstream
+        // outputs; the post-batch opening points are derived against these same
+        // values through the relation objects.
+        let stage4_points = stage4.output_points();
+        let stage5_points = stage5.output_points();
+        let stage5_instruction_address = stage5.instruction_r_address();
+        let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
+        let stage1_cycle_binding =
+            stage1
+                .cycle_binding()
+                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: "Stage 1 remainder point is empty".to_string(),
+                })?;
+        let stage2_points = stage2.batch_output_points();
+        let stage3_points = stage3.output_points();
+        let (register_read_write_address, register_read_write_cycle) = stage6_checked_split(
+            "Stage 6 stage4 register read-write opening",
+            stage4_points.registers_read_write_point(),
+            REGISTER_ADDRESS_BITS,
+            JoltRelationId::BytecodeReadRaf,
+        )?;
+        let (register_val_evaluation_address, register_val_evaluation_cycle) =
+            stage6_checked_split(
+                "Stage 6 stage5 register value-evaluation opening",
+                stage5_points.registers_opening_point(),
+                REGISTER_ADDRESS_BITS,
+                JoltRelationId::BytecodeReadRaf,
+            )?;
+        let stage_cycle_points = [
+            stage1_cycle_binding.iter().rev().copied().collect(),
+            stage2_points.product_remainder_point().to_vec(),
+            stage3_points.shift_opening_point().to_vec(),
+            register_read_write_cycle.to_vec(),
+            register_val_evaluation_cycle.to_vec(),
+        ];
+        let ram_reduced = stage5_points.ram_reduced_opening_point();
+        if ram_reduced.len() != log_k + log_t {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::RamRaVirtualization,
+                reason: format!(
+                    "Stage 6 RAM RA reduction opening point length mismatch: expected {}, got {}",
+                    log_k + log_t,
+                    ram_reduced.len()
+                ),
+            });
+        }
+        let (ram_reduced_address, ram_reduced_cycle) = ram_reduced.split_at(log_k);
+        let (_, ram_read_write_cycle) = stage6_checked_split(
+            "Stage 6 RAM read-write opening",
+            stage2_points.ram_read_write_point(),
+            log_k,
+            JoltRelationId::IncClaimReduction,
+        )?;
+        let (ram_val_check_address, ram_val_check_cycle) = stage6_checked_split(
+            "Stage 6 RAM value-check opening",
+            stage4_points.ram_val_check_point(),
+            log_k,
+            JoltRelationId::IncClaimReduction,
+        )?;
+        let inc_cycle_points = [
+            ram_read_write_cycle.to_vec(),
+            ram_val_check_cycle.to_vec(),
+            register_read_write_cycle.to_vec(),
+            register_val_evaluation_cycle.to_vec(),
+        ];
+        let entry_bytecode_index =
+            preprocessing
+                .program
+                .entry_bytecode_index()
+                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: "entry address was not found in bytecode preprocessing".to_string(),
+                })?;
+        // The full-program table fold is expected_output-only, so ZK (which never
+        // runs it) skips the aux entirely.
+        let bytecode_table_fold = if checked.zk || committed_program {
+            None
+        } else {
+            Some(BytecodeReadRafTableFoldInputs {
+                bytecode: preprocessing
+                    .program
+                    .as_full()
+                    .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::BytecodeReadRaf,
+                        reason: "full bytecode table is unavailable".to_string(),
+                    })?
+                    .bytecode
+                    .bytecode
+                    .as_slice(),
+                register_read_write_point: register_read_write_address,
+                register_val_evaluation_point: register_val_evaluation_address,
+                stage_gammas: [
+                    &carried.stage1_gammas,
+                    &carried.stage2_gammas,
+                    &carried.stage3_gammas,
+                    &carried.stage4_gammas,
+                    &carried.stage5_gammas,
+                ],
+            })
+        };
+        // `eta` is drawn exactly when the bytecode layout is committed, so a
+        // committed layout always carries weights and the member's `(Some, None)`
+        // case is unreachable.
+        let cycle_bytecode_reduction_weights = bytecode_reduction_layout
+            .zip(eta)
+            .map(|(layout, eta)| {
+                bytecode_reduction_weights(
+                    layout,
+                    BytecodeLaneWeightInputs {
+                        eta,
+                        stage1_gammas: &carried.stage1_gammas,
+                        stage2_gammas: &carried.stage2_gammas,
+                        stage3_gammas: &carried.stage3_gammas,
+                        stage4_gammas: &carried.stage4_gammas,
+                        stage5_gammas: &carried.stage5_gammas,
+                        register_read_write_point: register_read_write_address,
+                        register_val_evaluation_point: register_val_evaluation_address,
+                    },
+                    &bytecode_r_address,
+                )
+            })
+            .transpose()?;
+        // Clear-only value legs: the staged Val openings and the advice reference
+        // points feed only `input_claim` / `expected_output`, which never run in ZK.
+        let (address_val_stages, trusted_advice_reference_point, untrusted_advice_reference_point) =
+            if checked.zk {
+                (Vec::new(), None, None)
+            } else {
+                let stage4 = stage4.clear()?;
+                let claims_6a = &proof.clear_claims()?.stage6a;
+                let reference = |kind| {
+                    stage4
+                        .ram_val_check_init
+                        .advice_contribution(kind)
+                        .map(|contribution| contribution.opening_point.clone())
+                };
+                (
+                    claims_6a.bytecode_read_raf.val_stages.clone(),
+                    reference(JoltAdviceKind::Trusted),
+                    reference(JoltAdviceKind::Untrusted),
+                )
+            };
+
         let bytecode_read_raf = if committed_program {
             BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
-                dimensions: params.bytecode_dimensions,
-                r_address: params.bytecode_r_address,
-                stage_cycle_points: params.stage_cycle_points,
-                entry_bytecode_index: params.entry_bytecode_index,
-                committed_chunk_bits: params.committed_chunk_bits,
-                val_stages: params.address_val_stages,
+                dimensions: formula_dimensions.bytecode_read_raf,
+                r_address: bytecode_r_address,
+                stage_cycle_points,
+                entry_bytecode_index,
+                committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+                val_stages: address_val_stages,
             })
         } else {
             BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
-                dimensions: params.bytecode_dimensions,
-                r_address: params.bytecode_r_address,
-                stage_cycle_points: params.stage_cycle_points,
-                entry_bytecode_index: params.entry_bytecode_index,
-                committed_chunk_bits: params.committed_chunk_bits,
-                table_fold: params.bytecode_table_fold,
+                dimensions: formula_dimensions.bytecode_read_raf,
+                r_address: bytecode_r_address,
+                stage_cycle_points,
+                entry_bytecode_index,
+                committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+                table_fold: bytecode_table_fold,
             })?
         };
 
         let booleanity = Booleanity::new(
-            params.booleanity_dimensions,
-            params.booleanity_r_address,
-            params.booleanity_reference_address,
-            params.booleanity_reference_cycle,
+            booleanity_dimensions,
+            booleanity_r_address,
+            carried.booleanity_reference_address.clone(),
+            carried.booleanity_reference_cycle.clone(),
         );
         let ram_hamming_booleanity =
-            RamHammingBooleanity::new(params.trace_dimensions, params.stage1_cycle_binding);
+            RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding);
         let ram_ra_virtualization = RamRaVirtualization::new(
-            params.ram_ra_dimensions,
-            params.ram_reduced_address,
-            params.ram_reduced_cycle,
-            params.committed_chunk_bits,
+            formula_dimensions.ram_ra_virtualization,
+            ram_reduced_address.to_vec(),
+            ram_reduced_cycle.to_vec(),
+            proof.one_hot_config.committed_chunk_bits(),
         );
         let instruction_ra_virtualization = InstructionRaVirtualization::new(
-            params.instruction_ra_dimensions,
-            params.instruction_r_address,
-            params.instruction_r_cycle,
-            params.committed_chunk_bits,
+            formula_dimensions.instruction_ra_virtualization,
+            stage5_instruction_address.to_vec(),
+            stage5_instruction_cycle.to_vec(),
+            proof.one_hot_config.committed_chunk_bits(),
         );
         let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
-            params.inc_cycle_points;
+            inc_cycle_points;
         let inc_claim_reduction = IncClaimReduction::new(
-            params.trace_dimensions,
+            trace_dimensions,
             ram_read_write_cycle,
             ram_val_check_cycle,
             registers_read_write_cycle,
             registers_val_evaluation_cycle,
         );
 
-        let trusted_advice = params.trusted_advice_layout.map(|layout| {
+        let trusted_advice = trusted_advice_layout.map(|layout| {
             AdviceCyclePhase::new(
                 JoltAdviceKind::Trusted,
                 layout,
-                params.trusted_advice_reference_point,
+                trusted_advice_reference_point,
             )
         });
-        let untrusted_advice = params.untrusted_advice_layout.map(|layout| {
+        let untrusted_advice = untrusted_advice_layout.map(|layout| {
             AdviceCyclePhase::new(
                 JoltAdviceKind::Untrusted,
                 layout,
-                params.untrusted_advice_reference_point,
+                untrusted_advice_reference_point,
             )
         });
-        // `eta` is drawn exactly when the bytecode layout is committed, so a
-        // committed layout without weights is unreachable from `verify`.
-        let bytecode_reduction = match (
-            params.bytecode_reduction_layout,
-            params.bytecode_reduction_weights,
-        ) {
+        let bytecode_reduction = match (bytecode_reduction_layout, cycle_bytecode_reduction_weights)
+        {
             (Some(layout), Some(weights)) => {
                 Some(BytecodeReductionCyclePhase::new(layout, weights))
             }
-            (Some(_), None) => {
-                return Err(VerifierError::MissingStageClaimChallenge {
-                    id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-                })
-            }
-            (None, _) => None,
+            _ => None,
         };
-        let program_image_reduction = params.program_image_reduction_layout.map(|layout| {
-            ProgramImageReductionCyclePhase::new(layout, params.program_image_r_addr_rw)
+        let program_image_reduction = program_image_reduction_layout.map(|layout| {
+            ProgramImageReductionCyclePhase::new(layout, ram_val_check_address.to_vec())
         });
 
         Ok(Self {
@@ -187,4 +330,22 @@ impl<F: Field> Stage6bSumchecks<F> {
             program_image_reduction,
         })
     }
+}
+
+fn stage6_checked_split<'a, F: Field>(
+    label: &'static str,
+    point: &'a [F],
+    split_at: usize,
+    stage: JoltRelationId,
+) -> Result<(&'a [F], &'a [F]), VerifierError> {
+    if point.len() < split_at {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: format!(
+                "{label} has {} variables, expected at least {split_at}",
+                point.len()
+            ),
+        });
+    }
+    Ok(point.split_at(split_at))
 }

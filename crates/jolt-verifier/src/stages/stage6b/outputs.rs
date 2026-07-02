@@ -165,6 +165,35 @@ impl<F: Field> Stage6bOutputPoints<F> {
     pub fn bytecode_cycle_phase_variables(&self) -> Option<Vec<F>> {
         Some(reversed(self.bytecode_reduction_opening_point()?))
     }
+
+    /// The total number of produced opening-point cells across every member. This
+    /// is the derived, layout-independent claim count; the ZK path subtracts its
+    /// runtime bytecode/booleanity point-alias dedup from it to size the committed
+    /// output claims.
+    pub fn point_count(&self) -> usize {
+        let advice_count = |member: &Option<AdviceCyclePhaseOutputClaims<Vec<F>>>| {
+            member.as_ref().map_or(0, |claims| {
+                usize::from(claims.trusted.is_some()) + usize::from(claims.untrusted.is_some())
+            })
+        };
+        self.bytecode_read_raf.bytecode_ra.len()
+            + self.booleanity.instruction_ra.len()
+            + self.booleanity.bytecode_ra.len()
+            + self.booleanity.ram_ra.len()
+            + 1
+            + self.ram_ra_virtualization.ram_ra.len()
+            + self
+                .instruction_ra_virtualization
+                .committed_instruction_ra
+                .len()
+            + 2
+            + advice_count(&self.trusted_advice)
+            + advice_count(&self.untrusted_advice)
+            + self.bytecode_reduction.as_ref().map_or(0, |reduction| {
+                usize::from(reduction.intermediate.is_some()) + reduction.chunks.len()
+            })
+            + usize::from(self.program_image_reduction.is_some())
+    }
 }
 
 fn reversed<F: Field>(point: &[F]) -> Vec<F> {
