@@ -25,6 +25,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
   "crates/jolt-claims",
+  "crates/jolt-claims-ref",
   "crates/jolt-akita",
   "crates/jolt-blindfold",
   "crates/jolt-crypto",

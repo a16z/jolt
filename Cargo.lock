@@ -3168,6 +3168,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-claims-ref"
+version = "0.1.0"
+dependencies = [
+ "blake2 0.11.0-rc.6",
+ "derive_more",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-poly",
+ "jolt-riscv",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-crypto"
 version = "0.1.0"
 dependencies = [
