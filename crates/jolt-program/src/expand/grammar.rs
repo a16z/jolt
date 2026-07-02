@@ -3,8 +3,6 @@ use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceInstructionRo
 use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
 /// Symbolic register placeholder, resolved to a physical virtual register during materialization.
-/// The number counts temps in the order they were requested: first `allocate()` gives `TempId(0)`,
-/// second gives `TempId(1)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TempId(pub(super) u8);
 
@@ -166,8 +164,7 @@ impl<K> InstructionTemplate<K> {
 }
 
 /// A single step in a symbolic expansion recipe.
-// Debug added so the transpiler extractor can print a recipe's ops for inspection.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub(super) enum ExpansionOp {
     /// Append this row directly to the output.
     Emit(RowTemplate),
@@ -413,7 +410,9 @@ impl ExpansionBuilder {
 }
 
 /// Instructions that exist only in decoded source and must be expanded into target-legal sequences.
-pub(super) fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
+// Exposed (pub) so the Lean generator can gate on the same expand-vs-native
+// decision the expander itself uses in `dispatch_source`.
+pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
         SourceInstructionKind::Inline

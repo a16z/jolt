@@ -3103,6 +3103,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-lean-gen"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-program",
+ "jolt-riscv",
+]
+
+[[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
