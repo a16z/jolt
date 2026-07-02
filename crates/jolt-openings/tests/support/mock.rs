@@ -54,7 +54,6 @@ where
     type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
-    type Polynomial = Polynomial<F>;
     type OpeningHint = ();
     type SetupParams = ();
 

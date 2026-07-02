@@ -727,7 +727,7 @@ mod tests {
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
-    use jolt_poly::{MultilinearPoly, Polynomial};
+    use jolt_poly::MultilinearPoly;
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
@@ -752,7 +752,6 @@ mod tests {
         type Proof = ();
         type ProverSetup = ();
         type VerifierSetup = ();
-        type Polynomial = Polynomial<Fr>;
         type OpeningHint = ();
         type SetupParams = ();
 

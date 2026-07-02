@@ -141,6 +141,16 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
         None
     }
 
+    /// Borrows the full evaluation table when this polynomial is backed by
+    /// dense storage.
+    ///
+    /// PCS backends that need the dense table (e.g. HyperKZG) use this to
+    /// skip materializing a copy via [`for_each_row`](Self::for_each_row).
+    /// Lazy or sparse sources return `None` and take the materializing path.
+    fn dense_evaluations(&self) -> Option<&[F]> {
+        None
+    }
+
     /// Iterates over positions whose value is exactly `F::one()`.
     ///
     /// Only implementations that return true from [`is_one_hot`](Self::is_one_hot)
@@ -188,6 +198,10 @@ impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
         }
         result
     }
+
+    fn dense_evaluations(&self) -> Option<&[F]> {
+        Some(self.evaluations())
+    }
 }
 
 impl<F: Field> MultilinearPoly<F> for [F] {
@@ -227,6 +241,10 @@ impl<F: Field> MultilinearPoly<F> for [F] {
         }
         result
     }
+
+    fn dense_evaluations(&self) -> Option<&[F]> {
+        Some(self)
+    }
 }
 
 impl<F: Field> MultilinearPoly<F> for Vec<F> {
@@ -245,6 +263,10 @@ impl<F: Field> MultilinearPoly<F> for Vec<F> {
 
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         self.as_slice().fold_rows(left, sigma)
+    }
+
+    fn dense_evaluations(&self) -> Option<&[F]> {
+        Some(self.as_slice())
     }
 }
 
@@ -289,6 +311,10 @@ where
     fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
         (**self).for_each_one(f);
     }
+
+    fn dense_evaluations(&self) -> Option<&[F]> {
+        (**self).dense_evaluations()
+    }
 }
 
 impl<F, P> MultilinearPoly<F> for Box<P>
@@ -332,6 +358,10 @@ where
     fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
         (**self).for_each_one(f);
     }
+
+    fn dense_evaluations(&self) -> Option<&[F]> {
+        (**self).dense_evaluations()
+    }
 }
 
 impl<F, P> MultilinearPoly<F> for std::sync::Arc<P>
@@ -374,6 +404,10 @@ where
 
     fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
         (**self).for_each_one(f);
+    }
+
+    fn dense_evaluations(&self) -> Option<&[F]> {
+        (**self).dense_evaluations()
     }
 }
 

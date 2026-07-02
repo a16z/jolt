@@ -2,11 +2,10 @@
 
 use jolt_crypto::Commitment;
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, PackedBatch,
-    PackedWitness, PrefixPackedClaim, PrefixPackedProverSetup, PrefixPackedStatement,
-    PrefixPackedVerifierSetup, PrefixPacking,
+    PrefixPackedProverSetup, PrefixPackedStatement, PrefixPackedVerifierSetup, PrefixPacking,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -58,14 +57,32 @@ fn packed_claims(
     polynomials: &[(PackedId, Polynomial<Fr>)],
     packing: &PrefixPacking<PackedId>,
     packed_point: &[Fr],
-) -> Vec<PrefixPackedClaim<Fr, PackedId>> {
+) -> Vec<(PackedId, EvaluationClaim<Fr>)> {
     polynomials
         .iter()
         .map(|(id, polynomial)| {
             let logical_point = packing
                 .logical_point(id, packed_point)
                 .expect("packed point should produce logical suffix");
-            PrefixPackedClaim::new(
+            (
+                *id,
+                EvaluationClaim::new(logical_point.clone(), polynomial.evaluate(&logical_point)),
+            )
+        })
+        .collect()
+}
+
+fn independent_claims(
+    polynomials: &[(PackedId, Polynomial<Fr>)],
+    rng: &mut ChaCha20Rng,
+) -> Vec<(PackedId, EvaluationClaim<Fr>)> {
+    polynomials
+        .iter()
+        .map(|(id, polynomial)| {
+            let logical_point = (0..polynomial.num_vars())
+                .map(|_| Fr::random(rng))
+                .collect::<Vec<_>>();
+            (
                 *id,
                 EvaluationClaim::new(logical_point.clone(), polynomial.evaluate(&logical_point)),
             )
@@ -104,7 +121,8 @@ fn prove_packed(
     <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         setup,
         statement,
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     )
     .expect("Dory prefix-packed batch proof should be produced")
@@ -129,7 +147,8 @@ fn dory_prefix_packed_batch_roundtrip_complex_mixed_arities() {
     let proof = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut prover_transcript,
     )
     .expect("Dory prefix-packed batch proof should be produced");
@@ -147,7 +166,7 @@ fn dory_prefix_packed_batch_roundtrip_complex_mixed_arities() {
 }
 
 #[test]
-fn dory_prefix_packed_batch_rejects_right_values_at_wrong_suffix_point() {
+fn dory_prefix_packed_batch_rejects_proof_for_different_claim_points() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
@@ -173,7 +192,7 @@ fn dory_prefix_packed_batch_rejects_right_values_at_wrong_suffix_point() {
     );
     assert!(
         result.is_err(),
-        "right values at a different suffix-compatible point should fail"
+        "a proof for one claim set should not verify a statement with different points"
     );
 }
 
@@ -195,7 +214,7 @@ fn dory_prefix_packed_batch_rejects_known_id_prefix_tamper() {
 
     let mut tampered = claims;
     for claim in &mut tampered {
-        claim.id = match claim.id {
+        claim.0 = match claim.0 {
             PackedId::NarrowA => PackedId::NarrowB,
             PackedId::NarrowB => PackedId::NarrowA,
             id => id,
@@ -222,13 +241,14 @@ fn dory_prefix_packed_batch_rejects_duplicate_known_id() {
     let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
-    claims[0].id = claims[1].id;
+    claims[0].0 = claims[1].0;
 
     let mut transcript = Blake2bTranscript::new(b"dory-packed-duplicate-id");
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -242,20 +262,195 @@ fn dory_prefix_packed_batch_rejects_unknown_id() {
     let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
-    claims[0].id = PackedId::Unused;
+    claims[0].0 = PackedId::Unused;
 
     let mut transcript = Blake2bTranscript::new(b"dory-packed-unknown-id");
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
 }
 
 #[test]
-fn dory_prefix_packed_batch_rejects_suffix_incompatible_claims() {
+fn dory_prefix_packed_batch_roundtrip_independent_points_per_slot() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0xdecaf);
+    let polynomials = packed_polynomials();
+    let packed = build_packed(&polynomials);
+    let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let claims = independent_claims(&polynomials, &mut rng);
+    let statement = PrefixPackedStatement::new(commitment, claims);
+
+    let mut prover_transcript = Blake2bTranscript::new(b"dory-packed-independent-points");
+    let proof = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
+        &prover_setup,
+        statement.clone(),
+        &packed.polynomial,
+        hint,
+        &mut prover_transcript,
+    )
+    .expect("claims at independent per-slot points should be provable");
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-independent-points");
+    <PackedDoryBatch as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        statement,
+        &proof,
+        &mut verifier_transcript,
+    )
+    .expect("claims at independent per-slot points should verify");
+
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}
+
+/// A malicious prover proving a stale value: the claim point moves but the
+/// value is left at the old point's evaluation.
+#[test]
+fn dory_prefix_packed_batch_rejects_stale_value_at_shifted_point() {
+    let polynomials = packed_polynomials();
+    let packed = build_packed(&polynomials);
+    let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
+    let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
+    let medium = claims
+        .iter_mut()
+        .find(|claim| claim.0 == PackedId::Medium)
+        .expect("medium claim should exist");
+    let mut point = medium.1.point.clone().into_vec();
+    point[0] += fr(1);
+    medium.1.point = point.into();
+    let statement = PrefixPackedStatement::new(commitment, claims);
+
+    let proof = prove_packed(
+        &packed,
+        &prover_setup,
+        statement.clone(),
+        hint,
+        b"dory-packed-stale-value",
+    );
+    let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-stale-value");
+    let result = <PackedDoryBatch as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        statement,
+        &proof,
+        &mut verifier_transcript,
+    );
+    assert!(
+        result.is_err(),
+        "stale value at a shifted point should fail"
+    );
+}
+
+/// Regression test for the pinned-point reduction soundness bug: two slots
+/// sharing the shortest packing prefix (`Medium` = `010`, `NarrowA` = `0110`)
+/// had challenge-independent relative eq-weights, so lies of the form
+/// `Δ_medium·(1 - a_1) + Δ_narrow_a·a_1(1 - a_2) = 0` (with `a` the pinned
+/// suffix coordinates) cancelled identically and verified. The sumcheck
+/// reduction must reject them.
+#[test]
+fn dory_prefix_packed_batch_rejects_seesaw_value_cancellation() {
+    let polynomials = packed_polynomials();
+    let packed = build_packed(&polynomials);
+    assert_eq!(
+        packed.packing[&PackedId::Medium].prefix,
+        vec![false, true, false]
+    );
+    assert_eq!(
+        packed.packing[&PackedId::NarrowA].prefix,
+        vec![false, true, true, false]
+    );
+
+    let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
+    let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
+
+    let a_1 = packed_point[2];
+    let a_2 = packed_point[3];
+    let weight_medium = fr(1) - a_1;
+    let weight_narrow_a = a_1 * (fr(1) - a_2);
+    let delta_medium = weight_narrow_a;
+    let delta_narrow_a = -weight_medium;
+    assert_eq!(
+        delta_medium * weight_medium + delta_narrow_a * weight_narrow_a,
+        fr(0),
+        "the two lies must cancel under the old pinned-point reduction"
+    );
+    for claim in &mut claims {
+        match claim.0 {
+            PackedId::Medium => claim.1.value += delta_medium,
+            PackedId::NarrowA => claim.1.value += delta_narrow_a,
+            _ => {}
+        }
+    }
+    let statement = PrefixPackedStatement::new(commitment, claims);
+
+    let proof = prove_packed(
+        &packed,
+        &prover_setup,
+        statement.clone(),
+        hint,
+        b"dory-packed-seesaw",
+    );
+    let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-seesaw");
+    let result = <PackedDoryBatch as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        statement,
+        &proof,
+        &mut verifier_transcript,
+    );
+    assert!(
+        result.is_err(),
+        "cancelling value lies across same-bucket slots should fail"
+    );
+}
+
+#[test]
+fn dory_prefix_packed_batch_rejects_missing_slot_claim() {
+    let polynomials = packed_polynomials();
+    let packed = build_packed(&polynomials);
+    let (prover_setup, _) = packed_setup(packed.packing.clone());
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
+    let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
+    claims.retain(|claim| claim.0 != PackedId::Constant);
+
+    let mut transcript = Blake2bTranscript::new(b"dory-packed-missing-slot");
+    let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
+        &prover_setup,
+        PrefixPackedStatement::new(commitment, claims),
+        &packed.polynomial,
+        hint,
+        &mut transcript,
+    );
+    assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
+}
+
+#[test]
+fn dory_prefix_packed_batch_rejects_empty_claims() {
+    let polynomials = packed_polynomials();
+    let packed = build_packed(&polynomials);
+    let (prover_setup, _) = packed_setup(packed.packing.clone());
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+
+    let mut transcript = Blake2bTranscript::new(b"dory-packed-empty-claims");
+    let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
+        &prover_setup,
+        PrefixPackedStatement::new(commitment, Vec::new()),
+        &packed.polynomial,
+        hint,
+        &mut transcript,
+    );
+    assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
+}
+
+#[test]
+fn dory_prefix_packed_batch_rejects_wrong_point_arity() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
@@ -264,20 +459,50 @@ fn dory_prefix_packed_batch_rejects_suffix_incompatible_claims() {
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let medium = claims
         .iter_mut()
-        .find(|claim| claim.id == PackedId::Medium)
+        .find(|claim| claim.0 == PackedId::Medium)
         .expect("medium claim should exist");
-    let mut point = medium.evaluation.point.clone().into_vec();
-    point[0] += fr(1);
-    medium.evaluation.point = point.into();
+    let mut point = medium.1.point.clone().into_vec();
+    point.push(fr(17));
+    medium.1.point = point.into();
 
-    let mut transcript = Blake2bTranscript::new(b"dory-packed-suffix-incompat");
+    let mut transcript = Blake2bTranscript::new(b"dory-packed-wrong-arity");
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        PackedWitness::new(&packed.polynomial, hint),
+        &packed.polynomial,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
+}
+
+#[test]
+fn dory_prefix_packed_batch_rejects_wrong_packed_commitment() {
+    let polynomials = packed_polynomials();
+    let packed = build_packed(&polynomials);
+    let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let mut rng = ChaCha20Rng::seed_from_u64(0x0bad_c0de);
+    let other_polynomial = Polynomial::<Fr>::random(packed.packing.packed_num_vars, &mut rng);
+    let (other_commitment, _) = DoryScheme::commit(&other_polynomial, &prover_setup.pcs);
+    let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
+    let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
+    let proof = prove_packed(
+        &packed,
+        &prover_setup,
+        PrefixPackedStatement::new(commitment, claims.clone()),
+        hint,
+        b"dory-packed-wrong-commitment",
+    );
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-wrong-commitment");
+    let result = <PackedDoryBatch as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        PrefixPackedStatement::new(other_commitment, claims),
+        &proof,
+        &mut verifier_transcript,
+    );
+    assert!(result.is_err(), "wrong packed commitment should reject");
 }
 
 #[test]
@@ -297,7 +522,7 @@ fn dory_prefix_packed_batch_rejects_tampered_value() {
     );
 
     let mut tampered = claims;
-    tampered[0].evaluation.value += fr(1);
+    tampered[0].1.value += fr(1);
     let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-tampered-value");
     let result = <PackedDoryBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
@@ -322,7 +547,8 @@ fn dory_prefix_packed_batch_rejects_wrong_witness_dimension() {
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         PrefixPackedStatement::new(commitment, claims),
-        PackedWitness::new(&wrong_witness, hint),
+        &wrong_witness,
+        hint,
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));

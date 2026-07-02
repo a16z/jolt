@@ -5,9 +5,8 @@
 
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
-    HomomorphicBatchWitness, HomomorphicZkBatchWitness, OpeningsError, VerifierOpeningClaim,
-    ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch, OpeningsError,
+    VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -49,11 +48,15 @@ fn clear_claims(
         .collect()
 }
 
-fn clear_witness(polynomials: &[Polynomial<Fr>]) -> HomomorphicBatchWitness<'_, Fr, ()> {
+fn sources(polynomials: &[Polynomial<Fr>]) -> Vec<&dyn MultilinearPoly<Fr>> {
     polynomials
         .iter()
-        .map(|polynomial| (polynomial as &dyn MultilinearPoly<Fr>, ()))
+        .map(|polynomial| polynomial as &dyn MultilinearPoly<Fr>)
         .collect()
+}
+
+fn unit_hints(count: usize) -> Vec<()> {
+    vec![(); count]
 }
 
 #[test]
@@ -65,7 +68,8 @@ fn homomorphic_batch_opening_roundtrip_clear() {
     let proof = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims.clone(),
-        clear_witness(&polynomials),
+        sources(&polynomials),
+        unit_hints(polynomials.len()),
         &mut prover_transcript,
     )
     .expect("batch proof should be produced");
@@ -91,7 +95,8 @@ fn homomorphic_batch_opening_rejects_tampered_clear_claim() {
     let proof = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims.clone(),
-        clear_witness(&polynomials),
+        sources(&polynomials),
+        unit_hints(polynomials.len()),
         &mut prover_transcript,
     )
     .expect("batch proof should be produced");
@@ -116,6 +121,7 @@ fn homomorphic_batch_opening_rejects_empty_claims() {
         &(),
         Vec::new(),
         Vec::new(),
+        Vec::new(),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -131,7 +137,8 @@ fn homomorphic_batch_opening_rejects_mismatched_points() {
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims,
-        clear_witness(&polynomials),
+        sources(&polynomials),
+        unit_hints(polynomials.len()),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -146,7 +153,8 @@ fn homomorphic_batch_opening_rejects_mismatched_witness_count() {
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims,
-        clear_witness(&polynomials[..1]),
+        sources(&polynomials[..1]),
+        unit_hints(1),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
@@ -159,16 +167,10 @@ fn zk_commitments(polynomials: &[Polynomial<Fr>]) -> Vec<MockCommitment<Fr>> {
         .collect()
 }
 
-fn zk_witness<'a>(
-    polynomials: &'a [Polynomial<Fr>],
-    point: &Point<HIGH_TO_LOW, Fr>,
-) -> HomomorphicZkBatchWitness<'a, Fr, ()> {
+fn evaluations(polynomials: &[Polynomial<Fr>], point: &Point<HIGH_TO_LOW, Fr>) -> Vec<Fr> {
     polynomials
         .iter()
-        .map(|polynomial| {
-            let eval = polynomial.evaluate(point);
-            (polynomial as &dyn MultilinearPoly<Fr>, (), eval)
-        })
+        .map(|polynomial| polynomial.evaluate(point))
         .collect()
 }
 
@@ -183,7 +185,9 @@ fn homomorphic_batch_opening_roundtrip_zk() {
             &(),
             point.clone(),
             commitments.clone(),
-            zk_witness(&polynomials, &point),
+            sources(&polynomials),
+            unit_hints(polynomials.len()),
+            evaluations(&polynomials, &point),
             &mut prover_transcript,
         )
         .expect("ZK batch proof should be produced");
@@ -212,7 +216,9 @@ fn homomorphic_zk_batch_opening_rejects_witness_count_mismatch() {
         &(),
         point.clone(),
         commitments,
-        zk_witness(&polynomials[..1], &point),
+        sources(&polynomials[..1]),
+        unit_hints(1),
+        evaluations(&polynomials[..1], &point),
         &mut transcript,
     );
     assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));

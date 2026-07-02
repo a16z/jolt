@@ -8,12 +8,12 @@
     reason = "KZG operations return Result for API symmetry; with a correctly-sized SRS and well-formed inputs these errors are unreachable"
 )]
 
-use std::marker::PhantomData;
+use std::{borrow::Cow, marker::PhantomData};
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::{FromPrimitiveInt, RandomSampling};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
-use jolt_poly::{MultilinearPoly, Polynomial};
+use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
@@ -242,6 +242,24 @@ impl<P: PairingGroup> DeriveSetup<HyperKZGProverSetup<P>> for PedersenSetup<P::G
     }
 }
 
+/// HyperKZG always works on dense evaluations: borrow them when the source is
+/// already dense, materialize a copy only for lazy sources.
+fn dense_table<F, S>(poly: &S) -> Cow<'_, [F]>
+where
+    F: jolt_field::Field,
+    S: MultilinearPoly<F> + ?Sized,
+{
+    if let Some(evaluations) = poly.dense_evaluations() {
+        Cow::Borrowed(evaluations)
+    } else {
+        let mut table = Vec::with_capacity(1usize << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| {
+            table.extend_from_slice(row);
+        });
+        Cow::Owned(table)
+    }
+}
+
 impl<P: PairingGroup> Commitment for HyperKZGScheme<P> {
     type Output = HyperKZGCommitment<P>;
 }
@@ -255,7 +273,6 @@ where
     type Proof = HyperKZGProof<P>;
     type ProverSetup = HyperKZGProverSetup<P>;
     type VerifierSetup = HyperKZGVerifierSetup<P>;
-    type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
     type SetupParams = (usize, P::G1, P::G2);
 
@@ -277,11 +294,7 @@ where
         poly: &S,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        // HyperKZG always works on dense evaluations.
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = dense_table(poly);
         let point = kzg::kzg_commit::<P>(&evaluations, setup)
             .expect("SRS must be large enough for the polynomial");
         (HyperKZGCommitment { point }, ())
@@ -295,10 +308,7 @@ where
         _hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        let mut evaluations = Vec::with_capacity(1usize << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+        let evaluations = dense_table(poly);
         Self::open(setup, &evaluations, point, transcript)
             .expect("HyperKZG open should not fail with valid inputs")
     }
