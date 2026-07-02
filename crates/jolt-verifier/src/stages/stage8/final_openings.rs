@@ -346,26 +346,19 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
         JoltCommittedPolynomial::UntrustedAdvice => {
             advice_opening_claim_and_scale(JoltAdviceKind::Untrusted, opening_point, stage7)
         }
-        JoltCommittedPolynomial::BytecodeChunk(_) | JoltCommittedPolynomial::ProgramImageInit => {
-            // Committed-program members are not part of the prover-driven order
-            // produced by `stage8_final_opening_order`; `verify()` handles them
-            // directly from the precommitted finals.
-            Err(VerifierError::FinalOpeningBatchFailed {
-                reason: format!(
-                    "committed-program polynomial {polynomial:?} is not part of the stage 8 prover order"
-                ),
-            })
-        }
-        JoltCommittedPolynomial::UnsignedIncChunk(_)
+        JoltCommittedPolynomial::BytecodeChunk(_)
+        | JoltCommittedPolynomial::ProgramImageInit
+        | JoltCommittedPolynomial::UnsignedIncChunk(_)
         | JoltCommittedPolynomial::UnsignedIncMsb
         | JoltCommittedPolynomial::TrustedAdviceBytes
         | JoltCommittedPolynomial::UntrustedAdviceBytes => {
-            // Lattice-mode columns discharge through the packed opening
-            // (jolt_claims::protocols::jolt::lattice::discharge), never the
-            // homomorphic stage 8 RLC batch.
+            // Committed-program members are handled by `verify()` directly
+            // from the precommitted finals; lattice columns discharge through
+            // the packed opening (`lattice::packing::final_opening`), never
+            // the homomorphic stage 8 RLC batch.
             Err(VerifierError::FinalOpeningBatchFailed {
                 reason: format!(
-                    "lattice column {polynomial:?} is not part of the stage 8 prover order"
+                    "polynomial {polynomial:?} is not part of the stage 8 prover order"
                 ),
             })
         }

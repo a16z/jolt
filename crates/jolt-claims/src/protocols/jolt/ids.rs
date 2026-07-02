@@ -2,11 +2,6 @@ use derive_more::From;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
-use super::lattice::{
-    AdviceBytesValidityChallenge, AdviceBytesValidityPublic, IncVirtualizationChallenge,
-    IncVirtualizationPublic, UnsignedIncChunkReconstructionChallenge,
-    UnsignedIncChunkReconstructionPublic,
-};
 use crate::Expr;
 
 /// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
@@ -286,6 +281,51 @@ pub enum InstructionRaVirtualizationChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionRaVirtualizationPublic {
     EqCycle,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum IncVirtualizationChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum IncVirtualizationPublic {
+    EqRamReadWrite,
+    EqRamValCheck,
+    EqRegistersReadWrite,
+    EqRegistersValEvaluation,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum UnsignedIncChunkReconstructionChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum UnsignedIncChunkReconstructionPublic {
+    /// `eq(r_booleanity_address, r_address)` — reduces the chunk openings
+    /// produced at the booleanity address point to this relation's bound
+    /// address point.
+    EqBooleanityAddress,
+    /// The identity MLE `Σ_bit 2^bit · r_address[bit]` at the bound address
+    /// point — decodes a one-hot chunk opening into its symbol value.
+    IdentityAtAddress,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AdviceBytesValidityChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AdviceBytesValidityPublic {
+    /// `eq` over the full `(symbol ‖ limb ‖ word)` cell domain at the bound
+    /// point — weights the booleanity leg.
+    EqCell,
+    /// `eq` over the `(limb ‖ word)` sub-domain at the bound point — weights
+    /// the per-byte-position hamming leg (symbol variables are summed, not
+    /// eq-bound).
+    EqLimbWord,
 }
 
 #[derive(

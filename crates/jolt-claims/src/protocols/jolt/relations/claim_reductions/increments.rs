@@ -4,8 +4,7 @@ use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::increments::{
-    ram_inc_read_write, ram_inc_reduced, ram_inc_val_check, rd_inc_read_write, rd_inc_reduced,
-    rd_inc_val_evaluation,
+    inc_consumers_input, ram_inc_reduced, rd_inc_reduced,
 };
 use crate::protocols::jolt::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr,
@@ -83,12 +82,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(IncClaimReductionChallenge::Gamma);
-
-        opening(ram_inc_read_write())
-            + gamma.clone() * opening(ram_inc_val_check())
-            + gamma.clone().pow(2) * opening(rd_inc_read_write())
-            + gamma.clone().pow(3) * opening(rd_inc_val_evaluation())
+        inc_consumers_input(challenge(IncClaimReductionChallenge::Gamma))
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -106,6 +100,9 @@ impl SymbolicSumcheck for ClaimReduction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::jolt::geometry::claim_reductions::increments::{
+        ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation,
+    };
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn dimensions() -> TraceDimensions {

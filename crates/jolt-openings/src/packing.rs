@@ -68,7 +68,7 @@ impl PrefixSlot {
     }
 
     /// The slot's prefix bits as an integer (msb-first).
-    pub fn prefix_index(&self) -> usize {
+    pub(crate) fn prefix_index(&self) -> usize {
         self.prefix
             .iter()
             .fold(0usize, |acc, bit| (acc << 1) | usize::from(*bit))

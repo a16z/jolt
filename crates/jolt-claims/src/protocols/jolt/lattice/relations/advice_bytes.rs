@@ -23,7 +23,7 @@ use crate::protocols::jolt::{
 };
 use crate::{challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
-use super::super::geometry::{BYTE_SYMBOL_BITS, WORD_BYTE_LIMB_BITS};
+use super::super::geometry::word_byte_column_vars;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AdviceBytesDimensions {
@@ -31,12 +31,10 @@ pub struct AdviceBytesDimensions {
 }
 
 impl AdviceBytesDimensions {
-    pub const fn new(word_vars: usize) -> Self {
-        Self { word_vars }
-    }
-
+    /// The sumcheck round count — the packed byte column's arity by
+    /// construction (both come from [`word_byte_column_vars`]).
     pub const fn cell_vars(self) -> usize {
-        BYTE_SYMBOL_BITS + WORD_BYTE_LIMB_BITS + self.word_vars
+        word_byte_column_vars(self.word_vars)
     }
 }
 
@@ -119,7 +117,7 @@ mod tests {
 
     #[test]
     fn validity_evaluates_like_core_formula() {
-        let relation = AdviceBytesValidity::new(AdviceBytesDimensions::new(4));
+        let relation = AdviceBytesValidity::new(AdviceBytesDimensions { word_vars: 4 });
 
         let bytes = Fr::from_u64(3);
         let gamma = Fr::from_u64(5);
@@ -154,7 +152,7 @@ mod tests {
 
     #[test]
     fn validity_exposes_expected_dependencies() {
-        let relation = AdviceBytesValidity::new(AdviceBytesDimensions::new(4));
+        let relation = AdviceBytesValidity::new(AdviceBytesDimensions { word_vars: 4 });
 
         assert_eq!(
             AdviceBytesValidity::id(),

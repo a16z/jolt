@@ -1,4 +1,5 @@
 use jolt_field::RingCore;
+use jolt_poly::math::Math;
 use thiserror::Error;
 
 use super::super::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
@@ -17,9 +18,8 @@ pub const LATTICE_BYTECODE_VAL_STAGES: usize = NUM_BYTECODE_VAL_STAGES + 1;
 /// Symbol bits of a byte one-hot column.
 pub const BYTE_SYMBOL_BITS: usize = 8;
 
-/// Byte limbs of one 64-bit word and their index bits.
+/// Byte limbs of one 64-bit word.
 pub const WORD_BYTE_LIMBS: usize = 8;
-pub const WORD_BYTE_LIMB_BITS: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum LatticeGeometryError {
@@ -45,7 +45,6 @@ pub enum LatticeGeometryError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnsignedIncChunking {
     chunk_width: usize,
-    chunk_count: usize,
 }
 
 impl UnsignedIncChunking {
@@ -59,10 +58,7 @@ impl UnsignedIncChunking {
         if !UNSIGNED_INC_BITS.is_multiple_of(chunk_width) {
             return Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width });
         }
-        Ok(Self {
-            chunk_width,
-            chunk_count: UNSIGNED_INC_BITS / chunk_width,
-        })
+        Ok(Self { chunk_width })
     }
 
     pub const fn chunk_width(self) -> usize {
@@ -70,11 +66,7 @@ impl UnsignedIncChunking {
     }
 
     pub const fn chunk_count(self) -> usize {
-        self.chunk_count
-    }
-
-    pub const fn alphabet_size(self) -> usize {
-        1 << self.chunk_width
+        UNSIGNED_INC_BITS / self.chunk_width
     }
 
     /// The place value `2^(chunk_width * index)` weighting chunk `index` in
@@ -84,20 +76,11 @@ impl UnsignedIncChunking {
     }
 }
 
-/// `ceil(log2(value))` for column-arity math; `0` for `value <= 1`.
-pub const fn ceil_log2(value: usize) -> usize {
-    if value <= 1 {
-        0
-    } else {
-        usize::BITS as usize - (value - 1).leading_zeros() as usize
-    }
-}
-
 /// Arity of a one-hot column over `symbol_bits` symbols, `limbs` limbs, and a
 /// `2^log_rows` row domain, under the `(symbol ‖ limb ‖ row)` cell order.
 /// Limb counts round up to a power of two; dummy limb cells are zero by
 /// convention.
-pub const fn one_hot_column_vars(
+pub fn one_hot_column_vars(
     symbol_bits: usize,
     limbs: usize,
     log_rows: usize,
@@ -105,15 +88,20 @@ pub const fn one_hot_column_vars(
     if limbs == 0 {
         return Err(LatticeGeometryError::ZeroLimbCount);
     }
-    Ok(symbol_bits + ceil_log2(limbs.next_power_of_two()) + log_rows)
+    Ok(symbol_bits + limbs.log_2() + log_rows)
 }
 
 /// Arity of a byte one-hot column carrying `limbs` bytes per row.
-pub const fn byte_column_vars(
-    limbs: usize,
-    log_rows: usize,
-) -> Result<usize, LatticeGeometryError> {
+pub fn byte_column_vars(limbs: usize, log_rows: usize) -> Result<usize, LatticeGeometryError> {
     one_hot_column_vars(BYTE_SYMBOL_BITS, limbs, log_rows)
+}
+
+/// Arity of the byte one-hot column of 64-bit words — the advice and
+/// program-image encoding, and the cell-variable count of the advice
+/// byte-validity sumcheck (relation rounds and packed arity are the same
+/// number by construction).
+pub const fn word_byte_column_vars(log_words: usize) -> usize {
+    BYTE_SYMBOL_BITS + WORD_BYTE_LIMBS.ilog2() as usize + log_words
 }
 
 #[cfg(test)]
@@ -136,7 +124,6 @@ mod tests {
         let chunking = UnsignedIncChunking::new(8).unwrap();
         assert_eq!(chunking.chunk_width(), 8);
         assert_eq!(chunking.chunk_count(), 8);
-        assert_eq!(chunking.alphabet_size(), 256);
     }
 
     #[test]
@@ -164,5 +151,6 @@ mod tests {
             byte_column_vars(0, 4),
             Err(LatticeGeometryError::ZeroLimbCount)
         );
+        assert_eq!(word_byte_column_vars(5), byte_column_vars(8, 5).unwrap());
     }
 }

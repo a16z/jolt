@@ -5,16 +5,13 @@ use jolt_field::RingCore;
 use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};
 
-use crate::protocols::jolt::geometry::claim_reductions::increments::{
-    ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation,
-};
+use crate::protocols::jolt::geometry::claim_reductions::increments::inc_consumers_input;
+use crate::protocols::jolt::relations::claim_reductions::increments::IncClaimReductionInputClaims;
 use crate::protocols::jolt::{
     IncVirtualizationChallenge, IncVirtualizationPublic, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial, TraceDimensions,
 };
-use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
-};
+use crate::{challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The fused increment stream and its destination selector, produced at the
 /// bound cycle point. A cycle increments RAM (`store = 1`) or a register
@@ -45,21 +42,6 @@ pub struct IncVirtualizationOutputClaims<C> {
     pub store: C,
 }
 
-/// The four reduced `Inc` openings consumed from the read-write / value
-/// relations of RAM and registers — the same consumed set as the base
-/// `IncClaimReduction`.
-#[derive(Clone, Debug, InputClaims)]
-pub struct IncVirtualizationInputClaims<C> {
-    #[opening(committed = RamInc, from = RamReadWriteChecking)]
-    pub ram_inc_read_write: C,
-    #[opening(committed = RamInc, from = RamValCheck)]
-    pub ram_inc_val_check: C,
-    #[opening(committed = RdInc, from = RegistersReadWriteChecking)]
-    pub rd_inc_read_write: C,
-    #[opening(committed = RdInc, from = RegistersValEvaluation)]
-    pub rd_inc_val_evaluation: C,
-}
-
 #[derive(Clone, Copy, Debug, SumcheckChallenges)]
 pub struct IncVirtualizationChallenges<F> {
     #[challenge(IncVirtualizationChallenge::Gamma)]
@@ -82,7 +64,11 @@ impl SymbolicSumcheck for IncVirtualization {
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = TraceDimensions;
     type Challenges<F> = IncVirtualizationChallenges<F>;
-    type Inputs<C> = IncVirtualizationInputClaims<C>;
+    /// The same consumed-claim struct as the base `IncClaimReduction`: the
+    /// lattice relation replaces it and must consume exactly the same four
+    /// claims (input-claim ids carry the producing relations, not the
+    /// consumer, so the struct is shared verbatim).
+    type Inputs<C> = IncClaimReductionInputClaims<C>;
     type Outputs<C> = IncVirtualizationOutputClaims<C>;
 
     fn new(shape: TraceDimensions) -> Self {
@@ -102,12 +88,7 @@ impl SymbolicSumcheck for IncVirtualization {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(IncVirtualizationChallenge::Gamma);
-
-        opening(ram_inc_read_write())
-            + gamma.clone() * opening(ram_inc_val_check())
-            + gamma.clone().pow(2) * opening(rd_inc_read_write())
-            + gamma.pow(3) * opening(rd_inc_val_evaluation())
+        inc_consumers_input(challenge(IncVirtualizationChallenge::Gamma))
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -141,6 +122,9 @@ pub fn fused_inc_store_opening() -> JoltOpeningId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::jolt::geometry::claim_reductions::increments::{
+        ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation,
+    };
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
     use jolt_field::{Fr, FromPrimitiveInt};
 

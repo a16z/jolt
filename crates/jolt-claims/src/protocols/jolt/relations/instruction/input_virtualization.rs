@@ -154,23 +154,7 @@ mod tests {
             },
             |id| match *id {
                 JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::IncVirtualization(_)
-                | JoltChallengeId::UnsignedIncChunkReconstruction(_)
-                | JoltChallengeId::AdviceBytesValidity(_) => zero,
+                _ => zero,
             },
             |_| zero,
         );
@@ -189,23 +173,7 @@ mod tests {
             },
             |id| match *id {
                 JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::IncVirtualization(_)
-                | JoltChallengeId::UnsignedIncChunkReconstruction(_)
-                | JoltChallengeId::AdviceBytesValidity(_) => zero,
+                _ => zero,
             },
             |id| match *id {
                 JoltDerivedId::InstructionInput(InstructionInputPublic::EqProduct) => eq_product,

@@ -113,8 +113,6 @@ jolt-claims' API surface remains transcript-free.
 ```text
 crates/jolt-claims/src/protocols/jolt/lattice/
 ├── mod.rs          re-exports; module doc stating the boundary contract
-├── ids.rs          per-relation Challenge/Public leaf enums (aggregated into
-│                   the jolt/ids.rs enums as appended variants)
 ├── geometry.rs     inc chunking (width, count, place values), byte-limb
 │                   counts, packed-column arity derivation; pure functions
 ├── packing.rs      ALL packed-witness semantics in one file: LatticeColumn,
@@ -171,8 +169,9 @@ WARNING: enum `Ord` is protocol data too — `PrefixPacking` assigns slots by
 `(arity, Id)` order, so *reordering* variants (not just inserting) changes the
 packed witness layout silently.
 
-Per-relation leaf enums live in `lattice/ids.rs` and are aggregated as
-appended `JoltChallengeId`/`JoltDerivedId` variants:
+Per-relation leaf enums live in `protocols/jolt/ids.rs` next to every other
+relation's (house convention) and are aggregated as appended
+`JoltChallengeId`/`JoltDerivedId` variants:
 
 ```rust
 IncVirtualizationChallenge { Gamma }
@@ -455,8 +454,10 @@ pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening
 ```
 
 The base-mode map (`committed_openings::final_opening_relation`) gained
-lattice arms when the committed enum grew; a consistency test in `packing.rs`
-pins their agreement with the discharge leaves.
+lattice arms when the committed enum grew and is the single owner of the
+polynomial→relation mapping: the packed-claim leaves are derived from it
+(`final_opening_id`), with trusted-advice bytes as the one documented
+exception (view-produced, no relation leaf).
 
 This replaces both the prototype's `final_opening_lattice_requirement` and the
 base stage-8 RLC order for lattice mode.

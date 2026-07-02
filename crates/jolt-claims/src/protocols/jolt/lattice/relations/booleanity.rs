@@ -8,25 +8,33 @@ use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::booleanity::{
-    booleanity_output_openings, BooleanityDimensions,
+    booleanity_output, booleanity_output_openings, BooleanityDimensions,
 };
-use crate::protocols::jolt::{
-    BooleanityChallenge, BooleanityPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId,
-    JoltRelationId,
-};
-use crate::{challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+use crate::protocols::jolt::relations::booleanity::BooleanityChallenges;
+use crate::protocols::jolt::{JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId};
+use crate::{OutputClaims, SymbolicSumcheck};
 
-use super::super::geometry::UnsignedIncChunking;
+use super::super::geometry::{LatticeGeometryError, UnsignedIncChunking};
 
+/// The base booleanity dimensions plus the inc chunking they imply: the chunk
+/// width equals `log_k_chunk` by the shared-final-point invariant, so it is
+/// derived rather than supplied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LatticeBooleanityDimensions {
     pub base: BooleanityDimensions,
-    pub chunking: UnsignedIncChunking,
+    chunking: UnsignedIncChunking,
 }
 
 impl LatticeBooleanityDimensions {
-    pub const fn new(base: BooleanityDimensions, chunking: UnsignedIncChunking) -> Self {
-        Self { base, chunking }
+    pub fn new(base: BooleanityDimensions) -> Result<Self, LatticeGeometryError> {
+        Ok(Self {
+            base,
+            chunking: UnsignedIncChunking::new(base.log_k_chunk)?,
+        })
+    }
+
+    pub fn chunking(self) -> UnsignedIncChunking {
+        self.chunking
     }
 }
 
@@ -52,15 +60,10 @@ pub struct LatticeBooleanityOutputClaims<C> {
     pub unsigned_inc_msb: C,
 }
 
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
-pub struct LatticeBooleanityChallenges<F> {
-    #[challenge(BooleanityChallenge::Gamma)]
-    pub gamma: F,
-}
-
-/// The base booleanity output sum (`eq · Σ_i γ^{2i} (x_i² − x_i)`) extended
-/// past the `Ra` families with the unsigned-inc chunk columns and the msb
-/// column.
+/// The base booleanity fold extended past the `Ra` families with the
+/// unsigned-inc chunk columns and the msb column; the formula itself is the
+/// shared [`booleanity_output`] helper, so the two mode variants cannot
+/// diverge.
 pub struct LatticeBooleanity {
     shape: LatticeBooleanityDimensions,
 }
@@ -71,7 +74,7 @@ impl SymbolicSumcheck for LatticeBooleanity {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = LatticeBooleanityDimensions;
-    type Challenges<F> = LatticeBooleanityChallenges<F>;
+    type Challenges<F> = BooleanityChallenges<F>;
     type Inputs<C> = crate::NoInputs<C>;
     type Outputs<C> = LatticeBooleanityOutputClaims<C>;
 
@@ -96,16 +99,7 @@ impl SymbolicSumcheck for LatticeBooleanity {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(BooleanityChallenge::Gamma);
-        let mut output = JoltExpr::zero();
-        for (i, opening_id) in lattice_booleanity_output_openings(self.shape)
-            .into_iter()
-            .enumerate()
-        {
-            let x = opening(opening_id);
-            output = output + gamma.clone().pow(2 * i) * (x.clone() * x.clone() - x);
-        }
-        derived(BooleanityPublic::EqAddressCycle) * output
+        booleanity_output(lattice_booleanity_output_openings(self.shape))
     }
 }
 
@@ -115,8 +109,9 @@ pub fn lattice_booleanity_output_openings(
     dimensions: LatticeBooleanityDimensions,
 ) -> Vec<JoltOpeningId> {
     let mut openings = booleanity_output_openings(dimensions.base.layout);
-    openings
-        .extend((0..dimensions.chunking.chunk_count()).map(booleanity_unsigned_inc_chunk_opening));
+    openings.extend(
+        (0..dimensions.chunking().chunk_count()).map(booleanity_unsigned_inc_chunk_opening),
+    );
     openings.push(booleanity_unsigned_inc_msb_opening());
     openings
 }
@@ -140,15 +135,27 @@ pub fn booleanity_unsigned_inc_msb_opening() -> JoltOpeningId {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::protocols::jolt::{
+        BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltDerivedId,
+    };
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn dimensions() -> LatticeBooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(1, 0, 0).unwrap();
-        LatticeBooleanityDimensions::new(
-            BooleanityDimensions::new(layout, 5, 32),
-            UnsignedIncChunking::new(32).unwrap(),
-        )
+        LatticeBooleanityDimensions::new(BooleanityDimensions::new(layout, 5, 32)).unwrap()
+    }
+
+    #[test]
+    fn chunking_is_derived_from_the_shared_chunk_size() {
+        assert_eq!(
+            dimensions().chunking(),
+            UnsignedIncChunking::new(32).unwrap()
+        );
+        let layout = JoltRaPolynomialLayout::new(1, 0, 0).unwrap();
+        assert_eq!(
+            LatticeBooleanityDimensions::new(BooleanityDimensions::new(layout, 5, 7)),
+            Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width: 7 })
+        );
     }
 
     #[test]

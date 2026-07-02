@@ -10,6 +10,7 @@
 use jolt_field::{Field, FromPrimitiveInt};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_openings::PrefixPacking;
+use jolt_poly::math::Math;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use serde::{Deserialize, Serialize};
@@ -17,13 +18,14 @@ use serde::{Deserialize, Serialize};
 use super::super::geometry::claim_reductions::bytecode::{
     committed_lane_vars, BYTECODE_LANE_LAYOUT,
 };
+use super::super::geometry::committed_openings::final_opening_id;
 use super::super::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use super::super::geometry::error::JoltFormulaPointError;
 use super::super::geometry::ra::JoltRaPolynomialLayout;
-use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
+use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId};
 use super::geometry::{
-    byte_column_vars, ceil_log2, one_hot_column_vars, LatticeGeometryError, UnsignedIncChunking,
-    WORD_BYTE_LIMBS,
+    byte_column_vars, one_hot_column_vars, word_byte_column_vars, LatticeGeometryError,
+    UnsignedIncChunking, WORD_BYTE_LIMBS,
 };
 
 /// The register-selector lanes of a bytecode row, in committed lane order.
@@ -81,20 +83,16 @@ pub enum LatticeColumn {
 
 impl LatticeColumn {
     pub fn advice_bytes(kind: JoltAdviceKind) -> Self {
-        Self::Committed(advice_bytes_polynomial(kind))
+        Self::Committed(match kind {
+            JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdviceBytes,
+            JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdviceBytes,
+        })
     }
 }
 
 impl From<JoltCommittedPolynomial> for LatticeColumn {
     fn from(polynomial: JoltCommittedPolynomial) -> Self {
         Self::Committed(polynomial)
-    }
-}
-
-pub fn advice_bytes_polynomial(kind: JoltAdviceKind) -> JoltCommittedPolynomial {
-    match kind {
-        JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdviceBytes,
-        JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdviceBytes,
     }
 }
 
@@ -170,7 +168,7 @@ fn proof_columns(
     if let Some(word_vars) = shape.untrusted_advice_word_vars {
         columns.push((
             LatticeColumn::advice_bytes(JoltAdviceKind::Untrusted),
-            byte_column_vars(WORD_BYTE_LIMBS, word_vars)?,
+            word_byte_column_vars(word_vars),
         ));
     }
     Ok(columns)
@@ -181,7 +179,7 @@ fn precommitted_columns(
 ) -> Result<Vec<(LatticeColumn, usize)>, LatticeGeometryError> {
     let log_rows = shape.log_bytecode_rows;
     let selector_vars = one_hot_column_vars(REGISTER_ADDRESS_BITS, 1, log_rows)?;
-    let lookup_vars = ceil_log2(LookupTableKind::<XLEN>::COUNT.next_power_of_two()) + log_rows;
+    let lookup_vars = LookupTableKind::<XLEN>::COUNT.log_2() + log_rows;
 
     let mut columns = Vec::new();
     for chunk in 0..shape.bytecode_chunks {
@@ -205,7 +203,7 @@ fn precommitted_columns(
         columns.push((LatticeColumn::BytecodeRafFlag { chunk }, log_rows));
         columns.push((
             LatticeColumn::BytecodeUnexpandedPcBytes { chunk },
-            byte_column_vars(WORD_BYTE_LIMBS, log_rows)?,
+            word_byte_column_vars(log_rows),
         ));
         columns.push((
             LatticeColumn::BytecodeImmBytes { chunk },
@@ -215,13 +213,13 @@ fn precommitted_columns(
     if let Some(log_words) = shape.program_image_log_words {
         columns.push((
             LatticeColumn::ProgramImageBytes,
-            byte_column_vars(WORD_BYTE_LIMBS, log_words)?,
+            word_byte_column_vars(log_words),
         ));
     }
     if let Some(word_vars) = shape.trusted_advice_word_vars {
         columns.push((
             LatticeColumn::advice_bytes(JoltAdviceKind::Trusted),
-            byte_column_vars(WORD_BYTE_LIMBS, word_vars)?,
+            word_byte_column_vars(word_vars),
         ));
     }
     Ok(columns)
@@ -256,12 +254,12 @@ impl<F> DecodeTerm<F> {
 /// Little-endian byte decode: `Σ_{limb, symbol} 256^limb · symbol ·
 /// Column(symbol ‖ limb ‖ row)`, each term additionally scaled by `scale`.
 /// The zero symbol carries weight zero and is omitted.
-pub fn scaled_byte_decode_terms<F: Field + FromPrimitiveInt>(
+fn scaled_byte_decode_terms<F: Field + FromPrimitiveInt>(
     column: LatticeColumn,
     limbs: usize,
     scale: F,
 ) -> Vec<DecodeTerm<F>> {
-    let limb_bits = ceil_log2(limbs.next_power_of_two());
+    let limb_bits = limbs.log_2();
     let mut terms = Vec::with_capacity(limbs * 256);
     let mut place = scale;
     for limb in 0..limbs {
@@ -286,7 +284,7 @@ pub fn byte_decode_terms<F: Field + FromPrimitiveInt>(
 
 /// `Σ_symbol weight[symbol] · Column(symbol ‖ row)` for a single-limb one-hot
 /// column.
-pub fn weighted_symbol_terms<F>(
+fn weighted_symbol_terms<F>(
     column: LatticeColumn,
     weights: impl IntoIterator<Item = F>,
 ) -> Vec<DecodeTerm<F>> {
@@ -328,7 +326,14 @@ pub fn bytecode_chunk_decode_terms<F: Field + FromPrimitiveInt>(
     let layout = BYTECODE_LANE_LAYOUT;
     let register_count = 1usize << REGISTER_ADDRESS_BITS;
 
-    let mut terms = Vec::new();
+    let mut terms = Vec::with_capacity(
+        3 * register_count
+            + 255 * (WORD_BYTE_LIMBS + imm_byte_width)
+            + NUM_CIRCUIT_FLAGS
+            + NUM_INSTRUCTION_FLAGS
+            + LookupTableKind::<XLEN>::COUNT
+            + 1,
+    );
     for (lane, start) in [
         (BytecodeRegisterLane::Rs1, layout.rs1_start),
         (BytecodeRegisterLane::Rs2, layout.rs2_start),
@@ -439,28 +444,28 @@ pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening
 /// The relation output supplying a packed column's claim value, or `None`
 /// when the view-discharge reduction produces it (view-only sub-columns and
 /// trusted-advice bytes, which have no in-protocol validity relation).
-pub fn packed_column_leaf(column: LatticeColumn) -> Option<JoltOpeningId> {
+///
+/// The polynomial→relation mapping itself is owned by the base
+/// `committed_openings::final_opening_id`; this only classifies which packed
+/// columns have a relation leaf at all.
+fn packed_column_leaf(column: LatticeColumn) -> Option<JoltOpeningId> {
     let LatticeColumn::Committed(polynomial) = column else {
         return None;
     };
-    let relation = match polynomial {
+    match polynomial {
         JoltCommittedPolynomial::InstructionRa(_)
         | JoltCommittedPolynomial::BytecodeRa(_)
-        | JoltCommittedPolynomial::RamRa(_) => JoltRelationId::HammingWeightClaimReduction,
-        JoltCommittedPolynomial::UnsignedIncChunk(_) => {
-            JoltRelationId::UnsignedIncChunkReconstruction
-        }
-        JoltCommittedPolynomial::UnsignedIncMsb => JoltRelationId::Booleanity,
-        JoltCommittedPolynomial::UntrustedAdviceBytes => JoltRelationId::AdviceBytesValidity,
-        _ => return None,
-    };
-    Some(JoltOpeningId::committed(polynomial, relation))
+        | JoltCommittedPolynomial::RamRa(_)
+        | JoltCommittedPolynomial::UnsignedIncChunk(_)
+        | JoltCommittedPolynomial::UnsignedIncMsb
+        | JoltCommittedPolynomial::UntrustedAdviceBytes => Some(final_opening_id(polynomial)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::super::super::geometry::committed_openings;
     use super::*;
     use jolt_field::Fr;
 
@@ -604,36 +609,18 @@ mod tests {
         }
     }
 
-    /// The base-mode `final_opening_relation` gained lattice arms when the
-    /// committed enum grew; they must agree with the discharge leaves
-    /// (trusted-advice bytes intentionally diverge: their claim is
-    /// view-produced, so the base map's arm is only a scheduling hint).
     #[test]
-    fn packed_leaves_agree_with_base_final_opening_relation() {
-        let packing = proof_packing(&proof_shape()).unwrap();
-        for (column, _) in &packing {
-            let LatticeColumn::Committed(polynomial) = column else {
-                panic!("proof packed columns are committed polynomials");
-            };
-            assert_eq!(
-                packed_column_leaf(*column).unwrap(),
-                JoltOpeningId::committed(
-                    *polynomial,
-                    committed_openings::final_opening_relation(*polynomial)
-                )
-            );
-        }
+    fn view_only_columns_have_no_relation_leaf() {
+        assert_eq!(packed_column_leaf(LatticeColumn::ProgramImageBytes), None);
+        // Trusted-advice bytes intentionally have no relation leaf: their
+        // packed claim is view-produced (the base map's arm is only a
+        // scheduling hint).
         assert_eq!(
             packed_column_leaf(LatticeColumn::Committed(
                 JoltCommittedPolynomial::TrustedAdviceBytes
             )),
             None
         );
-    }
-
-    #[test]
-    fn view_only_columns_have_no_relation_leaf() {
-        assert_eq!(packed_column_leaf(LatticeColumn::ProgramImageBytes), None);
         assert_eq!(
             final_opening(JoltCommittedPolynomial::TrustedAdviceBytes),
             LatticeFinalOpening::Packed {

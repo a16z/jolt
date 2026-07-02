@@ -124,6 +124,7 @@ impl SymbolicSumcheck for ChunkReconstruction {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(UnsignedIncChunkReconstructionChallenge::Gamma);
+        let value_leg_scale = self.value_leg_scale();
         let eq_booleanity_address =
             derived(UnsignedIncChunkReconstructionPublic::EqBooleanityAddress);
         let identity_at_address = derived(UnsignedIncChunkReconstructionPublic::IdentityAtAddress);
@@ -132,7 +133,7 @@ impl SymbolicSumcheck for ChunkReconstruction {
         for index in 0..self.shape.chunk_count() {
             let coefficient = gamma.clone().pow(2 * index)
                 + gamma.clone().pow(2 * index + 1) * eq_booleanity_address.clone()
-                + self.value_leg_scale()
+                + value_leg_scale.clone()
                     * constant(self.shape.place_value::<F>(index))
                     * identity_at_address.clone();
             output = output + coefficient * opening(reconstructed_chunk_opening(index));

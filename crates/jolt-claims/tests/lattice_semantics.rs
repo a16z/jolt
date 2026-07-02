@@ -15,23 +15,18 @@ use jolt_claims::protocols::jolt::lattice::{
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::{Fr, FromPrimitiveInt, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
-use jolt_poly::EqPolynomial;
+use jolt_poly::math::Math;
+use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
-/// Inner-product MLE evaluation: `Σ_i eq(point, bits(i)) · evals[i]`, with
-/// index bits msb-first relative to the point (the packing convention).
+/// MLE evaluation via the library's own (msb-first) convention — the same one
+/// production code uses, so the tests pin the packing against it.
 fn eval_mle(evals: &[Fr], point: &[Fr]) -> Fr {
-    let table = EqPolynomial::<Fr>::evals(point, None);
-    assert_eq!(
-        table.len(),
-        evals.len(),
-        "point arity must match table size"
-    );
-    table.iter().zip(evals).map(|(w, v)| *w * *v).sum()
+    Polynomial::new(evals.to_vec()).evaluate(point)
 }
 
 /// A deterministic, non-boolean evaluation point (distinct small primes).
@@ -323,7 +318,7 @@ fn bytecode_lane_decode_matches_committed_chunk() {
                 .map(|row| fr(u64::from(instruction_flag(row, flag))))
                 .collect(),
             LatticeColumn::BytecodeLookupSelector { .. } => {
-                let symbol_bits = table_count.next_power_of_two().trailing_zeros() as usize;
+                let symbol_bits = table_count.log_2();
                 let hot: Vec<usize> = row_data.iter().map(|row| row.lookup).collect();
                 one_hot_column(symbol_bits, log_rows, &hot)
             }

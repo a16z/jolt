@@ -92,8 +92,10 @@ pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelati
         }
         JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
-        // Lattice-mode columns; must agree with `lattice::discharge` (tested
-        // there).
+        // Lattice-mode columns: `lattice::packing` derives its packed-claim
+        // leaves from this map, so it is the single owner. The
+        // `TrustedAdviceBytes` arm is a scheduling hint only — its packed
+        // claim is view-produced and has no relation leaf.
         JoltCommittedPolynomial::UnsignedIncChunk(_) => {
             JoltRelationId::UnsignedIncChunkReconstruction
         }

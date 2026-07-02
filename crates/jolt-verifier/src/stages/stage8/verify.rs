@@ -373,10 +373,11 @@ where
                 | JoltCommittedPolynomial::TrustedAdviceBytes
                 | JoltCommittedPolynomial::UntrustedAdviceBytes => {
                     // Lattice-mode columns discharge through the packed
-                    // opening, never the homomorphic stage 8 batch.
+                    // opening (`lattice::packing::final_opening`), never the
+                    // homomorphic stage 8 RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(
-                            "lattice column {polynomial:?} is not part of the stage 8 batch"
+                            "polynomial {polynomial:?} is not part of the stage 8 prover order"
                         ),
                     });
                 }
