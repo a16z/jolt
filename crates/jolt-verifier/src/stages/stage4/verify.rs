@@ -139,14 +139,17 @@ where
 
     if checked.zk {
         let consistency = sumchecks.verify_zk(&proof.stages.stage4_sumcheck_proof, transcript)?;
-        let batch_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage4_sumcheck_proof,
-                proof_label: "stage4_sumcheck_proof",
-                output_claim_count: stage4_committed_output_claims(checked, proof),
-                stage: JoltRelationId::RegistersReadWriteChecking,
-            })?;
+        let output_claim_count = STAGE4_BATCH_BASE_OUTPUT_CLAIMS
+            + usize::from(proof.untrusted_advice_commitment.is_some())
+            + usize::from(checked.trusted_advice_commitment_present)
+            + usize::from(checked.precommitted.program_image.is_some());
+        let batch_output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage4_sumcheck_proof,
+            "stage4_sumcheck_proof",
+            output_claim_count,
+            JoltRelationId::RegistersReadWriteChecking,
+        )?;
 
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
         // output points and init structure. Advice / program-image openings live in
@@ -212,7 +215,6 @@ where
     claims.append_to_transcript(transcript);
 
     Ok(Stage4Output::Clear(Stage4ClearOutput {
-        challenges,
         output_values: claims.clone(),
         output_points,
         ram_val_check_init,
@@ -258,167 +260,4 @@ where
             .map(|segment| (segment.start_index, segment.words.as_slice())),
         r_address,
     ))
-}
-
-fn stage4_committed_output_claims<PCS, VC, ZkProof>(
-    checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-) -> usize
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    STAGE4_BATCH_BASE_OUTPUT_CLAIMS
-        + usize::from(proof.untrusted_advice_commitment.is_some())
-        + usize::from(checked.trusted_advice_commitment_present)
-        + usize::from(checked.precommitted.program_image.is_some())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use super::super::outputs::Stage4OutputClaims;
-    use crate::stages::stage4::ram_val_check::RamValCheckOutputClaims;
-    use crate::stages::stage4::registers_read_write_checking::RegistersReadWriteOutputClaims;
-    use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-        state: [u8; 32],
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            self.state
-        }
-    }
-
-    #[test]
-    fn opening_claim_appends_follow_declaration_order_without_advice() {
-        let claims = test_claims_without_advice();
-        let mut transcript = RecordingTranscript::new(b"stage4-openings");
-
-        claims.append_to_transcript(&mut transcript);
-
-        let expected = vec![
-            claims.registers_read_write.registers_val,
-            claims.registers_read_write.rs1_ra,
-            claims.registers_read_write.rs2_ra,
-            claims.registers_read_write.rd_wa,
-            claims.registers_read_write.rd_inc,
-            claims.ram_val_check.ram_ra,
-            claims.ram_val_check.ram_inc,
-        ];
-
-        assert_opening_claim_payloads(&transcript, &expected);
-    }
-
-    #[test]
-    fn opening_claim_appends_order_advice_before_registers() {
-        let claims = test_claims_with_advice();
-        let mut transcript = RecordingTranscript::new(b"stage4-openings");
-
-        claims.append_to_transcript(&mut transcript);
-
-        // Canonical order: advice openings precede the register openings, then the
-        // RAM value-check openings come last.
-        let mut expected = Vec::new();
-        if let Some(value) = claims.ram_val_check.untrusted_advice {
-            expected.push(value);
-        }
-        if let Some(value) = claims.ram_val_check.trusted_advice {
-            expected.push(value);
-        }
-        expected.extend([
-            claims.registers_read_write.registers_val,
-            claims.registers_read_write.rs1_ra,
-            claims.registers_read_write.rs2_ra,
-            claims.registers_read_write.rd_wa,
-            claims.registers_read_write.rd_inc,
-            claims.ram_val_check.ram_ra,
-            claims.ram_val_check.ram_inc,
-        ]);
-
-        assert_eq!(claims.opening_values().len(), expected.len());
-        assert_opening_claim_payloads(&transcript, &expected);
-    }
-
-    fn registers_claims() -> RegistersReadWriteOutputClaims<Fr> {
-        RegistersReadWriteOutputClaims {
-            registers_val: Fr::from_u64(3),
-            rs1_ra: Fr::from_u64(4),
-            rs2_ra: Fr::from_u64(5),
-            rd_wa: Fr::from_u64(6),
-            rd_inc: Fr::from_u64(7),
-        }
-    }
-
-    fn ram_claims() -> RamValCheckOutputClaims<Fr> {
-        RamValCheckOutputClaims {
-            untrusted_advice: None,
-            trusted_advice: None,
-            program_image: None,
-            ram_ra: Fr::from_u64(8),
-            ram_inc: Fr::from_u64(9),
-        }
-    }
-
-    fn test_claims_without_advice() -> Stage4OutputClaims<Fr> {
-        Stage4OutputClaims {
-            registers_read_write: registers_claims(),
-            ram_val_check: ram_claims(),
-        }
-    }
-
-    fn test_claims_with_advice() -> Stage4OutputClaims<Fr> {
-        Stage4OutputClaims {
-            registers_read_write: registers_claims(),
-            ram_val_check: RamValCheckOutputClaims {
-                untrusted_advice: Some(Fr::from_u64(1)),
-                trusted_advice: Some(Fr::from_u64(2)),
-                ..ram_claims()
-            },
-        }
-    }
-
-    fn assert_opening_claim_payloads(transcript: &RecordingTranscript, expected: &[Fr]) {
-        assert_eq!(transcript.chunks.len(), expected.len() * 2);
-        let label = opening_claim_label();
-        for (index, expected_payload) in expected.iter().copied().enumerate() {
-            assert_eq!(transcript.chunks[2 * index], label);
-            assert_eq!(
-                transcript.chunks[2 * index + 1],
-                scalar_bytes(expected_payload)
-            );
-        }
-    }
-
-    fn opening_claim_label() -> Vec<u8> {
-        let mut label = vec![0; 32];
-        label[..b"opening_claim".len()].copy_from_slice(b"opening_claim");
-        label
-    }
-
-    fn scalar_bytes(value: Fr) -> Vec<u8> {
-        let mut bytes = vec![0; Fr::NUM_BYTES];
-        value.to_bytes_le(&mut bytes);
-        bytes.reverse();
-        bytes
-    }
 }

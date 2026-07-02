@@ -37,20 +37,6 @@ pub struct Stage6aSumchecks<F: Field> {
     pub booleanity: BooleanityAddressPhase<F>,
 }
 
-/// The stage-6a produced opening points: both intermediates open at the
-/// (reversed) address sumcheck point of their instance.
-impl<F: Field> Stage6aOutputPoints<F> {
-    /// The bytecode read-RAF address opening (`bytecode_r_address`).
-    pub fn bytecode_r_address(&self) -> &[F] {
-        &self.bytecode_read_raf.intermediate
-    }
-
-    /// The booleanity address opening (`booleanity_r_address`).
-    pub fn booleanity_r_address(&self) -> &[F] {
-        &self.booleanity.intermediate
-    }
-}
-
 /// The stage-6a Fiat-Shamir draws sampled before/around the address-phase batch
 /// but consumed only by stage 6b. The prover's booleanity subprotocol samples its
 /// gamma (and the reference-address padding) before the 6a batch runs, and the
@@ -73,7 +59,7 @@ pub struct Stage6aCarriedChallenges<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aClearOutput<F: Field> {
     /// The produced address-phase opening *points*, read by stage 6b to construct
-    /// the cycle-phase batch (via the `Stage6aOutputPoints<F>` accessors).
+    /// the cycle-phase batch.
     pub output_points: Stage6aOutputPoints<F>,
     /// The pre-/around-batch draws carried to stage 6b (see
     /// [`Stage6aCarriedChallenges`]).
@@ -86,8 +72,7 @@ pub struct Stage6aZkOutput<F: Field, C> {
     pub consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub output_claims: CommittedOutputClaimOutput<C>,
     /// The produced opening *points*, the ZK counterpart of the clear path's
-    /// `output_points`. Read by stage 6b and BlindFold through the same
-    /// `Stage6aOutputPoints<F>` accessors.
+    /// `output_points`. Read by stage 6b and BlindFold.
     pub output_points: Stage6aOutputPoints<F>,
 }
 
@@ -111,13 +96,6 @@ impl<F: Field, C> Stage6aOutput<F, C> {
         match self {
             Self::Clear(output) => &output.challenges,
             Self::Zk(output) => &output.challenges,
-        }
-    }
-
-    pub fn clear(&self) -> Result<&Stage6aClearOutput<F>, crate::VerifierError> {
-        match self {
-            Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6a" }),
         }
     }
 

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Field, Fr};
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
@@ -26,12 +26,15 @@ impl TamperMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "the shared `Checked` prefix records where a tampered field is caught; dropping it would obscure the disposition semantics"
+)]
 pub enum TamperDisposition {
     CheckedAtStage,
     CheckedByLaterStage(VerifierPhase),
     CheckedByFinalOpenings,
     CheckedByZk,
-    NotVerifierOwned,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +43,6 @@ pub enum MutationStrategy {
     FlipBool,
     ChangeEnumVariant,
     RemoveItem,
-    AddItem,
     DuplicateItem,
     SwapOrder,
     TruncateVector,
@@ -48,7 +50,6 @@ pub enum MutationStrategy {
     ReplaceProofPayload,
     ReplaceModePayload,
     ReplaceSetup,
-    None,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +57,6 @@ pub enum TamperCoverage {
     Active,
     IgnoredUntilFixture,
     Deferred,
-    NotApplicable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1080,19 +1080,15 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .collect()
 }
 
-pub fn target(name: &str) -> Option<TamperTarget> {
-    all_targets().into_iter().find(|target| target.name == name)
-}
-
 #[expect(
     clippy::panic,
     reason = "tamper tests should fail loudly when they reference a missing manifest entry"
 )]
 pub fn required_target(name: &str) -> TamperTarget {
-    match target(name) {
-        Some(target) => target,
-        None => panic!("missing tamper manifest target {name}"),
-    }
+    all_targets()
+        .into_iter()
+        .find(|target| target.name == name)
+        .unwrap_or_else(|| panic!("missing tamper manifest target {name}"))
 }
 
 pub fn target_names_are_unique() -> bool {
@@ -1114,7 +1110,7 @@ pub fn manifest_paths() -> BTreeSet<&'static str> {
     reason = "manifest structural tests should fail loudly if claim serialization breaks"
 )]
 pub fn clear_claim_leaf_paths() -> BTreeSet<String> {
-    let claims = zero_clear_claims();
+    let claims = clear_claims::<Fr>(true);
     let value = serde_json::to_value(claims).expect("clear claims should serialize");
     let mut paths = BTreeSet::new();
     collect_leaf_paths("claims", &value, &mut paths);
@@ -1160,6 +1156,16 @@ pub fn assert_manifest_target_is_active(target: TamperTarget) {
         target.coverage,
         TamperCoverage::Active,
         "tamper target is not active: {target:?}"
+    );
+}
+
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+pub fn assert_zk_target_active(name: &str) {
+    let target = required_target(name);
+    assert_manifest_target_is_active(target);
+    assert!(
+        target.mode.includes(true),
+        "tamper target mode does not include ZK: {target:?}"
     );
 }
 
@@ -1288,8 +1294,9 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
     }
 }
 
-fn zero_clear_claims() -> ClearProofClaims<Fr> {
-    let zero = Fr::from_u64(0);
+pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
+    let zero = F::zero();
+    let optional = fill_optionals.then_some(zero);
 
     ClearProofClaims {
         stage1: stage1::outputs::Stage1OutputClaims {
@@ -1354,11 +1361,11 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 },
                 instruction_claim_reduction:
                     stage2::outputs::InstructionClaimReductionOutputClaims {
-                        lookup_output: Some(zero),
+                        lookup_output: optional,
                         left_lookup_operand: zero,
                         right_lookup_operand: zero,
-                        left_instruction_input: Some(zero),
-                        right_instruction_input: Some(zero),
+                        left_instruction_input: optional,
+                        right_instruction_input: optional,
                     },
                 ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims { ram_ra: zero },
                 ram_output_check: stage2::outputs::RamOutputCheckOutputClaims { val_final: zero },
@@ -1397,8 +1404,8 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rd_inc: zero,
             },
             ram_val_check: stage4::RamValCheckOutputClaims {
-                untrusted_advice: Some(zero),
-                trusted_advice: Some(zero),
+                untrusted_advice: optional,
+                trusted_advice: optional,
                 program_image: None,
                 ram_ra: zero,
                 ram_inc: zero,
@@ -1419,7 +1426,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
         stage6a: stage6a::outputs::Stage6aOutputClaims {
             bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
                 intermediate: zero,
-                val_stages: vec![zero; 5],
+                val_stages: Vec::new(),
             },
             booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
                 intermediate: zero,
@@ -1448,19 +1455,25 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
-            trusted_advice: Some(stage6b::outputs::AdviceCyclePhaseOutputClaims {
-                trusted: Some(zero),
-                untrusted: None,
-            }),
-            untrusted_advice: Some(stage6b::outputs::AdviceCyclePhaseOutputClaims {
-                trusted: None,
-                untrusted: Some(zero),
-            }),
-            bytecode_reduction: Some(stage6b::outputs::BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: Some(zero),
-                chunks: Vec::new(),
-            }),
-            program_image_reduction: Some(
+            trusted_advice: fill_optionals.then_some(
+                stage6b::outputs::AdviceCyclePhaseOutputClaims {
+                    trusted: Some(zero),
+                    untrusted: None,
+                },
+            ),
+            untrusted_advice: fill_optionals.then_some(
+                stage6b::outputs::AdviceCyclePhaseOutputClaims {
+                    trusted: None,
+                    untrusted: Some(zero),
+                },
+            ),
+            bytecode_reduction: fill_optionals.then_some(
+                stage6b::outputs::BytecodeReductionCyclePhaseOutputClaims {
+                    intermediate: Some(zero),
+                    chunks: Vec::new(),
+                },
+            ),
+            program_image_reduction: fill_optionals.then_some(
                 stage6b::outputs::ProgramImageReductionCyclePhaseOutputClaims {
                     program_image: zero,
                 },
@@ -1473,24 +1486,24 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                 },
-            trusted_advice: Some(
+            trusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
                     trusted: Some(zero),
                     untrusted: None,
                 },
             ),
-            untrusted_advice: Some(
+            untrusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
                     trusted: None,
                     untrusted: Some(zero),
                 },
             ),
-            bytecode_address_phase: Some(
+            bytecode_address_phase: fill_optionals.then_some(
                 stage7::committed_reduction_address_phase::BytecodeReductionAddressPhaseOutputClaims {
                     chunks: vec![zero],
                 },
             ),
-            program_image_address_phase: Some(
+            program_image_address_phase: fill_optionals.then_some(
                 stage7::committed_reduction_address_phase::ProgramImageReductionAddressPhaseOutputClaims {
                     program_image: zero,
                 },

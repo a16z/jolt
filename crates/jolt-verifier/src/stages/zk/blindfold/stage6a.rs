@@ -32,8 +32,8 @@ where
         formula_dimensions.instruction_ra_virtualization,
     );
     let inc_claims = relations::claim_reductions::increments::ClaimReduction::new(trace_dimensions);
-    let (trusted_layout, trusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Trusted);
-    let (untrusted_layout, untrusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Untrusted);
+    let trusted_layout = input.checked.precommitted.advice(JoltAdviceKind::Trusted);
+    let untrusted_layout = input.checked.precommitted.advice(JoltAdviceKind::Untrusted);
 
     // The cycle bytecode round count is needed by the shared publics helper; the
     // committed and uncommitted cycle-phase relations are distinct types, so pick
@@ -57,10 +57,10 @@ where
         instruction_ra_claims.rounds(),
         inc_claims.rounds(),
     )?;
-    if let (Some(layout), Some(_claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
+    if let Some(layout) = trusted_layout {
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted)?;
     }
-    if let (Some(layout), Some(_claim)) = (untrusted_layout.as_ref(), untrusted_claims.as_ref()) {
+    if let Some(layout) = untrusted_layout {
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted)?;
     }
     if let Some(layout) = bytecode_reduction_layout.as_ref() {
@@ -96,16 +96,8 @@ where
         "stage6.address_phase",
         bytecode_address_claims.domain(),
         &[
-            bytecode_address_claims.rounds(),
-            booleanity_address_claims.rounds(),
-        ],
-        &[
-            bytecode_address_claims.input_expression::<PCS::Field>(),
-            booleanity_address_claims.input_expression::<PCS::Field>(),
-        ],
-        &[
-            bytecode_address_claims.output_expression::<PCS::Field>(),
-            booleanity_address_claims.output_expression::<PCS::Field>(),
+            relation_claim(&bytecode_address_claims),
+            relation_claim(&booleanity_address_claims),
         ],
         &input.stage6a.consistency,
         &input.stage6a.output_claims,

@@ -1,10 +1,7 @@
 //! The stage 3 `InstructionInputVirtualization` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 3 batch proof) and the verifier (after checking it). It
-//! owns the instruction-input opening-point derivation and the `EqProduct`
-//! public-value computation (against the product-remainder opening point), so the
-//! input/output claim algebra lives here once.
+//! Owns the instruction-input opening-point derivation and the `EqProduct`
+//! public-value computation (against the product-remainder opening point).
 //!
 //! The reduced-vs-product input consistency guard — that stage 2's
 //! `instruction_claim_reduction` left/right openings (when present) agree with the
@@ -36,17 +33,6 @@ pub fn instruction_input_input_values_from_upstream<F: Field>(
     InstructionInputInputClaims {
         right_instruction_input: product_remainder.right_instruction_input,
         left_instruction_input: product_remainder.left_instruction_input,
-    }
-}
-
-/// Wire the consumed opening *points*. Only the values feed the input claim (the
-/// output points come from this relation's own sumcheck point), so the input
-/// points are left empty.
-pub fn instruction_input_input_points_from_upstream<F: Field>(
-) -> InstructionInputInputClaims<Vec<F>> {
-    InstructionInputInputClaims {
-        right_instruction_input: Vec::new(),
-        left_instruction_input: Vec::new(),
     }
 }
 

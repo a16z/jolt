@@ -60,10 +60,6 @@ impl<F: Field> AdviceAddressPhase<F> {
         }
     }
 
-    pub fn kind(&self) -> JoltAdviceKind {
-        self.kind
-    }
-
     /// This kind's produced opening point, recovered from the output points.
     fn output_point<'a>(
         &self,

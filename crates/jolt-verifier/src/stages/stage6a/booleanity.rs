@@ -18,19 +18,6 @@ use jolt_field::Field;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
-/// The address phase consumes no openings (its input claim is the constant zero).
-/// (Verifier-side constructor for the moved [`BooleanityAddressPhaseInputClaims`].)
-pub fn booleanity_address_phase_input_values_from_upstream<F: Field>(
-) -> BooleanityAddressPhaseInputClaims<F> {
-    BooleanityAddressPhaseInputClaims::default()
-}
-
-/// The address phase consumes no openings, so its input-point struct is empty.
-pub fn booleanity_address_phase_input_points_from_upstream<F: Field>(
-) -> BooleanityAddressPhaseInputClaims<Vec<F>> {
-    BooleanityAddressPhaseInputClaims::default()
-}
-
 pub struct BooleanityAddressPhase<F: Field> {
     symbolic: relations::booleanity::BooleanityAddressPhase,
     _field: PhantomData<F>,

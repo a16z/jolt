@@ -6,16 +6,5 @@ pub mod registers_claim_reduction;
 pub mod spartan_shift;
 mod verify;
 
-pub use instruction_input::{
-    InstructionInput, InstructionInputInputClaims, InstructionInputOutputClaims,
-};
-pub use outputs::{
-    Stage3Challenges, Stage3ClearOutput, Stage3InputClaims, Stage3InputPoints, Stage3Output,
-    Stage3OutputClaims, Stage3OutputPoints, Stage3Sumchecks, Stage3ZkOutput,
-};
-pub use registers_claim_reduction::{
-    RegistersClaimReduction, RegistersClaimReductionInputClaims,
-    RegistersClaimReductionOutputClaims,
-};
-pub use spartan_shift::{SpartanShift, SpartanShiftInputClaims, SpartanShiftOutputClaims};
+pub use outputs::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints, Stage3ZkOutput};
 pub use verify::verify;

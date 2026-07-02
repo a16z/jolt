@@ -1,10 +1,8 @@
 //! The stage 3 `SpartanShift` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 3 batch proof) and the verifier (after checking it). It
-//! owns the shift opening-point derivation and the `EqPlusOne` public-value
+//! Owns the shift opening-point derivation and the `EqPlusOne` public-value
 //! computations (against the product uni-skip `tau_low` and the product-remainder
-//! opening point), so the input/output claim algebra lives here once.
+//! opening point).
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
@@ -36,19 +34,6 @@ pub fn spartan_shift_input_values_from_upstream<F: Field>(
         next_is_virtual: outer.next_is_virtual,
         next_is_first_in_sequence: outer.next_is_first_in_sequence,
         next_is_noop: stage2.product_remainder.next_is_noop,
-    }
-}
-
-/// Wire shift's consumed opening *points*. Shift reads only the input values — its
-/// output points come from its own sumcheck point and the stage-2 eq tables — so
-/// the input opening points are left empty.
-pub fn spartan_shift_input_points_from_upstream<F: Field>() -> SpartanShiftInputClaims<Vec<F>> {
-    SpartanShiftInputClaims {
-        next_unexpanded_pc: Vec::new(),
-        next_pc: Vec::new(),
-        next_is_virtual: Vec::new(),
-        next_is_first_in_sequence: Vec::new(),
-        next_is_noop: Vec::new(),
     }
 }
 

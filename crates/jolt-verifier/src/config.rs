@@ -10,16 +10,6 @@ pub enum ZkConfig {
     BlindFold,
 }
 
-impl ZkConfig {
-    pub const fn from_bool(zk: bool) -> Self {
-        if zk {
-            Self::BlindFold
-        } else {
-            Self::Transparent
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
@@ -28,7 +18,11 @@ pub struct JoltProtocolConfig {
 impl JoltProtocolConfig {
     pub const fn for_zk(zk: bool) -> Self {
         Self {
-            zk: ZkConfig::from_bool(zk),
+            zk: if zk {
+                ZkConfig::BlindFold
+            } else {
+                ZkConfig::Transparent
+            },
         }
     }
 }

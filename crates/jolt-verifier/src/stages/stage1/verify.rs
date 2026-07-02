@@ -1,7 +1,4 @@
-use jolt_claims::protocols::jolt::{
-    geometry::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain,
-};
-use jolt_claims::NoChallenges;
+use jolt_claims::protocols::jolt::{geometry::spartan::SpartanOuterDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::FromPrimitiveInt;
 use jolt_openings::CommitmentScheme;
@@ -17,12 +14,10 @@ use super::outer_remainder::{
     outer_remainder_input_points_from_uniskip_output,
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
-use super::outer_uniskip::{OuterUniskip, OuterUniskipInputClaims};
 use super::outputs::{
     Stage1BatchInputClaims, Stage1BatchInputPoints, Stage1BatchSumchecks, Stage1Challenges,
     Stage1ClearOutput, Stage1Output, Stage1ZkOutput,
 };
-use crate::stages::relations::ConcreteSumcheck;
 use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -41,16 +36,8 @@ where
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = transcript.challenge_vector(log_t + 2);
 
-    let uniskip_domain = JoltSumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
-    let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_domain else {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: "Stage 1 uni-skip sumcheck must use the centered-integer domain".to_string(),
-        });
-    };
-
     let sumchecks = Stage1BatchSumchecks {
-        outer_remainder: OuterRemainder::new(dimensions.clone()),
+        outer_remainder: OuterRemainder::new(dimensions),
     };
     // A transcript no-op (the remainder draws no challenges), but it produces the
     // aggregate value the generated clear drivers take.
@@ -71,14 +58,13 @@ where
                 stage,
                 reason: error.to_string(),
             })?;
-        let uniskip_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage1_uni_skip_first_round_proof,
-                proof_label: "stage1_uni_skip_first_round_proof",
-                output_claim_count: 1,
-                stage,
-            })?;
+        let uniskip_output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage1_uni_skip_first_round_proof,
+            "stage1_uni_skip_first_round_proof",
+            1,
+            stage,
+        )?;
         let [round] = uniskip_consistency.rounds.as_slice() else {
             return Err(VerifierError::StageClaimSumcheckFailed {
                 stage,
@@ -89,14 +75,13 @@ where
 
         let remainder_consistency =
             sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
-        let remainder_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage1_sumcheck_proof,
-                proof_label: "stage1_sumcheck_proof",
-                output_claim_count: sumchecks.output_claim_count(),
-                stage,
-            })?;
+        let remainder_output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage1_sumcheck_proof,
+            "stage1_sumcheck_proof",
+            sumchecks.output_claim_count(),
+            stage,
+        )?;
         let output_points =
             sumchecks.derive_opening_points(&remainder_consistency.challenges(), &input_points)?;
 
@@ -114,16 +99,11 @@ where
     }
 
     let claims = &proof.clear_claims()?.stage1;
-    let uniskip_relation = OuterUniskip::<PCS::Field>::new(dimensions);
-    // The uni-skip first round consumes no openings: its `input_expression` is
-    // `zero`, so the relation's `input_claim` is the constant zero. Computing it
-    // through the relation (rather than hard-coding `0`) keeps the claim algebra
-    // single-sourced with the BlindFold input constraint.
-    let uniskip_input_claim = uniskip_relation.input_claim(
-        &OuterUniskipInputClaims::default(),
-        &NoChallenges::default(),
-    )?;
-    debug_assert_eq!(uniskip_input_claim, PCS::Field::from_u64(0));
+    // The uni-skip first round consumes no openings: its symbolic `input_expression`
+    // is `zero` (jolt-claims `spartan/outer_uniskip.rs`), so the input claim is the
+    // constant zero. BlindFold still single-sources this claim from that same symbolic
+    // Expr, and muldiv (host) catches any drift between the two.
+    let uniskip_input_claim = PCS::Field::from_u64(0);
     let uniskip_reduction = proof
         .stages
         .stage1_uni_skip_first_round_proof
@@ -133,7 +113,7 @@ where
                 SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
                 uniskip_input_claim,
             ),
-            CenteredIntegerDomain::new(domain_size),
+            CenteredIntegerDomain::new(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE),
             UNISKIP_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )
@@ -203,6 +183,5 @@ where
     Ok(Stage1Output::Clear(Stage1ClearOutput {
         output_values: claims.outer.clone(),
         output_points,
-        uniskip_output_claim,
     }))
 }

@@ -93,14 +93,13 @@ where
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
         let consistency = sumchecks.verify_zk(&proof.stages.stage5_sumcheck_proof, transcript)?;
-        let batch_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage5_sumcheck_proof,
-                proof_label: "stage5_sumcheck_proof",
-                output_claim_count: sumchecks.output_claim_count(),
-                stage: JoltRelationId::InstructionReadRaf,
-            })?;
+        let batch_output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage5_sumcheck_proof,
+            "stage5_sumcheck_proof",
+            sumchecks.output_claim_count(),
+            JoltRelationId::InstructionReadRaf,
+        )?;
 
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
         // output points; `derive_opening_points` ignores the instruction relation's

@@ -2,7 +2,6 @@
 
 use jolt_claims::protocols::jolt::{geometry::instruction, JoltRelationId};
 use jolt_field::Field;
-use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
@@ -271,7 +270,9 @@ pub struct Stage2ClearOutput<F: Field> {
     /// `output_values`. Later stages read the points through the `*_point()`
     /// accessors.
     pub output_points: Stage2BatchOutputPoints<F>,
-    pub product_uniskip: VerifiedProductUniSkip<F>,
+    /// The product uni-skip `tau_low` (stage 1's remainder point low half,
+    /// reversed), read mode-agnostically via [`Stage2Output::product_tau_low`].
+    pub product_tau_low: Vec<F>,
 }
 
 /// Stage 2's ZK output, carrying the Fiat-Shamir values BlindFold sources via
@@ -315,7 +316,7 @@ impl<F: Field, C> Stage2Output<F, C> {
     /// construction evaluates its `EqPlusOne`/`EqSpartan` publics against it.
     pub fn product_tau_low(&self) -> &[F] {
         match self {
-            Self::Clear(output) => &output.product_uniskip.tau_low,
+            Self::Clear(output) => &output.product_tau_low,
             Self::Zk(output) => &output.product_tau_low,
         }
     }
@@ -341,13 +342,6 @@ impl<F: Field, C> Stage2Output<F, C> {
             Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage2" }),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedProductUniSkip<F: Field> {
-    pub tau_low: Vec<F>,
-    pub tau_high: F,
-    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
 }
 
 #[cfg(test)]

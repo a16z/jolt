@@ -1,11 +1,8 @@
 //! The stage 2 `RamReadWriteChecking` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 2 batch proof) and the verifier (after checking it). It
-//! owns the RAM read-write opening-point derivation and the `EqCycle` public-value
-//! computation, so the input/output claim algebra lives here once instead of being
-//! hand-coded on each side (and stays in lockstep with the BlindFold constraint,
-//! which evaluates the same `ram::read_write_checking` formula).
+//! Owns the RAM read-write opening-point derivation and the `EqCycle` public-value
+//! computation, in lockstep with the BlindFold constraint's
+//! `ram::read_write_checking` formula.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
@@ -31,16 +28,6 @@ pub fn ram_read_write_input_values_from_upstream<F: Field>(
     RamReadWriteInputClaims {
         ram_read_value: outer.ram_read_value,
         ram_write_value: outer.ram_write_value,
-    }
-}
-
-/// Wire the consumed RAM read/write value opening *points* (both empty — these
-/// openings carry no point at this stage, so no upstream data is needed and the
-/// same wiring serves the clear and ZK paths).
-pub fn ram_read_write_input_points_from_upstream<F: Field>() -> RamReadWriteInputClaims<Vec<F>> {
-    RamReadWriteInputClaims {
-        ram_read_value: Vec::new(),
-        ram_write_value: Vec::new(),
     }
 }
 

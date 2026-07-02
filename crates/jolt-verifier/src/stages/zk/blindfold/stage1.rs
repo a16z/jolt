@@ -23,10 +23,10 @@ where
         input.stage1.uniskip_consistency.clone(),
         &input.stage1.uniskip_output_claims,
         values,
-        vec![VerifierOpeningId::Jolt(outer_uniskip_opening())],
+        vec![outer_uniskip_opening()],
         Vec::new(),
         VerifierExpr::zero(),
-        opening(VerifierOpeningId::Jolt(outer_uniskip_opening())),
+        opening(outer_uniskip_opening()),
     )?;
 
     let opening_order = dimensions.variables().to_vec();
@@ -60,7 +60,7 @@ where
         });
     };
     let input_claim = scale_expr(
-        opening(VerifierOpeningId::Jolt(outer_uniskip_opening())),
+        opening(outer_uniskip_opening()),
         *remainder_batching_coefficient
             * PCS::Field::pow2(input.stage1.remainder_consistency.max_num_vars - remainder_rounds),
     );
@@ -79,11 +79,7 @@ where
         input.stage1.remainder_consistency.consistency.clone(),
         &input.stage1.remainder_output_claims,
         values,
-        opening_order
-            .iter()
-            .copied()
-            .map(|variable| VerifierOpeningId::Jolt(outer_opening(variable)))
-            .collect(),
+        opening_order.iter().copied().map(outer_opening).collect(),
         Vec::new(),
         input_claim,
         output_claim,
@@ -93,23 +89,21 @@ where
 fn stage1_spartan_outer_output_expr<F: Field>(
     openings: &[JoltVirtualPolynomial],
 ) -> VerifierExpr<F> {
-    let opening_id =
-        |variable: JoltVirtualPolynomial| VerifierOpeningId::Jolt(outer_opening(variable));
     let mut output = VerifierExpr::zero();
     for left in 0..openings.len() {
         for right in 0..openings.len() {
             output = output
                 + derived(VerifierPublicId::SpartanOuter(
                     JoltSpartanOuterPublic::QuadraticCoefficient { left, right },
-                )) * opening(opening_id(openings[left]))
-                    * opening(opening_id(openings[right]));
+                )) * opening(outer_opening(openings[left]))
+                    * opening(outer_opening(openings[right]));
         }
     }
     for (index, variable) in openings.iter().copied().enumerate() {
         output = output
             + derived(VerifierPublicId::SpartanOuter(
                 JoltSpartanOuterPublic::LinearCoefficient(index),
-            )) * opening(opening_id(variable));
+            )) * opening(outer_opening(variable));
     }
     output
         + derived(VerifierPublicId::SpartanOuter(

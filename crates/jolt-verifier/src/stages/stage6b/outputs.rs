@@ -1,6 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 6b (cycle-phase)
 //! verification.
 
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
@@ -251,4 +252,16 @@ pub struct BytecodeReductionWeights<F: Field> {
     pub r_bc: Vec<F>,
     pub chunk_rbc_weights: Vec<F>,
     pub lane_weights: Vec<F>,
+}
+
+impl<F: Field> BytecodeReductionWeights<F> {
+    /// Borrow the weights as the jolt-claims `BytecodeOutputWeightInputs` the
+    /// bytecode reduction's output-weight publics resolve against.
+    pub(crate) fn as_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
+        BytecodeOutputWeightInputs {
+            r_bc: &self.r_bc,
+            chunk_rbc_weights: &self.chunk_rbc_weights,
+            lane_weights: &self.lane_weights,
+        }
+    }
 }

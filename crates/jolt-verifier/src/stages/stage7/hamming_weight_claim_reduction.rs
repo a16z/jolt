@@ -1,13 +1,9 @@
 //! The stage 7 `HammingWeightClaimReduction` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 7 batch proof) and the verifier (after checking it). It
-//! reduces the per-family RA booleanity, virtualization, and hamming-weight
-//! claims (instruction, bytecode, RAM) into the one-hot `Ra` opening claims that
-//! anchor the stage 8 final batched opening. It owns the shared opening-point
-//! derivation and the `EqBooleanity` / `EqVirtualization` public-value
-//! computation, so the input/output claim algebra lives here once instead of
-//! being hand-coded on each side.
+//! Reduces the per-family RA booleanity, virtualization, and hamming-weight claims
+//! (instruction, bytecode, RAM) into the one-hot `Ra` opening claims that anchor the
+//! stage 8 final batched opening. Owns the shared opening-point derivation and the
+//! `EqBooleanity` / `EqVirtualization` public-value computation.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{

@@ -1,11 +1,8 @@
 //! The stage 2 `SpartanProductVirtualization` product-remainder sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 2 batch proof) and the verifier (after checking it). It
-//! owns the product opening-point derivation and the uni-skip Lagrange-weight /
-//! `TauKernel` public-value computation, so the input/output claim algebra lives
-//! here once (and stays in lockstep with the BlindFold constraint, which evaluates
-//! the same `spartan::product_remainder` formula).
+//! Owns the product opening-point derivation and the uni-skip Lagrange-weight /
+//! `TauKernel` public-value computation, in lockstep with the BlindFold constraint's
+//! `spartan::product_remainder` formula.
 //!
 //! The companion product *uni-skip* first round is a univariate skip rather than a
 //! [`ConcreteSumcheck`], so it stays hand-coded in the stage-2 verifier; this
@@ -37,15 +34,6 @@ pub fn product_remainder_input_values_from_uniskip_output<F: Field>(
 ) -> ProductRemainderInputClaims<F> {
     ProductRemainderInputClaims {
         product_uniskip: product_uniskip_output_claim,
-    }
-}
-
-/// Wire the consumed opening *point* (empty — this input carries no point at this
-/// stage).
-pub fn product_remainder_input_points_from_uniskip_output<F: Field>(
-) -> ProductRemainderInputClaims<Vec<F>> {
-    ProductRemainderInputClaims {
-        product_uniskip: Vec::new(),
     }
 }
 

@@ -13,28 +13,21 @@ use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_transcript::Transcript;
 
 use super::{
-    booleanity::{
-        booleanity_address_phase_input_points_from_upstream,
-        booleanity_address_phase_input_values_from_upstream, BooleanityAddressPhase,
-    },
+    booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseInputClaims},
     bytecode_read_raf::{
         bytecode_read_raf_address_phase_input_points_from_upstream,
         bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
     },
     outputs::{
         Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aInputPoints,
-        Stage6aOutput, Stage6aOutputClaims, Stage6aSumchecks, Stage6aZkOutput,
+        Stage6aOutput, Stage6aSumchecks, Stage6aZkOutput,
     },
 };
 use crate::{
     proof::JoltProof,
     stages::{
-        stage1::Stage1Output,
-        stage2::Stage2Output,
-        stage3::Stage3Output,
-        stage4::Stage4Output,
-        stage5::{Stage5Output, Stage5OutputPoints},
-        zk::committed,
+        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
+        stage5::Stage5Output, zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -109,8 +102,8 @@ where
     // transcript schedule fixes them here. Stage 6b's booleanity member is their
     // only consumer, so they ride downstream as typed upstream values (the same
     // idiom as `Stage2ZkOutput`'s `product_tau_high`).
-    let stage5_points = stage5_output_points(stage5);
-    let stage5_instruction_address = stage5_instruction_r_address(stage5);
+    let stage5_points = stage5.output_points();
+    let stage5_instruction_address = stage5.instruction_r_address();
     let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
 
     let mut booleanity_reference_address = stage5_instruction_address.to_vec();
@@ -142,23 +135,22 @@ where
 
     let address_input_points = Stage6aInputPoints {
         bytecode_read_raf: bytecode_read_raf_address_phase_input_points_from_upstream(),
-        booleanity: booleanity_address_phase_input_points_from_upstream(),
+        booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
     if checked.zk {
         let consistency =
             address_sumchecks.verify_zk(&proof.stages.stage6a_sumcheck_proof, transcript)?;
-        let output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage6a_sumcheck_proof,
-                proof_label: "stage6a_sumcheck_proof",
-                // The address-phase output Expr carries only the two staged
-                // intermediates; committed mode additionally commits the staged
-                // `BytecodeValStage` columns, so the count stays hand-written.
-                output_claim_count: 2 + num_bytecode_val_stages,
-                stage: JoltRelationId::BytecodeReadRaf,
-            })?;
+        let output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage6a_sumcheck_proof,
+            "stage6a_sumcheck_proof",
+            // The address-phase output Expr carries only the two staged
+            // intermediates; committed mode additionally commits the staged
+            // `BytecodeValStage` columns, so the count stays hand-written.
+            2 + num_bytecode_val_stages,
+            JoltRelationId::BytecodeReadRaf,
+        )?;
         let output_points = address_sumchecks
             .derive_opening_points(&consistency.challenges(), &address_input_points)?;
         return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
@@ -191,7 +183,7 @@ where
             &stage4.clear()?.output_values,
             &stage5.clear()?.output_values,
         )?,
-        booleanity: booleanity_address_phase_input_values_from_upstream(),
+        booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
     let batch = address_sumchecks.verify_clear(
@@ -213,7 +205,11 @@ where
         return Err(VerifierError::StageClaimOutputMismatch { stage: 6 });
     }
 
-    append_address_phase_opening_claims(transcript, claims);
+    // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
+    // then booleanity `intermediate`) is single-sourced from the generated
+    // `Stage6aOutputClaims::append_to_transcript` (member declaration order =
+    // canonical Fiat-Shamir order; no alias dedup in the address phase).
+    claims.append_to_transcript(transcript);
 
     Ok(Stage6aOutput::Clear(Stage6aClearOutput {
         output_points,
@@ -233,64 +229,17 @@ fn gamma_powers<F: Field>(gamma: F, len: usize) -> Vec<F> {
     powers
 }
 
-fn stage5_output_points<F: Field, C>(stage5: &Stage5Output<F, C>) -> &Stage5OutputPoints<F> {
-    match stage5 {
-        Stage5Output::Clear(output) => &output.output_points,
-        Stage5Output::Zk(output) => &output.output_points,
-    }
-}
-
-/// The contiguous stage-5 instruction address point, stored on both output
-/// variants because the per-chunk virtual-RA cells don't hold it contiguously.
-fn stage5_instruction_r_address<F: Field, C>(stage5: &Stage5Output<F, C>) -> &[F] {
-    match stage5 {
-        Stage5Output::Clear(output) => &output.instruction_r_address,
-        Stage5Output::Zk(output) => &output.instruction_r_address,
-    }
-}
-
-fn append_address_phase_opening_claims<F, T>(transcript: &mut T, claims: &Stage6aOutputClaims<F>)
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    // The address-phase order (bytecode `intermediate`, each `val_stages`, then
-    // booleanity `intermediate`) is single-sourced from the generated
-    // `Stage6aOutputClaims::append_to_transcript` (member declaration order =
-    // canonical Fiat-Shamir order; no alias dedup in the address phase).
-    claims.append_to_transcript(transcript);
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::booleanity::BooleanityAddressPhaseOutputClaims;
     use super::super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
+    use super::super::outputs::Stage6aOutputClaims;
     use super::*;
+    use crate::stages::relations::append_recording::RecordingTranscript;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
-    }
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
     }
 
     fn sample_claims() -> Stage6aOutputClaims<Fr> {
@@ -310,12 +259,12 @@ mod tests {
     /// booleanity `intermediate`. Single-sourced from the generated
     /// `Stage6aOutputClaims::append_to_transcript`.
     #[test]
-    fn append_address_phase_opening_claims_follows_canonical_order() {
+    fn stage6a_output_claims_append_follows_canonical_order() {
         let mut claims = sample_claims();
         claims.bytecode_read_raf.val_stages = vec![fr(903), fr(904)];
 
         let mut got = RecordingTranscript::default();
-        append_address_phase_opening_claims(&mut got, &claims);
+        claims.append_to_transcript(&mut got);
 
         let mut want = RecordingTranscript::default();
         for value in [fr(901), fr(903), fr(904), fr(902)] {

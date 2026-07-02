@@ -20,20 +20,6 @@ use jolt_poly::try_eq_mle;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
-/// `RamHammingBooleanity` consumes no openings (its input claim is the constant
-/// zero), so its consumed-claim struct is empty. (Verifier-side constructor for
-/// the moved [`RamHammingBooleanityInputClaims`].)
-pub fn ram_hamming_booleanity_input_values_from_upstream<F: Field>(
-) -> RamHammingBooleanityInputClaims<F> {
-    RamHammingBooleanityInputClaims::default()
-}
-
-/// `RamHammingBooleanity` consumes no openings, so its input-point struct is empty.
-pub fn ram_hamming_booleanity_input_points_from_upstream<F: Field>(
-) -> RamHammingBooleanityInputClaims<Vec<F>> {
-    RamHammingBooleanityInputClaims::default()
-}
-
 pub struct RamHammingBooleanity<F: Field> {
     symbolic: relations::ram::HammingBooleanity,
     trace_dimensions: TraceDimensions,

@@ -54,7 +54,10 @@ pub fn ram_val_check_input_values_from_upstream<F: Field>(
         ram_val_final: stage2.ram_output_check.val_final,
         untrusted_advice: advice(JoltAdviceKind::Untrusted),
         trusted_advice: advice(JoltAdviceKind::Trusted),
-        program_image: init.program_image_contribution_value,
+        program_image: init
+            .program_image_contribution
+            .as_ref()
+            .map(|(_, value)| *value),
     }
 }
 
@@ -173,20 +176,16 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                 ram_read_write_point.len()
             )));
         }
-        let (r_address, r_cycle) = ram_read_write_point.split_at(self.ram_log_k);
-        let cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
-        if cycle.len() != r_cycle.len() {
-            return Err(public_input_failed(format!(
-                "RAM value cycle point length mismatch: expected {}, got {}",
-                r_cycle.len(),
-                cycle.len()
-            )));
-        }
+        let r_address = &ram_read_write_point[..self.ram_log_k];
+        let cycle = self
+            .trace_dimensions
+            .cycle_opening_point(sumcheck_point)
+            .map_err(public_input_failed)?;
         let opening_point = [r_address, cycle.as_slice()].concat();
-        // The advice / program-image opening *points* are not derived from the
-        // batch sumcheck point (they sit at the staged RAM address sub-point); they
-        // are filled in by the stage-4 verifier when it assembles the located
-        // output claims, so the point-only cell leaves them absent here.
+        // The advice / program-image points sit at the staged RAM address sub-point,
+        // not the batch sumcheck point; downstream reads them from
+        // `RamValCheckInitialEvaluation` (clear) or BlindFold's own init decomposition
+        // (ZK), so they are left absent here.
         Ok(RamValCheckOutputClaims {
             untrusted_advice: None,
             trusted_advice: None,
@@ -348,14 +347,9 @@ pub(crate) fn ram_val_check_init_structure<F: Field>(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInitialEvaluation<F: Field> {
     pub public_eval: F,
-    /// The staged program-image contribution's opening *point* (committed program
-    /// mode only): the full RAM address point. Present iff
-    /// `program_image_contribution_value` is.
-    pub program_image_contribution_point: Option<Vec<F>>,
-    /// The staged program-image contribution's opening *value* (committed program
-    /// mode only). Its presence tracks whether the program-image contribution
-    /// exists.
-    pub program_image_contribution_value: Option<F>,
+    /// The staged program-image contribution's opening point (the full RAM address
+    /// point) and value; committed-program mode only.
+    pub program_image_contribution: Option<(Vec<F>, F)>,
     pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
 }
 
@@ -392,21 +386,20 @@ pub(crate) fn ram_val_check_initial_evaluation<F: Field>(
 ) -> Result<RamValCheckInitialEvaluation<F>, VerifierError> {
     let ram = &claims.ram_val_check;
     let program_image_opening = program_image::ram_val_check_contribution_opening();
-    let (program_image_contribution_point, program_image_contribution_value) =
-        match (&structure.program_image_point, ram.program_image) {
-            (None, Some(_)) => {
-                return Err(VerifierError::UnexpectedOpeningClaim {
-                    id: program_image_opening,
-                });
-            }
-            (None, None) => (None, None),
-            (Some(_), None) => {
-                return Err(VerifierError::MissingOpeningClaim {
-                    id: program_image_opening,
-                });
-            }
-            (Some(point), Some(value)) => (Some(point.clone()), Some(value)),
-        };
+    let program_image_contribution = match (&structure.program_image_point, ram.program_image) {
+        (None, Some(_)) => {
+            return Err(VerifierError::UnexpectedOpeningClaim {
+                id: program_image_opening,
+            });
+        }
+        (None, None) => None,
+        (Some(_), None) => {
+            return Err(VerifierError::MissingOpeningClaim {
+                id: program_image_opening,
+            });
+        }
+        (Some(point), Some(value)) => Some((point.clone(), value)),
+    };
 
     let mut advice_contributions = Vec::new();
     for (kind, opening_claim) in [
@@ -435,16 +428,16 @@ pub(crate) fn ram_val_check_initial_evaluation<F: Field>(
 
     Ok(RamValCheckInitialEvaluation {
         public_eval: structure.public_eval,
-        program_image_contribution_point,
-        program_image_contribution_value,
+        program_image_contribution,
         advice_contributions,
     })
 }
 
 /// The advice block's selector and opening point, derived from the memory layout
-/// and the RAM address point. The prover (which produces the advice opening from
-/// the witness) and the verifier (which checks the claimed opening) must compute
-/// this geometry identically, so it is single-sourced here.
+/// and the RAM address point.
+///
+/// WARNING: the ZK path recomputes the same geometry in `zk::blindfold`'s
+/// `advice_selector`, so the two must stay in lockstep.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckAdviceBlock<F: Field> {
     pub selector: F,
@@ -452,9 +445,11 @@ pub struct RamValCheckAdviceBlock<F: Field> {
 }
 
 /// Compute the [`RamValCheckAdviceBlock`] for `kind` against `r_address`, using the
-/// advice block's start/size from the memory layout. Shared by the verifier and the
-/// prover so the advice selector and opening point cannot drift between them.
-pub fn ram_val_check_advice_block<F: Field>(
+/// advice block's start/size from the memory layout.
+///
+/// WARNING: the ZK path recomputes the same geometry in `zk::blindfold`'s
+/// `advice_selector`, so the two must stay in lockstep.
+fn ram_val_check_advice_block<F: Field>(
     kind: JoltAdviceKind,
     checked: &CheckedInputs,
     r_address: &[F],
@@ -496,7 +491,7 @@ pub fn ram_val_check_advice_block<F: Field>(
 /// chunk before sampling the gamma, so [`RamValCheck::draw_challenges`] must
 /// reproduce it byte-for-byte (label chunk + empty payload) or every challenge from
 /// here on diverges.
-pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
+fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
     transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
     transcript.append_bytes(&[]);
 }

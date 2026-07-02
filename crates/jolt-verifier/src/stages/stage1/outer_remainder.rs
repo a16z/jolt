@@ -238,27 +238,30 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::OutputClaims;
-    use crate::stages::stage1::outputs::outer_remainder_outputs_from_r1cs_inputs;
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
+    use jolt_claims::protocols::jolt::JoltOpeningId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
-    /// The assembled `OuterRemainderOutputValues` field (declaration) order is the
+    /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
     /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so `opening_values()` (which the
-    /// generated `append_to_transcript` iterates) reproduces the input order. Equal
-    /// value sequences ⇒ byte-identical Fiat-Shamir appends.
+    /// generated `append_to_transcript` iterates) reproduces the input order,
+    /// byte-identically. `canonical_order()` surfaces that field order as opening ids,
+    /// which must line up one-for-one with the R1CS inputs.
     #[test]
     fn append_order_matches_r1cs_input_order() {
-        // Distinct values, one per R1CS input, in canonical order.
-        let values = SPARTAN_OUTER_R1CS_INPUTS
+        let expected = SPARTAN_OUTER_R1CS_INPUTS
             .iter()
             .copied()
-            .enumerate()
-            .map(|(index, variable)| (variable, Fr::from_u64(1_000 + index as u64)))
+            .map(|variable| {
+                JoltOpeningId::virtual_polynomial(variable, JoltRelationId::SpartanOuter)
+            })
             .collect::<Vec<_>>();
-        let expected = values.iter().map(|(_, value)| *value).collect::<Vec<_>>();
-        let relation_form = outer_remainder_outputs_from_r1cs_inputs(values).unwrap();
+        let openings = (0..SPARTAN_OUTER_R1CS_INPUTS.len() as u64)
+            .map(Fr::from_u64)
+            .collect::<Vec<_>>();
+        let relation_form = output_values_from(&openings);
 
-        assert_eq!(relation_form.opening_values(), expected);
+        assert_eq!(relation_form.canonical_order(), expected);
     }
 
     /// Fill all 35 produced opening *values* with the given values (in canonical

@@ -21,21 +21,16 @@ use num_traits::One;
 
 use super::{
     batch::Stage6bParams,
-    booleanity::{
-        booleanity_input_points_from_upstream, booleanity_input_values_from_upstream,
-        BooleanityCyclePhaseChallenges,
-    },
+    booleanity::{BooleanityCyclePhaseChallenges, BooleanityInputClaims},
     bytecode_read_raf::{
-        bytecode_read_raf_input_points_from_upstream, bytecode_read_raf_input_values_from_upstream,
-        BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafTableFoldInputs,
+        BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
+        BytecodeReadRafTableFoldInputs,
     },
     committed_reduction_cycle_phase::{
-        advice_cycle_phase_input_points, advice_cycle_phase_input_values_from_upstream,
-        bytecode_reduction_cycle_phase_input_points_from_points,
-        bytecode_reduction_cycle_phase_input_values_from_values,
-        program_image_reduction_cycle_phase_input_points,
+        advice_cycle_phase_input_values_from_upstream,
         program_image_reduction_cycle_phase_input_values_from_upstream,
-        BytecodeReductionCyclePhaseChallenges,
+        AdviceCyclePhaseInputClaims, BytecodeReductionCyclePhaseChallenges,
+        BytecodeReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseInputClaims,
     },
     inc_claim_reduction::{
         inc_claim_reduction_input_points_from_upstream,
@@ -51,10 +46,7 @@ use super::{
         Stage6bInputClaims, Stage6bInputPoints, Stage6bOutput, Stage6bOutputClaims,
         Stage6bSumchecks, Stage6bZkOutput,
     },
-    ram_hamming_booleanity::{
-        ram_hamming_booleanity_input_points_from_upstream,
-        ram_hamming_booleanity_input_values_from_upstream,
-    },
+    ram_hamming_booleanity::RamHammingBooleanityInputClaims,
     ram_ra_virtualization::{
         ram_ra_virtualization_input_points_from_upstream,
         ram_ra_virtualization_input_values_from_upstream,
@@ -121,8 +113,12 @@ where
     // them). They ride on the stage-6a output as typed upstream values.
     let carried = stage6a.challenges();
     let bytecode_gamma = carried.bytecode_gamma_powers[1];
-    let bytecode_r_address = stage6a.output_points().bytecode_r_address().to_vec();
-    let booleanity_r_address = stage6a.output_points().booleanity_r_address().to_vec();
+    let bytecode_r_address = stage6a
+        .output_points()
+        .bytecode_read_raf
+        .intermediate
+        .clone();
+    let booleanity_r_address = stage6a.output_points().booleanity.intermediate.clone();
 
     // Post-6a draws: the instruction-RA virtualization gamma, the increment gamma,
     // and (committed-program only) the bytecode claim-reduction eta.
@@ -143,28 +139,44 @@ where
     // Cycle-phase constructor legs, wired mode-agnostically off the upstream
     // outputs; the post-batch opening points are derived against these same
     // values through the relation objects.
-    let stage4_points = stage4_output_points(stage4);
-    let stage5_points = stage5_output_points(stage5);
-    let stage5_instruction_address = stage5_instruction_r_address(stage5);
+    let stage4_points = stage4.output_points();
+    let stage5_points = stage5.output_points();
+    let stage5_instruction_address = stage5.instruction_r_address();
     let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
     let stage1_cycle_binding = stage6_stage1_cycle_binding(stage1)?;
     let stage2_points = stage2.batch_output_points();
     let stage3_points = stage3.output_points();
-    let register_points = stage6_bytecode_register_points(stage4_points, stage5_points)?;
+    let (register_read_write_address, register_read_write_cycle) = stage6_checked_split(
+        "Stage 6 stage4 register read-write opening",
+        stage4_points.registers_read_write_point(),
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::BytecodeReadRaf,
+    )?;
+    let (register_val_evaluation_address, register_val_evaluation_cycle) = stage6_checked_split(
+        "Stage 6 stage5 register value-evaluation opening",
+        stage5_points.registers_opening_point(),
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::BytecodeReadRaf,
+    )?;
     let stage_cycle_points = [
         stage1_cycle_binding.iter().rev().copied().collect(),
         stage2_points.product_remainder_point().to_vec(),
         stage3_points.shift_opening_point().to_vec(),
-        register_points.read_write_cycle.to_vec(),
-        register_points.val_evaluation_cycle.to_vec(),
+        register_read_write_cycle.to_vec(),
+        register_val_evaluation_cycle.to_vec(),
     ];
-    let (ram_reduced_address, ram_reduced_cycle) = stage6_checked_exact_split(
-        "Stage 6 RAM RA reduction opening point",
-        stage5_points.ram_reduced_opening_point(),
-        log_k,
-        log_k + log_t,
-        JoltRelationId::RamRaVirtualization,
-    )?;
+    let ram_reduced = stage5_points.ram_reduced_opening_point();
+    if ram_reduced.len() != log_k + log_t {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamRaVirtualization,
+            reason: format!(
+                "Stage 6 RAM RA reduction opening point length mismatch: expected {}, got {}",
+                log_k + log_t,
+                ram_reduced.len()
+            ),
+        });
+    }
+    let (ram_reduced_address, ram_reduced_cycle) = ram_reduced.split_at(log_k);
     let (_, ram_read_write_cycle) = stage6_checked_split(
         "Stage 6 RAM read-write opening",
         stage2_points.ram_read_write_point(),
@@ -180,8 +192,8 @@ where
     let inc_cycle_points = [
         ram_read_write_cycle.to_vec(),
         ram_val_check_cycle.to_vec(),
-        register_points.read_write_cycle.to_vec(),
-        register_points.val_evaluation_cycle.to_vec(),
+        register_read_write_cycle.to_vec(),
+        register_val_evaluation_cycle.to_vec(),
     ];
     let entry_bytecode_index = preprocessing
         .program
@@ -206,8 +218,8 @@ where
                 .bytecode
                 .bytecode
                 .as_slice(),
-            register_read_write_point: register_points.read_write_address,
-            register_val_evaluation_point: register_points.val_evaluation_address,
+            register_read_write_point: register_read_write_address,
+            register_val_evaluation_point: register_val_evaluation_address,
             stage_gammas: [
                 &carried.stage1_gammas,
                 &carried.stage2_gammas,
@@ -227,8 +239,8 @@ where
                 stage3_gammas: &carried.stage3_gammas,
                 stage4_gammas: &carried.stage4_gammas,
                 stage5_gammas: &carried.stage5_gammas,
-                register_read_write_point: register_points.read_write_address,
-                register_val_evaluation_point: register_points.val_evaluation_address,
+                register_read_write_point: register_read_write_address,
+                register_val_evaluation_point: register_val_evaluation_address,
                 bytecode_r_address: &bytecode_r_address,
             },
         )?),
@@ -340,10 +352,12 @@ where
                     reason: "Stage 6 booleanity produced no opening point".to_string(),
                 }
             })?;
-        let aliased_bytecode_ra_openings = aliased_booleanity_bytecode_openings(
-            &cycle_points.bytecode_read_raf.bytecode_ra,
-            booleanity_opening_point,
-        );
+        let aliased_bytecode_ra_openings = cycle_points
+            .bytecode_read_raf
+            .bytecode_ra
+            .iter()
+            .filter(|point| point.as_slice() == booleanity_opening_point)
+            .count();
         let bytecode_output_openings =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
         let booleanity_output_openings =
@@ -376,14 +390,13 @@ where
             + usize::from(sumchecks.untrusted_advice.is_some())
             + bytecode_reduction_output_claims
             + program_image_reduction_output_claims;
-        let batch_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage6b_sumcheck_proof,
-                proof_label: "stage6b_sumcheck_proof",
-                output_claim_count: committed_output_claims,
-                stage: JoltRelationId::BytecodeReadRaf,
-            })?;
+        let batch_output_claims = committed::verify_output_claim_commitments(
+            checked,
+            &proof.stages.stage6b_sumcheck_proof,
+            "stage6b_sumcheck_proof",
+            committed_output_claims,
+            JoltRelationId::BytecodeReadRaf,
+        )?;
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
             challenges: Stage6bCarriedChallenges {
@@ -598,11 +611,13 @@ fn stage6b_input_values_from_upstream<F: Field>(
     stage5: &Stage5OutputClaims<F>,
 ) -> Result<Stage6bInputClaims<F>, VerifierError> {
     Ok(Stage6bInputClaims {
-        bytecode_read_raf: bytecode_read_raf_input_values_from_upstream(
-            address_claims.bytecode_read_raf.intermediate,
-        ),
-        booleanity: booleanity_input_values_from_upstream(address_claims.booleanity.intermediate),
-        ram_hamming_booleanity: ram_hamming_booleanity_input_values_from_upstream(),
+        bytecode_read_raf: BytecodeReadRafInputClaims {
+            address_phase: address_claims.bytecode_read_raf.intermediate,
+        },
+        booleanity: BooleanityInputClaims {
+            address_phase: address_claims.booleanity.intermediate,
+        },
+        ram_hamming_booleanity: RamHammingBooleanityInputClaims::default(),
         ram_ra_virtualization: ram_ra_virtualization_input_values_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_values_from_upstream(
             stage5,
@@ -625,9 +640,9 @@ fn stage6b_input_values_from_upstream<F: Field>(
             )
         }),
         bytecode_reduction: sumchecks.bytecode_reduction.as_ref().map(|_| {
-            bytecode_reduction_cycle_phase_input_values_from_values(
-                address_claims.bytecode_read_raf.val_stages.clone(),
-            )
+            BytecodeReductionCyclePhaseInputClaims {
+                val_stages: address_claims.bytecode_read_raf.val_stages.clone(),
+            }
         }),
         program_image_reduction: sumchecks
             .program_image_reduction
@@ -653,9 +668,13 @@ fn stage6b_input_points_from_upstream<F: Field>(
     stage5: &Stage5OutputPoints<F>,
 ) -> Stage6bInputPoints<F> {
     Stage6bInputPoints {
-        bytecode_read_raf: bytecode_read_raf_input_points_from_upstream(Vec::new()),
-        booleanity: booleanity_input_points_from_upstream(Vec::new()),
-        ram_hamming_booleanity: ram_hamming_booleanity_input_points_from_upstream(),
+        bytecode_read_raf: BytecodeReadRafInputClaims {
+            address_phase: Vec::new(),
+        },
+        booleanity: BooleanityInputClaims {
+            address_phase: Vec::new(),
+        },
+        ram_hamming_booleanity: RamHammingBooleanityInputClaims::default(),
         ram_ra_virtualization: ram_ra_virtualization_input_points_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_points_from_upstream(
             stage5,
@@ -664,42 +683,26 @@ fn stage6b_input_points_from_upstream<F: Field>(
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
-            .map(|_| advice_cycle_phase_input_points()),
-        untrusted_advice: sumchecks
-            .untrusted_advice
-            .as_ref()
-            .map(|_| advice_cycle_phase_input_points()),
-        bytecode_reduction: sumchecks
-            .bytecode_reduction
-            .as_ref()
-            .map(|_| bytecode_reduction_cycle_phase_input_points_from_points(Vec::new())),
-        program_image_reduction: sumchecks
-            .program_image_reduction
-            .as_ref()
-            .map(|_| program_image_reduction_cycle_phase_input_points()),
-    }
-}
-
-fn stage4_output_points<F: Field, C>(stage4: &Stage4Output<F, C>) -> &Stage4OutputPoints<F> {
-    match stage4 {
-        Stage4Output::Clear(output) => &output.output_points,
-        Stage4Output::Zk(output) => &output.output_points,
-    }
-}
-
-fn stage5_output_points<F: Field, C>(stage5: &Stage5Output<F, C>) -> &Stage5OutputPoints<F> {
-    match stage5 {
-        Stage5Output::Clear(output) => &output.output_points,
-        Stage5Output::Zk(output) => &output.output_points,
-    }
-}
-
-/// The contiguous stage-5 instruction address point, stored on both output
-/// variants because the per-chunk virtual-RA cells don't hold it contiguously.
-fn stage5_instruction_r_address<F: Field, C>(stage5: &Stage5Output<F, C>) -> &[F] {
-    match stage5 {
-        Stage5Output::Clear(output) => &output.instruction_r_address,
-        Stage5Output::Zk(output) => &output.instruction_r_address,
+            .map(|_| AdviceCyclePhaseInputClaims {
+                trusted: None,
+                untrusted: None,
+            }),
+        untrusted_advice: sumchecks.untrusted_advice.as_ref().map(|_| {
+            AdviceCyclePhaseInputClaims {
+                trusted: None,
+                untrusted: None,
+            }
+        }),
+        bytecode_reduction: sumchecks.bytecode_reduction.as_ref().map(|_| {
+            BytecodeReductionCyclePhaseInputClaims {
+                val_stages: Vec::new(),
+            }
+        }),
+        program_image_reduction: sumchecks.program_image_reduction.as_ref().map(|_| {
+            ProgramImageReductionCyclePhaseInputClaims {
+                contribution: Vec::new(),
+            }
+        }),
     }
 }
 
@@ -720,37 +723,6 @@ fn stage6_stage1_cycle_binding<F: Field, C>(
     Ok(cycle.to_vec())
 }
 
-struct Stage6BytecodeRegisterPoints<'a, F: Field> {
-    read_write_address: &'a [F],
-    read_write_cycle: &'a [F],
-    val_evaluation_address: &'a [F],
-    val_evaluation_cycle: &'a [F],
-}
-
-fn stage6_bytecode_register_points<'a, F: Field>(
-    stage4: &'a Stage4OutputPoints<F>,
-    stage5: &'a Stage5OutputPoints<F>,
-) -> Result<Stage6BytecodeRegisterPoints<'a, F>, VerifierError> {
-    let (register_read_write_address, register_read_write_cycle) = stage6_checked_split(
-        "Stage 6 stage4 register read-write opening",
-        stage4.registers_read_write_point(),
-        REGISTER_ADDRESS_BITS,
-        JoltRelationId::BytecodeReadRaf,
-    )?;
-    let (register_val_evaluation_address, register_val_evaluation_cycle) = stage6_checked_split(
-        "Stage 6 stage5 register value-evaluation opening",
-        stage5.registers_opening_point(),
-        REGISTER_ADDRESS_BITS,
-        JoltRelationId::BytecodeReadRaf,
-    )?;
-    Ok(Stage6BytecodeRegisterPoints {
-        read_write_address: register_read_write_address,
-        read_write_cycle: register_read_write_cycle,
-        val_evaluation_address: register_val_evaluation_address,
-        val_evaluation_cycle: register_val_evaluation_cycle,
-    })
-}
-
 fn stage6_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],
@@ -767,35 +739,6 @@ fn stage6_checked_split<'a, F: Field>(
         });
     }
     Ok(point.split_at(split_at))
-}
-
-fn stage6_checked_exact_split<'a, F: Field>(
-    label: &'static str,
-    point: &'a [F],
-    split_at: usize,
-    expected_len: usize,
-    stage: JoltRelationId,
-) -> Result<(&'a [F], &'a [F]), VerifierError> {
-    if point.len() != expected_len {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: format!(
-                "{label} length mismatch: expected {expected_len}, got {}",
-                point.len()
-            ),
-        });
-    }
-    Ok(point.split_at(split_at))
-}
-
-fn aliased_booleanity_bytecode_openings<F: Field>(
-    bytecode_ra_opening_points: &[Vec<F>],
-    booleanity_opening_point: &[F],
-) -> usize {
-    bytecode_ra_opening_points
-        .iter()
-        .filter(|point| point.as_slice() == booleanity_opening_point)
-        .count()
 }
 
 pub(crate) struct BytecodeReductionWeightInputs<'a, F: Field> {
@@ -909,31 +852,11 @@ mod tests {
     use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
+    use crate::stages::relations::append_recording::RecordingTranscript;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
-    }
-
-    #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
     }
 
     fn sample_claims() -> Stage6bOutputClaims<Fr> {

@@ -36,7 +36,7 @@ pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
     let reduction = &stage2.instruction_claim_reduction;
     let lookup_output = reduction
         .lookup_output
-        .map_or(stage2.product_remainder.lookup_output, |value| value);
+        .unwrap_or(stage2.product_remainder.lookup_output);
     InstructionReadRafInputClaims {
         lookup_output,
         left_lookup_operand: reduction.left_lookup_operand,
