@@ -37,43 +37,38 @@ use jolt_field::Field;
 
 use super::outputs::BytecodeReductionWeights;
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage4::Stage4ClearOutput;
+use crate::stages::stage4::RamValCheckInitialEvaluation;
 use crate::VerifierError;
 
-/// Wire the consumed RAM value-check advice opening *values*, keyed by kind.
-/// (Verifier-side constructor for the moved [`AdviceCyclePhaseInputClaims`].)
+/// Wire the consumed RAM value-check advice opening *value* for `kind`, in the
+/// shared [`AdviceCyclePhaseInputClaims`] with only that kind's slot filled (the
+/// relation's input `Expr` reads only its own kind's opening). Clear-only.
 pub fn advice_cycle_phase_input_values_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
+    kind: JoltAdviceKind,
 ) -> AdviceCyclePhaseInputClaims<F> {
-    let value = |kind| {
-        stage4
-            .ram_val_check_init
-            .advice_contributions
-            .iter()
-            .find(|contribution| contribution.kind == kind)
-            .map(|contribution| contribution.opening_value)
-    };
-    AdviceCyclePhaseInputClaims {
-        trusted: value(JoltAdviceKind::Trusted),
-        untrusted: value(JoltAdviceKind::Untrusted),
+    let value = ram_val_check_init
+        .advice_contribution(kind)
+        .map(|contribution| contribution.opening_value);
+    match kind {
+        JoltAdviceKind::Trusted => AdviceCyclePhaseInputClaims {
+            trusted: value,
+            untrusted: None,
+        },
+        JoltAdviceKind::Untrusted => AdviceCyclePhaseInputClaims {
+            trusted: None,
+            untrusted: value,
+        },
     }
 }
 
-/// Wire the consumed RAM value-check advice opening *points*, keyed by kind.
-pub fn advice_cycle_phase_input_points_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
-) -> AdviceCyclePhaseInputClaims<Vec<F>> {
-    let point = |kind| {
-        stage4
-            .ram_val_check_init
-            .advice_contributions
-            .iter()
-            .find(|contribution| contribution.kind == kind)
-            .map(|contribution| contribution.opening_point.clone())
-    };
+/// The consumed advice opening *points* cell. The relation derives its produced
+/// points from its own sumcheck point and reads no input point, so the cell is
+/// empty; one constructor serves both proving modes.
+pub fn advice_cycle_phase_input_points<F: Field>() -> AdviceCyclePhaseInputClaims<Vec<F>> {
     AdviceCyclePhaseInputClaims {
-        trusted: point(JoltAdviceKind::Trusted),
-        untrusted: point(JoltAdviceKind::Untrusted),
+        trusted: None,
+        untrusted: None,
     }
 }
 
@@ -83,14 +78,15 @@ pub struct AdviceCyclePhase<F: Field> {
     layout: AdviceClaimReductionLayout,
     /// The RAM address point of the staged advice opening from RAM value-check;
     /// the `FinalScale` public compares the produced opening point against it.
-    reference_opening_point: Vec<F>,
+    /// `None` in ZK, where `expected_output` (its only reader) never runs.
+    reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: Field> AdviceCyclePhase<F> {
     pub fn new(
         kind: JoltAdviceKind,
         layout: &AdviceClaimReductionLayout,
-        reference_opening_point: Vec<F>,
+        reference_opening_point: Option<Vec<F>>,
     ) -> Self {
         Self {
             symbolic: relations::claim_reductions::advice::CyclePhase::new((
@@ -141,6 +137,12 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
         &self.symbolic
     }
 
+    /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
+    /// the batch challenge vector, not the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
@@ -173,9 +175,13 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
         if self.layout.dimensions().has_address_phase() {
             Ok(value)
         } else {
+            let reference_opening_point =
+                self.reference_opening_point.as_ref().ok_or_else(|| {
+                    advice_public_failed("advice reference opening point unavailable")
+                })?;
             let scale = self
                 .layout
-                .cycle_phase_scale_at_opening_point(&self.reference_opening_point, point)
+                .cycle_phase_scale_at_opening_point(reference_opening_point, point)
                 .map_err(advice_public_failed)?;
             Ok(scale * value)
         }
@@ -183,13 +189,11 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
 }
 
 /// Wire the consumed RAM value-check program-image contribution *value*.
-/// (Verifier-side constructor for the moved
-/// [`ProgramImageReductionCyclePhaseInputClaims`].)
+/// Clear-only.
 pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<ProgramImageReductionCyclePhaseInputClaims<F>, VerifierError> {
-    let value = stage4
-        .ram_val_check_init
+    let value = ram_val_check_init
         .program_image_contribution_value
         .ok_or_else(|| {
             program_image_public_failed("missing RAM value-check program-image contribution")
@@ -199,20 +203,14 @@ pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
     })
 }
 
-/// Wire the consumed RAM value-check program-image contribution *point*.
-pub fn program_image_reduction_cycle_phase_input_points_from_upstream<F: Field>(
-    stage4: &Stage4ClearOutput<F>,
-) -> Result<ProgramImageReductionCyclePhaseInputClaims<Vec<F>>, VerifierError> {
-    let point = stage4
-        .ram_val_check_init
-        .program_image_contribution_point
-        .clone()
-        .ok_or_else(|| {
-            program_image_public_failed("missing RAM value-check program-image contribution")
-        })?;
-    Ok(ProgramImageReductionCyclePhaseInputClaims {
-        contribution: point,
-    })
+/// The consumed program-image contribution *point* cell. The relation derives its
+/// produced point from its own sumcheck point and reads no input point, so the
+/// cell is empty; one constructor serves both proving modes.
+pub fn program_image_reduction_cycle_phase_input_points<F: Field>(
+) -> ProgramImageReductionCyclePhaseInputClaims<Vec<F>> {
+    ProgramImageReductionCyclePhaseInputClaims {
+        contribution: Vec::new(),
+    }
 }
 
 pub struct ProgramImageReductionCyclePhase<F: Field> {
@@ -248,6 +246,12 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
+    /// the batch challenge vector, not the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
     }
 
     fn derive_opening_points(
@@ -345,6 +349,12 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
+    /// the batch challenge vector, not the front-loaded suffix.
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
     }
 
     fn derive_opening_points(

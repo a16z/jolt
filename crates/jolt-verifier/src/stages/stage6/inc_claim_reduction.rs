@@ -19,42 +19,39 @@ use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::{
-    stage2::Stage2ClearOutput, stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
+    stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints},
+    stage4::{Stage4OutputClaims, Stage4OutputPoints},
+    stage5::{Stage5OutputClaims, Stage5OutputPoints},
 };
 use crate::VerifierError;
 
 /// Wire the four reduced `Inc` opening *values* from the read-write / value
-/// relations of RAM and registers. (Verifier-side constructor for the moved
-/// [`IncClaimReductionInputClaims`].)
+/// relations of RAM and registers. Clear-only.
 pub fn inc_claim_reduction_input_values_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    stage5: &Stage5ClearOutput<F>,
+    stage2: &Stage2BatchOutputClaims<F>,
+    stage4: &Stage4OutputClaims<F>,
+    stage5: &Stage5OutputClaims<F>,
 ) -> IncClaimReductionInputClaims<F> {
     IncClaimReductionInputClaims {
-        ram_inc_read_write: stage2.output_values.ram_read_write.inc,
-        ram_inc_val_check: stage4.output_values.ram_val_check.ram_inc,
-        rd_inc_read_write: stage4.output_values.registers_read_write.rd_inc,
-        rd_inc_val_evaluation: stage5.output_values.registers_val_evaluation.rd_inc,
+        ram_inc_read_write: stage2.ram_read_write.inc,
+        ram_inc_val_check: stage4.ram_val_check.ram_inc,
+        rd_inc_read_write: stage4.registers_read_write.rd_inc,
+        rd_inc_val_evaluation: stage5.registers_val_evaluation.rd_inc,
     }
 }
 
 /// Wire the four reduced `Inc` opening *points* from the read-write / value
-/// relations of RAM and registers.
+/// relations of RAM and registers. ZK-agnostic.
 pub fn inc_claim_reduction_input_points_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    stage5: &Stage5ClearOutput<F>,
+    stage2: &Stage2BatchOutputPoints<F>,
+    stage4: &Stage4OutputPoints<F>,
+    stage5: &Stage5OutputPoints<F>,
 ) -> IncClaimReductionInputClaims<Vec<F>> {
     IncClaimReductionInputClaims {
-        ram_inc_read_write: stage2.output_points.ram_read_write.inc().to_vec(),
-        ram_inc_val_check: stage4.output_points.ram_val_check.ram_inc().to_vec(),
-        rd_inc_read_write: stage4.output_points.registers_read_write.rd_inc().to_vec(),
-        rd_inc_val_evaluation: stage5
-            .output_points
-            .registers_val_evaluation
-            .rd_inc()
-            .to_vec(),
+        ram_inc_read_write: stage2.ram_read_write.inc().to_vec(),
+        ram_inc_val_check: stage4.ram_val_check.ram_inc().to_vec(),
+        rd_inc_read_write: stage4.registers_read_write.rd_inc().to_vec(),
+        rd_inc_val_evaluation: stage5.registers_val_evaluation.rd_inc().to_vec(),
     }
 }
 

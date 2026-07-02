@@ -24,7 +24,7 @@ pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
 pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
 use super::booleanity::{Booleanity, BooleanityAddressPhase};
-use super::bytecode_read_raf::{BytecodeReadRafAddressPhase, BytecodeReadRafCommitted};
+use super::bytecode_read_raf::{BytecodeReadRafAddressPhase, BytecodeReadRafCycle};
 use super::committed_reduction_cycle_phase::{
     AdviceCyclePhase, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
 };
@@ -37,37 +37,75 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// (bytecode read-RAF, booleanity). `#[derive(SumcheckBatch)]` generates the
 /// `Stage6AddressPhase{Input,Output}{Claims,Points}<F>` and
 /// `Stage6AddressPhaseChallenges<F>` aggregates — one field per instance, in
-/// this declaration order. No alias dedup in the address phase, so the generated
-/// `opening_values` / `append_to_transcript` (member order: bytecode read-RAF's
-/// `intermediate` then `val_stages`, then booleanity's `intermediate`) is the
-/// canonical Fiat-Shamir order.
+/// this declaration order — plus the batched-verify drivers. No alias dedup in
+/// the address phase, so the generated `opening_values` / `append_to_transcript`
+/// (member order: bytecode read-RAF's `intermediate` then `val_stages`, then
+/// booleanity's `intermediate`) is the canonical Fiat-Shamir order.
+///
+/// `output_shape` is intentionally NOT enabled: the address-phase output `Expr`
+/// carries only the staged intermediate, but committed-program mode additionally
+/// commits the `BytecodeValStage` openings, so the ZK commitment count
+/// (`2 + NUM_BYTECODE_VAL_STAGES`) and the val-stage presence check stay
+/// hand-written in `verify`.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(verify_clear, verify_zk, derive_opening_points, expected_final_claim)]
 pub struct Stage6AddressPhaseSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,
+}
+
+/// The stage-6a produced opening points: both intermediates open at the
+/// (reversed) address sumcheck point of their instance.
+impl<F: Field> Stage6AddressPhaseOutputPoints<F> {
+    /// The bytecode read-RAF address opening (`bytecode_r_address`).
+    pub fn bytecode_r_address(&self) -> &[F] {
+        &self.bytecode_read_raf.intermediate
+    }
+
+    /// The booleanity address opening (`booleanity_r_address`).
+    pub fn booleanity_r_address(&self) -> &[F] {
+        &self.booleanity.intermediate
+    }
 }
 
 /// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
 /// Fiat-Shamir batch order. `#[derive(SumcheckBatch)]` generates the
 /// `Stage6CyclePhase{Input,Output}{Claims,Points}<F>` and
 /// `Stage6CyclePhaseChallenges<F>` aggregates — one field per instance, in this
-/// declaration order.
+/// declaration order — plus the batched-verify drivers. The four `Option`
+/// members are present exactly when their precommitted layout is committed, in
+/// BOTH proving modes, so the coefficient count matches the prover's instance
+/// count.
 ///
-/// `bytecode_read_raf` lists [`BytecodeReadRafCommitted`] purely as a projection
-/// anchor: both cycle variants (full / committed) share the same
-/// `BytecodeReadRafInputClaims` / `BytecodeReadRafOutputClaims`, and the runtime
-/// dispatch enum (`BytecodeReadRafCycle`, in `batch.rs`) carries the lifetime the
-/// macro cannot accept. The threaded gamma resolves through that enum at runtime.
+/// `bytecode_read_raf` is the runtime dispatch [`BytecodeReadRafCycle`], whose
+/// `ConcreteSumcheck` impl is anchored on the committed cycle symbolic (see the
+/// invariant on that impl); the aggregates project through the anchor, which both
+/// variants share cell-for-cell.
+///
+/// The generated `draw_challenges` must NOT be called on this struct: the
+/// members' challenges have stage-level provenance (the bytecode gamma shares
+/// stage 6a's squeeze, the booleanity gamma is drawn pre-6a with a
+/// prover-matched zero-replacement, and the instruction-RA gamma keeps
+/// `powers(n)[1].unwrap_or(one)`), so `verify` hand-assembles
+/// `Stage6CyclePhaseChallenges` from the stage-level draws.
 ///
 /// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
 /// `opening_values` / `append_to_transcript`: booleanity's `bytecode_ra` openings
 /// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
 /// order is curated by [`append_opening_claims`](super::verify::append_opening_claims)
-/// which threads the dedup points.
+/// which threads the dedup points. `output_shape` is NOT applicable: the committed
+/// bytecode output `Expr` consumes the 6a-produced `BytecodeValStage` openings
+/// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values)]
+#[sumcheck_batch(
+    custom_opening_values,
+    verify_clear,
+    verify_zk,
+    derive_opening_points,
+    expected_final_claim
+)]
 pub struct Stage6CyclePhaseSumchecks<F: Field> {
-    pub bytecode_read_raf: BytecodeReadRafCommitted<F>,
+    pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
