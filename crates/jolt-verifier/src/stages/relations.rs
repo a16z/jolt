@@ -897,8 +897,10 @@ mod sumcheck_batch_derive_tests {
         );
     }
 
+    // Not `#[expect(dead_code)]` like its siblings: the validate test below
+    // constructs it, so the struct and fields are live.
     #[derive(SumcheckBatch)]
-    #[expect(dead_code)]
+    #[sumcheck_batch(output_shape)]
     struct FixtureOptionSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: Option<RegistersValEvaluation<F>>,
@@ -930,6 +932,51 @@ mod sumcheck_batch_derive_tests {
             registers_val_evaluation: None,
         };
         assert_eq!(absent.opening_values(), vec![fr(1), fr(2), fr(3)]);
+    }
+
+    /// Wire claims supplied for an `Option` member whose instance did not run are
+    /// rejected by the generated `validate_output_claims` (attributed to the first
+    /// supplied opening id), and the well-formed absent case still validates.
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn validate_output_claims_rejects_claims_for_absent_member() {
+        use jolt_claims::protocols::jolt::geometry::instruction::{
+            read_raf_output_openings, InstructionReadRafDimensions,
+        };
+
+        let fr = Fr::from_u64;
+        let dimensions = InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap();
+        let sumchecks = FixtureOptionSumchecks::<Fr> {
+            instruction_read_raf: InstructionReadRaf::new(dimensions),
+            registers_val_evaluation: None,
+        };
+
+        // Shape-correct instruction claims (sized from the geometry), so the absent
+        // member's supplied claims are the only defect.
+        let openings = read_raf_output_openings(dimensions);
+        let instruction = || InstructionReadRafOutputClaims {
+            lookup_table_flags: vec![fr(0); openings.lookup_table_flags.len()],
+            instruction_ra: vec![fr(0); openings.instruction_ra.len()],
+            instruction_raf_flag: fr(0),
+        };
+
+        let unexpected = FixtureOptionOutputClaims::<Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: Some(RegistersValEvaluationOutputClaims {
+                rd_inc: fr(1),
+                rd_wa: fr(2),
+            }),
+        };
+        assert!(matches!(
+            sumchecks.validate_output_claims(&unexpected),
+            Err(crate::VerifierError::UnexpectedOpeningClaim { .. })
+        ));
+
+        let well_formed = FixtureOptionOutputClaims::<Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: None,
+        };
+        assert!(sumchecks.validate_output_claims(&well_formed).is_ok());
     }
 
     // The opt-out fixture: `#[sumcheck_batch(custom_opening_values)]` must still

@@ -42,14 +42,6 @@ where
     let tau = transcript.challenge_vector(log_t + 2);
 
     let uniskip_domain = JoltSumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
-    let uniskip_rounds = 1;
-    let uniskip_degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
-    if uniskip_degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage,
-            degree: uniskip_degree,
-        });
-    }
     let JoltSumcheckDomain::CenteredInteger { domain_size } = uniskip_domain else {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage,
@@ -72,7 +64,7 @@ where
             .stages
             .stage1_uni_skip_first_round_proof
             .verify_committed_consistency(
-                SumcheckStatement::new(uniskip_rounds, uniskip_degree),
+                SumcheckStatement::new(1, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE),
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -136,7 +128,11 @@ where
         .stages
         .stage1_uni_skip_first_round_proof
         .verify(
-            &SumcheckClaim::new(uniskip_rounds, uniskip_degree, uniskip_input_claim),
+            &SumcheckClaim::new(
+                1,
+                SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+                uniskip_input_claim,
+            ),
             CenteredIntegerDomain::new(domain_size),
             UNISKIP_ROUND_TRANSCRIPT_LABEL,
             transcript,
