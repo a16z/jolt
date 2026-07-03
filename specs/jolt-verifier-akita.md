@@ -73,8 +73,8 @@ Out of scope (not planned for this integration):
 
 ```text
 zk × lattice — there is no zk path in the Akita/lattice version of Jolt for
-    now; rejected fail-closed, and BlindFold keeps its current Dory machinery
-    untouched (no ZkBatchOpeningScheme migration)
+    now; rejected fail-closed (BlindFold itself stays Dory-only; its final
+    opening may ride ZkBatchOpeningScheme for uniformity, see phase A)
 field_inline × lattice
 ```
 
@@ -86,8 +86,7 @@ field_inline × lattice
 | `jolt-claims` | relations, columns, `final_opening` map, reconstruction terms | — |
 | `jolt-openings` | `BatchOpeningScheme` + both strategies, `PrefixPacking` | Jolt ids/semantics |
 | `jolt-akita` / `jolt-dory` | PCS + native batch adapters | Jolt protocol shape |
-| `jolt-prover-legacy` (every phase) | prove-side batch call + streaming RLC source (A); packed witness assembly, lattice sumcheck instances, packed stage-8 prove (B/C) | verifier logic |
-| `jolt-witness` | trace-backed column streams the prover assembles from | — |
+| `jolt-prover-legacy` (every phase) | prove-side batch call + streaming RLC source (A); packed witness assembly, lattice sumcheck instances, packed stage-8 prove (B/C) — **owns the witness path entirely**; jolt-witness is not used in this integration for now | verifier logic |
 
 ## Design
 
@@ -115,19 +114,24 @@ sequence behind `BatchOpeningScheme`. The change:
   `Vec<VerifierOpeningClaim>` instead of the inline RLC.
 - The prover calls `B::prove_batch`. Constraint: the current prover streams
   the RLC (it regenerates bytecode-derived polynomials on the fly and never
-  materializes the joint polynomial). `HomomorphicBatch::Polynomials` is
-  `Vec<&dyn MultilinearPoly>` combined through the lazy `RlcSource`, so the
-  streaming property survives **iff** the prover's sources are exposed as
-  `MultilinearPoly` views; if any source resists that shape, adapt the trait
-  in jolt-openings rather than fork the prover path.
+  materializes the joint polynomial), and that property is non-negotiable.
+  `HomomorphicBatch::Polynomials` is `Vec<&dyn MultilinearPoly>` combined
+  through the lazy `RlcSource`; where the prover's sources resist that shape,
+  **contorting `HomomorphicBatch` and the trait's GATs in jolt-openings is
+  the sanctioned move** — the trait exists to serve the production paths,
+  not the other way around. No per-PCS fork of the batch impl unless it
+  turns out strictly cleaner.
 - Transcript note: `HomomorphicBatch` absorbs a typed statement
   (`VerifierRlcClaims`) where today's code appends a bare `rlc_claims` scalar
   list. Prover and verifier switch in the same commit; old proofs do not
   survive (none are stable artifacts yet).
-- ZK mode: the clear path moves to `B`; the BlindFold path keeps its current
-  machinery permanently for this integration — there is no zk path in the
-  Akita/lattice version of Jolt, so no `ZkBatchOpeningScheme` migration
-  happens here at all. zk × packed is rejected fail-closed.
+- ZK mode: the clear path moves to `B::verify_batch`; the BlindFold final
+  opening **may** move to `B::verify_batch_zk` (`ZkBatchOpeningScheme`) for
+  uniformity — stage 8 then has exactly two flavors, clear and zk, both
+  through `B`. This is safe precisely because zk × lattice never runs:
+  Akita's `ZkBatchOpeningScheme` impl exists but is unreachable behind the
+  fail-closed rejection, so the migration only ever exercises the Dory path
+  the `host,zk` gate covers.
 
 Acceptance for phase A: `muldiv` e2e green in `host` and `host,zk`; no
 `HomomorphicCommitment` bound anywhere outside the `HomomorphicBatch`
@@ -166,6 +170,23 @@ Two-level gating, mirroring how `zk` works today:
   `akita` module pins `F = AkitaField`. No packing/layout digests travel in
   the proof: the packing is a pure function of the (absorbed) config and
   shape on both sides, and `PackedBatch` absorbs the statement it verifies.
+
+### Phase B — mode-typed stage claims (compile time, no enums, no Options)
+
+Four claim groups change shape between modes: the stage-6 inc reduction
+(`IncClaimReductionOutputClaims` vs `IncVirtualizationOutputClaims`), the
+stage-6 booleanity outputs (base vs lattice, chunk/msb columns added), the
+bytecode read-raf claims (one extra val stage), and stage 7
+(+`ChunkReconstructionOutputClaims`). These are resolved the same way as the
+commitments: **split the mode-varying structs out of the shared stage
+outputs and select them through the mode seam's associated types** — the
+seam trait carries the varying claim-group types alongside `Commitments` and
+`Proof`, and `JoltProofClaims`/the stage outputs thread that one generic.
+A proof for the wrong mode fails to deserialize/typecheck rather than being
+runtime-rejected; the reference's `Option`-field hollowing and two-variant
+enums are both off the table. The generic stays contained because only the
+four varying groups move behind associated types — everything mode-invariant
+keeps its concrete struct.
 
 ### Phase B — lattice stage orchestration
 
@@ -252,10 +273,22 @@ that get rewritten later:
   bytecode read-raf instance; full-mode vals come from public bytecode on
   both sides). zk × lattice is rejected, so these instances carry no
   BlindFold constraint plumbing.
-- **Packed stage-8 prove.** The same `final_opening` map the verifier walks
-  assembles the `PrefixPackedStatement` prover-side;
-  `PackedBatch::prove_batch` runs the reduction sumcheck over `W` and the
-  single Akita opening (with the commit-time hint).
+- **Packed stage-8 prove — with a sparse reduction prover.** The same
+  `final_opening` map the verifier walks assembles the
+  `PrefixPackedStatement` prover-side; `PackedBatch::prove_batch` runs the
+  reduction sumcheck over `W` and the single Akita opening (with the
+  commit-time hint). **The landed reduction prover densifies both operands**
+  (`polynomial.to_dense()` plus a dense `2^packed_num_vars` selector table)
+  — acceptable for unit tests, impossible at trace scale, since
+  `packed_num_vars` is the log of the *sum of all one-hot column sizes*.
+  Phase B replaces it with a sparse path in jolt-openings, in the classic
+  optimized style of jolt-prover-legacy's one-hot sumcheck code: the
+  selector `E(z) = Σ αᵢ·eq(z, bᵢ‖γᵢ)` is evaluated per-slot through its eq
+  factorization (never materialized), and `W` binds through its one-hot
+  column structure. No densifying anywhere on the prod path; the dense route
+  survives only as the test oracle. Contorting `PackedBatch`'s GATs (e.g.
+  the `Polynomials` source type) to make this natural is sanctioned, same as
+  phase A.
 - **Preamble symmetry.** The prover absorbs the `CommitmentConfig` and the
   single packed commitment exactly where the verifier expects them.
 
@@ -300,6 +333,9 @@ jolt-prover-legacy
            four lattice sumcheck instances            ~350
            packed stage-8 prove + preamble            ~150
                                       prover total    ~850
+jolt-openings
+  Phase A: GAT adjustments for streaming sources       ~50
+  Phase B: sparse one-hot packed reduction prover     ~300
 ```
 
 If the verifier side trends past ~1,200 the design is wrong somewhere —
