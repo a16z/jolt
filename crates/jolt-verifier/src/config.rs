@@ -78,11 +78,12 @@ pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     commitment: CommitmentConfig::Homomorphic,
 };
 
-pub fn validate_proof_config<PCS, VC, ZkProof, JointOpeningProof>(
+pub fn validate_proof_config<PCS, VC, ZkProof, JointOpeningProof, Commitments, M>(
     config: &JoltProtocolConfig,
-    proof: &JoltProof<PCS, VC, ZkProof, JointOpeningProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JointOpeningProof, Commitments, M>,
 ) -> Result<(), VerifierError>
 where
+    M: jolt_claims::protocols::jolt::JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
 {

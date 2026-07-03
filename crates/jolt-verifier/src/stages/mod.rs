@@ -1,5 +1,6 @@
 //! Typed verifier stage entry points.
 
+use jolt_claims::protocols::jolt::JoltCommitmentMode;
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::{advice, bytecode, program_image},
     geometry::dimensions::JoltFormulaDimensions,
@@ -32,14 +33,15 @@ pub mod zk;
 /// the verifier-trusted geometry (trace length, lookup operand width, bytecode
 /// length, RAM size), mapping the layout error to `stage`. Shared by the stages
 /// (5, 6, 7) that derive their RA layouts from it.
-pub fn build_formula_dimensions<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn build_formula_dimensions<PCS, VC, ZkProof, JOP, Cmts, M>(
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     checked: &CheckedInputs,
     log_t: usize,
     stage: JoltRelationId,
 ) -> Result<JoltFormulaDimensions, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {

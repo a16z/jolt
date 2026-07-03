@@ -1,5 +1,6 @@
 //! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
 
+use jolt_claims::protocols::jolt::JoltCommitmentMode;
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, relations, JoltRelationId,
 };
@@ -76,14 +77,15 @@ pub fn stage3_output_claims_with_points<F: Field>(
     }
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
 ) -> Result<Stage3Output<PCS::Field, VC::Output>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,

@@ -2,7 +2,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::{
-    JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
+    JoltCommitmentMode, JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
@@ -263,13 +263,14 @@ pub struct CheckedInputs {
     pub precommitted: PrecommittedSchedule,
 }
 
-pub fn validate_inputs<PCS, VC, ZkProof>(
+pub fn validate_inputs<PCS, VC, ZkProof, JOP, Cmts, M>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     trusted_advice_commitment_present: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
@@ -451,11 +452,12 @@ where
     Ok(got)
 }
 
-pub fn absorb_preamble<PCS, VC, ZkProof, T>(
+pub fn absorb_preamble<PCS, VC, ZkProof, JOP, Cmts, M, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     transcript: &mut T,
 ) where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
@@ -637,10 +639,11 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     transcript.append(&U64Word(value));
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn validate_proof_consistency<PCS, VC, ZkProof, JOP, Cmts, M>(
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
 ) -> Result<(), VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {

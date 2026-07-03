@@ -17,6 +17,7 @@
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamValCheckAdviceClaims, RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
+use jolt_claims::protocols::jolt::JoltCommitmentMode;
 use jolt_claims::protocols::jolt::{
     geometry::{
         claim_reductions::program_image,
@@ -299,14 +300,15 @@ pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
 /// program-image openings: record each present contribution's staged opening
 /// alongside the public initial-RAM `public_eval`. Mirrors the prover's own init
 /// reconstruction so both decompose `Val_init` identically.
-pub(crate) fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
+pub(crate) fn ram_val_check_initial_evaluation<PCS, VC, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     claims: &Stage4OutputClaims<PCS::Field>,
     r_address: &[PCS::Field],
     public_eval: PCS::Field,
 ) -> Result<RamValCheckInitialEvaluation<PCS::Field>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {

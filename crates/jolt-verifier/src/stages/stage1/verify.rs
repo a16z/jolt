@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::JoltCommitmentMode;
 use jolt_claims::protocols::jolt::{
     geometry::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain,
 };
@@ -27,12 +28,13 @@ use super::outputs::{
 use crate::stages::relations::{zip_openings, ConcreteSumcheck, OutputAppend};
 use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     transcript: &mut T,
 ) -> Result<Stage1Output<PCS::Field, VC::Output>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,

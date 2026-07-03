@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::JoltCommitmentMode;
 use jolt_claims::protocols::jolt::{
     geometry::{
         dimensions::TraceDimensions, ram::RamRafEvaluationDimensions,
@@ -185,13 +186,14 @@ pub fn stage2_expected_final_claim<F: Field>(
         + *ram_output_coefficient * ram_output_check)
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2Output<PCS::Field, VC::Output>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
@@ -206,9 +208,10 @@ where
         _ => {}
     }
 
-    let product_uniskip =
-        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
-    let batch = verify_regular_batch::<PCS, VC, T, ZkProof>(
+    let product_uniskip = verify_product_uniskip::<PCS, VC, T, ZkProof, JOP, Cmts, M>(
+        checked, proof, transcript, stage1,
+    )?;
+    let batch = verify_regular_batch::<PCS, VC, T, ZkProof, JOP, Cmts, M>(
         checked,
         proof,
         transcript,
@@ -254,13 +257,14 @@ where
     }
 }
 
-fn verify_product_uniskip<PCS, VC, T, ZkProof>(
+fn verify_product_uniskip<PCS, VC, T, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2ProductUniSkip<PCS::Field, VC::Output>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
@@ -379,14 +383,15 @@ where
     }
 }
 
-fn verify_regular_batch<PCS, VC, T, ZkProof>(
+fn verify_regular_batch<PCS, VC, T, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     transcript: &mut T,
     product_uniskip: &Stage2ProductUniSkip<PCS::Field, VC::Output>,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2Batch<PCS::Field, VC::Output>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,

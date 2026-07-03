@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::JoltCommitmentMode;
 use jolt_claims::protocols::jolt::{
     geometry::{dimensions::JoltFormulaDimensions, instruction},
     relations, JoltRelationId,
@@ -86,15 +87,16 @@ pub fn stage5_output_claims_with_points<F: Field>(
     }
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
 ) -> Result<Stage5Output<PCS::Field, VC::Output>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,

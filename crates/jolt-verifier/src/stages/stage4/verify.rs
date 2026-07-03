@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::JoltCommitmentMode;
 use jolt_claims::protocols::jolt::{
     geometry::{
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
@@ -61,15 +62,16 @@ pub fn stage4_expected_final_claim<F: Field>(
     Ok(*registers_coefficient * registers_read_write + *ram_val_coefficient * ram_val_check)
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
     transcript: &mut T,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
     stage3: &Stage3Output<PCS::Field, VC::Output>,
 ) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
@@ -427,11 +429,12 @@ where
     ))
 }
 
-fn stage4_committed_output_claims<PCS, VC, ZkProof>(
+fn stage4_committed_output_claims<PCS, VC, ZkProof, JOP, Cmts, M>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, JOP, Cmts, M>,
 ) -> usize
 where
+    M: JoltCommitmentMode,
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
