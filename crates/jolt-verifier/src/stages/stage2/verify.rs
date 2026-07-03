@@ -10,13 +10,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-};
-use jolt_sumcheck::{
-    CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckStatement,
-    UNISKIP_ROUND_TRANSCRIPT_LABEL,
-};
 use jolt_transcript::Transcript;
 
 use super::{
@@ -38,6 +31,7 @@ use crate::{
     stages::{
         relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
+        uniskip,
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -57,10 +51,7 @@ struct ProductUniskipStep<F: Field, C> {
 
 enum ProductUniskipVerified<F: Field, C> {
     Clear,
-    Zk {
-        consistency: CommittedSumcheckConsistency<F, C>,
-        output_claims: committed::CommittedOutputClaimOutput<C>,
-    },
+    Zk(uniskip::UniskipZk<F, C>),
 }
 
 /// Assemble the stage-2 batch consumed opening *values* from the upstream clear
@@ -183,11 +174,7 @@ where
     let input_points = sumchecks.empty_input_points();
 
     if checked.zk {
-        let ProductUniskipVerified::Zk {
-            consistency: product_uniskip_consistency,
-            output_claims: product_uniskip_output_claims,
-        } = uniskip.verified
-        else {
+        let ProductUniskipVerified::Zk(product_uniskip) = uniskip.verified else {
             return Err(VerifierError::ExpectedCommittedProof {
                 field: "stage2_uni_skip_first_round_proof",
             });
@@ -209,8 +196,8 @@ where
             product_tau_low: uniskip.tau_low,
             product_tau_high: uniskip.tau_high,
             output_address_challenges,
-            product_uniskip_consistency,
-            product_uniskip_output_claims,
+            product_uniskip_consistency: product_uniskip.consistency,
+            product_uniskip_output_claims: product_uniskip.output_claims,
             batch_consistency: consistency,
             batch_output_claims,
             output_points,
@@ -295,85 +282,41 @@ where
     tau_low.reverse();
 
     let tau_high = transcript.challenge();
-    let uniskip_rounds = 1;
-    let uniskip_degree = SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
+    let uniskip_params = uniskip::UniskipParams::spartan_product();
     match stage1 {
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
-            let uniskip = ProductUniskip::new(product_dimensions, tau_high);
+            let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
             let uniskip_input_values = product_uniskip_input_values_from_stage1(stage1);
-
-            let uniskip_claim = claims.product_uniskip_output_claim;
             let uniskip_input_claim =
-                uniskip.input_claim(&uniskip_input_values, &NoChallenges::default())?;
+                uniskip_relation.input_claim(&uniskip_input_values, &NoChallenges::default())?;
 
-            let uniskip_reduction = proof
-                .stages
-                .stage2_uni_skip_first_round_proof
-                .verify(
-                    &SumcheckClaim::new(uniskip_rounds, uniskip_degree, uniskip_input_claim),
-                    CenteredIntegerDomain::new(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE),
-                    UNISKIP_ROUND_TRANSCRIPT_LABEL,
-                    transcript,
-                )
-                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage,
-                    reason: error.to_string(),
-                })?;
-            if uniskip_reduction.value != uniskip_claim {
-                return Err(VerifierError::StageClaimOutputMismatch { stage: 2 });
-            }
-
-            transcript.append_labeled(b"opening_claim", &uniskip_claim);
-
-            let [challenge] = uniskip_reduction.point.as_slice() else {
-                return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage,
-                    reason: "product uni-skip proof did not reduce to one challenge".to_string(),
-                });
-            };
+            let challenge = uniskip::verify_clear(
+                &proof.stages.stage2_uni_skip_first_round_proof,
+                &uniskip_params,
+                uniskip_input_claim,
+                claims.product_uniskip_output_claim,
+                transcript,
+            )?;
             Ok(ProductUniskipStep {
                 tau_low,
                 tau_high,
-                challenge: *challenge,
+                challenge,
                 verified: ProductUniskipVerified::Clear,
             })
         }
         Stage1Output::Zk(_) => {
-            let consistency = proof
-                .stages
-                .stage2_uni_skip_first_round_proof
-                .verify_committed_consistency(
-                    SumcheckStatement::new(uniskip_rounds, uniskip_degree),
-                    transcript,
-                )
-                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage,
-                    reason: error.to_string(),
-                })?;
-            let output_claims = committed::verify_output_claim_commitments(
+            let verified = uniskip::verify_zk(
                 checked,
                 &proof.stages.stage2_uni_skip_first_round_proof,
-                "stage2_uni_skip_first_round_proof",
-                1,
-                stage,
+                &uniskip_params,
+                transcript,
             )?;
-            let [round] = consistency.rounds.as_slice() else {
-                return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage,
-                    reason: "product uni-skip committed consistency did not produce one challenge"
-                        .to_string(),
-                });
-            };
-
             Ok(ProductUniskipStep {
                 tau_low,
                 tau_high,
-                challenge: round.challenge,
-                verified: ProductUniskipVerified::Zk {
-                    consistency,
-                    output_claims,
-                },
+                challenge: verified.challenge,
+                verified: ProductUniskipVerified::Zk(verified),
             })
         }
     }

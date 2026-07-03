@@ -26,6 +26,7 @@ pub mod stage6a;
 pub mod stage6b;
 pub mod stage7;
 pub mod stage8;
+pub(crate) mod uniskip;
 #[doc(hidden)]
 pub mod zk;
 

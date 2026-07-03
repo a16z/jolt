@@ -2,12 +2,6 @@ use jolt_claims::protocols::jolt::{geometry::spartan::SpartanOuterDimensions, Jo
 use jolt_crypto::VectorCommitment;
 use jolt_field::FromPrimitiveInt;
 use jolt_openings::CommitmentScheme;
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
-use jolt_sumcheck::{
-    CenteredIntegerDomain, SumcheckClaim, SumcheckStatement, UNISKIP_ROUND_TRANSCRIPT_LABEL,
-};
 use jolt_transcript::Transcript;
 
 use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
@@ -15,7 +9,12 @@ use super::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1Challenges, Stage1ClearOutput,
     Stage1Output, Stage1ZkOutput,
 };
-use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
+use crate::{
+    proof::JoltProof,
+    stages::{uniskip, zk::committed},
+    verifier::CheckedInputs,
+    VerifierError,
+};
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
@@ -27,38 +26,20 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let stage = JoltRelationId::SpartanOuter;
+    let uniskip_params = uniskip::UniskipParams::spartan_outer();
 
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = transcript.challenge_vector(log_t + 2);
 
     if checked.zk {
-        let uniskip_consistency = proof
-            .stages
-            .stage1_uni_skip_first_round_proof
-            .verify_committed_consistency(
-                SumcheckStatement::new(1, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE),
-                transcript,
-            )
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage,
-                reason: error.to_string(),
-            })?;
-        let uniskip_output_claims = committed::verify_output_claim_commitments(
+        let uniskip = uniskip::verify_zk(
             checked,
             &proof.stages.stage1_uni_skip_first_round_proof,
-            "stage1_uni_skip_first_round_proof",
-            1,
-            stage,
+            &uniskip_params,
+            transcript,
         )?;
-        let [round] = uniskip_consistency.rounds.as_slice() else {
-            return Err(VerifierError::StageClaimSumcheckFailed {
-                stage,
-                reason: "uni-skip committed consistency did not produce one challenge".to_string(),
-            });
-        };
-        let uniskip_challenge = round.challenge;
+        let uniskip_challenge = uniskip.challenge;
 
         // Built after the uni-skip step so the relation carries `tau` and the
         // uni-skip reduction challenge (two of its three coefficient-table
@@ -76,7 +57,7 @@ where
             &proof.stages.stage1_sumcheck_proof,
             "stage1_sumcheck_proof",
             sumchecks.output_claim_count(),
-            stage,
+            JoltRelationId::SpartanOuter,
         )?;
         let output_points =
             sumchecks.derive_opening_points(&remainder_consistency.challenges(), &input_points)?;
@@ -86,8 +67,8 @@ where
                 tau,
                 uniskip_challenge,
             },
-            uniskip_consistency,
-            uniskip_output_claims,
+            uniskip_consistency: uniskip.consistency,
+            uniskip_output_claims: uniskip.output_claims,
             remainder_consistency,
             remainder_output_claims,
             output_points,
@@ -100,40 +81,14 @@ where
     // constant zero. BlindFold still single-sources this claim from that same symbolic
     // Expr, and muldiv (host) catches any drift between the two.
     let uniskip_input_claim = PCS::Field::from_u64(0);
-    let uniskip_reduction = proof
-        .stages
-        .stage1_uni_skip_first_round_proof
-        .verify(
-            &SumcheckClaim::new(
-                1,
-                SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-                uniskip_input_claim,
-            ),
-            CenteredIntegerDomain::new(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE),
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
-            transcript,
-        )
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: error.to_string(),
-        })?;
-    if uniskip_reduction.value != claims.uniskip_output_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 1 });
-    }
     let uniskip_output_claim = claims.uniskip_output_claim;
-
-    // Match the prover transcript: the uni-skip output is absorbed as an
-    // opening claim before deriving the remainder batching challenge (the
-    // singleton batch's RLC coefficient squeeze inside `verify_clear`).
-    transcript.append_labeled(b"opening_claim", &uniskip_output_claim);
-
-    let [uniskip_challenge] = uniskip_reduction.point.as_slice() else {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: "uni-skip proof did not reduce to one challenge".to_string(),
-        });
-    };
-    let uniskip_challenge = *uniskip_challenge;
+    let uniskip_challenge = uniskip::verify_clear(
+        &proof.stages.stage1_uni_skip_first_round_proof,
+        &uniskip_params,
+        uniskip_input_claim,
+        uniskip_output_claim,
+        transcript,
+    )?;
 
     // Built after the uni-skip step so the relation carries `tau` and the
     // uni-skip reduction challenge; the coefficient table completes itself from
