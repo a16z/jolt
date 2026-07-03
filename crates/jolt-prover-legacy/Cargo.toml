@@ -24,6 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
+akita = ["dep:akita-config", "dep:akita-field"]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
 host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
 prover = [
@@ -64,6 +65,8 @@ transcript-keccak = []
 transcript-blake2b = []
 
 [dependencies]
+akita-config = { workspace = true, optional = true }
+akita-field = { workspace = true, optional = true }
 ark-bn254.workspace = true
 jolt-optimizations.workspace = true
 ark-ec.workspace = true

@@ -3545,6 +3545,8 @@ dependencies = [
 name = "jolt-prover-legacy"
 version = "0.1.0"
 dependencies = [
+ "akita-config",
+ "akita-field",
  "allocative",
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
