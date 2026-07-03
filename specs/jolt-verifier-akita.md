@@ -26,39 +26,55 @@ owns `BatchOpeningScheme`, `HomomorphicBatch`, `PackedBatch`, and
 no new protocol semantics — where one seemed needed, the fix belongs in
 jolt-claims first.
 
+Prover and verifier land **in tandem in every phase** — each phase ends at a
+real e2e gate, so coverage grows incrementally instead of arriving all at
+once with a big-bang prover. The prover half extends `jolt-prover-legacy`
+(never the verifier crate), mirroring its optimized sibling instances.
+
 A previous attempt exists as the local branch `feat/akita-protocol-integration`
 (~35k insertions, ~18k in jolt-verifier). Its architecture notes
 (`specs/akita/00-roadmap.md` on that branch) are a useful map of *what* must
 happen; its code is superseded rails. Section "Dropped from the reference"
-records what we deliberately do not carry over — the target for the verifier
-work here is **~500–1000 non-test LOC**.
+records what we deliberately do not carry over — the target is **~500–1,000
+non-test LOC on the verifier side** (the prover side budgets separately,
+sized by its optimized siblings).
 
-## Scope (phased)
+## Scope (phased — prover and verifier land together in every phase)
+
+Each phase ships both halves so it ends at a real e2e gate; incremental
+testability is a design requirement, not an afterthought. The prover side of
+the lattice semantics is a handful of additional sumchecks shaped like
+existing ones — extended in `jolt-prover-legacy` by mirroring sibling
+instances, keeping the optimized prover code paths so nothing gets rewritten
+later. Restructuring jolt-prover-legacy where that makes hosting both paths
+cleaner is explicitly allowed.
 
 ```text
-Phase A  batch-opening abstraction: stage 8 goes through BatchOpeningScheme on
-         both the verifier and prover sides; Dory instantiates
-         HomomorphicBatch; muldiv e2e green in both modes proves the
-         abstraction is sound (this is the "checkable against dory" gate)
-Phase B  lattice verifier orchestration, feature-gated `akita`:
-         config/payload axis, stage swaps for the lattice relations, packed
-         stage 8 via PackedBatch — scoped to FULL program mode, no advice
-         (the packed lifecycle is then exactly one W: Ra columns + inc
-         chunks + msb, every column with a relation leaf)
+Phase A  batch-opening abstraction, both sides: stage 8 goes through
+         BatchOpeningScheme in the verifier and the prover; Dory instantiates
+         HomomorphicBatch.
+         GATE: muldiv e2e green in host and host,zk ("checkable against dory")
+Phase B  lattice path, both sides, feature-gated `akita`, scoped to FULL
+         program mode and no advice (the packed lifecycle is exactly one W:
+         Ra columns + inc chunks + msb, every column with a relation leaf):
+         verifier — config axis, stage swaps, packed stage 8 via PackedBatch;
+         prover  — packed witness assembly, four lattice sumcheck instances,
+         packed stage-8 prove.
+         GATE: muldiv e2e green over Akita (new feature-gated test variant)
+Phase C  committed-program + advice over Akita, both sides: precommitted
+         objects and their reconstructions (ReconstructionTerm lists become
+         claim-reduction legs), advice byte column unified with
+         AdviceBytesValidity, native-batch composition of W_jolt with the
+         precommitted commitment objects.
+         GATE: Akita parity with the committed-program and advice e2e tests
 ```
 
-Out of scope (deferred, in dependency order):
+Out of scope (not planned for this integration):
 
 ```text
-prover/witness lattice path (packed witness assembly + lattice relation
-    proving in jolt-prover-legacy / jolt-witness) — required for Akita e2e;
-    tracked separately, NOT re-implemented inside jolt-verifier
-committed-program mode over Akita (precommitted W′, bytecode-lane /
-    program-image reconstructions) and advice over Akita (byte-column
-    reconstruction unified with AdviceBytesValidity) — the jolt-claims
-    semantics exist (#1663); the verifier reduction that turns
-    ReconstructionTerm lists into per-column claims lands with this
-zk × lattice (rejected fail-closed until a lattice hiding layer exists)
+zk × lattice — there is no zk path in the Akita/lattice version of Jolt for
+    now; rejected fail-closed, and BlindFold keeps its current Dory machinery
+    untouched (no ZkBatchOpeningScheme migration)
 field_inline × lattice
 ```
 
@@ -70,7 +86,8 @@ field_inline × lattice
 | `jolt-claims` | relations, columns, `final_opening` map, reconstruction terms | — |
 | `jolt-openings` | `BatchOpeningScheme` + both strategies, `PrefixPacking` | Jolt ids/semantics |
 | `jolt-akita` / `jolt-dory` | PCS + native batch adapters | Jolt protocol shape |
-| `jolt-prover-legacy` (phase A only here) | prove-side batch call, streaming RLC source | verifier logic |
+| `jolt-prover-legacy` (every phase) | prove-side batch call + streaming RLC source (A); packed witness assembly, lattice sumcheck instances, packed stage-8 prove (B/C) | verifier logic |
+| `jolt-witness` | trace-backed column streams the prover assembles from | — |
 
 ## Design
 
@@ -108,9 +125,9 @@ sequence behind `BatchOpeningScheme`. The change:
   list. Prover and verifier switch in the same commit; old proofs do not
   survive (none are stable artifacts yet).
 - ZK mode: the clear path moves to `B`; the BlindFold path keeps its current
-  machinery in phase A (its final opening is already committed-evaluation
-  shaped), migrating to `ZkBatchOpeningScheme` only if it is a strict
-  refactor. zk × packed stays rejected regardless.
+  machinery permanently for this integration — there is no zk path in the
+  Akita/lattice version of Jolt, so no `ZkBatchOpeningScheme` migration
+  happens here at all. zk × packed is rejected fail-closed.
 
 Acceptance for phase A: `muldiv` e2e green in `host` and `host,zk`; no
 `HomomorphicCommitment` bound anywhere outside the `HomomorphicBatch`
@@ -206,11 +223,52 @@ Two properties of the landed `PackedBatch` make this section small:
    subcube through the eq kernel, so garbage outside claimed slots never
    enters any verified statement.
 
+### Phase B — prover side (jolt-prover-legacy)
+
+Landed in tandem with the verifier work above so phase B ends at a real
+Akita e2e. Four pieces, each mirroring an optimized sibling that already
+exists — copy the shape, keep the fast paths, do not write naive versions
+that get rewritten later:
+
+- **Packed witness assembly + commit.** The one-hot `Ra` cell streams the
+  prover already materializes (the one-hot polynomial machinery —
+  `RaPolynomial`/shared-eq infrastructure) are placed into `W` sparsely via
+  `PrefixSlot::packed_index`; nothing is densified. The new columns derive
+  from the same trace pass that builds `RdInc`/`RamInc` today: per cycle,
+  the fused delta `2^64 + δ` yields the chunk symbols and msb bit —
+  including the padding encoding (`δ = 0` ⇒ msb hot, chunks at symbol 0,
+  per the jolt-claims padding invariant). One Akita commit of `W` through
+  jolt-akita's sparse one-hot fast path replaces today's ~10+ per-polynomial
+  commits.
+- **Four prover sumcheck instances**, each copied from its nearest sibling
+  and driven by the same jolt-claims `SymbolicSumcheck` the verifier uses:
+  `IncVirtualization` (from the inc claim-reduction instance — same four
+  consumed claims, different output fold), lattice `Booleanity` (the base
+  booleanity instance with the chunk/msb columns joining its fold —
+  chunk columns bind through the same one-hot representations as `Ra`, so
+  the optimized bind/eval paths apply unchanged), `UnsignedIncChunkReconstruction`
+  (hamming-reduction-shaped, `log_k_chunk` rounds over the chunk columns),
+  and the read-raf store val stage (one more gamma stage in the existing
+  bytecode read-raf instance; full-mode vals come from public bytecode on
+  both sides). zk × lattice is rejected, so these instances carry no
+  BlindFold constraint plumbing.
+- **Packed stage-8 prove.** The same `final_opening` map the verifier walks
+  assembles the `PrefixPackedStatement` prover-side;
+  `PackedBatch::prove_batch` runs the reduction sumcheck over `W` and the
+  single Akita opening (with the commit-time hint).
+- **Preamble symmetry.** The prover absorbs the `CommitmentConfig` and the
+  single packed commitment exactly where the verifier expects them.
+
+Where hosting both paths cleanly wants prover restructuring (e.g. carving
+the commit/stage-8 sections behind the same mode seam instead of `if`s
+around Dory-specific state), restructure — jolt-prover-legacy is not
+load-bearing legacy for this integration.
+
 ### Dropped from the reference (and why)
 
 | Reference construct | Fate |
 |---|---|
-| model prover inside jolt-verifier (`akita_witness/openings/validity`, ~4k, re-runs stages 1–7 to reconstruct transcript state) | never — prover work happens in the prover crates, as its own phase |
+| model prover inside jolt-verifier (`akita_witness/openings/validity`, ~4k, re-runs stages 1–7 to reconstruct transcript state) | never — prover work happens in the prover crates, in tandem within each phase |
 | packed validity subprotocol + separate validity opening proof | dropped — validity is the lattice relations (argument above) |
 | `PackingViewFormula` resolution in stage 8, per-view row points | dropped — `PackedBatch` takes claims at arbitrary points |
 | layout/validity digests in the proof + FS | dropped — packing derives deterministically from the absorbed config/shape |
@@ -220,51 +278,66 @@ Two properties of the landed `PackedBatch` make this section small:
 
 Kept from the reference (its genuinely good calls): config-in-proof absorbed
 into FS with `deny_unknown_fields`; fail-closed on every invalid combination
-(lattice×zk, lattice×advice, lattice×committed-program for now, payload/config
-mismatch, `Packed` without the feature); the store-binding requirement; the
-precommitted policy (when phase D lands, precommitted columns open against
-the precommitted `W′`, never satisfiable through the per-proof `W`).
+(lattice×zk, lattice×advice and lattice×committed-program until phase C,
+config/instantiation mismatch, `Packed` without the feature); the
+store-binding requirement; the precommitted policy (phase C: precommitted
+objects open against their own commitments, never satisfiable through the
+per-proof `W`).
 
-## LOC budget (non-test, jolt-verifier + prover seam)
+## LOC budget (non-test)
 
 ```text
-Phase A: stage-8 verifier rewiring        ~120
-         prover-side B::prove_batch seam  ~100   (jolt-prover-legacy)
-         generics/bounds threading         ~80
-Phase B: config axis + payload + checks   ~150
-         stage-6/7 lattice relation impls ~250   (4 ConcreteSumchecks + deriveds)
-         read-raf store val stage          ~50
-         packed stage-8 statement assembly ~100
-                                    total ~850
+jolt-verifier
+  Phase A: stage-8 rewiring + generics threading      ~200
+  Phase B: config axis + fail-closed checks           ~150
+           stage-6/7 lattice ConcreteSumchecks        ~250
+           read-raf store val stage                    ~50
+           packed stage-8 statement assembly          ~100
+                                    verifier total    ~750
+jolt-prover-legacy
+  Phase A: B::prove_batch seam                        ~100
+  Phase B: packed witness assembly + commit           ~250
+           four lattice sumcheck instances            ~350
+           packed stage-8 prove + preamble            ~150
+                                      prover total    ~850
 ```
 
-If it trends past ~1,200 the design is wrong somewhere — stop and find the
-missing abstraction in jolt-claims/jolt-openings instead of writing more
-verifier code.
+If the verifier side trends past ~1,200 the design is wrong somewhere —
+stop and find the missing abstraction in jolt-claims/jolt-openings instead
+of writing more verifier code. The prover side is allowed to cost what the
+optimized siblings cost, but each instance should read like its sibling.
 
 ## Testing / Acceptance
 
 - Phase A gate: `muldiv` e2e green under `host` and `host,zk` with Dory
   through `HomomorphicBatch` — no transcript drift between the halves.
-- Phase B (no prover yet): `ConcreteSumcheck` impl tests in the house style
-  (draw-recording transcript, expected-output evaluation against the
-  symbolic relation); packed statement assembly tests (every
-  `proof_packing` column receives exactly one leaf claim; config/payload
-  fail-closed matrix — each invalid combination produces its error);
-  `PackedBatch` round-trip against `AkitaScheme` with hand-built claims
-  already exists in jolt-akita's tests.
-- Full Akita e2e is the acceptance gate of the *prover* phase, not this one.
+- Phase B, incrementally as pieces land: each prover instance tested against
+  its `ConcreteSumcheck` expected-output (house style, draw-recording
+  transcript); packed-witness assembly tested against the jolt-claims
+  `lattice_semantics` identities (slot readback, chunk/msb encoding incl.
+  padding); statement assembly (every `proof_packing` column receives
+  exactly one leaf claim); the config/instantiation fail-closed matrix.
+- Phase B gate: **`muldiv` e2e green over Akita** — a feature-gated e2e
+  variant in jolt-prover-legacy (`F = AkitaField`, full mode, no advice),
+  run alongside the Dory variants from then on.
+- Phase C gate: Akita parity with the committed-program and advice e2e
+  tests.
 
 ## Open questions
 
-1. **One packed opening or two, later**: when the precommitted `W′` lands
-   (phase D), per-proof `W` and `W′` are two `PackedBatch` calls; Akita's
-   `AkitaNativeBatching` could open both at one shared point in a single
-   backend proof if the two reduction sumchecks are co-batched. Decide when
-   phase D is real; two calls are correct and simpler.
-2. **Where the reconstruction reductions live** (phase D): standalone
-   sumcheck over cell variables per reconstruction vs folding into the
-   existing claim-reduction relations (jolt-claims spec §5 note for advice).
-   Decide against real shapes when committed-program/advice come into scope.
-3. **`ZkBatchOpeningScheme` adoption for BlindFold** (phase A follow-up):
-   only if it is a strict refactor of the current dory ZK final opening.
+1. **Composing `W_jolt` with the precommitted objects (phase C)** — decided
+   direction: trusted/precommitted objects stay separate commitment objects,
+   and the final opening **black-box/native-batches `W_jolt` together with
+   those objects** via `AkitaNativeBatching` (one backend proof over the
+   commitment group at a common point). That requires the reduction step to
+   land `W_jolt`'s claims and the precommitted claims on one shared point —
+   extend jolt-openings' packed reduction to claim sets spanning several
+   commitments (or co-batch per-commitment reductions sharing the bound
+   point). Two separate `PackedBatch` calls remain the correct simple
+   fallback while that lands. Sub-question deferred with it: whether the
+   precommitted side is one packed `W′` or several individual objects.
+2. **Reconstruction reductions (phase C)** — decided direction: fold them
+   into the existing claim-reduction relations wherever the shapes allow
+   (the natural form, and what jolt-claims spec §5 already prescribes for
+   advice); a standalone cell-variable sumcheck only where folding is
+   genuinely impossible.
