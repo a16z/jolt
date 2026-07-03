@@ -15,15 +15,12 @@
 //!
 //! generates `Stage5InputClaims<F>`, `Stage5InputPoints<F>`,
 //! `Stage5OutputClaims<F>`, `Stage5OutputPoints<F>`, `Stage5Challenges<F>`, and
-//! `Stage5BatchingCoefficients<F>` (the `Sumchecks` suffix is replaced by
-//! `InputClaims` / `InputPoints` / `OutputClaims` / `OutputPoints` / `Challenges` /
-//! `BatchingCoefficients`). The claim/point/challenge aggregates project each field
-//! through the `SumcheckInputClaims` / `SumcheckInputPoints` / `SumcheckOutputClaims`
-//! / `SumcheckOutputPoints` / `ConcreteSumcheckChallenges` aliases in
-//! `jolt-verifier`'s `stages::relations` (the `*Claims` aggregates hold the wire
-//! *values*, the `*Points` aggregates the derived opening points); the
-//! `BatchingCoefficients` aggregate holds one `F` per member (the scalar the batched
-//! verifier draws for that instance). A source field `Option<Instance>` becomes an
+//! `Stage5BatchingCoefficients<F>` (one cell per member, in declaration order),
+//! projecting each field through the `Sumcheck{Input,Output}{Claims,Points}` /
+//! `ConcreteSumcheckChallenges` aliases in `jolt-verifier`'s `stages::relations`
+//! (the `*Claims` aggregates hold the wire *values*, the `*Points` aggregates the
+//! derived opening points; `BatchingCoefficients` holds the batched verifier's
+//! per-instance scalar). A source field `Option<Instance>` becomes an
 //! `Option<projection>` (a conditional instance), chained only when `Some`. The
 //! generated drivers treat a *present* instance with an absent input / challenge /
 //! claim / point / coefficient cell as a wiring error (attributed to the member's
@@ -40,73 +37,50 @@
 //! normalizes to the concrete per-relation claim struct, so the plain derives
 //! apply.
 //!
-//! Emitted for every stage (all as inherent methods on the source
-//! `StageNSumchecks` struct):
+//! Emitted for every stage, as inherent methods on the source `StageNSumchecks`
+//! struct (each generated method's own doc has the details; the shared
+//! per-member logic lives as generic functions in `stages::relations`, so the
+//! macro emits only the typed per-member dispatch):
 //!
-//! - the Fiat-Shamir absorb plumbing — `opening_values(&claims)` /
-//!   `append_output_claims(transcript, &claims)` — each member's claims in
-//!   declaration order and per-member `canonical_order`, minus the member's
-//!   `ConcreteSumcheck::aliased_output_openings` (cross-relation aliases, absorbed
-//!   once via their canonical source relation). Suppressible via
-//!   `#[sumcheck_batch(custom_opening_values)]` for a stage whose absorb order
-//!   interleaves members or whose dedup is runtime point-driven;
-//! - `validate_aliases` — enforce each member's declared `(aliased, source)`
-//!   opening pairs: the wire's aliased cell must equal the canonical source cell,
-//!   resolved by id across the batch. Run unskippably by `expected_final_claim`
-//!   (the fold consumes the aliased copies), so declaring a pair on a relation
-//!   enforces it everywhere;
-//! - `draw_challenges` (draw each member's challenges into `StageNChallenges`),
-//!   suppressible via `#[sumcheck_batch(no_draw_challenges)]` for a stage whose
-//!   member challenges have stage-level provenance and are hand-assembled;
 //! - `verify_clear` — the clear-path batched-verify driver: fold the members into
 //!   one combined claim (max `(num_vars, degree)`, absorb each `input_claim`, draw
 //!   the batching coefficients, random-linear-combine the padded sums) and reduce it
 //!   through the single-instance `SumcheckProof::verify_compressed_boolean`. The
 //!   batching lives in this generated driver; `jolt-sumcheck` provides only the
-//!   single-instance verifier, not a batched one.
+//!   single-instance verifier. Returns `StageNClearBatch { reduction, coefficients }`.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
-//!   `SumcheckProof::verify_committed_consistency_dims`.
-//! - `derive_opening_points` — slice each member's opening point from the batch
-//!   challenge vector (its length-`rounds` suffix, per the front-loaded batching
-//!   layout) and map it through the member's `ConcreteSumcheck::derive_opening_points`
-//!   into the stage's `OutputPoints` aggregate. Takes the challenge vector as `&[F]`,
-//!   so the clear and ZK paths each pass their own.
+//!   `SumcheckProof::verify_committed_consistency_dims`. Committed proofs reveal no
+//!   claim scalars, so the caller must have absorbed claim COMMITMENTS beforehand
+//!   (the coefficients are squeezed before the consistency rounds).
+//! - `derive_opening_points` — slice each member's point from the batch challenge
+//!   vector (`ConcreteSumcheck::instance_point`, at the member's overridable
+//!   `instance_point_offset`) and map it through the member's
+//!   `ConcreteSumcheck::derive_opening_points`.
+//!   Takes the challenge vector as `&[F]`, so the clear and ZK paths each pass
+//!   their own.
 //! - `expected_final_claim` — run `validate_aliases`, then fold the members'
-//!   `ConcreteSumcheck::expected_output` with the batch coefficients
-//!   (`StageNBatchingCoefficients`) into the final claim the reduction is checked
-//!   against. `verify_clear` returns the coefficients inside
-//!   `StageNClearBatch { reduction, coefficients }`.
-//! - `empty_input_points` — an all-default `StageNInputPoints` constructor for the
-//!   common case of relations that consume no input opening points (each
-//!   non-`Option` cell `Default::default()`, each `Option` cell tracking its
-//!   member's presence). Requires each cell's concrete `InputClaims<Vec<F>>` to be
-//!   `Default`; stages whose relations do consume input points build theirs from
-//!   upstream instead of calling this.
+//!   `ConcreteSumcheck::expected_output` with the batch coefficients.
+//! - `validate_aliases` — each member's declared `(aliased, source)` opening pairs,
+//!   via `relations::validate_member_aliases` against the batch-wide resolver. Run
+//!   unskippably by `expected_final_claim`, so declaring a pair on a relation
+//!   enforces it everywhere.
+//! - `draw_challenges`, `empty_input_points`, and the absorb plumbing
+//!   (`opening_values` / `append_output_claims`, via
+//!   `relations::absorbed_opening_values`).
 //!
-//! Opt-in per method via `#[sumcheck_batch(...)]` flags, emitted on the source
-//! `StageNSumchecks` struct only for stages that request them:
-//!
-//! - `output_shape` — `output_claim_count` (total absorbed/committed openings,
-//!   e.g. the ZK commitment count) and `validate_output_claims` (assert the
-//!   proof's output claims match the expected shape), both via each member's
-//!   `ConcreteSumcheck::wire_output_openings` (its output-`Expr`-referenced set
-//!   minus its aliased openings).
-//! - `validate_claim_presence` — `validate_claim_presence`, the presence-only subset
-//!   of `validate_output_claims` (the `Option`-member present-instance/absent-instance
-//!   claim guards, with no output-`Expr` shape check) for a stage that curates its own
-//!   shape checks but wants the shared presence guards.
+//! `#[sumcheck_batch(...)]` flags (`StageOptions` below is the canonical
+//! reference): `output_shape` opts in to `output_claim_count` /
+//! `validate_output_claims` (via `relations::validate_member_{presence,
+//! output_shape}`); `custom_opening_values` and `no_draw_challenges` suppress
+//! generated methods that would be WRONG to call on their stage (a
+//! member-interleaved or runtime-deduped absorb order; stage-level challenge
+//! provenance) — suppressed rather than overridden so they cannot be miscalled.
 //!
 //! The `verify_*` drivers never name `SumcheckClaim` / `SumcheckStatement`; those
 //! stay internal to `jolt-sumcheck`.
 //!
 //! See `specs/sumcheck-batch-derive.md`.
-//!
-//! The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
-//! suppresses *only* the generated `opening_values` / `append_output_claims`
-//! absorb methods, leaving the aggregate structs (and their derives / serde)
-//! untouched. A stage whose absorb order interleaves members (stage 4) or whose
-//! dedup is runtime point-driven (stage 6b) uses it to supply its own.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -142,6 +116,37 @@ struct InstanceField {
     is_option: bool,
 }
 
+/// Wrap `body` in the member-presence scaffold shared by the per-member driver
+/// blocks: bind each `(name, expr)` cell by reference for a plain member, or via
+/// `if let Some(..)` over `expr.as_ref()` for an `Option` member (skipping
+/// `body` when absent). Only for infallible-skip sites; blocks that must ERROR
+/// on a present/absent cell mismatch keep their bespoke matches.
+fn per_member(
+    is_option: bool,
+    cells: &[(&Ident, TokenStream2)],
+    body: TokenStream2,
+) -> TokenStream2 {
+    if is_option {
+        let patterns = cells
+            .iter()
+            .map(|(name, _)| quote!(::core::option::Option::Some(#name)));
+        let scrutinees = cells.iter().map(|(_, expr)| quote!(#expr.as_ref()));
+        quote! {
+            if let (#(#patterns,)*) = (#(#scrutinees,)*) {
+                #body
+            }
+        }
+    } else {
+        let bindings = cells.iter().map(|(name, expr)| quote!(let #name = &#expr;));
+        quote! {
+            {
+                #(#bindings)*
+                #body
+            }
+        }
+    }
+}
+
 fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let vis = &input.vis;
@@ -167,8 +172,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let options = StageOptions::parse(&input.attrs)?;
 
-    validate_generics(&input.generics)?;
-    let f = field_type_param(&input.generics)?;
+    let f = validated_field_param(&input.generics)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
         .iter()
@@ -231,43 +235,23 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect::<Vec<_>>();
 
-    // The instance-based absorb: each member contributes its claims'
-    // `canonical_order`-aligned values in declaration order, minus the member's
-    // aliased opening ids (absorbed once via their canonical source relation).
-    // `Option` members follow the claims cell (validators police presence
-    // mismatches; the absorb itself is infallible).
+    // The instance-based absorb: each member contributes its
+    // `absorbed_opening_values` (its claims' `canonical_order`-aligned values
+    // minus its aliased opening ids) in declaration order. `Option` members
+    // follow the claims cell (validators police presence mismatches; the absorb
+    // itself is infallible).
+    let claims_ident = format_ident!("__claims");
+    let member_ident = format_ident!("__member");
     let opening_extends = plans.iter().map(|plan| {
         let id = &plan.ident;
         let instance = &plan.instance;
-        let extend = quote! {
-            let __skip: ::std::collections::BTreeSet<_> =
-                <#instance as #relations::ConcreteSumcheck<#f>>::aliased_output_openings()
-                    .into_iter()
-                    .map(|(__aliased, _)| __aliased)
-                    .collect();
-            __values.extend(
-                __claims
-                    .canonical_order()
-                    .into_iter()
-                    .zip(__claims.opening_values())
-                    .filter(|(__id, _)| !__skip.contains(__id))
-                    .map(|(_, __value)| __value),
-            );
-        };
-        if plan.is_option {
+        per_member(
+            plan.is_option,
+            &[(&claims_ident, quote!(claims.#id))],
             quote! {
-                if let ::core::option::Option::Some(__claims) = claims.#id.as_ref() {
-                    #extend
-                }
-            }
-        } else {
-            quote! {
-                {
-                    let __claims = &claims.#id;
-                    #extend
-                }
-            }
-        }
+                __values.extend(#relations::absorbed_opening_values::<#f, #instance>(__claims));
+            },
+        )
     });
 
     // Per-instance driver plumbing on the source `StageNSumchecks` struct itself:
@@ -280,12 +264,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         let id = &plan.ident;
         if plan.is_option {
             quote! {
-                #id: match self.#id.as_ref() {
-                    ::core::option::Option::Some(member) => {
-                        ::core::option::Option::Some(member.draw_challenges(transcript)?)
-                    }
-                    ::core::option::Option::None => ::core::option::Option::None,
-                }
+                #id: self
+                    .#id
+                    .as_ref()
+                    .map(|__member| __member.draw_challenges(transcript))
+                    .transpose()?
             }
         } else {
             quote!(#id: self.#id.draw_challenges(transcript)?)
@@ -306,19 +289,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let max_fold = || {
         plans.iter().map(|plan| {
             let id = &plan.ident;
-            if plan.is_option {
+            per_member(
+                plan.is_option,
+                &[(&member_ident, quote!(self.#id))],
                 quote! {
-                    if let ::core::option::Option::Some(__member) = self.#id.as_ref() {
-                        __max_num_vars = ::core::cmp::max(__max_num_vars, __member.rounds());
-                        __max_degree = ::core::cmp::max(__max_degree, __member.degree());
-                    }
-                }
-            } else {
-                quote! {
-                    __max_num_vars = ::core::cmp::max(__max_num_vars, self.#id.rounds());
-                    __max_degree = ::core::cmp::max(__max_degree, self.#id.degree());
-                }
-            }
+                    __max_num_vars = ::core::cmp::max(__max_num_vars, __member.rounds());
+                    __max_degree = ::core::cmp::max(__max_degree, __member.degree());
+                },
+            )
         })
     };
 
@@ -378,22 +356,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         // Absorb each present member's claimed sum into the transcript, in
         // declaration order — the Fiat-Shamir binding that must precede the
         // batching-coefficient draw.
+        let sum_ident = format_ident!("__sum");
         let sum_absorbs = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
-            if plan.is_option {
-                quote! {
-                    if let ::core::option::Option::Some(__sum) = #sum.as_ref() {
-                        ::jolt_sumcheck::append_sumcheck_claim(transcript, __sum);
-                    }
-                }
-            } else {
-                quote!(::jolt_sumcheck::append_sumcheck_claim(transcript, &#sum);)
-            }
+            per_member(
+                plan.is_option,
+                &[(&sum_ident, quote!(#sum))],
+                quote!(::jolt_sumcheck::append_sumcheck_claim(transcript, __sum);),
+            )
         });
 
         // Draw one batching coefficient per present member (declaration order),
         // binding it to `__coeff_<member>`. `Option` members key the draw on the
         // member's bound sum — the same resolution the absorb used — so an absorb
-        // and its coefficient draw can never disagree about presence.
+        // and its coefficient draw can never disagree about presence (the squeeze
+        // side effect fires inside the `map` exactly when the sum is present).
         let coeff_draws =
             plans
                 .iter()
@@ -401,11 +377,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 .map(|(plan, (sum, coeff))| {
                     if plan.is_option {
                         quote! {
-                            let #coeff = if #sum.is_some() {
-                                ::core::option::Option::Some(transcript.challenge_scalar())
-                            } else {
-                                ::core::option::Option::None
-                            };
+                            let #coeff = #sum.as_ref().map(|_| transcript.challenge_scalar());
                         }
                     } else {
                         quote!(let #coeff = transcript.challenge_scalar();)
@@ -574,17 +546,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (
                             ::core::option::Option::Some(__member),
                             ::core::option::Option::Some(__input_points),
-                        ) => {
-                            let __point = __instance_point(
-                                batch_point,
-                                __member.instance_point_offset(batch_point.len())?,
-                                __member.rounds(),
-                                __member.id(),
-                            )?;
-                            ::core::option::Option::Some(
-                                __member.derive_opening_points(__point, __input_points)?,
-                            )
-                        }
+                        ) => ::core::option::Option::Some(__member.derive_opening_points(
+                            __member.instance_point(batch_point)?,
+                            __input_points,
+                        )?),
                         (::core::option::Option::None, _) => ::core::option::Option::None,
                         (::core::option::Option::Some(__member), ::core::option::Option::None) => {
                             return ::core::result::Result::Err(
@@ -600,12 +565,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             } else {
                 quote! {
                     let #field = self.#id.derive_opening_points(
-                        __instance_point(
-                            batch_point,
-                            self.#id.instance_point_offset(batch_point.len())?,
-                            self.#id.rounds(),
-                            self.#id.id(),
-                        )?,
+                        self.#id.instance_point(batch_point)?,
                         &input_points.#id,
                     )?;
                 }
@@ -624,30 +584,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 input_points: &#input_points_name<#f>,
             ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
-
-                // An instance with `rounds` variables is bound on
-                // `batch_point[offset .. offset + rounds]`, where `offset` is the
-                // member's `instance_point_offset` (the front-loaded suffix by
-                // default; the two-phase address relations use the offset-0 prefix,
-                // the stage-2 RAM relations their phase-1 offset).
-                fn __instance_point<__F: ::jolt_field::Field>(
-                    batch_point: &[__F],
-                    offset: usize,
-                    rounds: usize,
-                    stage: ::jolt_claims::protocols::jolt::JoltRelationId,
-                ) -> ::core::result::Result<&[__F], crate::VerifierError> {
-                    offset
-                        .checked_add(rounds)
-                        .and_then(|__end| batch_point.get(offset..__end))
-                        .ok_or(crate::VerifierError::StageClaimSumcheckFailed {
-                            stage,
-                            reason: ::std::format!(
-                                "instance point [{offset}, {offset} + {rounds}) exceeds the batch \
-                                 challenge vector ({} entries)",
-                                batch_point.len(),
-                            ),
-                        })
-                }
 
                 #(#point_bindings)*
                 ::core::result::Result::Ok(#output_points_name {
@@ -681,63 +617,35 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 quote!(.or_else(|| output_values.#id.resolve_output(__id)))
             }
         });
+        let claims_cell_ident = format_ident!("__claims_cell");
         let alias_checks = plans.iter().map(|plan| {
             let id = &plan.ident;
             let instance = &plan.instance;
-            let check = quote! {
-                for (__aliased, __source) in
-                    <#instance as #relations::ConcreteSumcheck<#f>>::aliased_output_openings()
-                {
-                    let __target = __claims_cell.resolve_output(&__aliased).ok_or(
-                        crate::VerifierError::MissingOpeningClaim { id: __aliased },
-                    )?;
-                    let __source_value = __resolve(&__source).ok_or(
-                        crate::VerifierError::MissingOpeningClaim { id: __source },
-                    )?;
-                    if __target != __source_value {
-                        return ::core::result::Result::Err(
-                            crate::VerifierError::StageClaimOpeningMismatch {
-                                stage: __member.id(),
-                                left: __aliased,
-                                right: __source,
-                            },
-                        );
-                    }
-                }
-            };
-            if plan.is_option {
+            per_member(
+                plan.is_option,
+                &[
+                    (&member_ident, quote!(self.#id)),
+                    (&claims_cell_ident, quote!(output_values.#id)),
+                ],
                 quote! {
-                    if let (
-                        ::core::option::Option::Some(__member),
-                        ::core::option::Option::Some(__claims_cell),
-                    ) = (self.#id.as_ref(), output_values.#id.as_ref())
-                    {
-                        #check
-                    }
-                }
-            } else {
-                quote! {
-                    {
-                        let __member = &self.#id;
-                        let __claims_cell = &output_values.#id;
-                        #check
-                    }
-                }
-            }
+                    #relations::validate_member_aliases::<#f, #instance>(
+                        __member,
+                        __claims_cell,
+                        &__resolve,
+                    )?;
+                },
+            )
         });
         quote! {
             /// Enforce every member's declared cross-relation opening aliases
             /// (`ConcreteSumcheck::aliased_output_openings`): each aliased wire
             /// cell must equal its canonical source opening, resolved by id across
-            /// the batch. Load-bearing — aliased cells are never Fiat-Shamir
-            /// absorbed and the batch fold pins only their random linear
-            /// combination, so downstream consumers reading a copy rely on this
-            /// equality. Run by `expected_final_claim`; callable directly by tests.
+            /// the batch. Load-bearing — see `relations::validate_member_aliases`.
+            /// Run by `expected_final_claim`; callable directly by tests.
             pub fn validate_aliases(
                 &self,
                 output_values: &#output_claims_name<#f>,
             ) -> ::core::result::Result<(), crate::VerifierError> {
-                use #relations::ConcreteSumcheck as _;
                 use ::jolt_claims::OutputClaims as _;
                 let __resolve = |__id: &::jolt_claims::protocols::jolt::JoltOpeningId| {
                     ::core::option::Option::<#f>::None
@@ -846,121 +754,46 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // The `Option`-member claim-presence match shared by `validate_output_claims`
-    // (output_shape) and `validate_claim_presence`: reject a present instance whose
-    // claims cell is absent, and reject claims supplied for an absent instance;
-    // `some_some_arm` handles a present instance with present claims (the shape check
-    // for `output_shape`, an empty arm for the presence-only validator). Factoring the
-    // three guard arms keeps both validators' presence handling token-identical.
-    let presence_match = |plan: &InstanceField, some_some_arm: TokenStream2| {
-        let id = &plan.ident;
-        let instance = &plan.instance;
-        quote! {
-            match (self.#id.as_ref(), claims.#id.as_ref()) {
-                #some_some_arm
-                (::core::option::Option::None, ::core::option::Option::None) => {}
-                (::core::option::Option::Some(__member), ::core::option::Option::None) => {
-                    return ::core::result::Result::Err(
-                        crate::VerifierError::StageClaimPublicInputFailed {
-                            stage: __member.id(),
-                            reason: "present instance is missing its output claims"
-                                .to_string(),
-                        },
-                    );
-                }
-                (::core::option::Option::None, ::core::option::Option::Some(__claims)) => {
-                    return ::core::result::Result::Err(
-                        match __claims.canonical_order().into_iter().next() {
-                            ::core::option::Option::Some(__opening) => {
-                                crate::VerifierError::UnexpectedOpeningClaim {
-                                    id: __opening,
-                                }
-                            }
-                            ::core::option::Option::None => {
-                                crate::VerifierError::StageClaimPublicInputFailed {
-                                    stage: <<#instance as #relations::ConcreteSumcheck<
-                                        #f,
-                                    >>::Symbolic as ::jolt_claims::SymbolicSumcheck>::id(),
-                                    reason: "output claims supplied for an absent instance"
-                                        .to_string(),
-                                }
-                            }
-                        },
-                    );
-                }
-            }
-        }
-    };
-
     // The output-claim shape helpers: the total produced-opening count (for the ZK
     // commitment count) and a validator that the proof-supplied output claims match
-    // the dims-derived expected shape (per member, comparing `canonical_order` id-sets
-    // against `expected_output_openings`). Opt-in via `#[sumcheck_batch(output_shape)]`.
+    // the dims-derived expected shape. Both delegate per member to the generic
+    // `relations` helpers; an `Option` member's presence guards run first (a stage
+    // that curates its own shape checks calls `validate_member_presence` by hand —
+    // stage 6b). Opt-in via `#[sumcheck_batch(output_shape)]`.
     let output_shape_methods = if options.output_shape {
         let count_terms = plans.iter().map(|plan| {
             let id = &plan.ident;
-            if plan.is_option {
-                quote! {
-                    if let ::core::option::Option::Some(__member) = self.#id.as_ref() {
-                        __count += __member.wire_output_openings().len();
-                    }
-                }
-            } else {
-                quote!(__count += self.#id.wire_output_openings().len();)
-            }
+            per_member(
+                plan.is_option,
+                &[(&member_ident, quote!(self.#id))],
+                quote!(__count += __member.wire_output_openings().len();),
+            )
         });
         let validate_checks = plans.iter().map(|plan| {
             let id = &plan.ident;
             let instance = &plan.instance;
-            let check = quote! {
-                let __expected = __member.wire_output_openings();
-                // Aliased openings are on the wire struct (plain cells) but are
-                // absorbed via their canonical source, so they are excluded from
-                // the provided set before the shape comparison; their value
-                // equality is enforced separately by `validate_aliases`.
-                let __aliased: ::std::collections::BTreeSet<_> =
-                    <#instance as #relations::ConcreteSumcheck<#f>>::aliased_output_openings()
-                        .into_iter()
-                        .map(|(__id, _)| __id)
-                        .collect();
-                let __provided: ::std::collections::BTreeSet<_> = __claims
-                    .canonical_order()
-                    .into_iter()
-                    .filter(|__id| !__aliased.contains(__id))
-                    .collect();
-                if __provided != __expected {
-                    return ::core::result::Result::Err(
-                        crate::VerifierError::StageClaimPublicInputFailed {
-                            stage: __member.id(),
-                            reason: ::std::format!(
-                                "output claim shape mismatch: expected {} openings, got {}",
-                                __expected.len(),
-                                __provided.len(),
-                            ),
-                        },
-                    );
-                }
-            };
-            if plan.is_option {
-                // A present instance with present claims runs the shape check;
-                // `presence_match` supplies the three guard arms (missing / absent).
-                presence_match(
-                    plan,
-                    quote! {
-                        (
-                            ::core::option::Option::Some(__member),
-                            ::core::option::Option::Some(__claims),
-                        ) => { #check }
-                    },
-                )
-            } else {
+            let shape = per_member(
+                plan.is_option,
+                &[
+                    (&member_ident, quote!(self.#id)),
+                    (&claims_ident, quote!(claims.#id)),
+                ],
                 quote! {
-                    {
-                        let __member = &self.#id;
-                        let __claims = &claims.#id;
-                        #check
-                    }
+                    #relations::validate_member_output_shape::<#f, #instance>(
+                        __member, __claims,
+                    )?;
+                },
+            );
+            if plan.is_option {
+                quote! {
+                    #relations::validate_member_presence::<#f, #instance>(
+                        self.#id.as_ref(),
+                        claims.#id.as_ref(),
+                    )?;
+                    #shape
                 }
+            } else {
+                shape
             }
         });
         quote! {
@@ -977,51 +810,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// Assert the proof-supplied output claims match the expected shape: per
             /// member, the provided `canonical_order` id-set (minus the member's
             /// aliased openings) equals the relation's
-            /// `ConcreteSumcheck::wire_output_openings`; claims supplied for an
-            /// absent `Option` member are rejected.
+            /// `ConcreteSumcheck::wire_output_openings`; an `Option` member's claim
+            /// presence must agree with the instance's.
             pub fn validate_output_claims(
                 &self,
                 claims: &#output_claims_name<#f>,
             ) -> ::core::result::Result<(), crate::VerifierError> {
-                use #relations::ConcreteSumcheck as _;
-                use ::jolt_claims::OutputClaims as _;
                 #(#validate_checks)*
-                ::core::result::Result::Ok(())
-            }
-        }
-    } else {
-        quote!()
-    };
-
-    // The presence-only subset of `validate_output_claims`: only the `Option`-member
-    // present-instance/absent-instance guards (no output-`Expr` shape check), for a
-    // stage that curates its own shape/count checks. The `(Some, Some)` arm is empty
-    // (`_` bindings, since no shape check reads the instance or claims). Opt-in via
-    // `#[sumcheck_batch(validate_claim_presence)]`.
-    let validate_claim_presence_method = if options.validate_claim_presence {
-        let presence_checks = plans.iter().filter(|plan| plan.is_option).map(|plan| {
-            presence_match(
-                plan,
-                quote! {
-                    (
-                        ::core::option::Option::Some(_),
-                        ::core::option::Option::Some(_),
-                    ) => {}
-                },
-            )
-        });
-        quote! {
-            /// Assert each optional member's output-claims presence agrees with the
-            /// instance: reject a present instance missing its claims, and reject
-            /// claims supplied for an absent instance. The presence-only subset of
-            /// `validate_output_claims` (no output-`Expr` shape check).
-            pub fn validate_claim_presence(
-                &self,
-                claims: &#output_claims_name<#f>,
-            ) -> ::core::result::Result<(), crate::VerifierError> {
-                use #relations::ConcreteSumcheck as _;
-                use ::jolt_claims::OutputClaims as _;
-                #(#presence_checks)*
                 ::core::result::Result::Ok(())
             }
         }
@@ -1071,8 +866,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// source relation). This is the Fiat-Shamir order and MUST match the
             /// prover's commitment order.
             pub fn opening_values(&self, claims: &#output_claims_name<#f>) -> ::std::vec::Vec<#f> {
-                use #relations::ConcreteSumcheck as _;
-                use ::jolt_claims::OutputClaims as _;
                 let mut __values = ::std::vec::Vec::new();
                 #(#opening_extends)*
                 __values
@@ -1104,7 +897,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #expected_final_claim_method
             #output_shape_methods
             #empty_input_points_method
-            #validate_claim_presence_method
             #absorb_methods
         }
     };
@@ -1177,10 +969,6 @@ struct StageOptions {
     /// each member's `wire_output_openings` (its output-`Expr`-referenced set minus
     /// its aliased openings).
     output_shape: bool,
-    /// `#[sumcheck_batch(validate_claim_presence)]`: emit `validate_claim_presence`,
-    /// the presence-only subset of `validate_output_claims` (the `Option`-member
-    /// present-instance/absent-instance claim guards, no output-`Expr` shape check).
-    validate_claim_presence: bool,
     /// `#[sumcheck_batch(no_draw_challenges)]`: skip emitting the generated
     /// `draw_challenges` for a stage whose member challenges have stage-level
     /// provenance (shared squeezes, pre-batch draws, value re-rolls) — calling a
@@ -1213,15 +1001,13 @@ impl StageOptions {
                     options.custom_opening_values = true;
                 } else if path.is_ident("output_shape") {
                     options.output_shape = true;
-                } else if path.is_ident("validate_claim_presence") {
-                    options.validate_claim_presence = true;
                 } else if path.is_ident("no_draw_challenges") {
                     options.no_draw_challenges = true;
                 } else {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
-                         `output_shape`, `validate_claim_presence`, `no_draw_challenges`)",
+                         `output_shape`, `no_draw_challenges`)",
                     ));
                 }
             }
@@ -1230,46 +1016,25 @@ impl StageOptions {
     }
 }
 
-/// The macro supports exactly one generic type parameter (the field `F`): no
-/// extra generics, no lifetimes/consts, and no where-clause (any of which the
-/// generated aggregates would silently drop). Reject anything else with a clear
-/// error rather than binding the wrong `F` or emitting wrong projections.
-fn validate_generics(generics: &syn::Generics) -> syn::Result<()> {
+/// The macro supports exactly one generic type parameter (the field `F`,
+/// returned): no extra generics, no lifetimes/consts, and no where-clause (any
+/// of which the generated aggregates would silently drop). Reject anything else
+/// with a clear error rather than binding the wrong `F` or emitting wrong
+/// projections.
+fn validated_field_param(generics: &syn::Generics) -> syn::Result<Ident> {
     if let Some(where_clause) = &generics.where_clause {
         return Err(syn::Error::new_spanned(
             where_clause,
             "SumcheckBatch does not support a where-clause on the source struct",
         ));
     }
-    let type_params = generics
-        .params
-        .iter()
-        .filter(|param| matches!(param, GenericParam::Type(_)))
-        .count();
-    if generics.params.len() != 1 || type_params != 1 {
-        return Err(syn::Error::new_spanned(
+    match generics.params.iter().collect::<Vec<_>>().as_slice() {
+        [GenericParam::Type(param)] => Ok(param.ident.clone()),
+        _ => Err(syn::Error::new_spanned(
             generics,
             "SumcheckBatch requires exactly one generic type parameter (the field `F`)",
-        ));
+        )),
     }
-    Ok(())
-}
-
-/// The first type generic parameter (the field, conventionally `F`).
-fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
-    generics
-        .params
-        .iter()
-        .find_map(|param| match param {
-            GenericParam::Type(param) => Some(param.ident.clone()),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            syn::Error::new_spanned(
-                generics,
-                "expected a field-type generic parameter (e.g. `<F>`)",
-            )
-        })
 }
 
 fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Field>> {

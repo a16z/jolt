@@ -61,7 +61,7 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// bytecode output `Expr` consumes the 6a-produced `BytecodeValStage` openings
 /// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values, no_draw_challenges, validate_claim_presence)]
+#[sumcheck_batch(custom_opening_values, no_draw_challenges)]
 pub struct Stage6bSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,

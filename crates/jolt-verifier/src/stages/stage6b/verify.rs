@@ -40,7 +40,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::OutputAppend,
+        relations::{validate_member_presence, OutputAppend},
         stage1::Stage1Output,
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::Stage3Output,
@@ -200,11 +200,26 @@ where
     // Reject cycle-phase output claims whose presence disagrees with the member's
     // layout: a present reduction missing its claims, or claims supplied for a
     // reduction that did not run. Instance presence mirrors layout presence (see
-    // `Stage6bSumchecks::build`), so this generated guard subsumes the former
-    // per-member absent-layout checks. Transcript-free (runs before the batched
-    // verify). Error variants for these malformed-proof cases differ from the former
-    // hand guards; the tampering suite asserts generic rejection.
-    sumchecks.validate_claim_presence(claims)?;
+    // `Stage6bSumchecks::build`). Hand-listed because 6b curates its own shape
+    // checks (no `output_shape`, whose generated validator runs these guards
+    // itself); one call per `Option` member. Transcript-free (runs before the
+    // batched verify); the tampering suite asserts generic rejection.
+    validate_member_presence(
+        sumchecks.trusted_advice.as_ref(),
+        claims.trusted_advice.as_ref(),
+    )?;
+    validate_member_presence(
+        sumchecks.untrusted_advice.as_ref(),
+        claims.untrusted_advice.as_ref(),
+    )?;
+    validate_member_presence(
+        sumchecks.bytecode_reduction.as_ref(),
+        claims.bytecode_reduction.as_ref(),
+    )?;
+    validate_member_presence(
+        sumchecks.program_image_reduction.as_ref(),
+        claims.program_image_reduction.as_ref(),
+    )?;
 
     let input_values = stage6b_input_values_from_upstream(
         &sumchecks,
@@ -262,7 +277,7 @@ where
 /// The wire-shape checks over the cycle-phase output claims that the generated
 /// drivers cannot express: the bytecode RA claim count and the bytecode reduction's
 /// intermediate-vs-chunks shape. Member presence is enforced separately by the
-/// generated `validate_claim_presence`; a missing advice inner opening is caught by
+/// hand-listed `validate_member_presence` calls; a missing advice inner opening is caught by
 /// `expected_final_claim` (the advice cycle phase's `expected_output`).
 fn validate_cycle_phase_claim_shape<F: Field>(
     formula_dimensions: &JoltFormulaDimensions,

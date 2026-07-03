@@ -7,6 +7,14 @@
 | Status      | proposed                       |
 | PR          |                                |
 
+> **NOTE (2026-07-03):** the implementation has evolved past this spec: the
+> aggregates are single-generic (`StageNOutputClaims<F>`, with the `*Points`
+> aggregates carrying the `Vec<F>` cell form), the batched verification drivers
+> described below as deferred ARE generated (`verify_clear` / `verify_zk` /
+> `derive_opening_points` / `expected_final_claim`), and the shared per-member
+> logic lives as generic functions in `jolt-verifier`'s `stages::relations`.
+> The crate-level docs of `jolt-verifier-derive` are the current reference.
+
 ## Summary
 
 Each verifier stage is a batch of one or more sumcheck instances, and the data

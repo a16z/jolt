@@ -212,6 +212,27 @@ where
         })
     }
 
+    /// The `batch_point[offset .. offset + rounds]` slice this instance is bound
+    /// on, where `offset` is [`instance_point_offset`](Self::instance_point_offset)
+    /// (the overridable knob; this method is the derived slice, so the
+    /// offset/rounds pairing is single-sourced). Called by the generated
+    /// `derive_opening_points` when slicing each member's point.
+    fn instance_point<'a>(&self, batch_point: &'a [F]) -> Result<&'a [F], VerifierError> {
+        let offset = self.instance_point_offset(batch_point.len())?;
+        let rounds = self.rounds();
+        offset
+            .checked_add(rounds)
+            .and_then(|end| batch_point.get(offset..end))
+            .ok_or(VerifierError::StageClaimSumcheckFailed {
+                stage: self.id(),
+                reason: format!(
+                    "instance point [{offset}, {offset} + {rounds}) exceeds the batch \
+                     challenge vector ({} entries)",
+                    batch_point.len(),
+                ),
+            })
+    }
+
     /// Map this instance's sumcheck point and the upstream input points into the
     /// produced openings' points. Value-independent, so it runs in both the clear
     /// and ZK paths; any cross-input consistency required for a well-defined point
@@ -302,6 +323,132 @@ where
             |id| self.derive_output_term(id, input_points, output_points, challenges),
         )
     }
+}
+
+/// One member's absorbed opening scalars: its claims' `canonical_order`-aligned
+/// values minus the member's [aliased
+/// openings](ConcreteSumcheck::aliased_output_openings) (absorbed once via
+/// their canonical source relation). Called by the generated `opening_values`
+/// per member, in member declaration order.
+pub fn absorbed_opening_values<F, I>(claims: &SumcheckOutputClaims<F, I>) -> Vec<F>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    let skip: BTreeSet<_> = I::aliased_output_openings()
+        .into_iter()
+        .map(|(aliased, _)| aliased)
+        .collect();
+    claims
+        .canonical_order()
+        .into_iter()
+        .zip(claims.opening_values())
+        .filter(|(id, _)| !skip.contains(id))
+        .map(|(_, value)| value)
+        .collect()
+}
+
+/// Assert an optional member's output-claims presence agrees with the instance:
+/// reject a present instance missing its claims cell, and reject claims
+/// supplied for an absent instance. Called by the generated
+/// `validate_output_claims` for each `Option` member (before its shape check),
+/// and directly by a stage that curates its own shape checks (stage 6b).
+pub fn validate_member_presence<F, I>(
+    member: Option<&I>,
+    claims: Option<&SumcheckOutputClaims<F, I>>,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    match (member, claims) {
+        (Some(_), Some(_)) | (None, None) => Ok(()),
+        (Some(member), None) => Err(VerifierError::StageClaimPublicInputFailed {
+            stage: member.id(),
+            reason: "present instance is missing its output claims".to_string(),
+        }),
+        (None, Some(claims)) => Err(match claims.canonical_order().into_iter().next() {
+            Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening },
+            None => VerifierError::StageClaimPublicInputFailed {
+                stage: <I::Symbolic as SymbolicSumcheck>::id(),
+                reason: "output claims supplied for an absent instance".to_string(),
+            },
+        }),
+    }
+}
+
+/// Enforce one member's declared cross-relation opening aliases: each aliased
+/// wire cell (resolved from the DECLARING member's claims) must equal its
+/// canonical source opening, resolved across the batch by `resolve_source`
+/// (the generated batch-wide resolver). Load-bearing — aliased cells are never
+/// Fiat-Shamir absorbed and the batch fold pins only their random linear
+/// combination, so downstream consumers reading a copy rely on this equality.
+/// Called by the generated `validate_aliases` per member.
+pub fn validate_member_aliases<F, I>(
+    member: &I,
+    claims: &SumcheckOutputClaims<F, I>,
+    resolve_source: impl Fn(&JoltOpeningId) -> Option<F>,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    for (aliased, source) in I::aliased_output_openings() {
+        let target = claims
+            .resolve_output(&aliased)
+            .ok_or(VerifierError::MissingOpeningClaim { id: aliased })?;
+        let source_value =
+            resolve_source(&source).ok_or(VerifierError::MissingOpeningClaim { id: source })?;
+        if target != source_value {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: member.id(),
+                left: aliased,
+                right: source,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Assert one member's wire claims match its expected output shape: the
+/// provided `canonical_order` id-set, minus the member's aliased openings
+/// (absorbed via their canonical source; their value equality is enforced
+/// separately by `validate_aliases`), must equal the member's
+/// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings). Called by
+/// the generated `validate_output_claims` per member.
+pub fn validate_member_output_shape<F, I>(
+    member: &I,
+    claims: &SumcheckOutputClaims<F, I>,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    let expected = member.wire_output_openings();
+    let aliased: BTreeSet<_> = I::aliased_output_openings()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let provided: BTreeSet<_> = claims
+        .canonical_order()
+        .into_iter()
+        .filter(|id| !aliased.contains(id))
+        .collect();
+    if provided != expected {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: member.id(),
+            reason: format!(
+                "output claim shape mismatch: expected {} openings, got {}",
+                expected.len(),
+                provided.len(),
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
