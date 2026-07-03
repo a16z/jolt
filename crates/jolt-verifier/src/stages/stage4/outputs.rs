@@ -26,15 +26,15 @@ use super::registers_read_write_checking::RegistersReadWriteChecking;
 /// program-image come *before* the register openings, then `ram_ra`/`ram_inc`
 /// come *after* — which a plain per-instance concatenation cannot express. The
 /// stage therefore opts out of the generated absorb methods via
-/// `#[sumcheck_batch(custom_opening_values)]` and supplies the exact interleaved
+/// `#[sumcheck_batch(no_opening_values)]` and supplies the exact interleaved
 /// order below.
 ///
 /// The RAM value-check member's wire set extends its output `Expr`
 /// (`ram_ra`/`ram_inc`) with the present staged advice / program-image openings
-/// (see its `wire_output_openings` override), so the generated `output_shape`
+/// (see its `wire_output_openings` override), so the generated output-shape
 /// count/validator cover their presence and count.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values, output_shape)]
+#[sumcheck_batch(no_opening_values)]
 pub struct Stage4Sumchecks<F: Field> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     pub ram_val_check: RamValCheck<F>,

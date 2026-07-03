@@ -24,7 +24,7 @@ pub struct Stage1OutputClaims<F: Field> {
 /// `Stage1BatchInputPoints<F>`, `Stage1BatchOutputClaims<F>` /
 /// `Stage1BatchOutputPoints<F>`, and `Stage1BatchChallenges<F>` aggregates — one
 /// field per instance, in this declaration order. With a single instance and no
-/// cross-relation aliasing there is no `custom_opening_values` opt-out: the
+/// cross-relation aliasing there is no `no_opening_values` opt-out: the
 /// generated absorb (`opening_values` / `append_output_claims` on this struct)
 /// delegates to `OuterRemainderOutputClaims` in `dimensions.variables()` order
 /// (the canonical 35 R1CS-input order), byte-identical to the previous explicit
@@ -34,7 +34,6 @@ pub struct Stage1OutputClaims<F: Field> {
 /// bound point, so it completes itself lazily: `derive_opening_points` captures
 /// the point and the first `derive_output_term` call builds the table.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(output_shape)]
 pub struct Stage1BatchSumchecks<F: Field> {
     pub outer_remainder: OuterRemainder<F>,
 }

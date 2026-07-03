@@ -53,15 +53,15 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// `Stage6bChallenges` from the stage-level draws — a generated per-member draw
 /// would squeeze at the wrong transcript position if it existed to be called.
 ///
-/// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
+/// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
 /// absorb methods: booleanity's `bytecode_ra` openings
 /// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
 /// order is curated by [`append_opening_claims`](super::verify::append_opening_claims)
-/// which threads the dedup points. `output_shape` is NOT applicable: the committed
+/// which threads the dedup points. `no_output_shape`: shape methods are inapplicable — the committed
 /// bytecode output `Expr` consumes the 6a-produced `BytecodeValStage` openings
 /// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values, no_draw_challenges)]
+#[sumcheck_batch(no_opening_values, no_draw_challenges, no_output_shape)]
 pub struct Stage6bSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,

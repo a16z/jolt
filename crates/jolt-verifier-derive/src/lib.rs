@@ -65,17 +65,20 @@
 //!   via `relations::validate_member_aliases` against the batch-wide resolver. Run
 //!   unskippably by `expected_final_claim`, so declaring a pair on a relation
 //!   enforces it everywhere.
+//! - `output_claim_count` / `validate_output_claims` — the wire-shape helpers
+//!   (via `relations::validate_member_{presence, output_shape}`), deriving each
+//!   member's expected openings from `ConcreteSumcheck::wire_output_openings`.
 //! - `draw_challenges`, `empty_input_points`, and the absorb plumbing
 //!   (`opening_values` / `append_output_claims`, via
 //!   `relations::absorbed_opening_values`).
 //!
-//! `#[sumcheck_batch(...)]` flags (`StageOptions` below is the canonical
-//! reference): `output_shape` opts in to `output_claim_count` /
-//! `validate_output_claims` (via `relations::validate_member_{presence,
-//! output_shape}`); `custom_opening_values` and `no_draw_challenges` suppress
-//! generated methods that would be WRONG to call on their stage (a
-//! member-interleaved or runtime-deduped absorb order; stage-level challenge
-//! provenance) — suppressed rather than overridden so they cannot be miscalled.
+//! Every `#[sumcheck_batch(...)]` flag is an opt-OUT (`StageOptions` below is
+//! the canonical reference): `no_opening_values`, `no_output_shape`, and
+//! `no_draw_challenges` each suppress generated methods that would be WRONG to
+//! call on their stage (a member-interleaved or runtime-deduped absorb order; a
+//! runtime-deduped wire shape; stage-level challenge provenance) — suppressed
+//! rather than overridden so they cannot be miscalled. A flagless stage gets
+//! the full method suite.
 //!
 //! The `verify_*` drivers never name `SumcheckClaim` / `SumcheckStatement`; those
 //! stay internal to `jolt-sumcheck`.
@@ -94,10 +97,10 @@ use syn::{
 /// / `StageNChallenges`) from a struct of `ConcreteSumcheck` instances. See the
 /// crate-level docs.
 ///
-/// The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
-/// opts a stage out of the generated `opening_values` / `append_output_claims`
-/// absorb methods on the source struct, so a stage with a member-interleaved
-/// absorb order or a runtime point-driven dedup can supply its own. The
+/// The struct-level `#[sumcheck_batch(...)]` flags are opt-outs
+/// (`no_opening_values`, `no_output_shape`, `no_draw_challenges`), each
+/// suppressing generated methods that would be wrong to call on the flagged
+/// stage, which supplies its own replacement where one is needed. The
 /// aggregate structs and their derives are emitted unchanged.
 #[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
@@ -759,8 +762,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // the dims-derived expected shape. Both delegate per member to the generic
     // `relations` helpers; an `Option` member's presence guards run first (a stage
     // that curates its own shape checks calls `validate_member_presence` by hand —
-    // stage 6b). Opt-in via `#[sumcheck_batch(output_shape)]`.
-    let output_shape_methods = if options.output_shape {
+    // stage 6b). Suppressed by `#[sumcheck_batch(no_output_shape)]` for a stage
+    // whose wire shape is runtime-deduped (the count/validator would be wrong).
+    let output_shape_methods = if options.no_output_shape {
+        quote!()
+    } else {
         let count_terms = plans.iter().map(|plan| {
             let id = &plan.ident;
             per_member(
@@ -820,8 +826,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 ::core::result::Result::Ok(())
             }
         }
-    } else {
-        quote!()
     };
 
     // Suppressed by `#[sumcheck_batch(no_draw_challenges)]`: a stage whose member
@@ -853,10 +857,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // The generated absorb plumbing, on the source `StageNSumchecks` struct (it
     // consults each member's `aliased_output_openings` skip-set, an instance
     // method). Gated out when the stage opts in to
-    // `#[sumcheck_batch(custom_opening_values)]`, in which case the stage supplies
+    // `#[sumcheck_batch(no_opening_values)]`, in which case the stage supplies
     // its own absorb (e.g. one whose order interleaves members, or whose dedup is
     // runtime point-driven).
-    let absorb_methods = if options.custom_opening_values {
+    let absorb_methods = if options.no_opening_values {
         quote!()
     } else {
         quote! {
@@ -960,15 +964,16 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 /// anything else.
 #[derive(Default)]
 struct StageOptions {
-    /// `#[sumcheck_batch(custom_opening_values)]`: skip emitting the generated
+    /// `#[sumcheck_batch(no_opening_values)]`: skip emitting the generated
     /// `opening_values` / `append_output_claims` absorb methods so the stage can
     /// supply its own (a member-interleaved order or a runtime point-driven dedup).
-    custom_opening_values: bool,
-    /// `#[sumcheck_batch(output_shape)]`: emit `output_claim_count` and
-    /// `validate_output_claims`, which derive the expected output-claim shape from
-    /// each member's `wire_output_openings` (its output-`Expr`-referenced set minus
-    /// its aliased openings).
-    output_shape: bool,
+    no_opening_values: bool,
+    /// `#[sumcheck_batch(no_output_shape)]`: skip emitting `output_claim_count` and
+    /// `validate_output_claims` (which derive the expected output-claim shape from
+    /// each member's `wire_output_openings`) for a stage whose wire shape is not
+    /// statically derivable (a runtime point-driven dedup) — the count/validator
+    /// would be wrong there, so they must not exist to be miscalled.
+    no_output_shape: bool,
     /// `#[sumcheck_batch(no_draw_challenges)]`: skip emitting the generated
     /// `draw_challenges` for a stage whose member challenges have stage-level
     /// provenance (shared squeezes, pre-batch draws, value re-rolls) — calling a
@@ -994,20 +999,20 @@ impl StageOptions {
                 let Meta::Path(path) = &flag else {
                     return Err(syn::Error::new_spanned(
                         &flag,
-                        "expected a bare `sumcheck_batch` flag (e.g. `custom_opening_values`)",
+                        "expected a bare `sumcheck_batch` flag (e.g. `no_opening_values`)",
                     ));
                 };
-                if path.is_ident("custom_opening_values") {
-                    options.custom_opening_values = true;
-                } else if path.is_ident("output_shape") {
-                    options.output_shape = true;
+                if path.is_ident("no_opening_values") {
+                    options.no_opening_values = true;
+                } else if path.is_ident("no_output_shape") {
+                    options.no_output_shape = true;
                 } else if path.is_ident("no_draw_challenges") {
                     options.no_draw_challenges = true;
                 } else {
                     return Err(syn::Error::new_spanned(
                         path,
-                        "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
-                         `output_shape`, `no_draw_challenges`)",
+                        "unknown `sumcheck_batch` flag (supported: `no_opening_values`, \
+                         `no_output_shape`, `no_draw_challenges`)",
                     ));
                 }
             }

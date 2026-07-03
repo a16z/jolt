@@ -28,10 +28,9 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 ///
 /// The bytecode read-RAF member's wire set extends its output `Expr` with the
 /// committed-program-only staged `BytecodeValStage` openings (see its
-/// `wire_output_openings` override), so the generated `output_shape`
+/// `wire_output_openings` override), so the generated output-shape
 /// count/validator cover the val-stage presence and count.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(output_shape)]
 pub struct Stage6aSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,

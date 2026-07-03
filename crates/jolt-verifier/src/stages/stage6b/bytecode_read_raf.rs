@@ -417,7 +417,7 @@ impl<F: Field> BytecodeReadRafCycle<F> {
 /// the differing halves — `expected_output` (output `Expr`) and
 /// `derive_opening_points` — is overridden to dispatch per variant, converting
 /// the anchor's `Challenges` into the full variant's. It stays sound only while
-/// those overrides stand and the batch does NOT enable `output_shape` (the
+/// those overrides stand and the batch keeps `no_output_shape` (the
 /// committed output `Expr` references the staged `BytecodeValStage` openings,
 /// which the full mode never produces).
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {

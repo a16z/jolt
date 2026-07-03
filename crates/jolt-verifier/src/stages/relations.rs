@@ -1054,7 +1054,6 @@ mod sumcheck_batch_derive_tests {
     }
 
     #[derive(SumcheckBatch)]
-    #[sumcheck_batch(output_shape)]
     struct FixtureOptionSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: Option<RegistersValEvaluation<F>>,
@@ -1141,14 +1140,14 @@ mod sumcheck_batch_derive_tests {
         assert!(sumchecks.validate_output_claims(&well_formed).is_ok());
     }
 
-    // The opt-out fixture: `#[sumcheck_batch(custom_opening_values)]` must still
+    // The opt-out fixture: `#[sumcheck_batch(no_opening_values)]` must still
     // generate the five aggregate structs but emit NO `opening_values` /
     // `append_output_claims` on the source struct. The inherent `opening_values`
     // below would collide with a generated one (the compiler rejects two inherent
     // methods of the same name), so this module compiling at all proves the
     // opt-out suppressed it.
     #[derive(SumcheckBatch)]
-    #[sumcheck_batch(custom_opening_values)]
+    #[sumcheck_batch(no_opening_values)]
     // The custom absorb below never reads the members (no aliased sets to consult).
     #[expect(dead_code)]
     struct FixtureCustomSumchecks<F: Field> {
@@ -1176,7 +1175,7 @@ mod sumcheck_batch_derive_tests {
     }
 
     #[test]
-    fn custom_opening_values_suppresses_generated_impl() {
+    fn no_opening_values_suppresses_generated_impl() {
         let fr = Fr::from_u64;
         let sumchecks = FixtureCustomSumchecks {
             instruction_read_raf: instruction_read_raf(),

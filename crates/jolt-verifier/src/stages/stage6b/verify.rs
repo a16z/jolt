@@ -201,7 +201,7 @@ where
     // layout: a present reduction missing its claims, or claims supplied for a
     // reduction that did not run. Instance presence mirrors layout presence (see
     // `Stage6bSumchecks::build`). Hand-listed because 6b curates its own shape
-    // checks (no `output_shape`, whose generated validator runs these guards
+    // checks (`no_output_shape`, so no generated validator runs these guards
     // itself); one call per `Option` member. Transcript-free (runs before the
     // batched verify); the tampering suite asserts generic rejection.
     validate_member_presence(
