@@ -67,6 +67,9 @@ pub mod claim_reductions;
 pub(crate) mod clear_claims;
 pub mod config;
 pub mod final_opening;
+#[cfg(feature = "prover")]
+pub mod lattice;
+
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
