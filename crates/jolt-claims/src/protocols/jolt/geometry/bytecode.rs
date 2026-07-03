@@ -543,7 +543,7 @@ where
     claim
 }
 
-fn bytecode_ra_product<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
+pub(crate) fn bytecode_ra_product<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
 where
     F: RingCore,
 {

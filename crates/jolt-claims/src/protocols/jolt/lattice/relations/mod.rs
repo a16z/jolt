@@ -6,3 +6,4 @@ pub mod advice_bytes;
 pub mod booleanity;
 pub mod chunk_reconstruction;
 pub mod inc_virtualization;
+pub mod read_raf;
