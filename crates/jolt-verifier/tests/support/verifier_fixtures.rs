@@ -1,6 +1,5 @@
 #![expect(
     clippy::expect_used,
-    clippy::panic,
     reason = "fixture generation should fail loudly when verifier object construction or serialization breaks"
 )]
 
@@ -456,34 +455,34 @@ fn write_fixture_file(path: &PathBuf, fixture: &GeneratedVerifierFixture) {
     fs::write(path, bytes).expect("write verifier fixture file");
 }
 
+/// Returns `None` on any decode failure, not just a magic mismatch: cached
+/// fixtures embed proof types whose serialized layout can change under a
+/// dependency bump, and a stale cache must count as a miss so
+/// `load_or_generate_fixture` regenerates it.
 fn read_fixture_file(path: &PathBuf) -> Option<GeneratedVerifierFixture> {
     let bytes = fs::read(path).expect("read verifier fixture file");
     let mut cursor = Cursor::new(bytes.as_slice());
     let mut magic = [0; FIXTURE_MAGIC.len()];
-    cursor
-        .read_exact(&mut magic)
-        .expect("read verifier fixture magic");
+    cursor.read_exact(&mut magic).ok()?;
     if &magic != FIXTURE_MAGIC {
         return None;
     }
 
-    let preprocessing = read_section(&mut cursor);
-    let public_io = read_section(&mut cursor);
-    let proof = read_section(&mut cursor);
+    let preprocessing = read_section(&mut cursor)?;
+    let public_io = read_section(&mut cursor)?;
+    let proof = read_section(&mut cursor)?;
     let mut has_trusted_advice_commitment = [0];
-    cursor
-        .read_exact(&mut has_trusted_advice_commitment)
-        .expect("read trusted advice commitment marker");
+    cursor.read_exact(&mut has_trusted_advice_commitment).ok()?;
     let trusted_advice_commitment = match has_trusted_advice_commitment[0] {
         0 => None,
-        1 => Some(deserialize_verifier_object(&read_section(&mut cursor))),
-        marker => panic!("invalid trusted advice commitment marker {marker}"),
+        1 => Some(deserialize_verifier_object(&read_section(&mut cursor)?)?),
+        _ => return None,
     };
 
     Some(GeneratedVerifierFixture {
-        preprocessing: deserialize_verifier_object(&preprocessing),
-        public_io: deserialize_verifier_object(&public_io),
-        proof: deserialize_verifier_object(&proof),
+        preprocessing: deserialize_verifier_object(&preprocessing)?,
+        public_io: deserialize_verifier_object(&public_io)?,
+        proof: deserialize_verifier_object(&proof)?,
         trusted_advice_commitment,
     })
 }
@@ -493,16 +492,17 @@ fn write_section(out: &mut Vec<u8>, section: &[u8]) {
     out.extend_from_slice(section);
 }
 
-fn read_section(cursor: &mut Cursor<&[u8]>) -> Vec<u8> {
+fn read_section(cursor: &mut Cursor<&[u8]>) -> Option<Vec<u8>> {
     let mut len = [0; 8];
-    cursor
-        .read_exact(&mut len)
-        .expect("read verifier fixture section length");
-    let mut section = vec![0; u64::from_le_bytes(len) as usize];
-    cursor
-        .read_exact(&mut section)
-        .expect("read verifier fixture section");
-    section
+    cursor.read_exact(&mut len).ok()?;
+    let len = usize::try_from(u64::from_le_bytes(len)).ok()?;
+    let remaining = (cursor.get_ref().len() as u64).saturating_sub(cursor.position());
+    if len as u64 > remaining {
+        return None;
+    }
+    let mut section = vec![0; len];
+    cursor.read_exact(&mut section).ok()?;
+    Some(section)
 }
 
 fn serialize_verifier_object<T: serde::Serialize>(item: &T) -> Vec<u8> {
@@ -510,11 +510,10 @@ fn serialize_verifier_object<T: serde::Serialize>(item: &T) -> Vec<u8> {
         .expect("serialize verifier object")
 }
 
-fn deserialize_verifier_object<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
-    let (value, consumed) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-        .expect("deserialize verifier object");
-    assert_eq!(consumed, bytes.len(), "trailing bytes in verifier object");
-    value
+fn deserialize_verifier_object<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+    let (value, consumed) =
+        bincode::serde::decode_from_slice(bytes, bincode::config::standard()).ok()?;
+    (consumed == bytes.len()).then_some(value)
 }
 
 fn assert_verifier_accepts(

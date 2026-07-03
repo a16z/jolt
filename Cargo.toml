@@ -267,7 +267,7 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b
   "sha3",
 ] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.3.0", features = [
+dory = { package = "dory-pcs", version = "0.4.0", features = [
   "backends",
   "cache",
   "disk-persistence",
