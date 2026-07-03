@@ -1,5 +1,6 @@
 pub mod final_openings;
 pub mod outputs;
+pub mod packed;
 mod verify;
 
 pub use final_openings::{
@@ -9,4 +10,5 @@ pub use final_openings::{
     Stage8FinalOpeningClaimsInput, Stage8FinalOpeningStructure,
 };
 pub use outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
+pub use packed::{verify_packed, PackedJoltProof};
 pub use verify::{verify, verify_zk};

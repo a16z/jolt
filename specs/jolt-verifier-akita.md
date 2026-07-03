@@ -222,9 +222,9 @@ created. Each is a `ConcreteSumcheck` impl over its jolt-claims
 | Stage | Base mode | Lattice mode |
 |---|---|---|
 | 1–5 | unchanged | unchanged |
-| 6 | `IncClaimReduction` | `IncVirtualization` — same slot, same four consumed claims, produces `FusedInc` + `OpFlags(Store)` |
+| 6a | — | `IncVirtualization` — same four consumed claims as the base inc reduction (stage-2/4/5 outputs, all upstream of 6a), produces `FusedInc` + `OpFlags(Store)`. Lives in the 6a batch (decided in review): a batch's input claims absorb at batch start, so the store claim can only feed the 6b read-raf input if it is produced strictly earlier — 6a outputs are visible to 6b inputs. Heterogeneous round counts are what batch round-offsets are for. |
 | 6 | `Booleanity` | lattice `Booleanity` — same relation id, output fold extended over `UnsignedIncChunk(0..N)` + `UnsignedIncMsb` |
-| 6 | `BytecodeReadRaf` (full mode) | + one val stage (`LATTICE_BYTECODE_VAL_STAGES`) consuming `OpFlags(Store)@IncVirtualization`; the verifier evaluates the store-flag val from public bytecode like the other five stages |
+| 6b | `BytecodeReadRaf` (full mode) | + one val stage (`LATTICE_BYTECODE_VAL_STAGES`) — the store claim enters the lattice 6b read-raf **input** fold (not 6a's, where the five upstream stages enter); the verifier evaluates the store-flag val from public bytecode like the other five stages |
 | 7 | `HammingWeightClaimReduction` | + `UnsignedIncChunkReconstruction` in the same batch — consumes the stage-6 chunk/msb/`FusedInc` openings, produces the chunk leaves |
 | 8 | RLC batch (`HomomorphicBatch`) | packed statement + `PackedBatch` (below) |
 
