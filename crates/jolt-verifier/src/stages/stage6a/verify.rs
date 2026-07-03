@@ -145,10 +145,7 @@ where
             checked,
             &proof.stages.stage6a_sumcheck_proof,
             "stage6a_sumcheck_proof",
-            // The address-phase output Expr carries only the two staged
-            // intermediates; committed mode additionally commits the staged
-            // `BytecodeValStage` columns, so the count stays hand-written.
-            2 + num_bytecode_val_stages,
+            address_sumchecks.output_claim_count(),
             JoltRelationId::BytecodeReadRaf,
         )?;
         let output_points = address_sumchecks
@@ -162,15 +159,10 @@ where
     }
 
     let claims = &proof.clear_claims()?.stage6a;
-    let has_val_stages = !claims.bytecode_read_raf.val_stages.is_empty();
-    if committed_program != has_val_stages {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: format!(
-                "bytecode Val-stage claims presence ({has_val_stages}) does not match committed program mode ({committed_program})"
-            ),
-        });
-    }
+    // Rejects val-stage claims whose presence or count disagrees with the
+    // committed-program mode (the bytecode member's wire set carries the staged
+    // `BytecodeValStage` ids exactly when the program is committed).
+    address_sumchecks.validate_output_claims(claims)?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening; the relation evaluates it through its input
@@ -207,9 +199,9 @@ where
 
     // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
     // then booleanity `intermediate`) is single-sourced from the generated
-    // `Stage6aOutputClaims::append_to_transcript` (member declaration order =
-    // canonical Fiat-Shamir order; no alias dedup in the address phase).
-    claims.append_to_transcript(transcript);
+    // `append_output_claims` (member declaration order = canonical Fiat-Shamir
+    // order; no alias dedup in the address phase).
+    address_sumchecks.append_output_claims(transcript, claims);
 
     Ok(Stage6aOutput::Clear(Stage6aClearOutput {
         output_points,
@@ -257,14 +249,29 @@ mod tests {
     /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
     /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
     /// booleanity `intermediate`. Single-sourced from the generated
-    /// `Stage6aOutputClaims::append_to_transcript`.
+    /// `append_output_claims`.
     #[test]
+    #[expect(clippy::unwrap_used)]
     fn stage6a_output_claims_append_follows_canonical_order() {
+        use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
+        use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+
+        let sumchecks = Stage6aSumchecks::<Fr> {
+            bytecode_read_raf: BytecodeReadRafAddressPhase::new(
+                BytecodeReadRafDimensions::new(3, 4, 2),
+                2,
+            ),
+            booleanity: BooleanityAddressPhase::new(BooleanityDimensions::new(
+                JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
+                4,
+                2,
+            )),
+        };
         let mut claims = sample_claims();
         claims.bytecode_read_raf.val_stages = vec![fr(903), fr(904)];
 
         let mut got = RecordingTranscript::default();
-        claims.append_to_transcript(&mut got);
+        sumchecks.append_output_claims(&mut got, &claims);
 
         let mut want = RecordingTranscript::default();
         for value in [fr(901), fr(903), fr(904), fr(902)] {

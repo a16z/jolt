@@ -44,14 +44,6 @@ use crate::{
     VerifierError,
 };
 
-/// The number of opening claims the stage-2 batch commits/absorbs: 15, not the 16
-/// the members' output expressions reference, because the three aliased
-/// instruction-claim-reduction openings (`lookup_output`,
-/// `left`/`right_instruction_input`) are absorbed once via their canonical
-/// product-remainder source (see
-/// [`Stage2BatchOutputClaims::opening_values`](super::outputs::Stage2BatchOutputClaims)).
-const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 15;
-
 /// The product uni-skip step's outputs: the tau bindings and the uni-skip
 /// reduction challenge are extracted mode-agnostically (clear: the single-entry
 /// reduction point; ZK: the committed round challenge) so the batch relations —
@@ -205,7 +197,7 @@ where
             checked,
             &proof.stages.stage2_sumcheck_proof,
             "stage2_sumcheck_proof",
-            STAGE2_BATCH_OUTPUT_CLAIMS,
+            sumchecks.output_claim_count(),
             JoltRelationId::RamReadWriteChecking,
         )?;
         let output_points =
@@ -232,6 +224,7 @@ where
     };
     let stage1 = stage1.clear()?;
     let claims = &proof.clear_claims()?.stage2;
+    sumchecks.validate_output_claims(&claims.batch_outputs)?;
 
     let input_values =
         stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
@@ -246,28 +239,23 @@ where
     let output_points =
         sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
 
-    let output_values = claims.batch_outputs.clone();
-    output_values.validate(&output_points)?;
-
-    // The reduction's output `Expr` reads the aliased openings, absent on the wire,
-    // so the fold is fed the alias-filled effective aggregates (raw `None` openings
-    // would error as `MissingOpeningClaim`).
-    let (effective_values, effective_points) = output_values.effective_aggregates(&output_points);
+    // Runs the generated `validate_aliases` first: the reduction's aliased wire
+    // cells (read by its output `Expr`) must equal their product-remainder sources.
     let expected_final_claim = sumchecks.expected_final_claim(
         &batch.coefficients,
         &input_points,
-        &effective_values,
-        &effective_points,
+        &claims.batch_outputs,
+        &output_points,
         &challenges,
     )?;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch { stage: 2 });
     }
 
-    claims.batch_outputs.append_to_transcript(transcript);
+    sumchecks.append_output_claims(transcript, &claims.batch_outputs);
 
     Ok(Stage2Output::Clear(Stage2ClearOutput {
-        output_values,
+        output_values: claims.batch_outputs.clone(),
         output_points,
         product_tau_low: uniskip.tau_low,
     }))

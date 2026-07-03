@@ -2,6 +2,12 @@
 //!
 //! Owns the register-reduction opening-point derivation and the `EqSpartan`
 //! public-value computation (against the product uni-skip `tau_low`).
+//!
+//! The reduced `rs1_value`/`rs2_value` outputs alias the instruction-input
+//! virtualization's: all stage-3 members bind the same batch-point suffix (equal
+//! rounds, default offsets) and derive the same reversed opening point. Declared
+//! in `aliased_output_openings` below; the generated drivers absorb each via its
+//! instruction-input source and enforce the wire copies equal it.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
@@ -9,8 +15,9 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
     RegistersClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId,
-    RegistersClaimReductionPublic,
+    geometry::claim_reductions::registers as registers_geometry,
+    geometry::dimensions::TraceDimensions, geometry::instruction, JoltDerivedId, JoltOpeningId,
+    JoltRelationId, RegistersClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -52,6 +59,19 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
+        vec![
+            (
+                registers_geometry::rs1_value_reduced(),
+                instruction::rs1_value(),
+            ),
+            (
+                registers_geometry::rs2_value_reduced(),
+                instruction::rs2_value(),
+            ),
+        ]
     }
 
     fn derive_opening_points(

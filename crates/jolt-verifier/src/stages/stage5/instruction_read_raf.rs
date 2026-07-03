@@ -27,18 +27,17 @@ use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::VerifierError;
 
 /// Wire the consumed opening *values* from the upstream instruction claim-reduction
-/// (stage 2), applying the lookup-output fallback to the product remainder. Takes the
-/// ZK-agnostic stage-2 output-claims aggregate (both the clear and ZK stage-2 outputs
-/// expose it).
+/// (stage 2). The reduced `lookup_output` wire cell is a cross-relation alias of
+/// the product remainder's; stage 2's generated `validate_aliases` (run inside its
+/// `expected_final_claim`) enforces their equality before this wiring reads it.
+/// Takes the ZK-agnostic stage-2 output-claims aggregate (both the clear and ZK
+/// stage-2 outputs expose it).
 pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> InstructionReadRafInputClaims<F> {
     let reduction = &stage2.instruction_claim_reduction;
-    let lookup_output = reduction
-        .lookup_output
-        .unwrap_or(stage2.product_remainder.lookup_output);
     InstructionReadRafInputClaims {
-        lookup_output,
+        lookup_output: reduction.lookup_output,
         left_lookup_operand: reduction.left_lookup_operand,
         right_lookup_operand: reduction.right_lookup_operand,
     }

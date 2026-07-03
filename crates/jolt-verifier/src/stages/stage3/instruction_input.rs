@@ -4,17 +4,24 @@
 //! public-value computation (against the product-remainder opening point).
 //!
 //! The reduced-vs-product input consistency guard — that stage 2's
-//! `instruction_claim_reduction` left/right openings (when present) agree with the
-//! product-remainder openings at the same point — lives in
-//! [`Stage2BatchOutputClaims::validate`](crate::stages::stage2::Stage2BatchOutputClaims::validate),
-//! which the stage-2 verifier runs before any consumer wires these inputs.
+//! `instruction_claim_reduction` left/right openings agree with the
+//! product-remainder openings at the same point — is enforced by stage 2's
+//! generated `validate_aliases` (driven by `InstructionClaimReduction`'s
+//! declared aliases), which runs before any consumer wires these inputs.
+//!
+//! This relation's own `unexpanded_pc` output aliases the Spartan shift's: both
+//! stage-3 members bind the same batch-point suffix (equal rounds, default
+//! offsets) and derive the same reversed opening point. Declared in
+//! `aliased_output_openings` below; the generated drivers absorb it via the
+//! shift source and enforce the wire copy equals it.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionInputChallenges, InstructionInputInputClaims, InstructionInputOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, InstructionInputPublic, JoltDerivedId, JoltRelationId,
+    geometry::bytecode, geometry::dimensions::TraceDimensions, InstructionInputPublic,
+    JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -55,6 +62,14 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
+        // The geometry pair is (shift, instruction-input); the shift opening is
+        // the canonical source, so the aliased/source order swaps here.
+        let [(shift_unexpanded_pc, instruction_unexpanded_pc)] =
+            bytecode::read_raf_consistency_openings();
+        vec![(instruction_unexpanded_pc, shift_unexpanded_pc)]
     }
 
     fn derive_opening_points(

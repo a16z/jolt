@@ -1005,11 +1005,11 @@ mod tests {
                     },
                     instruction_claim_reduction:
                         stage2::outputs::InstructionClaimReductionOutputClaims {
-                            lookup_output: None,
+                            lookup_output: zero,
                             left_lookup_operand: zero,
                             right_lookup_operand: zero,
-                            left_instruction_input: None,
-                            right_instruction_input: None,
+                            left_instruction_input: zero,
+                            right_instruction_input: zero,
                         },
                     ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims {
                         ram_ra: zero,

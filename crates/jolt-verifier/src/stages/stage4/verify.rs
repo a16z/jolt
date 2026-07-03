@@ -39,8 +39,6 @@ use crate::{
     VerifierError,
 };
 
-const STAGE4_BATCH_BASE_OUTPUT_CLAIMS: usize = 7;
-
 /// Assemble the stage-4 consumed opening *values* from the upstream outputs into
 /// the generated `Stage4InputClaims` aggregate. This is the single place the
 /// stage's Outputs→Inputs dataflow is expressed: the register read-write inputs
@@ -139,15 +137,11 @@ where
 
     if checked.zk {
         let consistency = sumchecks.verify_zk(&proof.stages.stage4_sumcheck_proof, transcript)?;
-        let output_claim_count = STAGE4_BATCH_BASE_OUTPUT_CLAIMS
-            + usize::from(proof.untrusted_advice_commitment.is_some())
-            + usize::from(checked.trusted_advice_commitment_present)
-            + usize::from(checked.precommitted.program_image.is_some());
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage4_sumcheck_proof,
             "stage4_sumcheck_proof",
-            output_claim_count,
+            sumchecks.output_claim_count(),
             JoltRelationId::RegistersReadWriteChecking,
         )?;
 
@@ -175,9 +169,11 @@ where
     let stage2 = stage2.clear()?;
     let stage3 = stage3.clear()?;
     let claims = &proof.clear_claims()?.stage4;
-    // Validates advice / program-image claim presence against the init structure
-    // and attaches the claimed opening values (consumed by the input wiring and
-    // carried downstream for the stage-6/7 address-phase reductions).
+    sumchecks.validate_output_claims(claims)?;
+    // Attaches the claimed advice / program-image opening values (consumed by the
+    // input wiring and carried downstream for the stage-6/7 address-phase
+    // reductions); presence against the init structure is validated by the
+    // generated `validate_output_claims` above and re-checked here.
     let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, claims)?;
 
     let input_values = stage4_input_values_from_upstream(

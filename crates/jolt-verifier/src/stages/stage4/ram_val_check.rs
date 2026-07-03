@@ -24,8 +24,8 @@ use jolt_claims::protocols::jolt::{
         ram::{self, RamValCheckInit, RamValCheckInitContribution},
     },
     relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
-    JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltRelationId, RamValCheckChallenge,
-    RamValCheckPublic,
+    JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
+    RamValCheckChallenge, RamValCheckPublic,
 };
 use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
@@ -93,6 +93,12 @@ pub struct RamValCheck<F: Field> {
     /// The negated block selector for each present `Val_init` contribution —
     /// resolves the `InitSelector`/`InitSelectorProgramImage` input publics.
     init_selectors: Vec<(RamValCheckPublic, F)>,
+    /// The present `Val_init` contribution openings (advice / program image):
+    /// staged on the stage-4 wire but consumed by this relation's *input* `Expr`
+    /// (the init-eval decomposition) and the stage-6/7 reductions, so they extend
+    /// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings) beyond the
+    /// output-`Expr` set.
+    contribution_openings: Vec<JoltOpeningId>,
 }
 
 impl<F: Field> RamValCheck<F> {
@@ -113,6 +119,11 @@ impl<F: Field> RamValCheck<F> {
             .iter()
             .map(|contribution| (contribution.selector, contribution.neg_selector))
             .collect();
+        let contribution_openings = init
+            .contributions
+            .iter()
+            .map(|contribution| contribution.opening)
+            .collect();
         let symbolic = RamValCheckSymbolic::new(RamValCheckShape {
             dimensions: trace_dimensions,
             contributions: init
@@ -130,6 +141,7 @@ impl<F: Field> RamValCheck<F> {
             ram_log_k,
             public_eval,
             init_selectors,
+            contribution_openings,
         }
     }
 }
@@ -146,6 +158,16 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
+        // Wire openings beyond the output-`Expr` set (`ram_ra`/`ram_inc`): the
+        // present staged `Val_init` contribution openings (advice /
+        // program-image), consumed by this relation's input `Expr` and the
+        // stage-6/7 reductions rather than its own output fold.
+        let mut openings = self.symbolic().expected_output_openings::<F>();
+        openings.extend(self.contribution_openings.iter().copied());
+        openings
     }
 
     /// Reproduces the stage-4 inline RAM value-check gamma draw: the

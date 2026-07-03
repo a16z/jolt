@@ -20,6 +20,8 @@ pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 /// per-relation claim plumbing it composes. See `specs/sumcheck-batch-derive.md`.
 pub use jolt_verifier_derive::SumcheckBatch;
 
+use std::collections::BTreeSet;
+
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -139,6 +141,56 @@ where
             transcript.challenge_scalar()
         }))
         .map_err(VerifierError::from)
+    }
+
+    /// This relation's cross-relation opening aliases, as `(aliased, canonical
+    /// source)` id pairs: each aliased opening is produced by this relation's
+    /// output `Expr` but is the same polynomial, at the same (structurally
+    /// identical) point, as the `source` opening produced by another member of the
+    /// same stage batch. Aliased openings appear on the wire claims struct as
+    /// plain (present) cells but are absorbed/committed once via their source, so
+    /// the generated drivers use this set three ways: the absorb skips the aliased
+    /// ids, the shape/count arithmetic subtracts them (see
+    /// [`wire_output_openings`](Self::wire_output_openings)), and the generated
+    /// `validate_aliases` — run by every `expected_final_claim` — enforces the
+    /// wire copies equal their sources. That equality check is load-bearing: the
+    /// aliased cells are never Fiat-Shamir-absorbed and the batch fold pins only
+    /// their random linear combination, so downstream consumers reading a copy
+    /// rely on it. BlindFold's `OpeningAlias` wiring is derived from these same
+    /// pairs, which is why this is an associated function (no instance state): the
+    /// alias structure is a constant of the relation, consumable without
+    /// constructing one.
+    ///
+    /// Point equality is NOT checked at runtime: opening points are derived (not
+    /// wire data), and an alias is only declarable when both relations bind the
+    /// same batch-point slice and derive it identically — a structural invariant.
+    /// The declaration invariants (each aliased id owned + `Expr`-referenced by
+    /// the declaring relation, each source absorbed by another member binding an
+    /// identical point slice) are pinned by hand-written tests in each declaring
+    /// stage (`alias_declarations_are_valid`).
+    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+
+    /// The opening ids this instance absorbs into the transcript (and commits in
+    /// ZK): the output-`Expr`-referenced set minus the aliased openings (absorbed
+    /// once via their canonical source). The generated `output_claim_count` sums
+    /// these; the generated `validate_output_claims` compares the wire claims
+    /// against them. A relation that absorbs openings its own output `Expr` does
+    /// not reference (values whose constraining fold happens downstream, e.g. the
+    /// product remainder's stage-6a-consumed flags) overrides this to add them.
+    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId>
+    where
+        Self: Sized,
+    {
+        let mut openings = self.symbolic().expected_output_openings::<F>();
+        for (aliased, _) in Self::aliased_output_openings() {
+            let _ = openings.remove(&aliased);
+        }
+        openings
     }
 
     /// The offset of this instance's point within the batch challenge vector: the
@@ -325,7 +377,7 @@ pub(crate) mod draw_recording {
     }
 }
 
-/// The append-order recorder shared by the stage `append_to_transcript` ordering
+/// The append-order recorder shared by the stage `append_output_claims` ordering
 /// locks: unlike the challenge recorder, it observes only byte appends.
 #[cfg(test)]
 pub(crate) mod append_recording {
@@ -846,18 +898,29 @@ mod tests {
 }
 
 #[cfg(test)]
-// `Fixture*Sumchecks` exist only to exercise `#[derive(SumcheckBatch)]`; the tests
-// drive the generated aggregates directly and never construct the source structs,
-// so each carries its own `#[expect(dead_code)]`.
+// `Fixture*Sumchecks` exist only to exercise `#[derive(SumcheckBatch)]`.
+#[expect(clippy::unwrap_used)]
 mod sumcheck_batch_derive_tests {
     use super::SumcheckBatch;
     use crate::stages::stage5::{
         InstructionReadRaf, InstructionReadRafOutputClaims, RegistersValEvaluation,
         RegistersValEvaluationOutputClaims,
     };
+    use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_field::{Field, Fr, FromPrimitiveInt};
 
+    fn instruction_read_raf() -> InstructionReadRaf<Fr> {
+        InstructionReadRaf::new(InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap())
+    }
+
+    fn registers_val_evaluation() -> RegistersValEvaluation<Fr> {
+        RegistersValEvaluation::new(TraceDimensions::new(4))
+    }
+
     #[derive(SumcheckBatch)]
+    // The generated absorb resolves the alias skip-sets statically (no instance
+    // state), so this alias-free fixture's members are never read.
     #[expect(dead_code)]
     struct FixtureSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
@@ -867,6 +930,10 @@ mod sumcheck_batch_derive_tests {
     #[test]
     fn output_aggregate_opening_values_follow_declaration_order() {
         let fr = Fr::from_u64;
+        let sumchecks = FixtureSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: registers_val_evaluation(),
+        };
         let claims = FixtureOutputClaims::<Fr> {
             instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![fr(1), fr(2)],
@@ -880,13 +947,11 @@ mod sumcheck_batch_derive_tests {
         };
 
         assert_eq!(
-            claims.opening_values(),
+            sumchecks.opening_values(&claims),
             vec![fr(1), fr(2), fr(3), fr(4), fr(5), fr(6)],
         );
     }
 
-    // Not `#[expect(dead_code)]` like its siblings: the validate test below
-    // constructs it, so the struct and fields are live.
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(output_shape)]
     struct FixtureOptionSumchecks<F: Field> {
@@ -903,6 +968,10 @@ mod sumcheck_batch_derive_tests {
             instruction_raf_flag: fr(3),
         };
 
+        let with_registers = FixtureOptionSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: Some(registers_val_evaluation()),
+        };
         let present = FixtureOptionOutputClaims::<Fr> {
             instruction_read_raf: instruction(),
             registers_val_evaluation: Some(RegistersValEvaluationOutputClaims {
@@ -911,26 +980,30 @@ mod sumcheck_batch_derive_tests {
             }),
         };
         assert_eq!(
-            present.opening_values(),
+            with_registers.opening_values(&present),
             vec![fr(1), fr(2), fr(3), fr(4), fr(5)]
         );
 
+        let without_registers = FixtureOptionSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: None,
+        };
         let absent = FixtureOptionOutputClaims::<Fr> {
             instruction_read_raf: instruction(),
             registers_val_evaluation: None,
         };
-        assert_eq!(absent.opening_values(), vec![fr(1), fr(2), fr(3)]);
+        assert_eq!(
+            without_registers.opening_values(&absent),
+            vec![fr(1), fr(2), fr(3)]
+        );
     }
 
     /// Wire claims supplied for an `Option` member whose instance did not run are
     /// rejected by the generated `validate_output_claims` (attributed to the first
     /// supplied opening id), and the well-formed absent case still validates.
     #[test]
-    #[expect(clippy::unwrap_used)]
     fn validate_output_claims_rejects_claims_for_absent_member() {
-        use jolt_claims::protocols::jolt::geometry::instruction::{
-            read_raf_output_openings, InstructionReadRafDimensions,
-        };
+        use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
 
         let fr = Fr::from_u64;
         let dimensions = InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap();
@@ -969,27 +1042,34 @@ mod sumcheck_batch_derive_tests {
 
     // The opt-out fixture: `#[sumcheck_batch(custom_opening_values)]` must still
     // generate the five aggregate structs but emit NO `opening_values` /
-    // `append_to_transcript`. The inherent `opening_values` below would collide
-    // with a generated one (the compiler rejects two inherent methods of the same
-    // name), so this module compiling at all proves the opt-out suppressed it.
+    // `append_output_claims` on the source struct. The inherent `opening_values`
+    // below would collide with a generated one (the compiler rejects two inherent
+    // methods of the same name), so this module compiling at all proves the
+    // opt-out suppressed it.
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(custom_opening_values)]
+    // The custom absorb below never reads the members (no aliased sets to consult).
     #[expect(dead_code)]
     struct FixtureCustomSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: RegistersValEvaluation<F>,
     }
 
-    impl FixtureCustomOutputClaims<Fr> {
+    impl FixtureCustomSumchecks<Fr> {
         /// A curated order distinct from the generated declaration order, to prove
-        /// this is the one in effect (the generated impl would chain instruction
+        /// this is the one in effect (the generated method would chain instruction
         /// then registers; this reverses them).
-        fn opening_values(&self) -> Vec<Fr> {
+        #[expect(
+            clippy::unused_self,
+            reason = "the signature mirrors the generated method it collides with"
+        )]
+        fn opening_values(&self, claims: &FixtureCustomOutputClaims<Fr>) -> Vec<Fr> {
             use crate::stages::relations::OutputClaims as _;
-            self.registers_val_evaluation
+            claims
+                .registers_val_evaluation
                 .opening_values()
                 .into_iter()
-                .chain(self.instruction_read_raf.opening_values())
+                .chain(claims.instruction_read_raf.opening_values())
                 .collect()
         }
     }
@@ -997,6 +1077,10 @@ mod sumcheck_batch_derive_tests {
     #[test]
     fn custom_opening_values_suppresses_generated_impl() {
         let fr = Fr::from_u64;
+        let sumchecks = FixtureCustomSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: registers_val_evaluation(),
+        };
         let claims = FixtureCustomOutputClaims::<Fr> {
             instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![fr(1)],
@@ -1012,7 +1096,7 @@ mod sumcheck_batch_derive_tests {
         // The hand-written curated order (registers first), proving no generated
         // `opening_values` (which would be instruction-first) shadows or collides.
         assert_eq!(
-            claims.opening_values(),
+            sumchecks.opening_values(&claims),
             vec![fr(4), fr(5), fr(1), fr(2), fr(3)]
         );
     }

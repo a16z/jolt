@@ -13,8 +13,8 @@ pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductRemainderInputClaims, ProductRemainderOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltRelationId,
-    SpartanProductVirtualizationPublic,
+    geometry::spartan, geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltOpeningId,
+    JoltRelationId, SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
@@ -72,6 +72,19 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
+        // Two wire openings beyond the output-`Expr`-referenced set:
+        // `write_lookup_output_to_rd` and `virtual_instruction` are absorbed here
+        // but their constraining fold happens downstream, in stage 6a's bytecode
+        // read-RAF input claim.
+        let mut openings = self.symbolic().expected_output_openings::<F>();
+        openings.extend([
+            spartan::write_lookup_output_to_rd_product(),
+            spartan::virtual_instruction_product(),
+        ]);
+        openings
     }
 
     fn derive_opening_points(

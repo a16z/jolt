@@ -136,6 +136,35 @@ fn spartan_outer_claims_from_openings<F: Field>(
 fn stage2_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage2OutputClaims<F>, VerifierError> {
+    let product_remainder = ProductRemainderOutputClaims {
+        left_instruction_input: claims.get_or_zero(spartan::left_instruction_input_product()),
+        right_instruction_input: claims.get_or_zero(spartan::right_instruction_input_product()),
+        jump_flag: claims.get_or_zero(spartan::jump_flag_product()),
+        write_lookup_output_to_rd: claims.get_or_zero(spartan::write_lookup_output_to_rd_product()),
+        lookup_output: claims.get_or_zero(spartan::lookup_output_product()),
+        branch_flag: claims.get_or_zero(spartan::branch_flag_product()),
+        next_is_noop: claims.get_or_zero(spartan::next_is_noop_product()),
+        virtual_instruction: claims.get_or_zero(spartan::virtual_instruction_product()),
+    };
+    // The three aliased reduced openings are deduplicated into their
+    // product-remainder sources by the accumulator (never absorbed separately),
+    // so the wire cells are back-filled from the product values — the same idiom
+    // the stage-3 projection uses for its aliases.
+    let instruction_claim_reduction = InstructionClaimReductionOutputClaims {
+        lookup_output: claims
+            .get(instruction_claim_reduction::lookup_output_reduced())
+            .unwrap_or(product_remainder.lookup_output),
+        left_lookup_operand: claims
+            .get_or_zero(instruction_claim_reduction::left_lookup_operand_reduced()),
+        right_lookup_operand: claims
+            .get_or_zero(instruction_claim_reduction::right_lookup_operand_reduced()),
+        left_instruction_input: claims
+            .get(instruction_claim_reduction::left_instruction_input_reduced())
+            .unwrap_or(product_remainder.left_instruction_input),
+        right_instruction_input: claims
+            .get(instruction_claim_reduction::right_instruction_input_reduced())
+            .unwrap_or(product_remainder.right_instruction_input),
+    };
     Ok(Stage2OutputClaims {
         product_uniskip_output_claim: claims.require(product_uniskip_opening())?,
         batch_outputs: Stage2BatchOutputClaims {
@@ -144,30 +173,8 @@ fn stage2_claims_from_openings<F: Field>(
                 ra: claims.get_or_zero(ram::ram_ra()),
                 inc: claims.get_or_zero(ram::ram_inc()),
             },
-            product_remainder: ProductRemainderOutputClaims {
-                left_instruction_input: claims
-                    .get_or_zero(spartan::left_instruction_input_product()),
-                right_instruction_input: claims
-                    .get_or_zero(spartan::right_instruction_input_product()),
-                jump_flag: claims.get_or_zero(spartan::jump_flag_product()),
-                write_lookup_output_to_rd: claims
-                    .get_or_zero(spartan::write_lookup_output_to_rd_product()),
-                lookup_output: claims.get_or_zero(spartan::lookup_output_product()),
-                branch_flag: claims.get_or_zero(spartan::branch_flag_product()),
-                next_is_noop: claims.get_or_zero(spartan::next_is_noop_product()),
-                virtual_instruction: claims.get_or_zero(spartan::virtual_instruction_product()),
-            },
-            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
-                lookup_output: claims.get(instruction_claim_reduction::lookup_output_reduced()),
-                left_lookup_operand: claims
-                    .get_or_zero(instruction_claim_reduction::left_lookup_operand_reduced()),
-                right_lookup_operand: claims
-                    .get_or_zero(instruction_claim_reduction::right_lookup_operand_reduced()),
-                left_instruction_input: claims
-                    .get(instruction_claim_reduction::left_instruction_input_reduced()),
-                right_instruction_input: claims
-                    .get(instruction_claim_reduction::right_instruction_input_reduced()),
-            },
+            product_remainder,
+            instruction_claim_reduction,
             ram_raf_evaluation: RamRafEvaluationOutputClaims {
                 ram_ra: claims.get_or_zero(ram::ram_ra_raf_evaluation()),
             },

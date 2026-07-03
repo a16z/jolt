@@ -178,7 +178,7 @@ where
 
     // Append the 35 produced openings in canonical (declaration) order, matching
     // the prover's commitment order.
-    claims.outer.append_to_transcript(transcript);
+    sumchecks.append_output_claims(transcript, &claims.outer);
 
     Ok(Stage1Output::Clear(Stage1ClearOutput {
         output_values: claims.outer.clone(),

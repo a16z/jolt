@@ -20,9 +20,9 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 /// `#[derive(SumcheckBatch)]` generates the `Stage7InputClaims<F>`,
 /// `Stage7InputPoints<F>`, `Stage7OutputClaims<F>`, `Stage7OutputPoints<F>`, and
 /// `Stage7Challenges<F>` aggregates — one field per instance, in this declaration
-/// order — plus the `Stage7OutputClaims` Fiat-Shamir opening plumbing
-/// (`opening_values` / `append_to_transcript`). The field order is load-bearing:
-/// it fixes the canonical opening order absorbed into the transcript, which must
+/// order — plus the Fiat-Shamir absorb plumbing (`opening_values` /
+/// `append_output_claims` on this struct). The field order is load-bearing: it
+/// fixes the canonical opening order absorbed into the transcript, which must
 /// match the prover's commitment order. The four `Option` members contribute only
 /// when their phase ran.
 ///
@@ -164,7 +164,53 @@ mod tests {
     /// absent `Option` members drop out of the stream entirely, and each advice
     /// member carries only its own kind's slot.
     #[test]
+    #[expect(clippy::unwrap_used)]
     fn opening_values_follow_canonical_order() {
+        use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
+        use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
+        use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+        use jolt_claims::protocols::jolt::TracePolynomialOrder;
+
+        let schedule = PrecommittedSchedule::new(
+            TracePolynomialOrder::CycleMajor,
+            4,
+            2,
+            Some(64),
+            Some(64),
+            Some(CommittedProgramSchedule {
+                bytecode_len: 8,
+                bytecode_chunk_count: 2,
+                program_image_len_words: 8,
+                program_image_start_index: 0,
+            }),
+        )
+        .unwrap();
+        let hamming_instance = || {
+            HammingWeightClaimReduction::new(
+                HammingWeightClaimReductionDimensions::new(
+                    JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
+                    4,
+                ),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+        let trusted_instance = || {
+            TrustedAdviceAddressPhase::new(
+                schedule.trusted_advice.as_ref().unwrap(),
+                None,
+                Vec::new(),
+            )
+        };
+        let untrusted_instance = || {
+            UntrustedAdviceAddressPhase::new(
+                schedule.untrusted_advice.as_ref().unwrap(),
+                None,
+                Vec::new(),
+            )
+        };
+
         let hamming = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![fr(1), fr(2)],
             bytecode_ra: vec![fr(3)],
@@ -173,6 +219,13 @@ mod tests {
         let trusted_advice = TrustedAdviceAddressPhaseOutputClaims { trusted: fr(5) };
         let untrusted_advice = UntrustedAdviceAddressPhaseOutputClaims { untrusted: fr(6) };
 
+        let without_committed_sumchecks = Stage7Sumchecks::<Fr> {
+            hamming_weight_claim_reduction: hamming_instance(),
+            trusted_advice: Some(trusted_instance()),
+            untrusted_advice: Some(untrusted_instance()),
+            bytecode_address_phase: None,
+            program_image_address_phase: None,
+        };
         let without_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming.clone(),
             trusted_advice: Some(trusted_advice.clone()),
@@ -181,10 +234,25 @@ mod tests {
             program_image_address_phase: None,
         };
         assert_eq!(
-            without_committed.opening_values(),
+            without_committed_sumchecks.opening_values(&without_committed),
             (1..=6).map(fr).collect::<Vec<_>>()
         );
 
+        let with_committed_sumchecks = Stage7Sumchecks::<Fr> {
+            hamming_weight_claim_reduction: hamming_instance(),
+            trusted_advice: Some(trusted_instance()),
+            untrusted_advice: Some(untrusted_instance()),
+            bytecode_address_phase: Some(BytecodeReductionAddressPhase::new(
+                schedule.bytecode.as_ref().unwrap(),
+                None,
+                Vec::new(),
+            )),
+            program_image_address_phase: Some(ProgramImageReductionAddressPhase::new(
+                schedule.program_image.as_ref().unwrap(),
+                None,
+                Vec::new(),
+            )),
+        };
         let with_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming,
             trusted_advice: Some(trusted_advice),
@@ -197,7 +265,7 @@ mod tests {
             }),
         };
         assert_eq!(
-            with_committed.opening_values(),
+            with_committed_sumchecks.opening_values(&with_committed),
             (1..=9).map(fr).collect::<Vec<_>>()
         );
     }

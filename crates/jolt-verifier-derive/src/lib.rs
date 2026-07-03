@@ -40,13 +40,22 @@
 //! normalizes to the concrete per-relation claim struct, so the plain derives
 //! apply.
 //!
-//! Emitted for every stage:
+//! Emitted for every stage (all as inherent methods on the source
+//! `StageNSumchecks` struct):
 //!
-//! - the Fiat-Shamir opening plumbing (`opening_values` / `append_to_transcript`
-//!   on the `OutputClaims` (values) aggregate, delegating to each member in
-//!   declaration order);
-//! - the per-instance driver method on the source `StageNSumchecks` struct —
-//!   `draw_challenges` (draw each member's challenges into `StageNChallenges`),
+//! - the Fiat-Shamir absorb plumbing — `opening_values(&claims)` /
+//!   `append_output_claims(transcript, &claims)` — each member's claims in
+//!   declaration order and per-member `canonical_order`, minus the member's
+//!   `ConcreteSumcheck::aliased_output_openings` (cross-relation aliases, absorbed
+//!   once via their canonical source relation). Suppressible via
+//!   `#[sumcheck_batch(custom_opening_values)]` for a stage whose absorb order
+//!   interleaves members or whose dedup is runtime point-driven;
+//! - `validate_aliases` — enforce each member's declared `(aliased, source)`
+//!   opening pairs: the wire's aliased cell must equal the canonical source cell,
+//!   resolved by id across the batch. Run unskippably by `expected_final_claim`
+//!   (the fold consumes the aliased copies), so declaring a pair on a relation
+//!   enforces it everywhere;
+//! - `draw_challenges` (draw each member's challenges into `StageNChallenges`),
 //!   suppressible via `#[sumcheck_batch(no_draw_challenges)]` for a stage whose
 //!   member challenges have stage-level provenance and are hand-assembled;
 //! - `verify_clear` — the clear-path batched-verify driver: fold the members into
@@ -63,18 +72,20 @@
 //!   layout) and map it through the member's `ConcreteSumcheck::derive_opening_points`
 //!   into the stage's `OutputPoints` aggregate. Takes the challenge vector as `&[F]`,
 //!   so the clear and ZK paths each pass their own.
-//! - `expected_final_claim` — fold the members' `ConcreteSumcheck::expected_output`
-//!   with the batch coefficients (`StageNBatchingCoefficients`) into the final claim
-//!   the reduction is checked against. `verify_clear` returns the coefficients inside
+//! - `expected_final_claim` — run `validate_aliases`, then fold the members'
+//!   `ConcreteSumcheck::expected_output` with the batch coefficients
+//!   (`StageNBatchingCoefficients`) into the final claim the reduction is checked
+//!   against. `verify_clear` returns the coefficients inside
 //!   `StageNClearBatch { reduction, coefficients }`.
 //!
 //! Opt-in per method via `#[sumcheck_batch(...)]` flags, emitted on the source
 //! `StageNSumchecks` struct only for stages that request them:
 //!
-//! - `output_shape` — `output_claim_count` (total produced openings, e.g. the ZK
-//!   commitment count) and `validate_output_claims` (assert the proof's output claims
-//!   match the dims-derived shape), both via each member's
-//!   `SymbolicSumcheck::expected_output_openings` (derived from its output `Expr`).
+//! - `output_shape` — `output_claim_count` (total absorbed/committed openings,
+//!   e.g. the ZK commitment count) and `validate_output_claims` (assert the
+//!   proof's output claims match the expected shape), both via each member's
+//!   `ConcreteSumcheck::wire_output_openings` (its output-`Expr`-referenced set
+//!   minus its aliased openings).
 //! - `empty_input_points` — `empty_input_points`, an all-default `StageNInputPoints`
 //!   constructor for a stage whose relations consume no input opening points (each
 //!   non-`Option` cell `Default::default()`, each `Option` cell tracking its member's
@@ -90,11 +101,10 @@
 //! See `specs/sumcheck-batch-derive.md`.
 //!
 //! The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
-//! suppresses *only* that generated `opening_values` / `append_to_transcript`
-//! inherent impl, leaving the aggregate structs (and their derives / serde)
-//! untouched. An alias-curated stage (one whose canonical opening order skips
-//! cross-relation aliased openings) uses it to supply its own consistent
-//! `opening_values` / `append_to_transcript` (and `validate`) as an inherent impl.
+//! suppresses *only* the generated `opening_values` / `append_output_claims`
+//! absorb methods, leaving the aggregate structs (and their derives / serde)
+//! untouched. A stage whose absorb order interleaves members (stage 4) or whose
+//! dedup is runtime point-driven (stage 6b) uses it to supply its own.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -109,10 +119,10 @@ use syn::{
 /// crate-level docs.
 ///
 /// The struct-level helper attribute `#[sumcheck_batch(custom_opening_values)]`
-/// opts a stage out of the generated `opening_values` / `append_to_transcript`
-/// inherent impl on the `OutputClaims` (values) aggregate, so an alias-curated
-/// stage can supply its own (e.g. one that skips cross-relation aliased openings).
-/// The aggregate structs and their derives are emitted unchanged.
+/// opts a stage out of the generated `opening_values` / `append_output_claims`
+/// absorb methods on the source struct, so a stage with a member-interleaved
+/// absorb order or a runtime point-driven dedup can supply its own. The
+/// aggregate structs and their derives are emitted unchanged.
 #[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -219,15 +229,42 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect::<Vec<_>>();
 
-    // `opening_values` over the wire cell (`C = F`): chain each member's
-    // `OutputClaims::opening_values` in declaration order; `Option` members
-    // contribute only when present.
-    let opening_chain = plans.iter().map(|plan| {
+    // The instance-based absorb: each member contributes its claims'
+    // `canonical_order`-aligned values in declaration order, minus the member's
+    // aliased opening ids (absorbed once via their canonical source relation).
+    // `Option` members follow the claims cell (validators police presence
+    // mismatches; the absorb itself is infallible).
+    let opening_extends = plans.iter().map(|plan| {
         let id = &plan.ident;
+        let instance = &plan.instance;
+        let extend = quote! {
+            let __skip: ::std::collections::BTreeSet<_> =
+                <#instance as #relations::ConcreteSumcheck<#f>>::aliased_output_openings()
+                    .into_iter()
+                    .map(|(__aliased, _)| __aliased)
+                    .collect();
+            __values.extend(
+                __claims
+                    .canonical_order()
+                    .into_iter()
+                    .zip(__claims.opening_values())
+                    .filter(|(__id, _)| !__skip.contains(__id))
+                    .map(|(_, __value)| __value),
+            );
+        };
         if plan.is_option {
-            quote!(.chain(self.#id.as_ref().map(|member| member.opening_values()).unwrap_or_default()))
+            quote! {
+                if let ::core::option::Option::Some(__claims) = claims.#id.as_ref() {
+                    #extend
+                }
+            }
         } else {
-            quote!(.chain(self.#id.opening_values()))
+            quote! {
+                {
+                    let __claims = &claims.#id;
+                    #extend
+                }
+            }
         }
     });
 
@@ -618,6 +655,98 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    // Enforce each member's declared cross-relation opening aliases: the wire's
+    // aliased cell must equal its canonical source's cell (resolved by id across
+    // the batch, so exactly one member answers). Value-only: opening points are
+    // derived, not wire data, and an alias is declarable only when both relations
+    // bind the same batch-point slice identically — a structural invariant.
+    // Always generated and run by `expected_final_claim` (the fold is where the
+    // aliased values get consumed), so declaring a pair on a relation enforces it
+    // everywhere: the check cannot be skipped by a stage.
+    let validate_aliases_method = {
+        let resolve_arms = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    .or_else(|| {
+                        output_values
+                            .#id
+                            .as_ref()
+                            .and_then(|__claims| __claims.resolve_output(__id))
+                    })
+                }
+            } else {
+                quote!(.or_else(|| output_values.#id.resolve_output(__id)))
+            }
+        });
+        let alias_checks = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            let instance = &plan.instance;
+            let check = quote! {
+                for (__aliased, __source) in
+                    <#instance as #relations::ConcreteSumcheck<#f>>::aliased_output_openings()
+                {
+                    let __target = __claims_cell.resolve_output(&__aliased).ok_or(
+                        crate::VerifierError::MissingOpeningClaim { id: __aliased },
+                    )?;
+                    let __source_value = __resolve(&__source).ok_or(
+                        crate::VerifierError::MissingOpeningClaim { id: __source },
+                    )?;
+                    if __target != __source_value {
+                        return ::core::result::Result::Err(
+                            crate::VerifierError::StageClaimOpeningMismatch {
+                                stage: __member.id(),
+                                left: __aliased,
+                                right: __source,
+                            },
+                        );
+                    }
+                }
+            };
+            if plan.is_option {
+                quote! {
+                    if let (
+                        ::core::option::Option::Some(__member),
+                        ::core::option::Option::Some(__claims_cell),
+                    ) = (self.#id.as_ref(), output_values.#id.as_ref())
+                    {
+                        #check
+                    }
+                }
+            } else {
+                quote! {
+                    {
+                        let __member = &self.#id;
+                        let __claims_cell = &output_values.#id;
+                        #check
+                    }
+                }
+            }
+        });
+        quote! {
+            /// Enforce every member's declared cross-relation opening aliases
+            /// (`ConcreteSumcheck::aliased_output_openings`): each aliased wire
+            /// cell must equal its canonical source opening, resolved by id across
+            /// the batch. Load-bearing — aliased cells are never Fiat-Shamir
+            /// absorbed and the batch fold pins only their random linear
+            /// combination, so downstream consumers reading a copy rely on this
+            /// equality. Run by `expected_final_claim`; callable directly by tests.
+            pub fn validate_aliases(
+                &self,
+                output_values: &#output_claims_name<#f>,
+            ) -> ::core::result::Result<(), crate::VerifierError> {
+                use #relations::ConcreteSumcheck as _;
+                use ::jolt_claims::OutputClaims as _;
+                let __resolve = |__id: &::jolt_claims::protocols::jolt::JoltOpeningId| {
+                    ::core::option::Option::<#f>::None
+                        #(#resolve_arms)*
+                };
+                #(#alias_checks)*
+                ::core::result::Result::Ok(())
+            }
+        }
+    };
+
     // Fold the members' expected output claims with the batch coefficients into the
     // final claim the reduction is checked against: `Σ coeff_m * expected_output_m`.
     // A present `Option` member with any absent cell errors rather than silently
@@ -679,6 +808,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 challenges: &#challenges_name<#f>,
             ) -> ::core::result::Result<#f, crate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
+                // The fold consumes the aliased wire copies, so their equality
+                // with the canonical sources is enforced here, unskippably.
+                self.validate_aliases(output_values)?;
                 let mut __terms = ::std::vec::Vec::new();
                 #(#output_terms)*
                 let __expected: #f = __terms.into_iter().sum();
@@ -770,19 +902,32 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             if plan.is_option {
                 quote! {
                     if let ::core::option::Option::Some(__member) = self.#id.as_ref() {
-                        __count += __member.symbolic().expected_output_openings::<#f>().len();
+                        __count += __member.wire_output_openings().len();
                     }
                 }
             } else {
-                quote!(__count += self.#id.symbolic().expected_output_openings::<#f>().len();)
+                quote!(__count += self.#id.wire_output_openings().len();)
             }
         });
         let validate_checks = plans.iter().map(|plan| {
             let id = &plan.ident;
+            let instance = &plan.instance;
             let check = quote! {
-                let __expected = __member.symbolic().expected_output_openings::<#f>();
-                let __provided: ::std::collections::BTreeSet<_> =
-                    __claims.canonical_order().into_iter().collect();
+                let __expected = __member.wire_output_openings();
+                // Aliased openings are on the wire struct (plain cells) but are
+                // absorbed via their canonical source, so they are excluded from
+                // the provided set before the shape comparison; their value
+                // equality is enforced separately by `validate_aliases`.
+                let __aliased: ::std::collections::BTreeSet<_> =
+                    <#instance as #relations::ConcreteSumcheck<#f>>::aliased_output_openings()
+                        .into_iter()
+                        .map(|(__id, _)| __id)
+                        .collect();
+                let __provided: ::std::collections::BTreeSet<_> = __claims
+                    .canonical_order()
+                    .into_iter()
+                    .filter(|__id| !__aliased.contains(__id))
+                    .collect();
                 if __provided != __expected {
                     return ::core::result::Result::Err(
                         crate::VerifierError::StageClaimPublicInputFailed {
@@ -819,19 +964,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
         quote! {
-            /// The total number of produced opening claims across the batch (the
-            /// dims-derived expected shape), e.g. the committed-output-claim count.
+            /// The total number of absorbed/committed opening claims across the
+            /// batch (each member's `ConcreteSumcheck::wire_output_openings`),
+            /// e.g. the committed-output-claim count.
             pub fn output_claim_count(&self) -> usize {
                 use #relations::ConcreteSumcheck as _;
-                use ::jolt_claims::SymbolicSumcheck as _;
                 let mut __count = 0usize;
                 #(#count_terms)*
                 __count
             }
 
             /// Assert the proof-supplied output claims match the expected shape: per
-            /// member, the provided `canonical_order` id-set equals the relation's
-            /// dims-derived `expected_output_openings`; claims supplied for an
+            /// member, the provided `canonical_order` id-set (minus the member's
+            /// aliased openings) equals the relation's
+            /// `ConcreteSumcheck::wire_output_openings`; claims supplied for an
             /// absent `Option` member are rejected.
             pub fn validate_output_claims(
                 &self,
@@ -839,7 +985,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             ) -> ::core::result::Result<(), crate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 use ::jolt_claims::OutputClaims as _;
-                use ::jolt_claims::SymbolicSumcheck as _;
                 #(#validate_checks)*
                 ::core::result::Result::Ok(())
             }
@@ -910,6 +1055,44 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    // The generated absorb plumbing, on the source `StageNSumchecks` struct (it
+    // consults each member's `aliased_output_openings` skip-set, an instance
+    // method). Gated out when the stage opts in to
+    // `#[sumcheck_batch(custom_opening_values)]`, in which case the stage supplies
+    // its own absorb (e.g. one whose order interleaves members, or whose dedup is
+    // runtime point-driven).
+    let absorb_methods = if options.custom_opening_values {
+        quote!()
+    } else {
+        quote! {
+            /// Produced opening scalars in canonical order — member declaration
+            /// order, each member's claims in its `canonical_order` — skipping
+            /// each member's aliased openings (absorbed once via their canonical
+            /// source relation). This is the Fiat-Shamir order and MUST match the
+            /// prover's commitment order.
+            pub fn opening_values(&self, claims: &#output_claims_name<#f>) -> ::std::vec::Vec<#f> {
+                use #relations::ConcreteSumcheck as _;
+                use ::jolt_claims::OutputClaims as _;
+                let mut __values = ::std::vec::Vec::new();
+                #(#opening_extends)*
+                __values
+            }
+
+            /// Append every absorbed opening to the transcript in canonical order,
+            /// each under the `b"opening_claim"` label, matching the prover's
+            /// commitment order.
+            pub fn append_output_claims<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
+                &self,
+                transcript: &mut __T,
+                claims: &#output_claims_name<#f>,
+            ) {
+                for value in self.opening_values(claims) {
+                    transcript.append_labeled(b"opening_claim", &value);
+                }
+            }
+        }
+    };
+
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
             #draw_challenges_method
@@ -917,43 +1100,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #verify_clear_method
             #verify_zk_method
             #derive_points_method
+            #validate_aliases_method
             #expected_final_claim_method
             #output_shape_methods
             #empty_input_points_method
             #validate_claim_presence_method
-        }
-    };
-
-    // The generated `OutputClaims` opening plumbing. Gated out when the stage opts
-    // in to `#[sumcheck_batch(custom_opening_values)]`, in which case the stage
-    // supplies its own alias-curated `opening_values` / `append_to_transcript` (and
-    // any `validate`) as an inherent impl on the generated struct.
-    let opening_impl = if options.custom_opening_values {
-        quote!()
-    } else {
-        quote! {
-            impl<#f: ::jolt_field::Field> #output_claims_name<#f> {
-                /// Produced opening scalars in canonical (field-declaration) order,
-                /// delegating to each instance's `OutputClaims` in order.
-                pub fn opening_values(&self) -> ::std::vec::Vec<#f> {
-                    use ::jolt_claims::OutputClaims as _;
-                    ::core::iter::empty::<#f>()
-                        #(#opening_chain)*
-                        .collect()
-                }
-
-                /// Append every produced opening to the transcript in canonical order,
-                /// each under the `b"opening_claim"` label, matching the prover's
-                /// commitment order.
-                pub fn append_to_transcript<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
-                    &self,
-                    transcript: &mut __T,
-                ) {
-                    for value in self.opening_values() {
-                        transcript.append_labeled(b"opening_claim", &value);
-                    }
-                }
-            }
+            #absorb_methods
         }
     };
 
@@ -1008,8 +1160,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #clear_batch_struct
 
         #driver_impl
-
-        #opening_impl
     })
 }
 
@@ -1019,12 +1169,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 #[derive(Default)]
 struct StageOptions {
     /// `#[sumcheck_batch(custom_opening_values)]`: skip emitting the generated
-    /// `OutputClaims` `opening_values` / `append_to_transcript` inherent impl so the
-    /// stage can curate its own (e.g. skipping cross-relation aliased openings).
+    /// `opening_values` / `append_output_claims` absorb methods so the stage can
+    /// supply its own (a member-interleaved order or a runtime point-driven dedup).
     custom_opening_values: bool,
     /// `#[sumcheck_batch(output_shape)]`: emit `output_claim_count` and
-    /// `validate_output_claims`, which derive the expected output-claim shape from each
-    /// member's `expected_output_openings` (its output `Expr`).
+    /// `validate_output_claims`, which derive the expected output-claim shape from
+    /// each member's `wire_output_openings` (its output-`Expr`-referenced set minus
+    /// its aliased openings).
     output_shape: bool,
     /// `#[sumcheck_batch(empty_input_points)]`: emit `empty_input_points`, an
     /// all-default `InputPoints` constructor for a stage whose relations read no input

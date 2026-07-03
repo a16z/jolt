@@ -125,9 +125,9 @@ where
     sumchecks.validate_output_claims(claims)?;
 
     // The reduced lookup output aliases the product remainder's lookup output
-    // (same opening point and value); stage 2 validates that alias, which the
-    // instruction read-RAF input wiring relies on when it falls back to the
-    // product remainder.
+    // (same opening point and value); stage 2's generated `validate_aliases`
+    // enforced that equality, so the instruction read-RAF wiring reads the
+    // reduced wire cell directly.
     let input_values =
         stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
     let input_points =
@@ -154,7 +154,7 @@ where
         return Err(VerifierError::StageClaimOutputMismatch { stage: 5 });
     }
 
-    claims.append_to_transcript(transcript);
+    sumchecks.append_output_claims(transcript, claims);
 
     let instruction_r_address = output_points.instruction_r_address();
     Ok(Stage5Output::Clear(Stage5ClearOutput {

@@ -60,18 +60,6 @@ where
 }
 
 #[doc(hidden)]
-pub fn upsert_opening_claim<PCS, VC, ZkProof>(
-    proof: &mut JoltProof<PCS, VC, ZkProof>,
-    id: native::JoltOpeningId,
-    opening_claim: PCS::Field,
-) where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let _ = set_claim(proof, id, opening_claim);
-}
-
-#[doc(hidden)]
 pub fn opening_claim<PCS, VC, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     id: native::JoltOpeningId,
@@ -111,22 +99,6 @@ where
     };
 
     claim_mut_from_clear(claims, proof.trace_length, id)
-}
-
-fn set_claim<PCS, VC, ZkProof>(
-    proof: &mut JoltProof<PCS, VC, ZkProof>,
-    id: native::JoltOpeningId,
-    opening_claim: PCS::Field,
-) -> bool
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-        return false;
-    };
-
-    set_claim_in_clear(claims, proof.trace_length, id, opening_claim)
 }
 
 fn claim_from_clear<F: Field>(
@@ -210,22 +182,6 @@ fn claim_mut_from_spartan_outer<F: Field>(
     }
 }
 
-fn set_claim_in_clear<F: Field>(
-    claims: &mut ClearProofClaims<F>,
-    trace_length: usize,
-    id: native::JoltOpeningId,
-    opening_claim: F,
-) -> bool {
-    if let Some(claim) = claim_mut_from_clear(claims, trace_length, id) {
-        *claim = opening_claim;
-        return true;
-    }
-
-    set_optional_stage2_batch_output(&mut claims.stage2.batch_outputs, id, opening_claim)
-        || set_optional_stage4_output(&mut claims.stage4, id, opening_claim)
-        || set_optional_stage6_output(&mut claims.stage6a, &mut claims.stage6b, id, opening_claim)
-}
-
 fn stage1_outer_variable(
     trace_length: usize,
     id: native::JoltOpeningId,
@@ -284,7 +240,7 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
             Some(&mut claims.product_remainder.virtual_instruction)
         }
         id if id == instruction_lookup_output => {
-            claims.instruction_claim_reduction.lookup_output.as_mut()
+            Some(&mut claims.instruction_claim_reduction.lookup_output)
         }
         id if id == instruction_left_lookup_operand => {
             Some(&mut claims.instruction_claim_reduction.left_lookup_operand)
@@ -292,98 +248,15 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
         id if id == instruction_right_lookup_operand => {
             Some(&mut claims.instruction_claim_reduction.right_lookup_operand)
         }
-        id if id == instruction_left_instruction_input => claims
-            .instruction_claim_reduction
-            .left_instruction_input
-            .as_mut(),
-        id if id == instruction_right_instruction_input => claims
-            .instruction_claim_reduction
-            .right_instruction_input
-            .as_mut(),
+        id if id == instruction_left_instruction_input => {
+            Some(&mut claims.instruction_claim_reduction.left_instruction_input)
+        }
+        id if id == instruction_right_instruction_input => {
+            Some(&mut claims.instruction_claim_reduction.right_instruction_input)
+        }
         id if id == ram_ra_raf_evaluation => Some(&mut claims.ram_raf_evaluation.ram_ra),
         id if id == ram_val_final => Some(&mut claims.ram_output_check.val_final),
         _ => None,
-    }
-}
-
-fn set_optional_stage2_batch_output<F: Field>(
-    claims: &mut Stage2BatchOutputClaims<F>,
-    id: native::JoltOpeningId,
-    opening_claim: F,
-) -> bool {
-    let instruction_lookup_output = instruction_claim_reduction::lookup_output_reduced();
-    let instruction_left_instruction_input =
-        instruction_claim_reduction::left_instruction_input_reduced();
-    let instruction_right_instruction_input =
-        instruction_claim_reduction::right_instruction_input_reduced();
-
-    match id {
-        id if id == instruction_lookup_output => {
-            claims.instruction_claim_reduction.lookup_output = Some(opening_claim);
-            true
-        }
-        id if id == instruction_left_instruction_input => {
-            claims.instruction_claim_reduction.left_instruction_input = Some(opening_claim);
-            true
-        }
-        id if id == instruction_right_instruction_input => {
-            claims.instruction_claim_reduction.right_instruction_input = Some(opening_claim);
-            true
-        }
-        _ => false,
-    }
-}
-
-fn set_optional_stage4_output<F: Field>(
-    claims: &mut Stage4OutputClaims<F>,
-    id: native::JoltOpeningId,
-    opening_claim: F,
-) -> bool {
-    match id {
-        id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => {
-            claims.ram_val_check.untrusted_advice = Some(opening_claim);
-            true
-        }
-        id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
-            claims.ram_val_check.trusted_advice = Some(opening_claim);
-            true
-        }
-        _ => false,
-    }
-}
-
-fn set_optional_stage6_output<F: Field>(
-    stage6a: &mut Stage6aOutputClaims<F>,
-    stage6b: &mut Stage6bOutputClaims<F>,
-    id: native::JoltOpeningId,
-    opening_claim: F,
-) -> bool {
-    match id {
-        id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
-            stage6a.bytecode_read_raf.intermediate = opening_claim;
-            true
-        }
-        id if id == booleanity::booleanity_address_phase_opening() => {
-            stage6a.booleanity.intermediate = opening_claim;
-            true
-        }
-        id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
-            || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
-        {
-            stage6b.trusted_advice = Some(TrustedAdviceCyclePhaseOutputClaims {
-                trusted: opening_claim,
-            });
-            true
-        }
-        id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
-            || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
-        {
-            stage6b.untrusted_advice = Some(UntrustedAdviceCyclePhaseOutputClaims {
-                untrusted: opening_claim,
-            });
-            true
-        }
-        _ => false,
     }
 }
 

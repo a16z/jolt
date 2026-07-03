@@ -243,8 +243,8 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
 
     /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
-    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so `opening_values()` (which the
-    /// generated `append_to_transcript` iterates) reproduces the input order,
+    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated absorb
+    /// (`append_output_claims`) reproduces the input order,
     /// byte-identically. `canonical_order()` surfaces that field order as opening ids,
     /// which must line up one-for-one with the R1CS inputs.
     #[test]

@@ -21,16 +21,16 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// `Stage6a{Input,Output}{Claims,Points}<F>` and `Stage6aChallenges<F>`
 /// aggregates — one field per instance, in this declaration order — plus the
 /// batched-verify drivers. No alias dedup in the address phase, so the generated
-/// `opening_values` / `append_to_transcript` (member order: bytecode read-RAF's
+/// absorb (`append_output_claims`; member order: bytecode read-RAF's
 /// `intermediate` then `val_stages`, then booleanity's `intermediate`) is the
 /// canonical Fiat-Shamir order.
 ///
-/// `output_shape` is intentionally NOT enabled: the address-phase output `Expr`
-/// carries only the staged intermediate, but committed-program mode additionally
-/// commits the `BytecodeValStage` openings, so the ZK commitment count
-/// (`2 + NUM_BYTECODE_VAL_STAGES`) and the val-stage presence check stay
-/// hand-written in `verify`.
+/// The bytecode read-RAF member's wire set extends its output `Expr` with the
+/// committed-program-only staged `BytecodeValStage` openings (see its
+/// `wire_output_openings` override), so the generated `output_shape`
+/// count/validator cover the val-stage presence and count.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(output_shape)]
 pub struct Stage6aSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,

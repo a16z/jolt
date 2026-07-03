@@ -25,9 +25,10 @@ pub struct Stage1OutputClaims<F: Field> {
 /// `Stage1BatchOutputPoints<F>`, and `Stage1BatchChallenges<F>` aggregates — one
 /// field per instance, in this declaration order. With a single instance and no
 /// cross-relation aliasing there is no `custom_opening_values` opt-out: the
-/// generated `opening_values` / `append_to_transcript` delegates to
-/// `OuterRemainderOutputClaims` in `dimensions.variables()` order (the canonical 35
-/// R1CS-input order), byte-identical to the previous explicit append loop.
+/// generated absorb (`opening_values` / `append_output_claims` on this struct)
+/// delegates to `OuterRemainderOutputClaims` in `dimensions.variables()` order
+/// (the canonical 35 R1CS-input order), byte-identical to the previous explicit
+/// append loop.
 ///
 /// `expected_final_claim` additionally requires
 /// the member's late [`bind_coefficients`](OuterRemainder::bind_coefficients)

@@ -16,9 +16,7 @@ use crate::protocols::jolt::{
 use crate::{derived, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// Produced reduced instruction-lookup openings, all sharing the single reduced
-/// opening point. The three aliased openings are [`Option`] (absent on the wire ⇒
-/// they alias the product-remainder openings; the clear opening-claim projection
-/// fills them). Generic over the cell. Field declaration order is the canonical
+/// opening point. Generic over the cell. Field declaration order is the canonical
 /// Fiat-Shamir order (single-sourced via [`OutputClaims::canonical_order`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -28,15 +26,15 @@ use crate::{derived, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumc
 #[relation(InstructionClaimReduction)]
 pub struct InstructionClaimReductionOutputClaims<C> {
     #[opening(LookupOutput)]
-    pub lookup_output: Option<C>,
+    pub lookup_output: C,
     #[opening(LeftLookupOperand)]
     pub left_lookup_operand: C,
     #[opening(RightLookupOperand)]
     pub right_lookup_operand: C,
     #[opening(LeftInstructionInput)]
-    pub left_instruction_input: Option<C>,
+    pub left_instruction_input: C,
     #[opening(RightInstructionInput)]
-    pub right_instruction_input: Option<C>,
+    pub right_instruction_input: C,
 }
 
 /// Consumed instruction-lookup openings from stage 1's outer sumcheck, reduced by

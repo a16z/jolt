@@ -15,10 +15,9 @@ use super::registers_val_evaluation::RegistersValEvaluation;
 /// value-evaluation). `#[derive(SumcheckBatch)]` generates the
 /// `Stage5{Input,Output}{Claims,Points}<F>` and `Stage5Challenges<F>`
 /// aggregates — one field per instance, in this declaration order — plus the
-/// `Stage5OutputClaims` Fiat-Shamir opening plumbing (`opening_values` /
-/// `append_to_transcript`). The field order is load-bearing: it fixes the canonical
-/// opening order absorbed into the transcript, which must match the prover's
-/// commitment order.
+/// Fiat-Shamir absorb plumbing (`opening_values` / `append_output_claims` on this
+/// struct). The field order is load-bearing: it fixes the canonical opening order
+/// absorbed into the transcript, which must match the prover's commitment order.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(output_shape)]
 pub struct Stage5Sumchecks<F: Field> {
@@ -127,8 +126,11 @@ impl<F: Field, C> Stage5Output<F, C> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
@@ -145,6 +147,14 @@ mod tests {
     /// silently breaks soundness, so it is pinned with distinct sentinels.
     #[test]
     fn opening_values_follow_canonical_order() {
+        let trace_dimensions = TraceDimensions::new(4);
+        let sumchecks = Stage5Sumchecks::<Fr> {
+            instruction_read_raf: InstructionReadRaf::new(
+                InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap(),
+            ),
+            ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, 3),
+            registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
+        };
         let claims = Stage5OutputClaims::<Fr> {
             instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![fr(1), fr(2)],
@@ -158,6 +168,9 @@ mod tests {
             },
         };
 
-        assert_eq!(claims.opening_values(), (1..=8).map(fr).collect::<Vec<_>>());
+        assert_eq!(
+            sumchecks.opening_values(&claims),
+            (1..=8).map(fr).collect::<Vec<_>>()
+        );
     }
 }

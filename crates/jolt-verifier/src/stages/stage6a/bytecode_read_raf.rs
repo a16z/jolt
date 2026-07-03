@@ -12,8 +12,11 @@ pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::{bytecode::BytecodeReadRafDimensions, spartan::outer_opening},
-    JoltVirtualPolynomial,
+    geometry::{
+        bytecode::BytecodeReadRafDimensions, claim_reductions::bytecode as bytecode_reduction,
+        spartan::outer_opening,
+    },
+    JoltOpeningId, JoltVirtualPolynomial,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -141,6 +144,16 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
+        // Committed-program mode absorbs the staged `BytecodeValStage` columns
+        // beyond the output-`Expr` set (the address-phase intermediate); their
+        // constraining fold happens in stage 6b's bytecode claim reduction.
+        let mut openings = self.symbolic().expected_output_openings::<F>();
+        openings
+            .extend((0..self.num_val_stages).map(bytecode_reduction::bytecode_val_stage_opening));
+        openings
     }
 
     fn derive_opening_points(

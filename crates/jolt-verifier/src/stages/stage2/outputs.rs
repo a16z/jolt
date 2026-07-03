@@ -1,14 +1,11 @@
 //! Typed inputs consumed and outputs produced by stage 2 verification.
 
-use jolt_claims::protocols::jolt::{geometry::instruction, JoltRelationId};
 use jolt_field::Field;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
-use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{OutputClaims, SumcheckBatch};
+use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
-use crate::VerifierError;
 
 pub use super::instruction_claim_reduction::{
     InstructionClaimReduction, InstructionClaimReductionOutputClaims,
@@ -29,69 +26,29 @@ pub struct Stage2OutputClaims<F: Field> {
 /// batch order (RAM read-write, product remainder, instruction claim-reduction,
 /// RAM RAF evaluation, RAM output check). `#[derive(SumcheckBatch)]` generates the
 /// `Stage2Batch{Input,Output}{Claims,Points}<F>` and `Stage2BatchChallenges<F>`
-/// aggregates — one field per instance, in this
-/// declaration order. The product uni-skip is a separate sub-sumcheck, not part of
-/// this batch.
+/// aggregates — one field per instance, in this declaration order — plus the
+/// batched-verify drivers and the absorb plumbing. The product uni-skip is a
+/// separate sub-sumcheck, not part of this batch.
 ///
-/// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
-/// `opening_values` / `append_to_transcript`: the instruction claim-reduction has
-/// three cross-relation aliased openings (`lookup_output` /
-/// `left`/`right_instruction_input`) that alias the product-remainder openings and
-/// must NOT be re-absorbed, so the canonical order is curated by hand below (and
-/// enforced by `validate`).
-///
-/// `output_shape` is intentionally NOT enabled for the same reason: the generated
-/// `output_claim_count` would sum the members' expression-referenced openings (16),
-/// but the batch commits/absorbs only 15 (the three aliases are absorbed once via
-/// their product-remainder source), so the committed-output-claim count stays
-/// hand-written in `verify`. The `verify_clear` / `verify_zk` /
-/// `derive_opening_points` / `expected_final_claim` drivers are generated; the
-/// two RAM relations slice their point at the phase-1 `instance_point_offset`,
-/// and `expected_final_claim` must be fed the alias-filled
-/// [`effective_aggregates`](Stage2BatchOutputClaims::effective_aggregates).
+/// The instruction claim-reduction declares three cross-relation opening aliases
+/// (`lookup_output`, `left`/`right_instruction_input` = the product-remainder
+/// openings; see its `aliased_output_openings`), and the product remainder
+/// declares two staged openings (`write_lookup_output_to_rd` /
+/// `virtual_instruction`, absorbed here but folded downstream by stage 6a). The
+/// batch therefore absorbs 15 openings — 16 expression-referenced, minus the 3
+/// aliases (each absorbed once via its product-remainder source), plus the 2
+/// staged — and the generated absorb, `output_shape` count/validator, and
+/// `validate_aliases` (run by `expected_final_claim`, enforcing the aliased wire
+/// copies equal their sources) all derive from those per-member declarations.
+/// The two RAM relations slice their point at the phase-1 `instance_point_offset`.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(custom_opening_values, empty_input_points)]
+#[sumcheck_batch(empty_input_points, output_shape)]
 pub struct Stage2BatchSumchecks<F: Field> {
     pub ram_read_write: RamReadWriteChecking<F>,
     pub product_remainder: ProductRemainder<F>,
     pub instruction_claim_reduction: InstructionClaimReduction<F>,
     pub ram_raf_evaluation: RamRafEvaluation<F>,
     pub ram_output_check: RamOutputCheck<F>,
-}
-
-impl<F: Field> Stage2BatchOutputClaims<F> {
-    /// The stage 2 batch produced opening claims in canonical (Fiat-Shamir) order:
-    /// the RAM read-write openings, the eight product-remainder openings, the two
-    /// reduced instruction lookup operands (the other reduced openings alias the
-    /// product-remainder ones and are not re-absorbed), then the RAM RAF and output
-    /// openings. Single-sources [`append_to_transcript`](Self::append_to_transcript)
-    /// and the prover's batch output-claim values.
-    pub fn opening_values(&self) -> Vec<F> {
-        // Full relations delegate to their derived `opening_values()` so the
-        // per-field order is single-sourced from the `OutputClaims` derive. Only
-        // the two reduced instruction lookup operands are listed explicitly: the
-        // reduction's other openings alias the product-remainder ones and are not
-        // re-absorbed (see `validate`).
-        self.ram_read_write
-            .opening_values()
-            .into_iter()
-            .chain(self.product_remainder.opening_values())
-            .chain([
-                self.instruction_claim_reduction.left_lookup_operand,
-                self.instruction_claim_reduction.right_lookup_operand,
-            ])
-            .chain(self.ram_raf_evaluation.opening_values())
-            .chain(self.ram_output_check.opening_values())
-            .collect()
-    }
-
-    /// Append every batch opening to the transcript in canonical order, each under
-    /// the `b"opening_claim"` label, matching the prover's commitment order.
-    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
-    }
 }
 
 /// The shared per-relation opening-point accessors over the point-only stage-2
@@ -120,138 +77,6 @@ impl<F: Field> Stage2BatchOutputPoints<F> {
     /// The RAM output-check opening point (`r_address`).
     pub fn ram_output_check_point(&self) -> &[F] {
         self.ram_output_check.val_final()
-    }
-}
-
-impl<F: Field> Stage2BatchOutputClaims<F> {
-    /// Enforce the cross-relation aliases between the product-remainder openings and
-    /// the reduced instruction-claim openings: when a reduced opening is present it
-    /// must share the product-remainder opening's point and value. Downstream
-    /// consumers rely on these aliases when they fall back to the product remainder —
-    /// the stage-5 instruction read-RAF wiring (`lookup_output`) and the stage-3
-    /// instruction-input virtualization (`left`/`right_instruction_input`) — so the
-    /// stage-2 verifier checks them here rather than each consumer re-checking. Errors
-    /// preserve the opening and relation ids those consumers reported. The value
-    /// fallbacks read off `self` (the values); the point-agreement test reads off the
-    /// paired `points` struct.
-    pub fn validate(&self, points: &Stage2BatchOutputPoints<F>) -> Result<(), VerifierError> {
-        let [(lookup_output_reduced, lookup_output_product)] =
-            instruction::read_raf_consistency_openings();
-        let [(left_reduced, left_product), (right_reduced, right_product)] =
-            instruction::input_virtualization_consistency_openings();
-
-        // Every reduced instruction opening shares the product-remainder opening
-        // point; if the points disagree the reduced openings cannot alias the
-        // product ones.
-        if points.product_remainder_point() != points.instruction_claim_reduction_point() {
-            return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltRelationId::InstructionReadRaf,
-                left: lookup_output_reduced,
-                right: lookup_output_product,
-            });
-        }
-
-        // `lookup_output`: stage-5 instruction read-RAF fallback to the product remainder.
-        let product_lookup_output = self.product_remainder.lookup_output;
-        let reduced_lookup_output = self
-            .instruction_claim_reduction
-            .lookup_output
-            .unwrap_or(product_lookup_output);
-        if reduced_lookup_output != product_lookup_output {
-            return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltRelationId::InstructionReadRaf,
-                left: lookup_output_reduced,
-                right: lookup_output_product,
-            });
-        }
-
-        // `left`/`right_instruction_input`: stage-3 instruction-input virtualization
-        // fallback to the product remainder.
-        let product_left = self.product_remainder.left_instruction_input;
-        let product_right = self.product_remainder.right_instruction_input;
-        let reduced_left = self
-            .instruction_claim_reduction
-            .left_instruction_input
-            .unwrap_or(product_left);
-        let reduced_right = self
-            .instruction_claim_reduction
-            .right_instruction_input
-            .unwrap_or(product_right);
-        if reduced_left != product_left {
-            return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltRelationId::InstructionInputVirtualization,
-                left: left_reduced,
-                right: left_product,
-            });
-        }
-        if reduced_right != product_right {
-            return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltRelationId::InstructionInputVirtualization,
-                left: right_reduced,
-                right: right_product,
-            });
-        }
-        Ok(())
-    }
-
-    /// Build the *effective* output aggregates the batch's final-claim fold is
-    /// evaluated against: clones of the wire values/points with the reduction's
-    /// three aliased openings (`lookup_output`, `left`/`right_instruction_input`)
-    /// filled in — the reduction's output `Expr` reads them, and the raw wire
-    /// `None`s would error as `MissingOpeningClaim`. Absent on the wire, they reuse
-    /// the product-remainder values at the shared reduction point (or zero when the
-    /// product/reduction points disagree — a defensive fallback that mirrors the
-    /// legacy reconstruction). The fallback VALUE reads from `self` (the values);
-    /// the point-agreement test reads from `points`; do not cross their provenance.
-    pub fn effective_aggregates(
-        &self,
-        points: &Stage2BatchOutputPoints<F>,
-    ) -> (Stage2BatchOutputClaims<F>, Stage2BatchOutputPoints<F>) {
-        let reduction = &self.instruction_claim_reduction;
-        let product = &self.product_remainder;
-        let reduction_point = points
-            .instruction_claim_reduction
-            .left_lookup_operand
-            .clone();
-        let points_match = points.product_remainder.left_instruction_input.as_slice()
-            == reduction_point.as_slice();
-        let aliased_value = |value: Option<F>, product_value: F| {
-            value.unwrap_or(if points_match {
-                product_value
-            } else {
-                F::from_u64(0)
-            })
-        };
-        let effective_reduction_values = InstructionClaimReductionOutputClaims {
-            lookup_output: Some(aliased_value(
-                reduction.lookup_output,
-                product.lookup_output,
-            )),
-            left_lookup_operand: reduction.left_lookup_operand,
-            right_lookup_operand: reduction.right_lookup_operand,
-            left_instruction_input: Some(aliased_value(
-                reduction.left_instruction_input,
-                product.left_instruction_input,
-            )),
-            right_instruction_input: Some(aliased_value(
-                reduction.right_instruction_input,
-                product.right_instruction_input,
-            )),
-        };
-        // Every reduced opening shares the single reduction point.
-        let effective_reduction_points = InstructionClaimReductionOutputClaims {
-            lookup_output: Some(reduction_point.clone()),
-            left_lookup_operand: reduction_point.clone(),
-            right_lookup_operand: reduction_point.clone(),
-            left_instruction_input: Some(reduction_point.clone()),
-            right_instruction_input: Some(reduction_point),
-        };
-
-        let mut effective_values = self.clone();
-        effective_values.instruction_claim_reduction = effective_reduction_values;
-        let mut effective_points = points.clone();
-        effective_points.instruction_claim_reduction = effective_reduction_points;
-        (effective_values, effective_points)
     }
 }
 
@@ -343,6 +168,7 @@ impl<F: Field, C> Stage2Output<F, C> {
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::ConcreteSumcheck;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::geometry::{
         dimensions::{ReadWriteDimensions, TraceDimensions},
@@ -351,16 +177,13 @@ mod tests {
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_program::preprocess::PublicIoMemory;
+    use jolt_transcript::Transcript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
     }
 
-    /// Pins the batch's `draw_challenges` to the pre-port inline draw: exactly two
-    /// squeezes, the RAM read-write gamma then the instruction claim-reduction
-    /// gamma (the other three members are `NoChallenges` and draw nothing).
-    #[test]
-    fn draw_challenges_matches_inline_two_gamma_sequence() {
+    fn sumchecks() -> Stage2BatchSumchecks<Fr> {
         let log_t = 4usize;
         let log_k = 3usize;
         let dimensions = ReadWriteDimensions::new(log_t, log_k, 2, 1);
@@ -370,7 +193,7 @@ mod tests {
             ..Default::default()
         }))
         .unwrap();
-        let sumchecks = Stage2BatchSumchecks::<Fr> {
+        Stage2BatchSumchecks::<Fr> {
             ram_read_write: RamReadWriteChecking::new(dimensions, log_k, Vec::new()),
             product_remainder: ProductRemainder::new(
                 SpartanProductDimensions::new(log_t),
@@ -390,8 +213,15 @@ mod tests {
                 Vec::new(),
             ),
             ram_output_check: RamOutputCheck::new(dimensions, Vec::new(), public_memory),
-        };
+        }
+    }
 
+    /// Pins the batch's `draw_challenges` to the pre-port inline draw: exactly two
+    /// squeezes, the RAM read-write gamma then the instruction claim-reduction
+    /// gamma (the other three members are `NoChallenges` and draw nothing).
+    #[test]
+    fn draw_challenges_matches_inline_two_gamma_sequence() {
+        let sumchecks = sumchecks();
         let (inline_events, (inline_ram_gamma, inline_instruction_gamma)) =
             record(|t| (t.challenge_scalar(), t.challenge_scalar()));
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
@@ -408,52 +238,12 @@ mod tests {
         );
     }
 
-    /// Locks the stage-2 batch Fiat-Shamir append order against silent drift. The
-    /// full relations single-source their order via the `OutputClaims` derive; only
-    /// the two reduced instruction lookup operands are curated (the reduction's
-    /// other openings alias the product-remainder ones and must NOT be
-    /// re-absorbed). Those aliased `Option` openings carry distinct sentinels here
-    /// to prove they are skipped.
-    #[test]
-    fn opening_values_follow_canonical_order() {
-        let claims = Stage2BatchOutputClaims::<Fr> {
-            ram_read_write: RamReadWriteOutputClaims {
-                val: fr(1),
-                ra: fr(2),
-                inc: fr(3),
-            },
-            product_remainder: ProductRemainderOutputClaims {
-                left_instruction_input: fr(4),
-                right_instruction_input: fr(5),
-                jump_flag: fr(6),
-                write_lookup_output_to_rd: fr(7),
-                lookup_output: fr(8),
-                branch_flag: fr(9),
-                next_is_noop: fr(10),
-                virtual_instruction: fr(11),
-            },
-            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
-                lookup_output: Some(fr(101)),
-                left_lookup_operand: fr(12),
-                right_lookup_operand: fr(13),
-                left_instruction_input: Some(fr(102)),
-                right_instruction_input: Some(fr(103)),
-            },
-            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
-            ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
-        };
-
-        assert_eq!(
-            claims.opening_values(),
-            (1..=15).map(fr).collect::<Vec<_>>()
-        );
-    }
-
-    /// A stage-2 batch output where the reduced instruction openings alias the
-    /// product-remainder ones (equal values): `lookup_output`,
-    /// `left`/`right_instruction_input`. The paired points agree on the shared
-    /// point. `validate` accepts it; the tests below perturb one alias value (or the
-    /// shared point) each to assert rejection.
+    /// A stage-2 batch output whose reduced instruction openings equal the
+    /// product-remainder ones they alias (`lookup_output`,
+    /// `left`/`right_instruction_input`). `validate_aliases` accepts it; the tests
+    /// below perturb one alias each to assert rejection. The aliased cells carry
+    /// the product values; the absorb test overrides them with sentinels to prove
+    /// they are skipped.
     fn consistent_values() -> Stage2BatchOutputClaims<Fr> {
         Stage2BatchOutputClaims::<Fr> {
             ram_read_write: RamReadWriteOutputClaims {
@@ -472,84 +262,145 @@ mod tests {
                 virtual_instruction: fr(11),
             },
             instruction_claim_reduction: InstructionClaimReductionOutputClaims {
-                lookup_output: Some(fr(8)),
+                lookup_output: fr(8),
                 left_lookup_operand: fr(12),
                 right_lookup_operand: fr(13),
-                left_instruction_input: Some(fr(4)),
-                right_instruction_input: Some(fr(5)),
+                left_instruction_input: fr(4),
+                right_instruction_input: fr(5),
             },
             ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
             ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
         }
     }
 
-    /// The paired points for [`consistent_values`]: the product-remainder and
-    /// reduced instruction-claim openings share the SAME point (so the alias holds).
-    fn consistent_points(shared_point: Vec<Fr>) -> Stage2BatchOutputPoints<Fr> {
-        let p = || shared_point.clone();
-        Stage2BatchOutputPoints::<Fr> {
-            ram_read_write: RamReadWriteOutputClaims {
-                val: p(),
-                ra: p(),
-                inc: p(),
-            },
-            product_remainder: ProductRemainderOutputClaims {
-                left_instruction_input: p(),
-                right_instruction_input: p(),
-                jump_flag: p(),
-                write_lookup_output_to_rd: p(),
-                lookup_output: p(),
-                branch_flag: p(),
-                next_is_noop: p(),
-                virtual_instruction: p(),
-            },
-            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
-                lookup_output: Some(p()),
-                left_lookup_operand: p(),
-                right_lookup_operand: p(),
-                left_instruction_input: Some(p()),
-                right_instruction_input: Some(p()),
-            },
-            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: p() },
-            ram_output_check: RamOutputCheckOutputClaims { val_final: p() },
+    /// Locks the stage-2 batch Fiat-Shamir append order against silent drift: the
+    /// generated absorb follows member declaration order and each member's
+    /// `canonical_order`, skipping the reduction's three aliased openings
+    /// (absorbed once via their product-remainder source). The aliased cells carry
+    /// distinct sentinels here to prove the skip is id-driven, not value-driven.
+    #[test]
+    fn opening_values_follow_canonical_order() {
+        let mut claims = consistent_values();
+        claims.instruction_claim_reduction.lookup_output = fr(101);
+        claims.instruction_claim_reduction.left_instruction_input = fr(102);
+        claims.instruction_claim_reduction.right_instruction_input = fr(103);
+
+        assert_eq!(
+            sumchecks().opening_values(&claims),
+            (1..=15).map(fr).collect::<Vec<_>>()
+        );
+    }
+
+    /// The generated `output_claim_count` sums the members' wire sets: 16
+    /// expression-referenced openings, minus the reduction's 3 aliases, plus the
+    /// product remainder's 2 staged openings.
+    #[test]
+    fn output_claim_count_matches_absorbed_openings() {
+        let sumchecks = sumchecks();
+        assert_eq!(sumchecks.output_claim_count(), 15);
+        assert_eq!(
+            sumchecks.opening_values(&consistent_values()).len(),
+            sumchecks.output_claim_count(),
+        );
+    }
+
+    /// Pins the reduction's alias declarations: each aliased id is distinct and
+    /// referenced by the reduction's own output `Expr` (so the batch fold
+    /// constrains the wire cell), and each canonical source is absorbed by the
+    /// product remainder (so the value the copy is checked against is
+    /// Fiat-Shamir-bound). The point-slice identity the value-only check relies
+    /// on is pinned by `aliased_members_derive_identical_opening_points`.
+    #[test]
+    fn alias_declarations_are_valid() {
+        use jolt_claims::SymbolicSumcheck as _;
+        use std::collections::BTreeSet;
+
+        let sumchecks = sumchecks();
+        let expression_openings = sumchecks
+            .instruction_claim_reduction
+            .symbolic()
+            .expected_output_openings::<Fr>();
+        let source_wire_openings = sumchecks.product_remainder.wire_output_openings();
+
+        let pairs = InstructionClaimReduction::<Fr>::aliased_output_openings();
+        assert_eq!(pairs.len(), 3);
+        let mut seen = BTreeSet::new();
+        for (aliased, source) in pairs {
+            assert!(
+                seen.insert(aliased),
+                "duplicate aliased opening {aliased:?}"
+            );
+            assert!(
+                expression_openings.contains(&aliased),
+                "aliased opening {aliased:?} is not referenced by the reduction's output Expr",
+            );
+            assert!(
+                source_wire_openings.contains(&source),
+                "source {source:?} is not absorbed by the product remainder",
+            );
         }
     }
 
     #[test]
-    fn validate_accepts_consistent_reduction() {
-        assert!(consistent_values()
-            .validate(&consistent_points(vec![fr(7)]))
-            .is_ok());
+    fn validate_aliases_accepts_consistent_reduction() {
+        assert!(sumchecks().validate_aliases(&consistent_values()).is_ok());
     }
 
     #[test]
-    fn validate_rejects_lookup_output_mismatch() {
+    fn validate_aliases_rejects_lookup_output_mismatch() {
         let mut values = consistent_values();
-        values.instruction_claim_reduction.lookup_output = Some(fr(99));
-        assert!(values.validate(&consistent_points(vec![fr(7)])).is_err());
+        values.instruction_claim_reduction.lookup_output = fr(99);
+        assert!(sumchecks().validate_aliases(&values).is_err());
     }
 
     #[test]
-    fn validate_rejects_left_instruction_input_mismatch() {
+    fn validate_aliases_rejects_left_instruction_input_mismatch() {
         let mut values = consistent_values();
-        values.instruction_claim_reduction.left_instruction_input = Some(fr(99));
-        assert!(values.validate(&consistent_points(vec![fr(7)])).is_err());
+        values.instruction_claim_reduction.left_instruction_input = fr(99);
+        assert!(sumchecks().validate_aliases(&values).is_err());
     }
 
     #[test]
-    fn validate_rejects_right_instruction_input_mismatch() {
+    fn validate_aliases_rejects_right_instruction_input_mismatch() {
         let mut values = consistent_values();
-        values.instruction_claim_reduction.right_instruction_input = Some(fr(99));
-        assert!(values.validate(&consistent_points(vec![fr(7)])).is_err());
+        values.instruction_claim_reduction.right_instruction_input = fr(99);
+        assert!(sumchecks().validate_aliases(&values).is_err());
     }
 
+    /// Pins the structural invariant the alias declaration relies on:
+    /// `validate_aliases` checks values only, which is sound because the product
+    /// remainder and the instruction claim-reduction bind the same batch-point
+    /// slice (equal rounds, default offsets) and derive the same opening point —
+    /// the aliased pairs are the same polynomial at the same point by
+    /// construction, never by proof content.
     #[test]
-    fn validate_rejects_reduction_point_mismatch() {
-        let values = consistent_values();
-        // Shift the product-remainder opening point away from the reduction's, so
-        // the reduced openings cannot alias the product ones.
-        let mut points = consistent_points(vec![fr(7)]);
-        points.product_remainder.left_instruction_input = vec![fr(1)];
-        assert!(values.validate(&points).is_err());
+    fn aliased_members_derive_identical_opening_points() {
+        let sumchecks = sumchecks();
+        let product = &sumchecks.product_remainder;
+        let reduction = &sumchecks.instruction_claim_reduction;
+        assert_eq!(product.rounds(), reduction.rounds());
+        let batch_num_vars = product.rounds() + 2;
+        assert_eq!(
+            product.instance_point_offset(batch_num_vars).unwrap(),
+            reduction.instance_point_offset(batch_num_vars).unwrap(),
+        );
+
+        let point: Vec<Fr> = (0..product.rounds() as u64).map(|i| fr(20 + i)).collect();
+        let input_points = sumchecks.empty_input_points();
+        let product_points = product
+            .derive_opening_points(&point, &input_points.product_remainder)
+            .unwrap();
+        let reduction_points = reduction
+            .derive_opening_points(&point, &input_points.instruction_claim_reduction)
+            .unwrap();
+        assert_eq!(product_points.lookup_output, reduction_points.lookup_output);
+        assert_eq!(
+            product_points.left_instruction_input,
+            reduction_points.left_instruction_input,
+        );
+        assert_eq!(
+            product_points.right_instruction_input,
+            reduction_points.right_instruction_input,
+        );
     }
 }

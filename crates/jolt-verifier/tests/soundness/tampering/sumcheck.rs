@@ -13,7 +13,7 @@ use crate::support::{
 };
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use crate::support::proof_claims::{offset_opening_claim, opening_claim, upsert_opening_claim};
+use crate::support::proof_claims::{offset_opening_claim, opening_claim};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     geometry::{
@@ -102,15 +102,12 @@ fn tampered_stage2_input_claims_reject() {
 fn tampered_stage2_output_claims_reject() {
     let base = standard_muldiv_case();
 
+    // Every wire cell is present (the aliased reduction cells carry
+    // validated-equal copies of the product-remainder values), so a plain offset
+    // suffices; the aliased offsets are rejected by the generated
+    // `validate_aliases`, the rest by the batch fold.
     for (target_name, id) in stage2_formula_output_openings() {
-        let replacement_claim = stage2_effective_output_claim(&base, id) + Fr::from_u64(1);
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target(target_name),
-            &base,
-            |case| {
-                upsert_opening_claim(&mut case.proof, id, replacement_claim);
-            },
-        );
+        offset_claim_rejects(&base, target_name, id);
     }
 
     for (target_name, id) in [
@@ -1128,30 +1125,4 @@ fn stage6_dimensions(base: &VerifierFixtureCase) -> JoltFormulaDimensions {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn manifest_target(name: &str) -> tamper_manifest::TamperTarget {
     tamper_manifest::required_target(name)
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_effective_output_claim(base: &VerifierFixtureCase, id: JoltOpeningId) -> Fr {
-    opening_claim(&base.proof, id)
-        .or_else(|| stage2_output_alias_claim(base, id))
-        .unwrap_or_else(|| Fr::from_u64(0))
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_output_alias_claim(base: &VerifierFixtureCase, id: JoltOpeningId) -> Option<Fr> {
-    let alias = stage2_output_alias(id)?;
-    opening_claim(&base.proof, alias)
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
-    if id == instruction_claim_reduction::lookup_output_reduced() {
-        Some(spartan::lookup_output_product())
-    } else if id == instruction_claim_reduction::left_instruction_input_reduced() {
-        Some(spartan::left_instruction_input_product())
-    } else if id == instruction_claim_reduction::right_instruction_input_reduced() {
-        Some(spartan::right_instruction_input_product())
-    } else {
-        None
-    }
 }

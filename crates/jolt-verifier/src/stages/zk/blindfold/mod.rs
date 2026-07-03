@@ -67,12 +67,12 @@ use jolt_claims::{
             claim_reductions::{
                 advice,
                 bytecode::{self as bytecode_reduction},
-                hamming_weight, program_image, registers as registers_claim_reduction,
+                hamming_weight, program_image,
             },
             dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
             instruction, ram,
             spartan::{
-                self, branch_flag_product, jump_flag_product, left_instruction_input_product,
+                branch_flag_product, jump_flag_product, left_instruction_input_product,
                 lookup_output_product, next_is_noop_product, outer_opening, outer_uniskip_opening,
                 product_outer_opening, product_should_branch_outer_opening,
                 product_should_jump_outer_opening, product_uniskip_opening,

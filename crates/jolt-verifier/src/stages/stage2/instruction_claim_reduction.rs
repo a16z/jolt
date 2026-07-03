@@ -4,13 +4,15 @@
 //! computation, in lockstep with the BlindFold constraint's
 //! `claim_reductions::instruction::claim_reduction` formula.
 //!
-//! WARNING — cross-relation aliases: three of the five reduced openings
-//! (`lookup_output`, `left_instruction_input`, `right_instruction_input`) are not
-//! re-committed when the reduction shares the product-remainder opening point; they
-//! alias the corresponding `SpartanProductVirtualization` product-remainder
-//! openings. They are therefore [`Option`] on the wire (absent ⇒ aliased), and the
-//! opening-claims helper fills them from the product-remainder openings (or zero
-//! when the points disagree) before this relation's output `Expr` is evaluated.
+//! Three of the five reduced openings (`lookup_output`, `left_instruction_input`,
+//! `right_instruction_input`) alias the corresponding
+//! `SpartanProductVirtualization` product-remainder openings — the reduction and
+//! the product remainder bind the same batch-point suffix (equal rounds, default
+//! offsets) and derive the same reversed opening point, so each pair is the same
+//! polynomial at the same point. The aliases are declared once, in
+//! [`aliased_output_openings`](crate::stages::relations::ConcreteSumcheck::aliased_output_openings)
+//! below; the generated drivers absorb each aliased opening via its
+//! product-remainder source and enforce the wire copies equal it.
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::{
@@ -18,8 +20,8 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::
     InstructionClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::dimensions::TraceDimensions, InstructionClaimReductionPublic, JoltDerivedId,
-    JoltRelationId,
+    geometry::dimensions::TraceDimensions, geometry::instruction, InstructionClaimReductionPublic,
+    JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -76,6 +78,12 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         &self.symbolic
     }
 
+    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
+        let [lookup_output] = instruction::read_raf_consistency_openings();
+        let [left_input, right_input] = instruction::input_virtualization_consistency_openings();
+        vec![lookup_output, left_input, right_input]
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
@@ -83,11 +91,11 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
     ) -> Result<InstructionClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(InstructionClaimReductionOutputClaims {
-            lookup_output: Some(opening_point.clone()),
+            lookup_output: opening_point.clone(),
             left_lookup_operand: opening_point.clone(),
             right_lookup_operand: opening_point.clone(),
-            left_instruction_input: Some(opening_point.clone()),
-            right_instruction_input: Some(opening_point),
+            left_instruction_input: opening_point.clone(),
+            right_instruction_input: opening_point,
         })
     }
 

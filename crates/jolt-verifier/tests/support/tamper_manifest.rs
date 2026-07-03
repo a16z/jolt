@@ -518,7 +518,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "prover-fixture test offsets each instruction claim-reduction output or its product alias",
+        "prover-fixture test offsets each instruction claim-reduction output (aliased cells are rejected by the generated validate_aliases)",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
@@ -1329,11 +1329,11 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 },
                 instruction_claim_reduction:
                     stage2::outputs::InstructionClaimReductionOutputClaims {
-                        lookup_output: optional,
+                        lookup_output: zero,
                         left_lookup_operand: zero,
                         right_lookup_operand: zero,
-                        left_instruction_input: optional,
-                        right_instruction_input: optional,
+                        left_instruction_input: zero,
+                        right_instruction_input: zero,
                     },
                 ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims { ram_ra: zero },
                 ram_output_check: stage2::outputs::RamOutputCheckOutputClaims { val_final: zero },

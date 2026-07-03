@@ -147,7 +147,7 @@ where
         return Err(VerifierError::StageClaimOutputMismatch { stage: 7 });
     }
 
-    claims.append_to_transcript(transcript);
+    sumchecks.append_output_claims(transcript, claims);
 
     Ok(Stage7Output::Clear(Stage7ClearOutput {
         output_values: claims.clone(),

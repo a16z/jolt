@@ -55,7 +55,7 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// would squeeze at the wrong transcript position if it existed to be called.
 ///
 /// The opt-out `#[sumcheck_batch(custom_opening_values)]` suppresses the generated
-/// `opening_values` / `append_to_transcript`: booleanity's `bytecode_ra` openings
+/// absorb methods: booleanity's `bytecode_ra` openings
 /// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
 /// order is curated by [`append_opening_claims`](super::verify::append_opening_claims)
 /// which threads the dedup points. `output_shape` is NOT applicable: the committed

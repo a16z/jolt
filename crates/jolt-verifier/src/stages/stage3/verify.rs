@@ -27,13 +27,6 @@ use crate::{
     VerifierError,
 };
 
-/// The number of opening claims the stage-3 batch commits/absorbs: 13, not the 16
-/// the members' output expressions reference, because three cross-relation aliases
-/// (`instruction_input.unexpanded_pc`, the register-reduction `rs1`/`rs2`) are
-/// absorbed once via their canonical source (see
-/// [`Stage3OutputClaims::opening_values`](super::outputs::Stage3OutputClaims)).
-const STAGE3_BATCH_OUTPUT_CLAIMS: usize = 13;
-
 /// Assemble the stage-3 consumed opening *values* from the upstream outputs into
 /// the generated `Stage3InputClaims` aggregate. This is the single place the
 /// stage's Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream`
@@ -91,7 +84,7 @@ where
             checked,
             &proof.stages.stage3_sumcheck_proof,
             "stage3_sumcheck_proof",
-            STAGE3_BATCH_OUTPUT_CLAIMS,
+            sumchecks.output_claim_count(),
             JoltRelationId::SpartanShift,
         )?;
         let output_points = sumchecks
@@ -108,6 +101,7 @@ where
     let stage1 = stage1.clear()?;
     let stage2 = stage2.clear()?;
     let claims = &proof.clear_claims()?.stage3;
+    sumchecks.validate_output_claims(claims)?;
 
     let input_values =
         stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);
@@ -123,6 +117,9 @@ where
     let output_points =
         sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
 
+    // Runs the generated `validate_aliases` first: the three aliased wire cells
+    // (read by the members' output `Expr`s and by downstream stages) must equal
+    // their canonical sources.
     let expected_final_claim = sumchecks.expected_final_claim(
         &batch.coefficients,
         &input_points,
@@ -134,11 +131,7 @@ where
         return Err(VerifierError::StageClaimOutputMismatch { stage: 3 });
     }
 
-    // After the per-relation output checks (which catch any single-claim offset),
-    // enforce the cross-relation opening aliases the downstream stages relied on.
-    claims.validate()?;
-
-    claims.append_to_transcript(transcript);
+    sumchecks.append_output_claims(transcript, claims);
 
     Ok(Stage3Output::Clear(Stage3ClearOutput {
         output_values: claims.clone(),

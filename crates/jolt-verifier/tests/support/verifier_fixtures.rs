@@ -46,7 +46,9 @@ use jolt_prover_legacy::{
 };
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0002";
+// Bumped for the InstructionClaimReductionOutputClaims Option<C> -> C wire flip
+// so stale cached fixtures regenerate instead of panicking mid-decode.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0003";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 

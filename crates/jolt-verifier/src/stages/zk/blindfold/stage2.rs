@@ -184,13 +184,24 @@ where
         relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims::<
             PCS::Field,
         > {
-            lookup_output: Some(PCS::Field::zero()),
+            lookup_output: PCS::Field::zero(),
             left_lookup_operand: PCS::Field::zero(),
             right_lookup_operand: PCS::Field::zero(),
-            left_instruction_input: Some(PCS::Field::zero()),
-            right_instruction_input: Some(PCS::Field::zero()),
+            left_instruction_input: PCS::Field::zero(),
+            right_instruction_input: PCS::Field::zero(),
         }
         .canonical_order();
+
+    // Single-sourced from the reduction's declared alias pairs
+    // (`ConcreteSumcheck::aliased_output_openings`): the committed output rows
+    // absorb the reduction's canonical openings minus its aliased ids, and the
+    // `OpeningAlias` rows mirror the same `(aliased, source)` pairs — so
+    // BlindFold's row layout cannot drift from the clear path's generated absorb
+    // and `validate_aliases`.
+    let alias_pairs = <crate::stages::stage2::outputs::InstructionClaimReduction<PCS::Field> as
+        crate::stages::relations::ConcreteSumcheck<PCS::Field>>::aliased_output_openings();
+    let aliased_targets: std::collections::BTreeSet<_> =
+        alias_pairs.iter().map(|(aliased, _)| *aliased).collect();
 
     let mut output_ids = Vec::new();
     output_ids.extend(
@@ -202,8 +213,12 @@ where
         .canonical_order(),
     );
     output_ids.extend(product_order.clone());
-    output_ids.push(instruction_outputs[1]);
-    output_ids.push(instruction_outputs[2]);
+    output_ids.extend(
+        instruction_outputs
+            .iter()
+            .copied()
+            .filter(|id| !aliased_targets.contains(id)),
+    );
     output_ids.extend(
         relations::ram::RamRafEvaluationOutputClaims::<PCS::Field> {
             ram_ra: PCS::Field::zero(),
@@ -216,11 +231,10 @@ where
         }
         .canonical_order(),
     );
-    let aliases = vec![
-        OpeningAlias::new(instruction_outputs[0], product_order[4]),
-        OpeningAlias::new(instruction_outputs[3], product_order[0]),
-        OpeningAlias::new(instruction_outputs[4], product_order[1]),
-    ];
+    let aliases = alias_pairs
+        .into_iter()
+        .map(|(aliased, source)| OpeningAlias::new(aliased, source))
+        .collect::<Vec<_>>();
 
     let batch_claims = [
         relation_claim(&ram_read_write),
