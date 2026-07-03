@@ -134,6 +134,10 @@ where
         Output = Self::VerifierRoundCommitment,
     >;
     type VerifierRoundCommitment: Copy
+        + core::fmt::Debug
+        + Eq
+        + Send
+        + Sync
         + HomomorphicCommitment<F::VerifierField>
         + jolt_transcript::AppendToTranscript
         + serde::Serialize
@@ -429,6 +433,7 @@ where
         stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
         stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
         stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
+        inc_virtualization_proof: Default::default(),
         stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
         stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
@@ -488,6 +493,7 @@ where
         stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
         stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
         stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
+        inc_virtualization_proof: Default::default(),
         stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
         stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),

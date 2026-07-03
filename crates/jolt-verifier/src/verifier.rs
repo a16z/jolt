@@ -1287,6 +1287,7 @@ mod tests {
             stage3_sumcheck_proof: sumcheck_proof(is_zk),
             stage4_sumcheck_proof: sumcheck_proof(is_zk),
             stage5_sumcheck_proof: sumcheck_proof(is_zk),
+            inc_virtualization_proof: Default::default(),
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),

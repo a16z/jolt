@@ -45,6 +45,13 @@ pub trait JoltCommitmentMode:
     type ChunkReconstructionOutputs<C>: Clone + Debug + PartialEq + Eq + Send + Sync
     where
         C: Clone + Debug + PartialEq + Eq + Send + Sync;
+
+    /// The `IncVirtualization` phase's sumcheck proof (the lattice-only phase
+    /// between stage 5 and the stage-6 address phase); zero wire bytes in the
+    /// homomorphic mode.
+    type IncVirtualizationProof<P>: Clone + Debug + PartialEq + Eq + Send + Sync
+    where
+        P: Clone + Debug + PartialEq + Eq + Send + Sync;
 }
 
 /// Per-polynomial commitments, RLC final opening (Dory/HyperKZG).
@@ -68,6 +75,11 @@ impl JoltCommitmentMode for BaseJolt {
         = NoOutputs<C>
     where
         C: Clone + Debug + PartialEq + Eq + Send + Sync;
+
+    type IncVirtualizationProof<P>
+        = NoOutputs<P>
+    where
+        P: Clone + Debug + PartialEq + Eq + Send + Sync;
 }
 
 /// One packed one-hot witness, reduction-sumcheck final opening (Akita).
@@ -91,4 +103,9 @@ impl JoltCommitmentMode for LatticeJolt {
         = ChunkReconstructionOutputClaims<C>
     where
         C: Clone + Debug + PartialEq + Eq + Send + Sync;
+
+    type IncVirtualizationProof<P>
+        = P
+    where
+        P: Clone + Debug + PartialEq + Eq + Send + Sync;
 }

@@ -23,8 +23,8 @@ use crate::{
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "PCS::Field: Serialize, ZkProof: Serialize, JointOpeningProof: Serialize, Commitments: Serialize, JoltProofClaims<PCS::Field, ZkProof, M>: Serialize",
-    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned, JointOpeningProof: serde::de::DeserializeOwned, Commitments: serde::de::DeserializeOwned, JoltProofClaims<PCS::Field, ZkProof, M>: serde::de::DeserializeOwned"
+    serialize = "PCS::Field: Serialize, ZkProof: Serialize, JointOpeningProof: Serialize, Commitments: Serialize, JoltProofClaims<PCS::Field, ZkProof, M>: Serialize, JoltStageProofs<PCS::Field, VC, M>: Serialize",
+    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned, JointOpeningProof: serde::de::DeserializeOwned, Commitments: serde::de::DeserializeOwned, JoltProofClaims<PCS::Field, ZkProof, M>: serde::de::DeserializeOwned, JoltStageProofs<PCS::Field, VC, M>: serde::de::DeserializeOwned"
 ))]
 pub struct JoltProof<
     PCS,
@@ -40,7 +40,7 @@ pub struct JoltProof<
 {
     pub protocol: JoltProtocolConfig,
     pub commitments: Commitments,
-    pub stages: JoltStageProofs<PCS::Field, VC>,
+    pub stages: JoltStageProofs<PCS::Field, VC, M>,
     pub joint_opening_proof: JointOpeningProof,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof, M>,
@@ -65,7 +65,7 @@ where
     pub fn new(
         commitment: CommitmentConfig,
         commitments: Commitments,
-        stages: JoltStageProofs<PCS::Field, VC>,
+        stages: JoltStageProofs<PCS::Field, VC, M>,
         joint_opening_proof: JointOpeningProof,
         untrusted_advice_commitment: Option<PCS::Output>,
         claims: JoltProofClaims<PCS::Field, ZkProof, M>,
@@ -195,13 +195,14 @@ pub struct ClearProofClaims<F: Field, M: JoltCommitmentMode = BaseJolt> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "F: Serialize, <VC as Commitment>::Output: Serialize",
-    deserialize = "F: for<'a> Deserialize<'a>, <VC as Commitment>::Output: serde::de::DeserializeOwned"
+    serialize = "F: Serialize, <VC as Commitment>::Output: Serialize, M::IncVirtualizationProof<SumcheckProof<F, VC::Output>>: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, <VC as Commitment>::Output: serde::de::DeserializeOwned, M::IncVirtualizationProof<SumcheckProof<F, VC::Output>>: serde::de::DeserializeOwned"
 ))]
-pub struct JoltStageProofs<F, VC>
+pub struct JoltStageProofs<F, VC, M = BaseJolt>
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
+    M: JoltCommitmentMode,
 {
     pub stage1_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
     pub stage1_sumcheck_proof: SumcheckProof<F, VC::Output>,
@@ -210,6 +211,9 @@ where
     pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    /// The lattice-only `IncVirtualization` phase between stage 5 and the
+    /// stage-6 address phase; zero wire bytes in the homomorphic mode.
+    pub inc_virtualization_proof: M::IncVirtualizationProof<SumcheckProof<F, VC::Output>>,
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
