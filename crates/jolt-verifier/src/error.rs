@@ -13,6 +13,12 @@ pub enum VerifierError {
         expected: JoltProtocolConfig,
         got: JoltProtocolConfig,
     },
+    #[error("packed commitment mode requires a transparent (non-zk) proof")]
+    PackedRequiresTransparentProof,
+    #[error("packed commitment mode requires full program mode (no committed program)")]
+    PackedRequiresFullProgramMode,
+    #[error("packed commitment mode does not support advice commitments")]
+    PackedRequiresNoAdvice,
 
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },

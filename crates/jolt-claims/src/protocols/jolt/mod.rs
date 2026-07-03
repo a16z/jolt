@@ -1,8 +1,11 @@
 pub mod geometry;
 pub mod lattice;
+pub mod mode;
 pub mod relations;
 
 mod ids;
+
+pub use mode::{BaseJolt, JoltCommitmentMode, LatticeJolt};
 
 pub use geometry::{
     claim_reductions::advice::AdviceClaimReductionLayout,

@@ -495,6 +495,11 @@ where
     type VerifierSetup = PrefixPackedVerifierSetup<PCS, Id>;
     type Statement = PrefixPackedStatement<PCS::Field, Id, PCS::Output>;
     /// The single packed polynomial backing every logical claim.
+    ///
+    /// Sources advertising [`MultilinearPoly::is_one_hot`] take the sparse
+    /// reduction prover, which reads only [`MultilinearPoly::for_each_one`]
+    /// and never materializes the packed evaluation table; all other sources
+    /// take the dense path via [`MultilinearPoly::to_dense`].
     type Polynomials<'a>
         = &'a (dyn MultilinearPoly<PCS::Field> + 'a)
     where
@@ -524,10 +529,15 @@ where
         }
         statement.append_to_transcript(transcript);
         let alpha = transcript.challenge_scalar_powers(statement.num_claims());
-        let selector = statement.selector_table(&alpha);
-        let packed_evaluations = polynomial.to_dense().into_owned();
-        let (round_polynomials, opening_point, opening_eval) =
-            prove_reduction_sumcheck(selector, packed_evaluations, transcript);
+        let (round_polynomials, opening_point, opening_eval) = if polynomial.is_one_hot() {
+            let mut one_positions = Vec::new();
+            polynomial.for_each_one(&mut |index| one_positions.push(index));
+            statement.prove_reduction_sumcheck_sparse(&alpha, one_positions, transcript)
+        } else {
+            let selector = statement.selector_table(&alpha);
+            let packed_evaluations = polynomial.to_dense().into_owned();
+            prove_reduction_sumcheck(selector, packed_evaluations, transcript)
+        };
         EvaluationClaim::new(opening_point.clone(), opening_eval).append_to_transcript(transcript);
         let pcs_proof = PCS::open(
             polynomial,

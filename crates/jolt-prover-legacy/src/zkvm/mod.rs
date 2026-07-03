@@ -344,6 +344,12 @@ pub fn fiat_shamir_preamble(
     one_hot_config: &OneHotConfig,
     dory_layout: DoryLayout,
     preprocessing_digest: &[u8; 32],
+    // Protocol-config scalars; consensus-critical, must match
+    // `jolt_verifier::ZkConfig::transcript_scalar` /
+    // `CommitmentConfig::transcript_scalar` (0 = Transparent/Homomorphic,
+    // 1 = BlindFold/Packed).
+    zk_config: u64,
+    commitment_config: u64,
     transcript: &mut impl Transcript,
 ) {
     transcript.append_bytes(b"preprocessing_digest", preprocessing_digest);
@@ -378,6 +384,8 @@ pub fn fiat_shamir_preamble(
         one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
     );
     transcript.append_u64(b"dory_layout", dory_layout as u64);
+    transcript.append_u64(b"zk_config", zk_config);
+    transcript.append_u64(b"commitment_config", commitment_config);
 }
 
 #[cfg(all(feature = "prover", feature = "transcript-poseidon"))]

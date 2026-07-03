@@ -76,6 +76,17 @@ impl UnsignedIncChunking {
     }
 }
 
+/// MLE of the symbol-value identity over a one-hot column's address bits,
+/// msb-first (the `(symbol ...)` cell order): `Σ_i 2^(w-1-i) · r[i]`.
+/// Decodes a one-hot chunk opening to its symbol value; the single owner of
+/// the bit-order convention for both the prover instance and the verifier's
+/// `IdentityAtAddress` public.
+pub fn identity_mle<F: RingCore>(address_point: &[F]) -> F {
+    address_point
+        .iter()
+        .fold(F::zero(), |acc, coordinate| acc + acc + *coordinate)
+}
+
 /// Arity of a one-hot column over `symbol_bits` symbols, `limbs` limbs, and a
 /// `2^log_rows` row domain, under the `(symbol ‖ limb ‖ row)` cell order.
 /// Limb counts round up to a power of two; dummy limb cells are zero by
@@ -152,5 +163,17 @@ mod tests {
             Err(LatticeGeometryError::ZeroLimbCount)
         );
         assert_eq!(word_byte_column_vars(5), byte_column_vars(8, 5).unwrap());
+    }
+
+    #[test]
+    fn identity_mle_decodes_boolean_symbols_msb_first() {
+        use jolt_field::{Fr, FromPrimitiveInt};
+        for symbol in 0..8u64 {
+            let point: Vec<Fr> = (0..3)
+                .rev()
+                .map(|bit| Fr::from_u64((symbol >> bit) & 1))
+                .collect();
+            assert_eq!(identity_mle(&point), Fr::from_u64(symbol));
+        }
     }
 }

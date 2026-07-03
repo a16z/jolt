@@ -451,6 +451,8 @@ impl<
             &self.one_hot_params.to_config(),
             DoryGlobals::get_layout(),
             &preprocessing_digest,
+            cfg!(feature = "zk") as u64,
+            0, // Homomorphic; the packed (Akita) prover passes 1.
             &mut self.transcript,
         );
 

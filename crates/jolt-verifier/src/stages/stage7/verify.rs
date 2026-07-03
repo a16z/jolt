@@ -696,6 +696,7 @@ impl<F: Field> Stage7Relations<F> {
 
         let output_claims = Stage7OutputClaims {
             hamming_weight_claim_reduction: hamming_output,
+            chunk_reconstruction: Default::default(),
             advice_address_phase: advice_output,
             bytecode_address_phase: bytecode_output,
             program_image_address_phase: program_image_output,

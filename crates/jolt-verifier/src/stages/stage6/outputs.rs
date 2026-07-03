@@ -1,7 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 6 verification.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-use jolt_claims::protocols::jolt::JoltAdviceKind;
+use jolt_claims::protocols::jolt::{BaseJolt, JoltAdviceKind, JoltCommitmentMode};
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use serde::{Deserialize, Serialize};
@@ -25,17 +25,21 @@ pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 /// the same cell convention.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
+    serialize = "C: serde::Serialize, M::BooleanityOutputs<C>: serde::Serialize, M::IncOutputs<C>: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>, M::BooleanityOutputs<C>: serde::Deserialize<'de>, M::IncOutputs<C>: serde::Deserialize<'de>"
 ))]
-pub struct Stage6OutputClaims<C> {
+pub struct Stage6OutputClaims<C, M = BaseJolt>
+where
+    C: Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
+    M: JoltCommitmentMode,
+{
     pub address_phase: Stage6AddressPhaseClaims<C>,
     pub bytecode_read_raf: BytecodeReadRafOutputClaims<C>,
-    pub booleanity: BooleanityOutputClaims<C>,
+    pub booleanity: M::BooleanityOutputs<C>,
     pub ram_hamming_booleanity: RamHammingBooleanityOutputClaims<C>,
     pub ram_ra_virtualization: RamRaVirtualizationOutputClaims<C>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<C>,
-    pub inc_claim_reduction: IncClaimReductionOutputClaims<C>,
+    pub inc_claim_reduction: M::IncOutputs<C>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<C>,
     /// Committed program mode only.
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<C>>,
@@ -202,14 +206,14 @@ pub struct Stage6Challenges<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6ClearOutput<F: Field> {
+pub struct Stage6ClearOutput<F: Field, M: JoltCommitmentMode = BaseJolt> {
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
-    pub output_claims: Stage6OutputClaims<F>,
+    pub output_claims: Stage6OutputClaims<F, M>,
     /// The produced opening *points* (point-only cell), paired field-for-field with
     /// `output_claims`. Stages 7 and 8 read each relation's opening point off these
     /// cells (via the `Stage6OutputClaims<Vec<F>>` accessors).
-    pub output_points: Stage6OutputClaims<Vec<F>>,
+    pub output_points: Stage6OutputClaims<Vec<F>, M>,
     /// Committed-program mode only: the bytecode claim-reduction's per-chunk
     /// weights (`r_bc`, chunk weights, gamma-folded lane weights). These are
     /// public derived data (not openings), so stage 7's bytecode address phase
@@ -233,13 +237,19 @@ pub struct Stage6ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage6Output<F: Field, C> {
-    Clear(Stage6ClearOutput<F>),
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Stage outputs live once per verification; boxing the clear arm would add indirection on the common path."
+)]
+pub enum Stage6Output<F: Field, C, M: JoltCommitmentMode = BaseJolt> {
+    Clear(Stage6ClearOutput<F, M>),
+    /// BlindFold rides the homomorphic mode only (zk x packed is rejected
+    /// fail-closed), so the zk arm stays [`BaseJolt`]-shaped.
     Zk(Stage6ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage6Output<F, C> {
-    pub fn clear(&self) -> Result<&Stage6ClearOutput<F>, crate::VerifierError> {
+impl<F: Field, C, M: JoltCommitmentMode> Stage6Output<F, C, M> {
+    pub fn clear(&self) -> Result<&Stage6ClearOutput<F, M>, crate::VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
             Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6" }),

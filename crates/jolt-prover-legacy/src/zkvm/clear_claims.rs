@@ -505,6 +505,7 @@ fn stage7_claims_from_openings<F: Field>(
             bytecode_ra,
             ram_ra,
         },
+        chunk_reconstruction: Default::default(),
         advice_address_phase: AdviceAddressPhaseOutputClaims {
             trusted: advice_address_phase_claim_from_openings(claims, JoltAdviceKind::Trusted),
             untrusted: advice_address_phase_claim_from_openings(claims, JoltAdviceKind::Untrusted),

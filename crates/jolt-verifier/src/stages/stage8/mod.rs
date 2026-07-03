@@ -9,4 +9,4 @@ pub use final_openings::{
     Stage8FinalOpeningClaimsInput, Stage8FinalOpeningStructure,
 };
 pub use outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
-pub use verify::verify;
+pub use verify::{verify, verify_zk};

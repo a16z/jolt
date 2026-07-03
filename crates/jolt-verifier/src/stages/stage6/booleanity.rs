@@ -10,6 +10,9 @@
 
 use core::marker::PhantomData;
 
+use jolt_claims::protocols::jolt::lattice::relations::booleanity::{
+    LatticeBooleanityCyclePhase, LatticeBooleanityDimensions, LatticeBooleanityOutputClaims,
+};
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims,
@@ -152,6 +155,98 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
             .map(GetPoint::point)
             .ok_or_else(|| public_input_failed("booleanity produced no openings"))?;
         let log_k_chunk = self.dimensions.log_k_chunk;
+        let (r_address, r_cycle) = opening_point.split_at(log_k_chunk);
+        let full_sumcheck_point = r_address
+            .iter()
+            .rev()
+            .chain(r_cycle.iter().rev())
+            .copied()
+            .collect::<Vec<_>>();
+        let reference_eq_point = self
+            .reference_address
+            .iter()
+            .rev()
+            .chain(self.reference_cycle.iter().rev())
+            .copied()
+            .collect::<Vec<_>>();
+        try_eq_mle(&full_sumcheck_point, &reference_eq_point).map_err(public_input_failed)
+    }
+}
+
+/// Lattice-mode cycle phase: the base wrapper with the unsigned-inc chunk
+/// columns (at the shared `r_address ++ r_cycle` point) and the msb column
+/// (at `r_cycle` — it has no address variables) joining the produced set.
+pub struct LatticeBooleanity<F: Field> {
+    symbolic: LatticeBooleanityCyclePhase,
+    dimensions: LatticeBooleanityDimensions,
+    r_address: Vec<F>,
+    reference_address: Vec<F>,
+    reference_cycle: Vec<F>,
+}
+
+impl<F: Field> LatticeBooleanity<F> {
+    pub fn new(
+        dimensions: LatticeBooleanityDimensions,
+        r_address: Vec<F>,
+        reference_address: Vec<F>,
+        reference_cycle: Vec<F>,
+    ) -> Self {
+        Self {
+            symbolic: LatticeBooleanityCyclePhase::new(dimensions),
+            dimensions,
+            r_address,
+            reference_address,
+            reference_cycle,
+        }
+    }
+}
+
+impl<F: Field> ConcreteSumcheck<F> for LatticeBooleanity<F> {
+    type Symbolic = LatticeBooleanityCyclePhase;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
+
+    fn derive_opening_points<C: GetPoint<F>>(
+        &self,
+        sumcheck_point: &[F],
+        _inputs: &BooleanityInputClaims<C>,
+    ) -> Result<LatticeBooleanityOutputClaims<Vec<F>>, VerifierError> {
+        let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = [self.r_address.as_slice(), r_cycle.as_slice()].concat();
+        let layout = self.dimensions.base.layout;
+        Ok(LatticeBooleanityOutputClaims {
+            instruction_ra: vec![opening_point.clone(); layout.instruction()],
+            bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
+            ram_ra: vec![opening_point.clone(); layout.ram()],
+            unsigned_inc_chunks: vec![opening_point; self.dimensions.chunking().chunk_count()],
+            unsigned_inc_msb: r_cycle,
+        })
+    }
+
+    fn derive_output_term<C: GetPoint<F>>(
+        &self,
+        id: &JoltDerivedId,
+        _inputs: &BooleanityInputClaims<C>,
+        outputs: &LatticeBooleanityOutputClaims<OpeningClaim<F>>,
+        _challenges: &BooleanityCyclePhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+        };
+        // Same two-phase point recovery as the base wrapper; the chunk
+        // openings share the full `r_address ++ r_cycle` point, so any of
+        // them anchors the split.
+        let opening_point = outputs
+            .instruction_ra
+            .first()
+            .or_else(|| outputs.bytecode_ra.first())
+            .or_else(|| outputs.ram_ra.first())
+            .or_else(|| outputs.unsigned_inc_chunks.first())
+            .map(GetPoint::point)
+            .ok_or_else(|| public_input_failed("booleanity produced no openings"))?;
+        let log_k_chunk = self.dimensions.base.log_k_chunk;
         let (r_address, r_cycle) = opening_point.split_at(log_k_chunk);
         let full_sumcheck_point = r_address
             .iter()

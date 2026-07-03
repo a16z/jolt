@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 7 verification.
 
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{BaseJolt, JoltCommitmentMode, JoltCommittedPolynomial};
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
@@ -25,11 +25,18 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClai
 /// the wire).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
+    serialize = "C: serde::Serialize, M::ChunkReconstructionOutputs<C>: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>, M::ChunkReconstructionOutputs<C>: serde::Deserialize<'de>"
 ))]
-pub struct Stage7OutputClaims<C> {
+pub struct Stage7OutputClaims<C, M = BaseJolt>
+where
+    C: Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
+    M: JoltCommitmentMode,
+{
     pub hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims<C>,
+    /// Unsigned-inc chunk claims from the lattice reconstruction; empty in
+    /// the homomorphic mode.
+    pub chunk_reconstruction: M::ChunkReconstructionOutputs<C>,
     pub advice_address_phase: AdviceAddressPhaseOutputClaims<C>,
     /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
     /// address phase; present only when that phase runs.
@@ -39,7 +46,7 @@ pub struct Stage7OutputClaims<C> {
     pub program_image_address_phase: Option<ProgramImageReductionAddressPhaseOutputClaims<C>>,
 }
 
-impl<F: Field> Stage7OutputClaims<F> {
+impl<F: Field> Stage7OutputClaims<F, BaseJolt> {
     /// The produced opening claims in canonical (Fiat-Shamir) order, single-sourced
     /// from the per-relation declaration orders.
     pub fn opening_values(&self) -> Vec<F> {
@@ -85,10 +92,10 @@ pub struct Stage7Challenges<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7ClearOutput<F: Field> {
+pub struct Stage7ClearOutput<F: Field, M: JoltCommitmentMode = BaseJolt> {
     /// The produced stage-7 openings paired with their points (point + value) via
     /// the `OpeningClaim` cell.
-    pub output_claims: Stage7OutputClaims<OpeningClaim<F>>,
+    pub output_claims: Stage7OutputClaims<OpeningClaim<F>, M>,
     /// The hamming-weight reduction's opening point — the own point of the one-hot
     /// `Ra` polynomials, shared by all reduced RA openings. Stored contiguously so
     /// stage 8 can borrow it directly (the per-family RA opening cells can be empty
@@ -116,13 +123,15 @@ pub struct Stage7ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage7Output<F: Field, C> {
-    Clear(Stage7ClearOutput<F>),
+pub enum Stage7Output<F: Field, C, M: JoltCommitmentMode = BaseJolt> {
+    Clear(Stage7ClearOutput<F, M>),
+    /// BlindFold rides the homomorphic mode only (zk x packed is rejected
+    /// fail-closed), so the zk arm stays [`BaseJolt`]-shaped.
     Zk(Stage7ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage7Output<F, C> {
-    pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, crate::VerifierError> {
+impl<F: Field, C, M: JoltCommitmentMode> Stage7Output<F, C, M> {
+    pub fn clear(&self) -> Result<&Stage7ClearOutput<F, M>, crate::VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
             Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage7" }),

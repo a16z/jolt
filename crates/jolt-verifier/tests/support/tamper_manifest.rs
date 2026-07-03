@@ -1242,6 +1242,9 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
                 collect_leaf_paths(&format!("{prefix}.{key}"), value, paths);
             }
         }
+        // Structurally empty claim groups (the inactive mode's placeholder,
+        // zero wire bytes) carry nothing to tamper.
+        Value::Null => {}
         _ => {
             let _ = paths.insert(prefix.to_string());
         }
@@ -1430,6 +1433,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                 },
+            chunk_reconstruction: Default::default(),
             advice_address_phase:
                 stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
                     trusted: Some(zero),

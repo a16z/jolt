@@ -141,7 +141,15 @@ impl<F: Field, C> SumcheckChallenges<F, C> for NoChallenges<F> {
 /// resolution): it declares the GATs `SymbolicSumcheck` requires without owning
 /// real claim structs. Never resolved (no `ConcreteSumcheck` impl references it).
 pub struct NoInputs<C>(::core::marker::PhantomData<C>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NoOutputs<C>(::core::marker::PhantomData<C>);
+
+impl<C> Default for NoOutputs<C> {
+    fn default() -> Self {
+        Self(::core::marker::PhantomData)
+    }
+}
 
 /// One opening-claim cell: a `(point, value)` pair. The opening point is
 /// verifier-derived (from the sumcheck), so it never crosses the wire — only the

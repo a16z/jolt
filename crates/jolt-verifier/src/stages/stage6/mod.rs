@@ -5,6 +5,7 @@ pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod committed_reduction_cycle_phase;
 pub mod inc_claim_reduction;
+pub mod inc_virtualization;
 pub mod instruction_ra_virtualization;
 pub mod outputs;
 pub mod ram_hamming_booleanity;

@@ -1,8 +1,8 @@
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::{EvaluationClaim, OpeningsError, PrefixPacking};
-use jolt_poly::Polynomial;
+use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
+use rand_core::{RngCore, SeedableRng};
 
 /// Logical ids for the shared mixed-arity packed fixture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -51,6 +51,80 @@ pub fn packed_claims(
             )
         })
         .collect()
+}
+
+const MIXED_ARITIES: [(PackedId, usize); 5] = [
+    (PackedId::Wide, 3),
+    (PackedId::Medium, 2),
+    (PackedId::NarrowB, 1),
+    (PackedId::NarrowA, 1),
+    (PackedId::Constant, 0),
+];
+
+/// One-hot witness over the mixed-arity packing plus the logical 0/1
+/// polynomials its slots contain, for claim construction and dense-oracle
+/// comparison.
+///
+/// Every one-position must land inside a slot subcube: packed padding cells
+/// are zero by convention.
+pub fn one_hot_packed_fixture(
+    k: usize,
+    indices: Vec<Option<u8>>,
+) -> (OneHotPolynomial, Vec<(PackedId, Polynomial<Fr>)>) {
+    let packing = PrefixPacking::new(MIXED_ARITIES).expect("mixed-arity packing should build");
+    let domain = 1usize << packing.packed_num_vars;
+    assert_eq!(k * indices.len(), domain);
+
+    let witness = OneHotPolynomial::new(k, indices);
+    let mut dense = vec![Fr::from_u64(0); domain];
+    MultilinearPoly::<Fr>::for_each_one(&witness, &mut |index| {
+        assert!(
+            in_slot(&packing, index),
+            "one-position {index} lands in packed padding"
+        );
+        dense[index] = Fr::from_u64(1);
+    });
+
+    let logical = MIXED_ARITIES
+        .iter()
+        .map(|&(id, num_vars)| {
+            let offset = packing[&id].packed_index(0);
+            (
+                id,
+                Polynomial::new(dense[offset..offset + (1usize << num_vars)].to_vec()),
+            )
+        })
+        .collect();
+    (witness, logical)
+}
+
+/// Seeded one-hot fixture: `32 / k` row-groups of `k` columns with at most one
+/// unit entry each; draws landing in packed padding become empty rows.
+pub fn one_hot_packed_polynomials(
+    k: usize,
+    seed: u64,
+) -> (OneHotPolynomial, Vec<(PackedId, Polynomial<Fr>)>) {
+    let packing = PrefixPacking::new(MIXED_ARITIES).expect("mixed-arity packing should build");
+    let domain = 1usize << packing.packed_num_vars;
+
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let indices = (0..domain / k)
+        .map(|row| {
+            if rng.next_u32() % 4 == 0 {
+                return None;
+            }
+            let column = rng.next_u32() as usize % k;
+            in_slot(&packing, row * k + column).then_some(column as u8)
+        })
+        .collect();
+    one_hot_packed_fixture(k, indices)
+}
+
+fn in_slot(packing: &PrefixPacking<PackedId>, index: usize) -> bool {
+    packing.iter().any(|(_, slot)| {
+        let offset = slot.packed_index(0);
+        index >= offset && index < offset + (1usize << slot.num_vars)
+    })
 }
 
 /// Honest claims for every slot at mutually independent random points.

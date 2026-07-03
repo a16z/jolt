@@ -505,6 +505,7 @@ fn stage7_claims_from_native<F: Field>(
     }
 
     Ok(Stage7OutputClaims {
+        chunk_reconstruction: Default::default(),
         hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
             instruction_ra,
             bytecode_ra,
@@ -712,6 +713,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             program_image_claim_reduction: None,
         },
         stage7: Stage7OutputClaims {
+            chunk_reconstruction: Default::default(),
             hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],

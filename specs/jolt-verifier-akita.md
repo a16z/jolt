@@ -158,11 +158,14 @@ bounds survive only in `HomomorphicBatch`'s jolt-openings impl and stage 8's
 
 Two-level gating, mirroring how `zk` works today:
 
-- **Cargo features** `dory` and `akita` on jolt-verifier gate only optional
-  dependencies and one instantiation module each
-  (`pcs/dory.rs`, `pcs/akita.rs`: type aliases + a concrete
-  `verify_dory`/`verify_akita` entry point). The core stays generic over
-  `(PCS, B)`; both features can coexist in one build.
+- **No PCS knowledge in jolt-verifier at all** (revised in review): the
+  crate exposes two generic entry points — `verify` (homomorphic bounds) and
+  `verify_packed` (plain `CommitmentScheme` bounds, `M = LatticeJolt`) — and
+  the concrete instantiation (Dory/Fr vs Akita/fp128) happens in the
+  consuming crate behind *its* cfg feature. No `dory`/`akita` features, no
+  optional PCS deps, no per-PCS modules; fail-closed selection is per entry
+  point (each validates the proof's self-described commitment axis against
+  what that entry point is).
 - **Runtime config in the proof** (kept from the reference — it is what makes
   tampering testable): `JoltProtocolConfig` gains
   `commitment: CommitmentConfig { Homomorphic, Packed }`. It is absorbed into
@@ -193,17 +196,22 @@ Two-level gating, mirroring how `zk` works today:
 Four claim groups change shape between modes: the stage-6 inc reduction
 (`IncClaimReductionOutputClaims` vs `IncVirtualizationOutputClaims`), the
 stage-6 booleanity outputs (base vs lattice, chunk/msb columns added), the
-bytecode read-raf claims (one extra val stage), and stage 7
-(+`ChunkReconstructionOutputClaims`). These are resolved the same way as the
-commitments: **split the mode-varying structs out of the shared stage
-outputs and select them through the mode seam's associated types** — the
-seam trait carries the varying claim-group types alongside `Commitments` and
-`Proof`, and `JoltProofClaims`/the stage outputs thread that one generic.
-A proof for the wrong mode fails to deserialize/typecheck rather than being
-runtime-rejected; the reference's `Option`-field hollowing and two-variant
-enums are both off the table. The generic stays contained because only the
-four varying groups move behind associated types — everything mode-invariant
-keeps its concrete struct.
+bytecode read-raf val-stage count (5 vs 6 — a shape change only in committed
+mode, so it rides as a validation const until phase C), and stage 7
+(+`ChunkReconstructionOutputClaims`). As built: **jolt-claims owns the type
+family** — `JoltCommitmentMode` (`protocols/jolt/mode.rs`) carries the three
+varying claim-group GATs over the cell type plus `BYTECODE_VAL_STAGES`, with
+unit impls `BaseJolt`/`LatticeJolt`. The verifier threads one defaulted
+`M: JoltCommitmentMode = BaseJolt` through `Stage6OutputClaims`/
+`Stage7OutputClaims`, the stage output carriers, `ClearProofClaims`,
+`JoltProofClaims`, and `JoltProof` (which also gains a plain defaulted
+`Commitments` parameter for the packed single-commitment payload); the base
+mode's placeholder (`NoOutputs`) serializes to zero bytes, so the base wire
+format is unchanged. Mode-specific consumers (stage-6/7 builders, stage-8
+batch assembly, everything zk) pin `M` concretely, so no field access goes
+through the trait. A proof for the wrong mode fails to
+deserialize/typecheck rather than being runtime-rejected; the reference's
+`Option`-field hollowing and two-variant enums are both off the table.
 
 ### Phase B — lattice stage orchestration
 

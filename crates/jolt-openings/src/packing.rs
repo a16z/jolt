@@ -72,6 +72,12 @@
 //! `(c-1)/|F|` over `α`, a sumcheck on a false claim survives with
 //! probability at most `2n/|F|`, and the final evaluation of `f` is bound by
 //! the PCS opening.
+//!
+//! The prover runs the reduction densely — materializing `E` and `f` over
+//! the packed Boolean cube — or, for unit-valued one-hot witnesses, sparsely
+//! from the one positions and the factored per-slot structure of `E`,
+//! producing field-identical round polynomials without any table sized
+//! `2^n`.
 
 use std::{
     collections::{btree_map::Iter, BTreeMap, BTreeSet},
@@ -434,6 +440,107 @@ where
             },
         )
     }
+
+    /// Sparse variant of [`prove_reduction_sumcheck`] for unit-valued one-hot
+    /// witnesses: field-identical round polynomials, challenges, and opening
+    /// evaluation, without materializing the `2^packed_num_vars` selector and
+    /// witness tables.
+    ///
+    /// The witness is carried as `(packed index, weight)` pairs whose weight
+    /// accumulates the bound-variable factor (`1 - r` or `r`) each round; the
+    /// selector is evaluated per one-position from the factored per-slot
+    /// state (see [`SparseSelectorSlot`]). Once the remaining domain is no
+    /// larger than the number of one-positions, the (now small) tables are
+    /// materialized and the remaining rounds run the dense prover.
+    pub(crate) fn prove_reduction_sumcheck_sparse<T>(
+        &self,
+        alpha: &[F],
+        one_positions: Vec<usize>,
+        transcript: &mut T,
+    ) -> (Vec<[F; 3]>, Vec<F>, F)
+    where
+        T: Transcript<Challenge = F>,
+    {
+        debug_assert_eq!(self.ordered_claims.len(), alpha.len());
+        debug_assert!(one_positions
+            .iter()
+            .all(|index| index >> self.packed_num_vars == 0));
+
+        let mut slots: Vec<SparseSelectorSlot<'_, F>> = self
+            .ordered_claims
+            .iter()
+            .zip(alpha)
+            .map(|((evaluation, slot), alpha_i)| {
+                SparseSelectorSlot::new(*alpha_i, slot, evaluation.point.as_slice())
+            })
+            .collect();
+        let mut positions: Vec<(usize, F)> = one_positions
+            .into_iter()
+            .map(|index| (index, F::one()))
+            .collect();
+
+        let num_rounds = self.packed_num_vars;
+        let mut round_polynomials = Vec::with_capacity(num_rounds);
+        let mut point = Vec::with_capacity(num_rounds);
+
+        for bound in 0..num_rounds {
+            let remaining_vars = num_rounds - bound;
+            if (1usize << remaining_vars) <= positions.len() {
+                let (selector, witness) =
+                    materialize_remaining(&slots, &positions, bound, remaining_vars);
+                let (tail_polynomials, tail_point, opening_eval) =
+                    prove_reduction_sumcheck(selector, witness, transcript);
+                round_polynomials.extend(tail_polynomials);
+                point.extend(tail_point);
+                return (round_polynomials, point, opening_eval);
+            }
+
+            let half = 1usize << (remaining_vars - 1);
+            let round_slots: Vec<RoundSelectorSlot<F>> = slots
+                .iter()
+                .map(|slot| RoundSelectorSlot::new(slot, bound, remaining_vars))
+                .collect();
+
+            let mut eval_zero = F::zero();
+            let mut eval_one = F::zero();
+            let mut quadratic = F::zero();
+            for &(index, weight) in &positions {
+                let low_index = index & (half - 1);
+                let selector_low = selector_value_at(&round_slots, low_index);
+                let selector_high = selector_value_at(&round_slots, low_index | half);
+                let cross = weight * (selector_high - selector_low);
+                if index & half == 0 {
+                    eval_zero += weight * selector_low;
+                    quadratic -= cross;
+                } else {
+                    eval_one += weight * selector_high;
+                    quadratic += cross;
+                }
+            }
+
+            let coefficients = [eval_zero, eval_one - eval_zero - quadratic, quadratic];
+            append_round_polynomial(&coefficients, transcript);
+            let challenge: F = transcript.challenge_scalar();
+            point.push(challenge);
+            for slot in &mut slots {
+                slot.bind(bound, challenge);
+            }
+            let one_minus_challenge = F::one() - challenge;
+            for (index, weight) in &mut positions {
+                *weight *= if *index & half == 0 {
+                    one_minus_challenge
+                } else {
+                    challenge
+                };
+            }
+            round_polynomials.push(coefficients);
+        }
+
+        let opening_eval = positions
+            .iter()
+            .fold(F::zero(), |acc, &(_, weight)| acc + weight);
+        (round_polynomials, point, opening_eval)
+    }
 }
 
 impl<F, C> AppendToTranscript for PreparedPrefixPackedStatement<'_, F, C>
@@ -589,6 +696,124 @@ where
     for coefficient in coefficients {
         coefficient.append_to_transcript(transcript);
     }
+}
+
+/// Factored per-slot state of the batched selector during the sparse
+/// reduction sumcheck.
+///
+/// Slot `i`'s selector segment is `α_i · eq(z, b_i || γ_i)`, a product of
+/// per-variable factors, so binding the most-significant variable to `r`
+/// leaves the same shape one variable shorter: a prefix bit multiplies the
+/// scalar by `r` or `1 - r`, a logical variable by `(1-r)(1-γ) + r·γ`. The
+/// eq factors over the unbound variables stay symbolic.
+struct SparseSelectorSlot<'a, F> {
+    scalar: F,
+    prefix: &'a [bool],
+    prefix_value: usize,
+    point: &'a [F],
+}
+
+impl<'a, F: Field> SparseSelectorSlot<'a, F> {
+    fn new(alpha: F, slot: &'a PrefixSlot, point: &'a [F]) -> Self {
+        Self {
+            scalar: alpha,
+            prefix: &slot.prefix,
+            prefix_value: slot.prefix_index(),
+            point,
+        }
+    }
+
+    /// Coverage after `bound` rounds: the slot's selector is
+    /// `scalar · eq(local, point)` on remaining-domain indices `j` with
+    /// `j >> point.len() == block`, and zero elsewhere. Once every prefix bit
+    /// is bound the slot covers the whole remaining domain — slots that were
+    /// disjoint may then overlap, so contributions must always be summed.
+    fn remaining(&self, bound: usize, remaining_vars: usize) -> (usize, &'a [F]) {
+        if bound < self.prefix.len() {
+            let block = self.prefix_value & ((1usize << (self.prefix.len() - bound)) - 1);
+            (block, self.point)
+        } else {
+            debug_assert_eq!(self.prefix.len() + self.point.len() - bound, remaining_vars);
+            (0, &self.point[bound - self.prefix.len()..])
+        }
+    }
+
+    fn bind(&mut self, bound: usize, r: F) {
+        if bound < self.prefix.len() {
+            self.scalar *= if self.prefix[bound] { r } else { F::one() - r };
+        } else {
+            let gamma = self.point[bound - self.prefix.len()];
+            self.scalar *= (F::one() - r) * (F::one() - gamma) + r * gamma;
+        }
+    }
+}
+
+/// Split-eq lookup for one slot at one sumcheck round: `O(1)` evaluation of
+/// the slot's selector at any remaining-domain index, from two half tables of
+/// combined size `O(2^{L/2})` for a length-`L` remaining logical point.
+struct RoundSelectorSlot<F> {
+    block: usize,
+    logical_vars: usize,
+    low_vars: usize,
+    high: Vec<F>,
+    low: Vec<F>,
+}
+
+impl<F: Field> RoundSelectorSlot<F> {
+    fn new(slot: &SparseSelectorSlot<'_, F>, bound: usize, remaining_vars: usize) -> Self {
+        let (block, point) = slot.remaining(bound, remaining_vars);
+        let low_vars = point.len() / 2;
+        let split = point.len() - low_vars;
+        Self {
+            block,
+            logical_vars: point.len(),
+            low_vars,
+            high: EqPolynomial::evals(&point[..split], Some(slot.scalar)),
+            low: EqPolynomial::evals(&point[split..], None),
+        }
+    }
+
+    #[inline]
+    fn value_at(&self, index: usize) -> Option<F> {
+        (index >> self.logical_vars == self.block).then(|| {
+            let local = index & ((1usize << self.logical_vars) - 1);
+            self.high[local >> self.low_vars] * self.low[local & ((1usize << self.low_vars) - 1)]
+        })
+    }
+}
+
+fn selector_value_at<F: Field>(round_slots: &[RoundSelectorSlot<F>], index: usize) -> F {
+    round_slots
+        .iter()
+        .filter_map(|slot| slot.value_at(index))
+        .fold(F::zero(), |acc, value| acc + value)
+}
+
+/// Dense remaining-domain selector and witness tables for the delegated tail
+/// rounds of the sparse prover.
+fn materialize_remaining<F: Field>(
+    slots: &[SparseSelectorSlot<'_, F>],
+    positions: &[(usize, F)],
+    bound: usize,
+    remaining_vars: usize,
+) -> (Vec<F>, Vec<F>) {
+    let size = 1usize << remaining_vars;
+    let mut selector: Vec<F> = unsafe_allocate_zero_vec(size);
+    for slot in slots {
+        let (block, point) = slot.remaining(bound, remaining_vars);
+        let offset = block << point.len();
+        for (cell, value) in selector[offset..]
+            .iter_mut()
+            .zip(EqPolynomial::evals(point, Some(slot.scalar)))
+        {
+            *cell += value;
+        }
+    }
+    let mut witness: Vec<F> = unsafe_allocate_zero_vec(size);
+    for &(index, weight) in positions {
+        witness[index & (size - 1)] += weight;
+    }
+    (selector, witness)
 }
 
 /// Prover setup for opening a prefix-packed witness with a concrete PCS.

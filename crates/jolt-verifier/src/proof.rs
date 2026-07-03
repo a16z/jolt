@@ -2,7 +2,9 @@
 
 use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+use jolt_claims::protocols::jolt::{
+    BaseJolt, JoltCommitmentMode, JoltOneHotConfig, JoltReadWriteConfig,
+};
 use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -21,24 +23,27 @@ use crate::{
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "PCS::Field: Serialize, ZkProof: Serialize, JointOpeningProof: Serialize",
-    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned, JointOpeningProof: serde::de::DeserializeOwned"
+    serialize = "PCS::Field: Serialize, ZkProof: Serialize, JointOpeningProof: Serialize, Commitments: Serialize, JoltProofClaims<PCS::Field, ZkProof, M>: Serialize",
+    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned, JointOpeningProof: serde::de::DeserializeOwned, Commitments: serde::de::DeserializeOwned, JoltProofClaims<PCS::Field, ZkProof, M>: serde::de::DeserializeOwned"
 ))]
 pub struct JoltProof<
     PCS,
     VC,
     ZkProof = BlindFoldProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
     JointOpeningProof = <PCS as CommitmentScheme>::Proof,
+    Commitments = JoltCommitments<<PCS as Commitment>::Output>,
+    M = BaseJolt,
 > where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    M: JoltCommitmentMode,
 {
     pub protocol: JoltProtocolConfig,
-    pub commitments: JoltCommitments<PCS::Output>,
+    pub commitments: Commitments,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof,
     pub untrusted_advice_commitment: Option<PCS::Output>,
-    pub claims: JoltProofClaims<PCS::Field, ZkProof>,
+    pub claims: JoltProofClaims<PCS::Field, ZkProof, M>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
@@ -46,21 +51,24 @@ pub struct JoltProof<
     pub trace_polynomial_order: TracePolynomialOrder,
 }
 
-impl<PCS, VC, ZkProof, JointOpeningProof> JoltProof<PCS, VC, ZkProof, JointOpeningProof>
+impl<PCS, VC, ZkProof, JointOpeningProof, Commitments, M>
+    JoltProof<PCS, VC, ZkProof, JointOpeningProof, Commitments, M>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    M: JoltCommitmentMode,
 {
     #[expect(
         clippy::too_many_arguments,
         reason = "Constructor mirrors the proof payload while keeping internal verifier claims private."
     )]
     pub fn new(
-        commitments: JoltCommitments<PCS::Output>,
+        commitment: CommitmentConfig,
+        commitments: Commitments,
         stages: JoltStageProofs<PCS::Field, VC>,
         joint_opening_proof: JointOpeningProof,
         untrusted_advice_commitment: Option<PCS::Output>,
-        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        claims: JoltProofClaims<PCS::Field, ZkProof, M>,
         trace_length: usize,
         ram_k: usize,
         rw_config: JoltReadWriteConfig,
@@ -69,7 +77,7 @@ where
     ) -> Self {
         let protocol = JoltProtocolConfig {
             zk: claims.zk_config(),
-            commitment: CommitmentConfig::Homomorphic,
+            commitment,
         };
         Self {
             protocol,
@@ -86,7 +94,7 @@ where
         }
     }
 
-    pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
+    pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field, M>, VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(claims) => Ok(claims),
             JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
@@ -141,20 +149,22 @@ impl<C> JoltCommitments<C> {
     reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
 )]
 #[serde(bound(
-    serialize = "F: Serialize, ZkProof: Serialize",
-    deserialize = "F: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
+    serialize = "F: Serialize, ZkProof: Serialize, ClearProofClaims<F, M>: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned, ClearProofClaims<F, M>: serde::de::DeserializeOwned"
 ))]
-pub enum JoltProofClaims<F, ZkProof>
+pub enum JoltProofClaims<F, ZkProof, M = BaseJolt>
 where
     F: Field,
+    M: JoltCommitmentMode,
 {
-    Clear(ClearProofClaims<F>),
+    Clear(ClearProofClaims<F, M>),
     Zk { blindfold_proof: ZkProof },
 }
 
-impl<F, ZkProof> JoltProofClaims<F, ZkProof>
+impl<F, ZkProof, M> JoltProofClaims<F, ZkProof, M>
 where
     F: Field,
+    M: JoltCommitmentMode,
 {
     pub const fn is_zk(&self) -> bool {
         matches!(self, Self::Zk { .. })
@@ -169,15 +179,18 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct ClearProofClaims<F: Field> {
+#[serde(bound(
+    serialize = "F: Serialize, stage6::outputs::Stage6OutputClaims<F, M>: Serialize, stage7::outputs::Stage7OutputClaims<F, M>: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, stage6::outputs::Stage6OutputClaims<F, M>: serde::Deserialize<'de>, stage7::outputs::Stage7OutputClaims<F, M>: serde::Deserialize<'de>"
+))]
+pub struct ClearProofClaims<F: Field, M: JoltCommitmentMode = BaseJolt> {
     pub stage1: stage1::outputs::Stage1OutputClaims<F>,
     pub stage2: stage2::outputs::Stage2OutputClaims<F>,
     pub stage3: stage3::outputs::Stage3OutputClaims<F>,
     pub stage4: stage4::outputs::Stage4OutputClaims<F>,
     pub stage5: stage5::outputs::Stage5OutputClaims<F>,
-    pub stage6: stage6::outputs::Stage6OutputClaims<F>,
-    pub stage7: stage7::outputs::Stage7OutputClaims<F>,
+    pub stage6: stage6::outputs::Stage6OutputClaims<F, M>,
+    pub stage7: stage7::outputs::Stage7OutputClaims<F, M>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -13,7 +13,8 @@ pub mod packing;
 pub mod relations;
 
 pub use geometry::{
-    LatticeGeometryError, UnsignedIncChunking, LATTICE_BYTECODE_VAL_STAGES, UNSIGNED_INC_BITS,
+    identity_mle, LatticeGeometryError, UnsignedIncChunking, LATTICE_BYTECODE_VAL_STAGES,
+    UNSIGNED_INC_BITS,
 };
 pub use packing::{
     advice_word_reconstruction_terms, byte_reconstruction_terms,

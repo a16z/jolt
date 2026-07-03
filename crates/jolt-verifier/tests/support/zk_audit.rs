@@ -5,7 +5,7 @@ use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, HomomorphicBatch, ZkOpeningScheme};
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use jolt_verifier::{
@@ -16,7 +16,7 @@ use jolt_verifier::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
         zk::{blindfold, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
     },
-    verifier::{validate_inputs, validate_proof_consistency, CheckedInputs},
+    verifier::{absorb_commitments, absorb_preamble, validate_inputs, validate_proof_consistency},
     VerifierError,
 };
 
@@ -47,123 +47,6 @@ impl ZkBlindFoldProtocolShape {
             error_row_len: protocol.dimensions.error.row_len,
             eval_commitments: protocol.eval_commitments.len(),
         }
-    }
-}
-
-fn absorb_preamble<PCS, VC, ZkProof, T>(
-    checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    transcript: &mut T,
-) where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
-{
-    let public_io = &checked.public_io;
-    absorb_labeled_bytes(
-        transcript,
-        b"preprocessing_digest",
-        &checked.preprocessing_digest,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_input_size",
-        public_io.memory_layout.max_input_size,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_output_size",
-        public_io.memory_layout.max_output_size,
-    );
-    absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
-    absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
-    absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", public_io.panic as u64);
-    absorb_labeled_u64(transcript, b"ram_K", checked.ram_K as u64);
-    absorb_labeled_u64(transcript, b"trace_length", checked.trace_length as u64);
-    absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase1_num_rounds",
-        proof.rw_config.ram_rw_phase1_num_rounds as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase2_num_rounds",
-        proof.rw_config.ram_rw_phase2_num_rounds as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase1_num_rounds",
-        proof.rw_config.registers_rw_phase1_num_rounds as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase2_num_rounds",
-        proof.rw_config.registers_rw_phase2_num_rounds as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"log_k_chunk",
-        proof.one_hot_config.log_k_chunk as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lookups_ra_virtual_log_k_chunk",
-        proof.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"dory_layout",
-        proof.trace_polynomial_order.transcript_scalar(),
-    );
-}
-
-fn absorb_commitments<PCS, VC, ZkProof, T>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    trusted_advice_commitment: Option<&PCS::Output>,
-    transcript: &mut T,
-) where
-    PCS: CommitmentScheme,
-    PCS::Output: AppendToTranscript,
-    VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
-{
-    let mut absorb_commitment = |commitment: &PCS::Output| {
-        append_payload_label(transcript, b"commitment", commitment);
-        transcript.append(commitment);
-    };
-    absorb_commitment(&proof.commitments.rd_inc);
-    absorb_commitment(&proof.commitments.ram_inc);
-    for commitment in &proof.commitments.ra.instruction {
-        absorb_commitment(commitment);
-    }
-    for commitment in &proof.commitments.ra.ram {
-        absorb_commitment(commitment);
-    }
-    for commitment in &proof.commitments.ra.bytecode {
-        absorb_commitment(commitment);
-    }
-    if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
-        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
-        transcript.append(untrusted_advice_commitment);
-    }
-    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
-        transcript.append(trusted_advice_commitment);
-    }
-    if let Some(committed) = preprocessing.program.committed() {
-        for commitment in &committed.bytecode_chunk_commitments {
-            append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-            transcript.append(commitment);
-        }
-        append_payload_label(
-            transcript,
-            b"program_image_commitment",
-            &committed.program_image_commitment,
-        );
-        transcript.append(&committed.program_image_commitment);
     }
 }
 
@@ -271,16 +154,15 @@ where
         &stage4,
         &stage6,
     )?;
-    let stage8 = stage8::verify::<_, _, _, _, _, HomomorphicBatch<PCS>>(
-        &checked,
+    let stage8 = stage8::Stage8Output::Zk(stage8::verify_zk(
         preprocessing,
         proof,
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
-        &stage6,
-        &stage7,
-    )?;
+        stage6.zk()?,
+        stage7.zk()?,
+    )?);
 
     let zk_stages = zk_stage_outputs::<PCS, VC>(
         &stage1, &stage2, &stage3, &stage4, &stage5, &stage6, &stage7, &stage8,

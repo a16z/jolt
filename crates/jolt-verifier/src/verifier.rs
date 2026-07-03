@@ -12,7 +12,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
-    config::{validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG},
+    config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG},
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
@@ -29,6 +29,7 @@ use crate::{
 /// [`JoltProof`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProofTranscriptConfig {
+    pub protocol: JoltProtocolConfig,
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
@@ -36,11 +37,13 @@ pub struct ProofTranscriptConfig {
 
 impl ProofTranscriptConfig {
     pub const fn new(
+        protocol: JoltProtocolConfig,
         rw_config: JoltReadWriteConfig,
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
     ) -> Self {
         Self {
+            protocol,
             rw_config,
             one_hot_config,
             trace_polynomial_order,
@@ -132,16 +135,27 @@ where
         &stage4,
         &stage6,
     )?;
-    let stage8 = stage8::verify::<_, _, _, _, _, HomomorphicBatch<PCS>>(
-        &checked,
-        preprocessing,
-        proof,
-        &formula_dimensions,
-        trusted_advice_commitment,
-        &mut transcript,
-        &stage6,
-        &stage7,
-    )?;
+    let stage8 = if checked.zk {
+        stage8::Stage8Output::Zk(stage8::verify_zk(
+            preprocessing,
+            proof,
+            &formula_dimensions,
+            trusted_advice_commitment,
+            &mut transcript,
+            stage6.zk()?,
+            stage7.zk()?,
+        )?)
+    } else {
+        stage8::Stage8Output::Clear(stage8::verify::<_, _, _, _, _, HomomorphicBatch<PCS>>(
+            preprocessing,
+            proof,
+            &formula_dimensions,
+            trusted_advice_commitment,
+            &mut transcript,
+            stage6.clear()?,
+            stage7.clear()?,
+        )?)
+    };
 
     if checked.zk {
         let zk_stages = zk_stage_outputs::<PCS, VC>(
@@ -437,7 +451,7 @@ where
     Ok(got)
 }
 
-pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
+pub fn absorb_preamble<PCS, VC, ZkProof, T>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
@@ -449,6 +463,7 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     absorb_transcript_preamble(
         checked,
         ProofTranscriptConfig::new(
+            proof.protocol,
             proof.rw_config,
             proof.one_hot_config,
             proof.trace_polynomial_order,
@@ -527,9 +542,10 @@ pub fn absorb_transcript_preamble<T>(
         b"dory_layout",
         config.trace_polynomial_order.transcript_scalar(),
     );
+    config.protocol.append_to_transcript(transcript);
 }
 
-pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
+pub fn absorb_commitments<PCS, VC, ZkProof, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
@@ -995,6 +1011,7 @@ mod tests {
 
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
+            crate::config::CommitmentConfig::Homomorphic,
             test_commitments(),
             stage_proofs(is_zk),
             (),
@@ -1166,6 +1183,7 @@ mod tests {
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
                     },
+                chunk_reconstruction: Default::default(),
                 advice_address_phase:
                     stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
                         trusted: None,

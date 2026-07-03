@@ -8,7 +8,8 @@ pub mod stages;
 pub mod verifier;
 
 pub use config::{
-    validate_proof_config, CommitmentConfig, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG,
+    validate_packed_inputs, validate_proof_config, CommitmentConfig, JoltProtocolConfig, ZkConfig,
+    JOLT_VERIFIER_CONFIG,
 };
 pub use error::VerifierError;
 pub use preprocessing::{

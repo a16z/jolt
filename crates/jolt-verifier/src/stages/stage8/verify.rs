@@ -1,16 +1,14 @@
-use super::outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput};
+use super::outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8ZkOutput};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
         relations::OpeningClaim,
-        stage6::{outputs::Stage6OutputClaims, Stage6Output},
-        stage7::{
-            outputs::{PrecommittedFinalOpening, Stage7OutputClaims},
-            Stage7Output,
+        stage6::outputs::{Stage6ClearOutput, Stage6OutputClaims, Stage6ZkOutput},
+        stage7::outputs::{
+            PrecommittedFinalOpening, Stage7ClearOutput, Stage7OutputClaims, Stage7ZkOutput,
         },
     },
-    verifier::CheckedInputs,
     VerifierError,
 };
 use jolt_claims::protocols::jolt::{
@@ -43,131 +41,54 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     scale: F,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
-)]
 pub fn verify<F, PCS, VC, T, ZkProof, B>(
-    checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof, PCS::Proof>,
+    proof: &JoltProof<PCS, VC, ZkProof, B::Proof>,
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-    stage6: &Stage6Output<F, VC::Output>,
-    stage7: &Stage7Output<F, VC::Output>,
-) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
+    stage6: &Stage6ClearOutput<F>,
+    stage7: &Stage7ClearOutput<F>,
+) -> Result<Stage8ClearOutput<F, PCS::Output>, VerifierError>
 where
     F: Field,
-    // The homomorphism bounds below and the `Proof = PCS::Proof` pin serve
-    // only the ZK arm.
     B: BatchOpeningScheme<
         Field = F,
         VerifierSetup = PCS::VerifierSetup,
-        Proof = PCS::Proof,
         Statement = Vec<VerifierOpeningClaim<F, PCS::Output>>,
     >,
-    PCS: CommitmentScheme<Field = F>
-        + AdditivelyHomomorphic
-        + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: Clone + HomomorphicCommitment<F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: Clone,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    let log_t = formula_dimensions.trace.log_t();
-    let layout = formula_dimensions.ra_layout;
-
-    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) =
-        match (stage6, stage7) {
-            (Stage6Output::Clear(stage6), Stage7Output::Clear(stage7)) => (
-                stage7.hamming_weight_opening_point.as_slice(),
-                stage6.output_points.inc_opening_point(),
-                stage7.precommitted_final_openings.as_slice(),
-                Some((&stage6.output_claims, &stage7.output_claims)),
-            ),
-            (Stage6Output::Zk(stage6), Stage7Output::Zk(stage7)) => (
-                stage7.hamming_weight_opening_point.as_slice(),
-                stage6.output_points.inc_opening_point(),
-                stage7.precommitted_final_openings.as_slice(),
-                None,
-            ),
-            (Stage6Output::Clear(_), Stage7Output::Zk(_)) => {
-                return Err(VerifierError::ExpectedClearProof { field: "stage7" });
-            }
-            (Stage6Output::Zk(_), Stage7Output::Clear(_)) => {
-                return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
-            }
-        };
-    require_commitment_layout(&proof.commitments, layout)?;
-
-    let anchor_points: Vec<&[F]> = precommitted_finals
-        .iter()
-        .map(|opening| opening.point.as_slice())
-        .collect();
-    let opening_point = final_opening_point(FinalOpeningPointInputs {
-        log_t,
-        log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
-        trace_order: proof.trace_polynomial_order,
-        hamming_weight_opening_point: hamming_opening_point,
-        inc_claim_reduction_opening_point: inc_opening_point,
-        precommitted_anchor_points: &anchor_points,
-    })
-    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-        reason: error.to_string(),
-    })?;
+    require_commitment_layout(&proof.commitments, formula_dimensions.ra_layout)?;
+    let opening_point = unified_opening_point(
+        formula_dimensions,
+        proof,
+        &stage7.hamming_weight_opening_point,
+        stage6.output_points.inc_opening_point(),
+        &stage7.precommitted_final_openings,
+    )?;
     let pcs_opening_point = Point::high_to_low(opening_point.clone());
-
     let entries = batch_entries(
         preprocessing,
         proof,
-        layout,
+        formula_dimensions.ra_layout,
         trusted_advice_commitment,
         &opening_point,
-        hamming_opening_point,
-        inc_opening_point,
-        precommitted_finals,
-        clear_claims,
+        &stage7.hamming_weight_opening_point,
+        stage6.output_points.inc_opening_point(),
+        &stage7.precommitted_final_openings,
+        Some((&stage6.output_claims, &stage7.output_claims)),
     )?;
-    let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
-
-    if checked.zk {
-        let gamma_powers = transcript.challenge_scalar_powers(entries.len());
-        let commitments: Vec<PCS::Output> = entries
-            .iter()
-            .map(|entry| entry.commitment.clone())
-            .collect();
-        let joint_commitment = PCS::combine(&commitments, &gamma_powers);
-        let constraint_coefficients = gamma_powers
-            .iter()
-            .zip(&entries)
-            .map(|(gamma, entry)| *gamma * entry.scale)
-            .collect::<Vec<_>>();
-
-        let hiding_evaluation_commitment = PCS::verify_zk(
-            &joint_commitment,
-            pcs_opening_point.as_slice(),
-            &proof.joint_opening_proof,
-            &preprocessing.pcs_setup,
-            transcript,
-        )
-        .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-            reason: error.to_string(),
-        })?;
-        ZkEvaluationClaim::new(pcs_opening_point.as_slice(), &hiding_evaluation_commitment)
-            .append_to_transcript(transcript);
-
-        return Ok(Stage8Output::Zk(Stage8ZkOutput {
-            opening_ids,
-            constraint_coefficients,
-            pcs_opening_point,
-            joint_commitment,
-            hiding_evaluation_commitment,
-        }));
-    }
-
+    let opening_ids = entries.iter().map(|entry| entry.id).collect();
     let opening_claims = entries
         .iter()
         .map(|entry| {
+            // `batch_entries` resolves a claim for every entry when given the
+            // clear claim sources; treat a gap as a batch failure rather than
+            // panicking.
             let opening_claim =
                 entry
                     .opening_claim
@@ -194,11 +115,121 @@ where
         reason: error.to_string(),
     })?;
 
-    Ok(Stage8Output::Clear(Stage8ClearOutput {
+    Ok(Stage8ClearOutput {
         opening_claims,
         opening_ids,
         pcs_opening_point,
-    }))
+    })
+}
+
+/// The BlindFold final opening: combines the batch commitments under fresh
+/// gamma powers and verifies the joint opening against a hiding evaluation
+/// commitment. Homomorphic-only by construction (zk x packed is rejected
+/// fail-closed), so the homomorphism bounds live here, not on [`verify`].
+pub fn verify_zk<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof, PCS::Proof>,
+    formula_dimensions: &JoltFormulaDimensions,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut T,
+    stage6: &Stage6ZkOutput<F, VC::Output>,
+    stage7: &Stage7ZkOutput<F, VC::Output>,
+) -> Result<Stage8ZkOutput<F, PCS::Output, VC::Output>, VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: Clone + HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    require_commitment_layout(&proof.commitments, formula_dimensions.ra_layout)?;
+    let opening_point = unified_opening_point(
+        formula_dimensions,
+        proof,
+        &stage7.hamming_weight_opening_point,
+        stage6.output_points.inc_opening_point(),
+        &stage7.precommitted_final_openings,
+    )?;
+    let pcs_opening_point = Point::high_to_low(opening_point.clone());
+    let entries = batch_entries(
+        preprocessing,
+        proof,
+        formula_dimensions.ra_layout,
+        trusted_advice_commitment,
+        &opening_point,
+        &stage7.hamming_weight_opening_point,
+        stage6.output_points.inc_opening_point(),
+        &stage7.precommitted_final_openings,
+        None,
+    )?;
+    let opening_ids = entries.iter().map(|entry| entry.id).collect();
+    let gamma_powers = transcript.challenge_scalar_powers(entries.len());
+    let commitments: Vec<PCS::Output> = entries
+        .iter()
+        .map(|entry| entry.commitment.clone())
+        .collect();
+    let joint_commitment = PCS::combine(&commitments, &gamma_powers);
+    let constraint_coefficients = gamma_powers
+        .iter()
+        .zip(&entries)
+        .map(|(gamma, entry)| *gamma * entry.scale)
+        .collect::<Vec<_>>();
+
+    let hiding_evaluation_commitment = PCS::verify_zk(
+        &joint_commitment,
+        pcs_opening_point.as_slice(),
+        &proof.joint_opening_proof,
+        &preprocessing.pcs_setup,
+        transcript,
+    )
+    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+        reason: error.to_string(),
+    })?;
+    ZkEvaluationClaim::new(pcs_opening_point.as_slice(), &hiding_evaluation_commitment)
+        .append_to_transcript(transcript);
+
+    Ok(Stage8ZkOutput {
+        opening_ids,
+        constraint_coefficients,
+        pcs_opening_point,
+        joint_commitment,
+        hiding_evaluation_commitment,
+    })
+}
+
+/// Combines the hamming, inc-reduction, and precommitted anchor points into
+/// the single point the whole batch opens at (in stage order; callers flip
+/// it high-to-low for the PCS).
+fn unified_opening_point<F, PCS, VC, ZkProof, JointOpeningProof>(
+    formula_dimensions: &JoltFormulaDimensions,
+    proof: &JoltProof<PCS, VC, ZkProof, JointOpeningProof>,
+    hamming_opening_point: &[F],
+    inc_opening_point: &[F],
+    precommitted_finals: &[PrecommittedFinalOpening<F>],
+) -> Result<Vec<F>, VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+{
+    let anchor_points: Vec<&[F]> = precommitted_finals
+        .iter()
+        .map(|opening| opening.point.as_slice())
+        .collect();
+    let opening_point = final_opening_point(FinalOpeningPointInputs {
+        log_t: formula_dimensions.trace.log_t(),
+        log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
+        trace_order: proof.trace_polynomial_order,
+        hamming_weight_opening_point: hamming_opening_point,
+        inc_claim_reduction_opening_point: inc_opening_point,
+        precommitted_anchor_points: &anchor_points,
+    })
+    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+        reason: error.to_string(),
+    })?;
+    Ok(opening_point)
 }
 
 /// Builds the final PCS batch in the canonical order from
