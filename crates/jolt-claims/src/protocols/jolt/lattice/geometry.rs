@@ -1,8 +1,15 @@
-use jolt_field::RingCore;
+use jolt_field::{Field, RingCore};
 use jolt_poly::math::Math;
+use jolt_poly::EqPolynomial;
 use thiserror::Error;
 
+use super::super::geometry::bytecode::{
+    read_raf_public_values, store_flag_row_value, BytecodeReadRafEvaluationInputs,
+    BytecodeReadRafPublicValues,
+};
 use super::super::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use super::super::geometry::error::JoltFormulaPointError;
+use super::super::BytecodeReadRafPublic;
 
 /// Bit width of the unsigned fused increment (`FusedInc + 2^64` fits in 65
 /// bits: the chunk columns carry the low 64, [`UnsignedIncMsb`]
@@ -115,6 +122,46 @@ pub const fn word_byte_column_vars(log_words: usize) -> usize {
     BYTE_SYMBOL_BITS + WORD_BYTE_LIMBS.ilog2() as usize + log_words
 }
 
+/// The six-stage public values of the lattice read-raf cycle output: the
+/// five base stage values plus the store-flag val bound to the
+/// `IncVirtualization` cycle point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LatticeBytecodeReadRafPublicValues<F: Field> {
+    pub base: BytecodeReadRafPublicValues<F>,
+    pub store_value: F,
+}
+
+impl<F: Field> LatticeBytecodeReadRafPublicValues<F> {
+    pub fn value(&self, id: BytecodeReadRafPublic) -> Option<F> {
+        match id {
+            BytecodeReadRafPublic::StageValue(5) => Some(self.store_value),
+            other => self.base.value(other),
+        }
+    }
+}
+
+/// Evaluates the lattice read-raf publics from the public bytecode: the base
+/// five stages, plus `StageValue(5) = eq(r_inc, r_cycle) · Σ_k
+/// eq(r_address, k) · store_flag(k)` — the store stage folded exactly like
+/// the base stages, with its consumer cycle point sourced from the
+/// pre-address-phase `IncVirtualization` sumcheck.
+pub fn lattice_read_raf_public_values<F>(
+    inputs: BytecodeReadRafEvaluationInputs<'_, F>,
+    inc_virtualization_cycle_point: &[F],
+) -> Result<LatticeBytecodeReadRafPublicValues<F>, JoltFormulaPointError>
+where
+    F: Field,
+{
+    let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
+    let mut store_value = F::zero();
+    for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
+        store_value += store_flag_row_value::<F>(instruction) * eq_address;
+    }
+    store_value *= EqPolynomial::<F>::mle(inc_virtualization_cycle_point, inputs.r_cycle);
+    let base = read_raf_public_values(inputs)?;
+    Ok(LatticeBytecodeReadRafPublicValues { base, store_value })
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -175,5 +222,77 @@ mod tests {
                 .collect();
             assert_eq!(identity_mle(&point), Fr::from_u64(symbol));
         }
+    }
+
+    #[test]
+    fn lattice_public_values_bind_the_store_stage() {
+        use crate::protocols::jolt::geometry::bytecode::BytecodeReadRafEvaluationInputs;
+        use jolt_field::{Fr, FromPrimitiveInt};
+        use jolt_lookup_tables::{LookupTableKind, XLEN};
+        use jolt_riscv::{
+            JoltInstructionKind, JoltInstructionRow, NormalizedOperands, NUM_CIRCUIT_FLAGS,
+        };
+
+        let store_row = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::SD,
+            address: 5,
+            operands: NormalizedOperands {
+                rs1: Some(1),
+                rs2: Some(2),
+                rd: None,
+                imm: 0,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        assert_eq!(store_flag_row_value::<Fr>(&store_row), Fr::from_u64(1));
+
+        let bytecode = vec![
+            JoltInstructionRow::default(),
+            store_row,
+            JoltInstructionRow::default(),
+            JoltInstructionRow::default(),
+        ];
+        let r_address = vec![Fr::from_u64(3), Fr::from_u64(7)];
+        let r_cycle = vec![Fr::from_u64(11); 3];
+        let inc_point = vec![Fr::from_u64(13); 3];
+        let register_point = vec![Fr::from_u64(2); 4];
+        let stage1_gammas = vec![Fr::from_u64(1); 2 + NUM_CIRCUIT_FLAGS];
+        let stage2_gammas = vec![Fr::from_u64(1); 4];
+        let stage3_gammas = vec![Fr::from_u64(1); 9];
+        let stage4_gammas = vec![Fr::from_u64(1); 3];
+        let stage5_gammas = vec![Fr::from_u64(1); 2 + LookupTableKind::<XLEN>::COUNT];
+
+        let publics = lattice_read_raf_public_values(
+            BytecodeReadRafEvaluationInputs {
+                bytecode: &bytecode,
+                r_address: &r_address,
+                r_cycle: &r_cycle,
+                stage_cycle_points: [&r_cycle; 5],
+                register_read_write_point: &register_point,
+                register_val_evaluation_point: &register_point,
+                entry_bytecode_index: 0,
+                stage1_gammas: &stage1_gammas,
+                stage2_gammas: &stage2_gammas,
+                stage3_gammas: &stage3_gammas,
+                stage4_gammas: &stage4_gammas,
+                stage5_gammas: &stage5_gammas,
+            },
+            &inc_point,
+        )
+        .unwrap();
+
+        let eq_evals = EqPolynomial::<Fr>::evals(&r_address, None);
+        let expected = eq_evals[1] * EqPolynomial::<Fr>::mle(&inc_point, &r_cycle);
+        assert_eq!(publics.store_value, expected);
+        assert_eq!(
+            publics.value(BytecodeReadRafPublic::StageValue(5)),
+            Some(expected)
+        );
+        assert_eq!(
+            publics.value(BytecodeReadRafPublic::StageValue(0)),
+            publics.base.value(BytecodeReadRafPublic::StageValue(0))
+        );
     }
 }
