@@ -562,37 +562,31 @@ where
     let log_k = input.checked.ram_K.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
 
-    let instruction_ra_gamma = input
-        .stage6b
-        .challenges
-        .instruction_ra_gamma_powers
-        .get(1)
-        .copied()
-        .unwrap_or_else(PCS::Field::one);
+    let bytecode_challenges = &input.stage6a.challenges.bytecode_read_raf;
     let challenge_publics: [(JoltChallengeId, PCS::Field); 9] = [
         (
             BytecodeReadRafChallenge::Gamma.into(),
-            input.stage6a.challenges.bytecode_gamma_powers[1],
+            bytecode_challenges.gamma,
         ),
         (
             BytecodeReadRafChallenge::Stage1Gamma.into(),
-            input.stage6a.challenges.stage1_gammas[1],
+            bytecode_challenges.stage1_gamma,
         ),
         (
             BytecodeReadRafChallenge::Stage2Gamma.into(),
-            input.stage6a.challenges.stage2_gammas[1],
+            bytecode_challenges.stage2_gamma,
         ),
         (
             BytecodeReadRafChallenge::Stage3Gamma.into(),
-            input.stage6a.challenges.stage3_gammas[1],
+            bytecode_challenges.stage3_gamma,
         ),
         (
             BytecodeReadRafChallenge::Stage4Gamma.into(),
-            input.stage6a.challenges.stage4_gammas[1],
+            bytecode_challenges.stage4_gamma,
         ),
         (
             BytecodeReadRafChallenge::Stage5Gamma.into(),
-            input.stage6a.challenges.stage5_gammas[1],
+            bytecode_challenges.stage5_gamma,
         ),
         (
             BooleanityChallenge::Gamma.into(),
@@ -600,7 +594,7 @@ where
         ),
         (
             InstructionRaVirtualizationChallenge::Gamma.into(),
-            instruction_ra_gamma,
+            input.stage6b.challenges.instruction_ra_gamma,
         ),
         (
             IncClaimReductionChallenge::Gamma.into(),
@@ -693,6 +687,7 @@ where
                 reason: "full bytecode table is unavailable".to_string(),
             }
         })?;
+        let stage_gamma_powers = bytecode_challenges.stage_gamma_powers();
         let v = bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
             bytecode: &full_program.bytecode.bytecode,
             r_address: &bytecode_r_address,
@@ -709,11 +704,11 @@ where
             register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
                 [..REGISTER_ADDRESS_BITS],
             entry_bytecode_index,
-            stage1_gammas: &input.stage6a.challenges.stage1_gammas,
-            stage2_gammas: &input.stage6a.challenges.stage2_gammas,
-            stage3_gammas: &input.stage6a.challenges.stage3_gammas,
-            stage4_gammas: &input.stage6a.challenges.stage4_gammas,
-            stage5_gammas: &input.stage6a.challenges.stage5_gammas,
+            stage1_gammas: &stage_gamma_powers[0],
+            stage2_gammas: &stage_gamma_powers[1],
+            stage3_gammas: &stage_gamma_powers[2],
+            stage4_gammas: &stage_gamma_powers[3],
+            stage5_gammas: &stage_gamma_powers[4],
         })
         .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
         for (index, stage_value) in v.stage_values.iter().enumerate() {
@@ -876,15 +871,20 @@ where
         .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
             id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
         })?;
+    let stage_gamma_powers = input
+        .stage6a
+        .challenges
+        .bytecode_read_raf
+        .stage_gamma_powers();
     committed_reduction_cycle_phase::bytecode_reduction_weights(
         layout,
         bytecode_reduction::BytecodeLaneWeightInputs {
             eta,
-            stage1_gammas: &input.stage6a.challenges.stage1_gammas,
-            stage2_gammas: &input.stage6a.challenges.stage2_gammas,
-            stage3_gammas: &input.stage6a.challenges.stage3_gammas,
-            stage4_gammas: &input.stage6a.challenges.stage4_gammas,
-            stage5_gammas: &input.stage6a.challenges.stage5_gammas,
+            stage1_gammas: &stage_gamma_powers[0],
+            stage2_gammas: &stage_gamma_powers[1],
+            stage3_gammas: &stage_gamma_powers[2],
+            stage4_gammas: &stage_gamma_powers[3],
+            stage5_gammas: &stage_gamma_powers[4],
             register_read_write_point: &input.stage4.output_points.registers_read_write_point()
                 [..REGISTER_ADDRESS_BITS],
             register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()

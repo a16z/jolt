@@ -1,6 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 6a (address-phase)
 //! verification.
 
+use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
@@ -44,12 +45,10 @@ pub struct Stage6aSumchecks<F: Field> {
 /// upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aCarriedChallenges<F: Field> {
-    pub bytecode_gamma_powers: Vec<F>,
-    pub stage1_gammas: Vec<F>,
-    pub stage2_gammas: Vec<F>,
-    pub stage3_gammas: Vec<F>,
-    pub stage4_gammas: Vec<F>,
-    pub stage5_gammas: Vec<F>,
+    /// The bytecode read-RAF address-phase draws (the fold gamma plus the five
+    /// per-stage gammas), verbatim. Consumers folding with power vectors expand
+    /// them via `stage_gamma_powers`.
+    pub bytecode_read_raf: BytecodeReadRafAddressPhaseChallenges<F>,
     pub booleanity_reference_address: Vec<F>,
     pub booleanity_reference_cycle: Vec<F>,
     pub booleanity_gamma: F,

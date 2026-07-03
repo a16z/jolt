@@ -48,9 +48,8 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 ///
 /// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
 /// members' challenges have stage-level provenance (the bytecode gamma shares
-/// stage 6a's squeeze, the booleanity gamma is drawn pre-6a where the prover's
-/// booleanity subprotocol samples it, and the instruction-RA gamma keeps
-/// `powers(n)[1].unwrap_or(one)`), so `verify` hand-assembles
+/// stage 6a's squeeze and the booleanity gamma is drawn pre-6a where the
+/// prover's booleanity subprotocol samples it), so `verify` hand-assembles
 /// `Stage6bChallenges` from the stage-level draws — a generated per-member draw
 /// would squeeze at the wrong transcript position if it existed to be called.
 ///
@@ -209,7 +208,7 @@ fn reversed<F: Field>(point: &[F]) -> Vec<F> {
 /// claim-reduction `eta`. Kept as field names greppable from BlindFold.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6bCarriedChallenges<F: Field> {
-    pub instruction_ra_gamma_powers: Vec<F>,
+    pub instruction_ra_gamma: F,
     pub inc_gamma: F,
     /// Committed program mode only: bytecode claim-reduction batching
     /// challenge (the prover's `eta`).

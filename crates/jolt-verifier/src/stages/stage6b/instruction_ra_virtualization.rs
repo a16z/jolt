@@ -149,14 +149,14 @@ mod tests {
         InstructionRaVirtualization::new(dimensions, Vec::new(), Vec::new(), 1)
     }
 
-    // Inherits the default `draw_challenges`: the inline draw is
-    // `challenge_scalar_powers(num_virtual_ra_polys())`, whose single squeeze's
-    // degree-1 power equals that squeezed scalar — exactly what the default's one
-    // `challenge_scalar` stores.
+    // Inherits the default `draw_challenges`: one `challenge_scalar` squeeze
+    // storing the squeezed scalar — the same draw the prover's
+    // `InstructionRaSumcheckParams::new` performs and stage 6b's hand-assembled
+    // `Stage6bChallenges` mirrors.
     #[test]
     fn default_draw_challenges_matches_inline_instruction_ra_gamma() {
         let relation = relation(2);
-        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar_powers(2)[1]);
+        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar());
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);

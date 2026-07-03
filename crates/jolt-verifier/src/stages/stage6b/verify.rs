@@ -7,7 +7,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
-use num_traits::One;
 
 use super::{
     booleanity::{BooleanityCyclePhaseChallenges, BooleanityInputClaims},
@@ -79,22 +78,12 @@ where
     // The bytecode fold gamma shares stage 6a's squeeze; it and the booleanity
     // gamma ride on the stage-6a output as typed upstream values.
     let carried = stage6a.challenges();
-    let bytecode_gamma = carried.bytecode_gamma_powers[1];
+    let bytecode_gamma = carried.bytecode_read_raf.gamma;
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
 
     // Post-6a draws: the instruction-RA virtualization gamma, the increment gamma,
     // and (committed-program only) the bytecode claim-reduction eta.
-    let instruction_ra_gamma_powers = transcript.challenge_scalar_powers(
-        formula_dimensions
-            .instruction_ra_virtualization
-            .num_virtual_ra_polys(),
-    );
-    // `powers(1)` keeps ONE as the folding gamma (not the squeezed scalar) — a
-    // prover-matched edge the relation's default draw cannot reproduce.
-    let instruction_ra_gamma = instruction_ra_gamma_powers
-        .get(1)
-        .copied()
-        .unwrap_or_else(PCS::Field::one);
+    let instruction_ra_gamma = transcript.challenge_scalar();
     let inc_gamma = transcript.challenge_scalar();
     let eta = bytecode_reduction_layout
         .is_some()
@@ -117,9 +106,9 @@ where
     )?;
 
     // Hand-assembled (the generated `draw_challenges` is suppressed): the bytecode
-    // gamma shares stage 6a's squeeze, the booleanity gamma was drawn pre-6a where
-    // the prover's booleanity subprotocol samples it, and the instruction-RA gamma
-    // keeps the `powers(1)` edge above.
+    // gamma shares stage 6a's squeeze and the booleanity gamma was drawn pre-6a
+    // where the prover's booleanity subprotocol samples it, so a generated
+    // per-member draw would squeeze for them at the wrong transcript position.
     let cycle_challenges = Stage6bChallenges {
         bytecode_read_raf: BytecodeReadRafCyclePhaseCommittedChallenges {
             gamma: bytecode_gamma,
@@ -192,7 +181,7 @@ where
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
             challenges: Stage6bCarriedChallenges {
-                instruction_ra_gamma_powers,
+                instruction_ra_gamma,
                 inc_gamma,
                 bytecode_reduction_eta: eta,
             },

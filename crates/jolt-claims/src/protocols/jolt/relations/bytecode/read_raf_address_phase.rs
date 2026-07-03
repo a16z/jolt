@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::bytecode::{
     bytecode_read_raf_address_phase_opening, pc_spartan_outer, pc_spartan_shift, stage1_claim,
     stage2_claim, stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
+    BYTECODE_STAGE_GAMMA_COUNTS,
 };
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
@@ -132,6 +133,29 @@ pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     pub stage4_gamma: F,
     #[challenge(BytecodeReadRafChallenge::Stage5Gamma)]
     pub stage5_gamma: F,
+}
+
+impl<F: jolt_field::Field> BytecodeReadRafAddressPhaseChallenges<F> {
+    /// Expand the five drawn per-stage scalars into the gamma-power vectors the
+    /// bytecode folds consume (`[1, γ, γ², …]` — the recurrence the prover's
+    /// `challenge_scalar_powers` applies to its single squeezed scalar), sized
+    /// by [`BYTECODE_STAGE_GAMMA_COUNTS`].
+    pub fn stage_gamma_powers(&self) -> [Vec<F>; 5] {
+        let stage_gammas = [
+            self.stage1_gamma,
+            self.stage2_gamma,
+            self.stage3_gamma,
+            self.stage4_gamma,
+            self.stage5_gamma,
+        ];
+        core::array::from_fn(|stage| {
+            let mut powers = vec![F::one(); BYTECODE_STAGE_GAMMA_COUNTS[stage]];
+            for index in 1..powers.len() {
+                powers[index] = powers[index - 1] * stage_gammas[stage];
+            }
+            powers
+        })
+    }
 }
 
 /// The address phase of the bytecode read-RAF sumcheck: the same folded input

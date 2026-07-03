@@ -6,10 +6,7 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
-use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
-use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_transcript::Transcript;
 
 use super::{
@@ -78,22 +75,11 @@ where
     // Six squeezes: the bytecode fold gamma plus the five per-stage folding
     // gammas, each formerly an inline `challenge_scalar_powers(..)` whose single
     // squeeze's degree-1 power equals the squeezed scalar. Byte- and value-equal
-    // (test-locked in `bytecode_read_raf.rs`); the downstream power VECTORS are
-    // reconstructed below via the same recurrence `challenge_scalar_powers` uses.
+    // (test-locked in `bytecode_read_raf.rs`); the drawn scalars ride downstream
+    // verbatim, and stage 6b's folds expand the power vectors they consume via
+    // `stage_gamma_powers` (the same recurrence `challenge_scalar_powers` uses;
+    // test-locked below).
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
-    let bytecode_gamma = address_challenges.bytecode_read_raf.gamma;
-    let bytecode_gamma_powers = gamma_powers(bytecode_gamma, 8);
-    let stage1_gammas = gamma_powers(
-        address_challenges.bytecode_read_raf.stage1_gamma,
-        2 + NUM_CIRCUIT_FLAGS,
-    );
-    let stage2_gammas = gamma_powers(address_challenges.bytecode_read_raf.stage2_gamma, 4);
-    let stage3_gammas = gamma_powers(address_challenges.bytecode_read_raf.stage3_gamma, 9);
-    let stage4_gammas = gamma_powers(address_challenges.bytecode_read_raf.stage4_gamma, 3);
-    let stage5_gammas = gamma_powers(
-        address_challenges.bytecode_read_raf.stage5_gamma,
-        2 + LookupTableKind::<RISCV_XLEN>::COUNT,
-    );
 
     // WHY these draws live in stage 6a but feed only stage 6b: the prover's
     // booleanity subprotocol samples its gamma — and pads the reference address
@@ -121,12 +107,7 @@ where
     let booleanity_gamma = transcript.challenge();
 
     let carried = Stage6aCarriedChallenges {
-        bytecode_gamma_powers,
-        stage1_gammas,
-        stage2_gammas,
-        stage3_gammas,
-        stage4_gammas,
-        stage5_gammas,
+        bytecode_read_raf: address_challenges.bytecode_read_raf,
         booleanity_reference_address,
         booleanity_reference_cycle,
         booleanity_gamma,
@@ -205,18 +186,6 @@ where
         output_points,
         challenges: carried,
     }))
-}
-
-/// `[1, gamma, gamma², ...]` — the same recurrence `Transcript::challenge_scalar_powers`
-/// applies to its single squeezed scalar. Reconstructs a full power vector from the
-/// scalar the generated `draw_challenges` keeps (the squeeze's degree-1 power); no
-/// transcript effect.
-fn gamma_powers<F: Field>(gamma: F, len: usize) -> Vec<F> {
-    let mut powers = vec![F::one(); len];
-    for index in 1..len {
-        powers[index] = powers[index - 1] * gamma;
-    }
-    powers
 }
 
 #[cfg(test)]
@@ -298,17 +267,32 @@ mod tests {
         }
     }
 
-    /// The reconstructed power vectors must equal `challenge_scalar_powers`'
-    /// output for the same squeezed scalar — the value-identity the stage-6a
-    /// generated draw substitution relies on.
+    /// The `stage_gamma_powers` expansion of a drawn scalar must equal
+    /// `challenge_scalar_powers`' output for the same squeezed scalar — the
+    /// value-identity the stage-6a generated draw substitution relies on
+    /// (the prover draws each stage's power vector inline; the verifier stores
+    /// the scalar and expands at the stage-6b folds).
     #[test]
-    fn gamma_powers_matches_challenge_scalar_powers() {
+    fn stage_gamma_powers_matches_challenge_scalar_powers() {
+        use jolt_claims::protocols::jolt::geometry::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
+        use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
+
+        let gamma = Fr::from_u64(7);
+        let challenges = BytecodeReadRafAddressPhaseChallenges {
+            gamma,
+            stage1_gamma: gamma,
+            stage2_gamma: gamma,
+            stage3_gamma: gamma,
+            stage4_gamma: gamma,
+            stage5_gamma: gamma,
+        };
         let mut transcript = ConstantChallengeTranscript;
-        for len in [1usize, 2, 3, 8, 9, 2 + NUM_CIRCUIT_FLAGS] {
-            assert_eq!(
-                gamma_powers(Fr::from_u64(7), len),
-                transcript.challenge_scalar_powers(len),
-            );
+        for (powers, len) in challenges
+            .stage_gamma_powers()
+            .into_iter()
+            .zip(BYTECODE_STAGE_GAMMA_COUNTS)
+        {
+            assert_eq!(powers, transcript.challenge_scalar_powers(len));
         }
     }
 }

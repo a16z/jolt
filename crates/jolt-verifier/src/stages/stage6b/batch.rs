@@ -89,8 +89,10 @@ impl<F: Field> Stage6bSumchecks<F> {
         // The pre-/around-6a draws consumed here ride on the stage-6a output as
         // typed upstream values: the bytecode fold gamma (shared with stage 6a's
         // squeeze), the per-stage folding gammas, and the booleanity address / cycle
-        // reference points.
+        // reference points. The bytecode folds below consume per-stage power
+        // VECTORS, expanded once here from the carried scalars.
         let carried = stage6a.challenges();
+        let stage_gamma_powers = carried.bytecode_read_raf.stage_gamma_powers();
         let bytecode_r_address = stage6a
             .output_points()
             .bytecode_read_raf
@@ -190,13 +192,7 @@ impl<F: Field> Stage6bSumchecks<F> {
                     .as_slice(),
                 register_read_write_point: register_read_write_address,
                 register_val_evaluation_point: register_val_evaluation_address,
-                stage_gammas: [
-                    &carried.stage1_gammas,
-                    &carried.stage2_gammas,
-                    &carried.stage3_gammas,
-                    &carried.stage4_gammas,
-                    &carried.stage5_gammas,
-                ],
+                stage_gammas: stage_gamma_powers.each_ref().map(Vec::as_slice),
             })
         };
         // `eta` is drawn exactly when the bytecode layout is committed, so a
@@ -209,11 +205,11 @@ impl<F: Field> Stage6bSumchecks<F> {
                     layout,
                     BytecodeLaneWeightInputs {
                         eta,
-                        stage1_gammas: &carried.stage1_gammas,
-                        stage2_gammas: &carried.stage2_gammas,
-                        stage3_gammas: &carried.stage3_gammas,
-                        stage4_gammas: &carried.stage4_gammas,
-                        stage5_gammas: &carried.stage5_gammas,
+                        stage1_gammas: &stage_gamma_powers[0],
+                        stage2_gammas: &stage_gamma_powers[1],
+                        stage3_gammas: &stage_gamma_powers[2],
+                        stage4_gammas: &stage_gamma_powers[3],
+                        stage5_gammas: &stage_gamma_powers[4],
                         register_read_write_point: register_read_write_address,
                         register_val_evaluation_point: register_val_evaluation_address,
                     },
