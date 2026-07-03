@@ -15,12 +15,11 @@ use jolt_transcript::Transcript;
 use super::{
     booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseInputClaims},
     bytecode_read_raf::{
-        bytecode_read_raf_address_phase_input_points_from_upstream,
         bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
     },
     outputs::{
-        Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aInputPoints,
-        Stage6aOutput, Stage6aSumchecks, Stage6aZkOutput,
+        Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutput,
+        Stage6aSumchecks, Stage6aZkOutput,
     },
 };
 use crate::{
@@ -133,10 +132,9 @@ where
         booleanity_gamma,
     };
 
-    let address_input_points = Stage6aInputPoints {
-        bytecode_read_raf: bytecode_read_raf_address_phase_input_points_from_upstream(),
-        booleanity: BooleanityAddressPhaseInputClaims::default(),
-    };
+    // Every member's input points are empty (the address phase reads only
+    // opening values; produced points derive from its own sumcheck point).
+    let address_input_points = address_sumchecks.empty_input_points();
 
     if checked.zk {
         let consistency =
@@ -174,7 +172,7 @@ where
             &stage3.clear()?.output_values,
             &stage4.clear()?.output_values,
             &stage5.clear()?.output_values,
-        )?,
+        ),
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 

@@ -77,6 +77,12 @@
 //!   (`StageNBatchingCoefficients`) into the final claim the reduction is checked
 //!   against. `verify_clear` returns the coefficients inside
 //!   `StageNClearBatch { reduction, coefficients }`.
+//! - `empty_input_points` — an all-default `StageNInputPoints` constructor for the
+//!   common case of relations that consume no input opening points (each
+//!   non-`Option` cell `Default::default()`, each `Option` cell tracking its
+//!   member's presence). Requires each cell's concrete `InputClaims<Vec<F>>` to be
+//!   `Default`; stages whose relations do consume input points build theirs from
+//!   upstream instead of calling this.
 //!
 //! Opt-in per method via `#[sumcheck_batch(...)]` flags, emitted on the source
 //! `StageNSumchecks` struct only for stages that request them:
@@ -86,10 +92,6 @@
 //!   proof's output claims match the expected shape), both via each member's
 //!   `ConcreteSumcheck::wire_output_openings` (its output-`Expr`-referenced set
 //!   minus its aliased openings).
-//! - `empty_input_points` — `empty_input_points`, an all-default `StageNInputPoints`
-//!   constructor for a stage whose relations consume no input opening points (each
-//!   non-`Option` cell `Default::default()`, each `Option` cell tracking its member's
-//!   presence). Requires each cell's concrete `InputClaims<Vec<F>>` to be `Default`.
 //! - `validate_claim_presence` — `validate_claim_presence`, the presence-only subset
 //!   of `validate_output_claims` (the `Option`-member present-instance/absent-instance
 //!   claim guards, with no output-`Expr` shape check) for a stage that curates its own
@@ -819,11 +821,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // An all-default `InputPoints` constructor for a stage whose relations read no
-    // input opening points: each non-`Option` cell is `Default::default()`, each
-    // `Option` cell tracks its member's presence (exactly the invariant the generated
-    // drivers require). Opt-in via `#[sumcheck_batch(empty_input_points)]`.
-    let empty_input_points_method = if options.empty_input_points {
+    // An all-default `InputPoints` constructor for relations that read no input
+    // opening points: each non-`Option` cell is `Default::default()`, each
+    // `Option` cell tracks its member's presence (exactly the invariant the
+    // generated drivers require).
+    let empty_input_points_method = {
         let cell_inits = plans.iter().map(|plan| {
             let id = &plan.ident;
             if plan.is_option {
@@ -842,8 +844,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 }
             }
         }
-    } else {
-        quote!()
     };
 
     // The `Option`-member claim-presence match shared by `validate_output_claims`
@@ -1177,12 +1177,6 @@ struct StageOptions {
     /// each member's `wire_output_openings` (its output-`Expr`-referenced set minus
     /// its aliased openings).
     output_shape: bool,
-    /// `#[sumcheck_batch(empty_input_points)]`: emit `empty_input_points`, an
-    /// all-default `InputPoints` constructor for a stage whose relations read no input
-    /// opening points (each non-`Option` cell `Default::default()`, each `Option` cell
-    /// tracking its member's presence). Requires each cell's concrete
-    /// `InputClaims<Vec<F>>` to be `Default`.
-    empty_input_points: bool,
     /// `#[sumcheck_batch(validate_claim_presence)]`: emit `validate_claim_presence`,
     /// the presence-only subset of `validate_output_claims` (the `Option`-member
     /// present-instance/absent-instance claim guards, no output-`Expr` shape check).
@@ -1219,8 +1213,6 @@ impl StageOptions {
                     options.custom_opening_values = true;
                 } else if path.is_ident("output_shape") {
                     options.output_shape = true;
-                } else if path.is_ident("empty_input_points") {
-                    options.empty_input_points = true;
                 } else if path.is_ident("validate_claim_presence") {
                     options.validate_claim_presence = true;
                 } else if path.is_ident("no_draw_challenges") {
@@ -1229,8 +1221,7 @@ impl StageOptions {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `custom_opening_values`, \
-                         `output_shape`, `empty_input_points`, `validate_claim_presence`, \
-                         `no_draw_challenges`)",
+                         `output_shape`, `validate_claim_presence`, `no_draw_challenges`)",
                     ));
                 }
             }

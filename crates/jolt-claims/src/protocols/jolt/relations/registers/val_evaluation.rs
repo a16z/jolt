@@ -27,7 +27,7 @@ pub struct RegistersValEvaluationOutputClaims<C> {
 
 /// Consumed register value-evaluation opening, wired from the upstream register
 /// read-write checking.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RegistersValEvaluationInputClaims<C> {
     #[opening(RegistersVal, from = RegistersReadWriteChecking)]
     pub registers_val: C,

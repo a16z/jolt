@@ -32,7 +32,7 @@ pub struct InstructionReadRafOutputClaims<C> {
 
 /// Consumed instruction-lookup openings (the reduced lookup output + left/right
 /// operands), wired from the upstream instruction claim-reduction.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionReadRafInputClaims<C> {
     #[opening(LookupOutput, from = InstructionClaimReduction)]
     pub lookup_output: C,

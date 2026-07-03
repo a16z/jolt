@@ -50,7 +50,7 @@ pub struct RamValCheckOutputClaims<C> {
 /// and output-check `val_final` (stage 2), reduced against `Val_init`, whose
 /// committed pieces (advice / program image) are present only in some proof
 /// configurations. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamValCheckInputClaims<C> {
     #[opening(RamVal, from = RamReadWriteChecking)]
     pub ram_val: C,

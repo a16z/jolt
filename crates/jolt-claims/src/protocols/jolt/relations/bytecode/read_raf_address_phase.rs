@@ -1,7 +1,7 @@
 //! The address phase of the bytecode read-RAF symbolic sumcheck.
 
 use jolt_field::RingCore;
-use jolt_riscv::{CircuitFlags, InstructionFlags, CIRCUIT_FLAGS};
+use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::{
@@ -34,17 +34,43 @@ pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
 /// opening the `read_raf_address_phase` input `Expr` folds (plus the two PC
 /// claims). The generic `input_claim` evaluates the bind from these via that
 /// `Expr`, so the gamma-folding formula lives in one place rather than a
-/// hand-written 25-opening resolver. The `op_flags` / `lookup_table_flags`
-/// families are indexed openings (`OpFlags(CIRCUIT_FLAGS[i])` /
-/// `LookupTableFlag(i)`).
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+/// hand-written resolver. Each Spartan-outer circuit flag is its own field (the
+/// `OuterRemainderOutputClaims` idiom), in `CIRCUIT_FLAGS` order; the
+/// `lookup_table_flags` family is indexed (`LookupTableFlag(i)`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     #[opening(UnexpandedPC, from = SpartanOuter)]
     pub outer_unexpanded_pc: C,
     #[opening(Imm, from = SpartanOuter)]
     pub outer_imm: C,
-    #[opening(OpFlags(CIRCUIT_FLAGS), from = SpartanOuter)]
-    pub outer_op_flags: Vec<C>,
+    #[opening(OpFlags(CircuitFlags::AddOperands), from = SpartanOuter)]
+    pub outer_add_operands: C,
+    #[opening(OpFlags(CircuitFlags::SubtractOperands), from = SpartanOuter)]
+    pub outer_subtract_operands: C,
+    #[opening(OpFlags(CircuitFlags::MultiplyOperands), from = SpartanOuter)]
+    pub outer_multiply_operands: C,
+    #[opening(OpFlags(CircuitFlags::Load), from = SpartanOuter)]
+    pub outer_load: C,
+    #[opening(OpFlags(CircuitFlags::Store), from = SpartanOuter)]
+    pub outer_store: C,
+    #[opening(OpFlags(CircuitFlags::Jump), from = SpartanOuter)]
+    pub outer_jump: C,
+    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD), from = SpartanOuter)]
+    pub outer_write_lookup_output_to_rd: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanOuter)]
+    pub outer_virtual_instruction: C,
+    #[opening(OpFlags(CircuitFlags::Assert), from = SpartanOuter)]
+    pub outer_assert: C,
+    #[opening(OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC), from = SpartanOuter)]
+    pub outer_do_not_update_unexpanded_pc: C,
+    #[opening(OpFlags(CircuitFlags::Advice), from = SpartanOuter)]
+    pub outer_advice: C,
+    #[opening(OpFlags(CircuitFlags::IsCompressed), from = SpartanOuter)]
+    pub outer_is_compressed: C,
+    #[opening(OpFlags(CircuitFlags::IsFirstInSequence), from = SpartanOuter)]
+    pub outer_is_first_in_sequence: C,
+    #[opening(OpFlags(CircuitFlags::IsLastInSequence), from = SpartanOuter)]
+    pub outer_is_last_in_sequence: C,
     #[opening(PC, from = SpartanOuter)]
     pub outer_pc: C,
     #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
@@ -161,6 +187,8 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_field::Fr;
+    use jolt_riscv::CIRCUIT_FLAGS;
 
     fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
         BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
@@ -175,5 +203,24 @@ mod tests {
             relation.degree(),
             dimensions(2).num_committed_ra_polys() + 1
         );
+    }
+
+    /// Pins the circuit-flag coverage of the input claims struct: every
+    /// `CircuitFlags` variant has a `SpartanOuter` field (a newly added flag
+    /// missing its field would make the input `Expr` reference an unresolvable
+    /// opening).
+    #[test]
+    fn input_claims_cover_circuit_flags() {
+        let claims = BytecodeReadRafAddressPhaseInputClaims::<Fr>::default();
+        for flag in CIRCUIT_FLAGS {
+            let outer = JoltOpeningId::virtual_polynomial(
+                crate::protocols::jolt::JoltVirtualPolynomial::OpFlags(flag),
+                JoltRelationId::SpartanOuter,
+            );
+            assert!(
+                claims.resolve_input(&outer).is_some(),
+                "missing SpartanOuter input field for OpFlags({flag:?})",
+            );
+        }
     }
 }

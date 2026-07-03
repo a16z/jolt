@@ -30,7 +30,7 @@ pub struct RamRaClaimReductionOutputClaims<C> {
 /// from the upstream RAF-evaluation, read-write-checking, and val-check
 /// relations. Generic over the opening cell (`F` for the serialized wire value,
 /// `Vec<F>` for the derived opening point).
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamRaClaimReductionInputClaims<C> {
     #[opening(RamRa, from = RamRafEvaluation)]
     pub raf: C,

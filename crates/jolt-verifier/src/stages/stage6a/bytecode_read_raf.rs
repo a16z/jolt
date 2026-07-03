@@ -14,15 +14,13 @@ pub use jolt_claims::protocols::jolt::relations::bytecode::{
 use jolt_claims::protocols::jolt::{
     geometry::{
         bytecode::BytecodeReadRafDimensions, claim_reductions::bytecode as bytecode_reduction,
-        spartan::outer_opening,
     },
-    JoltOpeningId, JoltVirtualPolynomial,
+    JoltOpeningId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_riscv::CIRCUIT_FLAGS;
 
-use crate::stages::relations::{ConcreteSumcheck, OutputClaims};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::{
     stage1::Stage1BatchOutputClaims, stage2::Stage2BatchOutputClaims, stage3::Stage3OutputClaims,
     stage4::Stage4OutputClaims, stage5::Stage5OutputClaims,
@@ -31,34 +29,40 @@ use crate::VerifierError;
 
 /// Wire the prior-proof opening *values* the address-phase input claim binds
 /// (every stage-1..5 opening folded by the `read_raf_address_phase` input `Expr`,
-/// plus the two PC claims).
+/// plus the two PC claims). Each Spartan-outer circuit flag is a direct
+/// field-for-field read from the stage-1 outer remainder; the input claim reads
+/// only values, so the consumed input *points* are the generated all-empty
+/// `empty_input_points`.
 pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,
-) -> Result<BytecodeReadRafAddressPhaseInputClaims<F>, VerifierError> {
+) -> BytecodeReadRafAddressPhaseInputClaims<F> {
     let outer = &stage1.outer_remainder;
-    let outer_op_flags = CIRCUIT_FLAGS
-        .iter()
-        .map(|flag| {
-            let id = outer_opening(JoltVirtualPolynomial::OpFlags(*flag));
-            outer
-                .resolve_output(&id)
-                .ok_or(VerifierError::MissingOpeningClaim { id })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let product = &stage2.product_remainder;
     let instruction_input = &stage3.instruction_input;
     let shift = &stage3.shift;
     let registers_read_write = &stage4.registers_read_write;
     let instruction_read_raf = &stage5.instruction_read_raf;
-    let lookup_table_flags = instruction_read_raf.lookup_table_flags.clone();
-    Ok(BytecodeReadRafAddressPhaseInputClaims {
+    BytecodeReadRafAddressPhaseInputClaims {
         outer_unexpanded_pc: outer.unexpanded_pc,
         outer_imm: outer.imm,
-        outer_op_flags,
+        outer_add_operands: outer.add_operands,
+        outer_subtract_operands: outer.subtract_operands,
+        outer_multiply_operands: outer.multiply_operands,
+        outer_load: outer.load,
+        outer_store: outer.store,
+        outer_jump: outer.jump,
+        outer_write_lookup_output_to_rd: outer.write_lookup_output_to_rd,
+        outer_virtual_instruction: outer.virtual_instruction,
+        outer_assert: outer.assert,
+        outer_do_not_update_unexpanded_pc: outer.do_not_update_unexpanded_pc,
+        outer_advice: outer.advice,
+        outer_is_compressed: outer.is_compressed,
+        outer_is_first_in_sequence: outer.is_first_in_sequence,
+        outer_is_last_in_sequence: outer.is_last_in_sequence,
         outer_pc: outer.pc,
         product_jump: product.jump_flag,
         product_branch: product.branch_flag,
@@ -79,46 +83,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
         rs2_ra: registers_read_write.rs2_ra,
         rd_wa_val_evaluation: stage5.registers_val_evaluation.rd_wa,
         instruction_raf_flag: instruction_read_raf.instruction_raf_flag,
-        lookup_table_flags,
-    })
-}
-
-/// Wire the prior-proof opening *points* the address-phase input claim binds. The
-/// input claim reads only opening *values*, so the points are unused; every field
-/// is an empty point.
-///
-/// WARNING: this must NOT be replaced by a generated
-/// `#[sumcheck_batch(empty_input_points)]` constructor. Unlike the other stages'
-/// all-empty input points, `outer_op_flags` is a length-`CIRCUIT_FLAGS.len()` outer
-/// vec of empty points (one per circuit flag), which `Default::default()` would
-/// shrink to a length-0 vec — desynchronizing the per-flag opening wiring.
-pub fn bytecode_read_raf_address_phase_input_points_from_upstream<F: Field>(
-) -> BytecodeReadRafAddressPhaseInputClaims<Vec<F>> {
-    BytecodeReadRafAddressPhaseInputClaims {
-        outer_unexpanded_pc: Vec::new(),
-        outer_imm: Vec::new(),
-        outer_op_flags: vec![Vec::new(); CIRCUIT_FLAGS.len()],
-        outer_pc: Vec::new(),
-        product_jump: Vec::new(),
-        product_branch: Vec::new(),
-        product_write_lookup_output_to_rd: Vec::new(),
-        product_virtual_instruction: Vec::new(),
-        instruction_input_imm: Vec::new(),
-        shift_unexpanded_pc: Vec::new(),
-        left_operand_is_rs1_value: Vec::new(),
-        left_operand_is_pc: Vec::new(),
-        right_operand_is_rs2_value: Vec::new(),
-        right_operand_is_imm: Vec::new(),
-        is_noop: Vec::new(),
-        shift_virtual_instruction: Vec::new(),
-        shift_is_first_in_sequence: Vec::new(),
-        shift_pc: Vec::new(),
-        rd_wa_read_write: Vec::new(),
-        rs1_ra: Vec::new(),
-        rs2_ra: Vec::new(),
-        rd_wa_val_evaluation: Vec::new(),
-        instruction_raf_flag: Vec::new(),
-        lookup_table_flags: Vec::new(),
+        lookup_table_flags: instruction_read_raf.lookup_table_flags.clone(),
     }
 }
 

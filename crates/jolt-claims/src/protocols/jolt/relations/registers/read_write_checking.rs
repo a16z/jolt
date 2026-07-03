@@ -39,7 +39,7 @@ pub struct RegistersReadWriteOutputClaims<C> {
 /// Consumed register openings reduced by the read-write checking sumcheck, wired
 /// from the upstream registers claim-reduction relation (stage 3). Generic over
 /// the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RegistersReadWriteInputClaims<C> {
     #[opening(RdWriteValue, from = RegistersClaimReduction)]
     pub rd_write_value: C,

@@ -47,12 +47,11 @@
 //! Arity is read from the field type, not the annotation. A `C` or `Option<C>`
 //! field is a single opening: `Variant` must be a unit variant or a
 //! payload-carrying variant (`OpFlags(CircuitFlags::VirtualInstruction)`). A
-//! `Vec<C>` field is an indexed family; element `i` maps to:
-//! - `Variant(i)` for a `usize`-indexed variant, e.g. `#[opening(LookupTableFlag)]`
-//!   → `LookupTableFlag(i)`; or
-//! - `Variant(ARRAY[i])` when the annotation supplies a per-element payload array,
-//!   e.g. `#[opening(OpFlags(CIRCUIT_FLAGS))]` → `OpFlags(CIRCUIT_FLAGS[i])`, for
-//!   families keyed by an enum rather than a contiguous index.
+//! `Vec<C>` field is an indexed family: element `i` maps to `Variant(i)` for a
+//! `usize`-indexed variant, e.g. `#[opening(LookupTableFlag)]` →
+//! `LookupTableFlag(i)`. A payload-carrying variant is always scalar; a family
+//! keyed by an enum is declared as one field per element (see
+//! `OuterRemainderOutputClaims` / `BytecodeReadRafAddressPhaseInputClaims`).
 //!
 //! `InputClaims` leaves additionally take `, from = ProducingRelation`.
 //!
@@ -313,6 +312,21 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
             "advice openings are scalar; a `Vec` advice field has no indexed id",
         ));
     }
+    if is_many
+        && matches!(
+            &spec.kind,
+            LeafKind::Virtual {
+                payload: Some(_),
+                ..
+            }
+        )
+    {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "per-element payload arrays (e.g. `OpFlags(CIRCUIT_FLAGS)` on a `Vec`) are not \
+             supported; declare one field per element instead",
+        ));
+    }
     Ok(FieldPlan {
         ident,
         is_option: is_option_type(&field.ty),
@@ -330,11 +344,10 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
     match kind {
         LeafKind::Virtual { variant, payload } => {
             let polynomial = match (index, payload) {
-                // Indexed family over an enum payload: the field is a `Vec` and the
-                // annotation supplies the per-element payload *array*, so element `i`
-                // maps to `Variant(ARRAY[i])` (e.g. `OpFlags(CIRCUIT_FLAGS[i])`).
-                (Some(index), Some(payload)) => {
-                    quote!(#jolt::JoltVirtualPolynomial::#variant(#payload[#index]))
+                // A payload-carrying variant is always scalar; the `Vec`+payload
+                // combination is rejected in `plan_field`.
+                (Some(_), Some(_)) => {
+                    unreachable!("Vec fields with payload annotations are rejected in plan_field")
                 }
                 // Indexed family over a `usize` payload: `Variant(i)`.
                 (Some(index), None) => quote!(#jolt::JoltVirtualPolynomial::#variant(#index)),

@@ -15,7 +15,7 @@ use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 /// Consumed Spartan outer remainder input: the uni-skip's reduced opening. The
 /// relation reads only this value (its output point comes from its own sumcheck
 /// point), so the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct OuterRemainderInputClaims<C> {
     #[opening(UnivariateSkip, from = SpartanOuter)]
     pub outer_uniskip: C,
@@ -27,7 +27,7 @@ pub struct OuterRemainderInputClaims<C> {
 /// order is the canonical Fiat-Shamir / append order and MUST equal
 /// [`SpartanOuterDimensions::variables`] /
 /// [`SPARTAN_OUTER_R1CS_INPUTS`](crate::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"
@@ -181,6 +181,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::JoltVirtualPolynomial;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_riscv::CIRCUIT_FLAGS;
 
     /// The expanded `output_expression` reproduces the factored quadratic form
     /// `tau_kernel * (Σ az[i] o[i] + az_c) * (Σ bz[i] o[i] + bz_c)` when fed the
@@ -240,5 +241,21 @@ mod tests {
         let az_form = az[0] * openings[0] + az[1] * openings[1] + az_constant;
         let bz_form = bz[0] * openings[0] + bz[1] * openings[1] + bz_constant;
         assert_eq!(output, tau_kernel * az_form * bz_form);
+    }
+
+    /// Pins the circuit-flag coverage of the outer-remainder output claims: every
+    /// `CircuitFlags` variant has a field (a newly added flag missing its field
+    /// would leave an R1CS input opening unresolvable — and desynchronize the
+    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` append order this struct encodes).
+    #[test]
+    fn output_claims_cover_circuit_flags() {
+        let claims = OuterRemainderOutputClaims::<Fr>::default();
+        for flag in CIRCUIT_FLAGS {
+            let id = outer_opening(JoltVirtualPolynomial::OpFlags(flag));
+            assert!(
+                claims.resolve_output(&id).is_some(),
+                "missing outer-remainder output field for OpFlags({flag:?})",
+            );
+        }
     }
 }
