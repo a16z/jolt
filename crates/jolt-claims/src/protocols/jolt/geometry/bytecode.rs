@@ -427,6 +427,22 @@ where
     [stage1, stage2, stage3, stage4, stage5]
 }
 
+/// The lattice sixth val-stage row value: the `Store` circuit flag bit. The
+/// stage's consumed claim is the single `OpFlags(Store)@IncVirtualization`
+/// opening, so the row value carries no gamma structure of its own.
+pub fn store_flag_row_value<F>(instruction: &JoltInstructionRow) -> F
+where
+    F: Field,
+{
+    let decoded = JoltInstruction::try_from(*instruction)
+        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+    if decoded.circuit_flags()[CircuitFlags::Store] {
+        F::one()
+    } else {
+        F::zero()
+    }
+}
+
 fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
     register
         .and_then(|register| eq.get(register as usize))
