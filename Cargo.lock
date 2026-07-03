@@ -120,7 +120,7 @@ source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2
 dependencies = [
  "akita-field",
  "akita-transcript",
- "sha3 0.10.8",
+ "sha3 0.10.9",
  "tracing",
 ]
 
@@ -197,7 +197,7 @@ dependencies = [
  "ctr",
  "rand_core 0.6.4",
  "rayon",
- "sha3 0.10.8",
+ "sha3 0.10.9",
  "tracing",
 ]
 
@@ -269,7 +269,7 @@ dependencies = [
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
- "sha3 0.10.8",
+ "sha3 0.10.9",
  "tracing",
 ]
 
@@ -544,7 +544,7 @@ dependencies = [
  "ruint",
  "rustc-hash",
  "serde",
- "sha3 0.10.8",
+ "sha3 0.10.9",
 ]
 
 [[package]]
@@ -628,7 +628,7 @@ dependencies = [
  "proc-macro-error2",
  "proc-macro2",
  "quote",
- "sha3 0.10.8",
+ "sha3 0.10.9",
  "syn 2.0.118",
  "syn-solidity",
 ]
@@ -2717,7 +2717,7 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-sdk",
  "sha2 0.11.0",
- "sha3 0.10.8",
+ "sha3 0.11.0",
 ]
 
 [[package]]
@@ -6136,9 +6136,9 @@ dependencies = [
 
 [[package]]
 name = "sha3"
-version = "0.10.8"
+version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
+checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
 dependencies = [
  "digest 0.10.7",
  "keccak 0.1.6",
