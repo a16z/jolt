@@ -24,10 +24,9 @@ use jolt_claims::protocols::jolt::{
         ram::{self, RamValCheckInit, RamValCheckInitContribution},
     },
     relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
-    JoltAdviceKind, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
-    RamValCheckChallenge, RamValCheckPublic,
+    JoltAdviceKind, JoltDerivedId, JoltOpeningId, JoltRelationId, RamValCheckPublic,
 };
-use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
 use jolt_transcript::{LabelWithCount, Transcript};
@@ -259,12 +258,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
             RamValCheckPublic::LtCyclePlusGamma => {
                 let output_cycle = &output_points.ram_ra()[self.ram_log_k..];
                 let fixed_cycle = &input_points.ram_val()[self.ram_log_k..];
-                let gamma = challenges
-                    .resolve_challenge(&JoltChallengeId::from(RamValCheckChallenge::Gamma))
-                    .ok_or(VerifierError::MissingStageClaimChallenge {
-                        id: JoltChallengeId::from(RamValCheckChallenge::Gamma),
-                    })?;
-                Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + gamma)
+                Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + challenges.gamma)
             }
             // Input publics — resolved in `derive_input_term`, never in the output expr.
             RamValCheckPublic::InitEval

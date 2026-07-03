@@ -12,10 +12,10 @@ pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafChallenges, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::instruction::InstructionReadRafDimensions, InstructionReadRafChallenge,
-    InstructionReadRafPublic, JoltChallengeId, JoltDerivedId, JoltRelationId,
+    geometry::instruction::InstructionReadRafDimensions, InstructionReadRafPublic, JoltDerivedId,
+    JoltRelationId,
 };
-use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
@@ -155,14 +155,8 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         let left = || OperandPolynomial::new(address_bits, OperandSide::Left).evaluate(&r_address);
         let right =
             || OperandPolynomial::new(address_bits, OperandSide::Right).evaluate(&r_address);
-        // The RAF publics fold the batching gamma into the operand evaluations. The
-        // gamma comes from the drawn `challenges` struct (the same value
-        // `draw_challenges` produced), not a stored scalar.
-        let gamma = challenges
-            .resolve_challenge(&JoltChallengeId::from(InstructionReadRafChallenge::Gamma))
-            .ok_or(VerifierError::MissingStageClaimChallenge {
-                id: JoltChallengeId::from(InstructionReadRafChallenge::Gamma),
-            })?;
+        // The RAF publics fold the batching gamma into the operand evaluations.
+        let gamma = challenges.gamma;
         let gamma2 = gamma * gamma;
         match public {
             InstructionReadRafPublic::EqTableValue(index) => {
