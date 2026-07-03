@@ -1,4 +1,8 @@
-#![expect(clippy::expect_used, reason = "tests assert successful proof paths")]
+#![expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "tests assert successful proof paths"
+)]
 
 use jolt_dory::DoryScheme;
 use jolt_openings::{
@@ -121,7 +125,7 @@ fn dory_homomorphic_zk_batch_roundtrip() {
     let mut evaluations = Vec::with_capacity(polynomials.len());
     for polynomial in &polynomials {
         let (commitment, hint) =
-            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup);
+            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup).unwrap();
         commitments.push(commitment);
         hints.push(hint);
         evaluations.push(polynomial.evaluate(&point));
@@ -163,7 +167,7 @@ fn dory_homomorphic_zk_batch_rejects_witness_count_mismatch() {
     let mut evaluations = Vec::with_capacity(polynomials.len());
     for polynomial in &polynomials {
         let (commitment, hint) =
-            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup);
+            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup).unwrap();
         commitments.push(commitment);
         hints.push(hint);
         evaluations.push(polynomial.evaluate(&point));

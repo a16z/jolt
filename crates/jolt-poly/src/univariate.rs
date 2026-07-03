@@ -3,6 +3,7 @@
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use jolt_field::Field;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Shared interface for univariate polynomial types.
@@ -22,7 +23,7 @@ pub trait UnivariatePolynomial<F: Field>: Send + Sync {
 /// Coefficients are stored in ascending degree order: `coefficients[i]` is the
 /// coefficient of $x^i$. An empty coefficient vector represents the zero polynomial.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
 pub struct UnivariatePoly<F: Field> {
     coefficients: Vec<F>,
 }

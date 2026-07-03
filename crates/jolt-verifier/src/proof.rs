@@ -20,7 +20,10 @@ use crate::{
     reason = "Matches current jolt-prover-legacy proof field name."
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
+#[serde(bound(
+    serialize = "PCS::Field: Serialize, ZkProof: Serialize",
+    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
+))]
 pub struct JoltProof<
     PCS,
     VC,
@@ -133,7 +136,10 @@ impl<C> JoltCommitments<C> {
     clippy::large_enum_variant,
     reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
 )]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
+#[serde(bound(
+    serialize = "F: Serialize, ZkProof: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
+))]
 pub enum JoltProofClaims<F, ZkProof>
 where
     F: Field,
@@ -152,7 +158,7 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct ClearProofClaims<F: Field> {
     pub stage1: stage1::outputs::Stage1OutputClaims<F>,
     pub stage2: stage2::outputs::Stage2OutputClaims<F>,
@@ -164,7 +170,10 @@ pub struct ClearProofClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(
+    serialize = "F: Serialize, <VC as Commitment>::Output: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, <VC as Commitment>::Output: serde::de::DeserializeOwned"
+))]
 pub struct JoltStageProofs<F, VC>
 where
     F: Field,

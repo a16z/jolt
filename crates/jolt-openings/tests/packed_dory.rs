@@ -1,4 +1,8 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof paths")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use jolt_crypto::Commitment;
 use jolt_dory::DoryScheme;
@@ -76,7 +80,7 @@ fn dory_prefix_packed_batch_roundtrip_complex_mixed_arities() {
     assert_eq!(packed.packing[&PackedId::Medium].num_vars, 2);
 
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let statement = PrefixPackedStatement::new(commitment, claims);
@@ -108,7 +112,7 @@ fn dory_prefix_packed_batch_rejects_proof_for_different_claim_points() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let original_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let original_claims = packed_claims(&polynomials, &packed.packing, &original_point);
     let proof = prove_packed(
@@ -139,7 +143,7 @@ fn dory_prefix_packed_batch_rejects_known_id_prefix_tamper() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
@@ -176,7 +180,7 @@ fn dory_prefix_packed_batch_rejects_duplicate_known_id() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     claims[0].0 = claims[1].0;
@@ -197,7 +201,7 @@ fn dory_prefix_packed_batch_rejects_unknown_id() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     claims[0].0 = PackedId::Unused;
@@ -219,7 +223,7 @@ fn dory_prefix_packed_batch_roundtrip_independent_points_per_slot() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let claims = independent_claims(&polynomials, &mut rng);
     let statement = PrefixPackedStatement::new(commitment, claims);
 
@@ -252,7 +256,7 @@ fn dory_prefix_packed_batch_rejects_stale_value_at_shifted_point() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let medium = claims
@@ -304,7 +308,7 @@ fn dory_prefix_packed_batch_rejects_seesaw_value_cancellation() {
     );
 
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
 
@@ -353,7 +357,7 @@ fn dory_prefix_packed_batch_rejects_missing_slot_claim() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     claims.retain(|claim| claim.0 != PackedId::Constant);
@@ -374,7 +378,7 @@ fn dory_prefix_packed_batch_rejects_empty_claims() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
 
     let mut transcript = Blake2bTranscript::new(b"dory-packed-empty-claims");
     let result = <PackedDoryBatch as BatchOpeningScheme>::prove_batch(
@@ -392,7 +396,7 @@ fn dory_prefix_packed_batch_rejects_wrong_point_arity() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let mut claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let medium = claims
@@ -419,10 +423,10 @@ fn dory_prefix_packed_batch_rejects_wrong_packed_commitment() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let mut rng = ChaCha20Rng::seed_from_u64(0x0bad_c0de);
     let other_polynomial = Polynomial::<Fr>::random(packed.packing.packed_num_vars, &mut rng);
-    let (other_commitment, _) = DoryScheme::commit(&other_polynomial, &prover_setup.pcs);
+    let (other_commitment, _) = DoryScheme::commit(&other_polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
@@ -448,7 +452,7 @@ fn dory_prefix_packed_batch_rejects_tampered_value() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let proof = prove_packed(
@@ -476,7 +480,7 @@ fn dory_prefix_packed_batch_rejects_wrong_witness_dimension() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
     let (prover_setup, _) = packed_setup(packed.packing.clone());
-    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs);
+    let (commitment, hint) = DoryScheme::commit(&packed.polynomial, &prover_setup.pcs).unwrap();
     let packed_point = vec![fr(3), fr(5), fr(7), fr(11), fr(13)];
     let claims = packed_claims(&polynomials, &packed.packing, &packed_point);
     let wrong_witness = Polynomial::new(vec![fr(1), fr(2), fr(3), fr(4)]);

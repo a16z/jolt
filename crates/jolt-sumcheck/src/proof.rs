@@ -24,21 +24,21 @@ use serde::{Deserialize, Serialize};
 /// the verifier is left with a single evaluation claim at the point
 /// $(r_1, \ldots, r_n)$.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct ClearSumcheckProof<F: jolt_field::Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct CompressedSumcheckProof<F: jolt_field::Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub enum ClearProof<F: jolt_field::Field> {
     Full(ClearSumcheckProof<F>),
     Compressed(CompressedSumcheckProof<F>),
@@ -51,7 +51,10 @@ impl<F: jolt_field::Field> Default for ClearProof<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "C: Serialize", deserialize = "C: Deserialize<'de>"))]
+#[serde(bound(
+    serialize = "F: Serialize, C: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, C: Deserialize<'de>"
+))]
 pub enum SumcheckProof<F: jolt_field::Field, C> {
     Clear(ClearProof<F>),
     Committed(CommittedSumcheckProof<C>),

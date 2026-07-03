@@ -1,4 +1,8 @@
 #![allow(unused_results)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "benchmarks and tests unwrap successful PCS operations"
+)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
@@ -93,11 +97,13 @@ fn bench_verify(c: &mut Criterion) {
                             .map(|_| <Fr as RandomSampling>::random(&mut rng))
                             .collect();
                         let eval = poly.evaluate(&point);
-                        let (commitment, _) = DoryScheme::commit(poly.evaluations(), &setup);
+                        let (commitment, _) =
+                            DoryScheme::commit(poly.evaluations(), &setup).unwrap();
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify");
                         let proof =
-                            DoryScheme::open(&poly, &point, eval, &setup, None, &mut transcript);
+                            DoryScheme::open(&poly, &point, eval, &setup, None, &mut transcript)
+                                .unwrap();
                         (commitment, point, eval, proof)
                     },
                     |(commitment, point, eval, proof)| {
@@ -158,8 +164,8 @@ fn bench_combine(c: &mut Criterion) {
         let mut rng = ChaCha20Rng::seed_from_u64(0);
         let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
         let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &setup);
-        let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &setup);
+        let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &setup).unwrap();
+        let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &setup).unwrap();
         let s_a = <Fr as RandomSampling>::random(&mut rng);
         let s_b = <Fr as RandomSampling>::random(&mut rng);
 
@@ -185,7 +191,7 @@ fn bench_combine_hints(c: &mut Criterion) {
         let hints_and_scalars: Vec<_> = (0..batch_size)
             .map(|_| {
                 let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-                let (_, hint) = DoryScheme::commit(poly.evaluations(), &setup);
+                let (_, hint) = DoryScheme::commit(poly.evaluations(), &setup).unwrap();
                 (hint, <Fr as RandomSampling>::random(&mut rng))
             })
             .collect();
@@ -228,7 +234,8 @@ fn bench_open_zk(c: &mut Criterion) {
                             .collect();
                         let eval = poly.evaluate(&point);
                         let (_, hint) =
-                            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup);
+                            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup)
+                                .unwrap();
                         (poly, point, eval, hint)
                     },
                     |(poly, point, eval, hint)| {
@@ -262,11 +269,13 @@ fn bench_verify_zk(c: &mut Criterion) {
                             .collect();
                         let eval = poly.evaluate(&point);
                         let (commitment, hint) =
-                            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup);
+                            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup)
+                                .unwrap();
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify-zk");
                         let (proof, _eval_com, _blind) =
-                            DoryScheme::open_zk(&poly, &point, eval, &setup, hint, &mut transcript);
+                            DoryScheme::open_zk(&poly, &point, eval, &setup, hint, &mut transcript)
+                                .unwrap();
                         (commitment, point, proof)
                     },
                     |(commitment, point, proof)| {

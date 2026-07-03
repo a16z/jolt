@@ -18,7 +18,7 @@ pub use super::ram_raf_evaluation::RamRafEvaluationOutputClaims;
 pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage2OutputClaims<F: Field> {
     pub product_uniskip_output_claim: F,
     pub batch_outputs: Stage2BatchOutputClaims<F>,
