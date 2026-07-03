@@ -10,13 +10,10 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::Transcript;
 
-use super::outer_remainder::{
-    outer_remainder_input_points_from_uniskip_output,
-    outer_remainder_input_values_from_uniskip_output, OuterRemainder,
-};
+use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
 use super::outputs::{
-    Stage1BatchInputClaims, Stage1BatchInputPoints, Stage1BatchSumchecks, Stage1Challenges,
-    Stage1ClearOutput, Stage1Output, Stage1ZkOutput,
+    Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1Challenges, Stage1ClearOutput,
+    Stage1Output, Stage1ZkOutput,
 };
 use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
 
@@ -35,16 +32,6 @@ where
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = transcript.challenge_vector(log_t + 2);
-
-    let sumchecks = Stage1BatchSumchecks {
-        outer_remainder: OuterRemainder::new(dimensions),
-    };
-    // A transcript no-op (the remainder draws no challenges), but it produces the
-    // aggregate value the generated clear drivers take.
-    let batch_challenges = sumchecks.draw_challenges(transcript)?;
-    let input_points = Stage1BatchInputPoints {
-        outer_remainder: outer_remainder_input_points_from_uniskip_output::<PCS::Field>(),
-    };
 
     if checked.zk {
         let uniskip_consistency = proof
@@ -72,6 +59,15 @@ where
             });
         };
         let uniskip_challenge = round.challenge;
+
+        // Built after the uni-skip step so the relation carries `tau` and the
+        // uni-skip reduction challenge (two of its three coefficient-table
+        // inputs); transcript-neutral, since the remainder draws no member
+        // challenges.
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(dimensions, tau.clone(), uniskip_challenge),
+        };
+        let input_points = sumchecks.empty_input_points();
 
         let remainder_consistency =
             sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
@@ -139,6 +135,17 @@ where
     };
     let uniskip_challenge = *uniskip_challenge;
 
+    // Built after the uni-skip step so the relation carries `tau` and the
+    // uni-skip reduction challenge; the coefficient table completes itself from
+    // the bound point captured by `derive_opening_points`. Construction and the
+    // (no-op) member draw are transcript-neutral, so their position relative to
+    // the uni-skip is immaterial.
+    let sumchecks = Stage1BatchSumchecks {
+        outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
+    };
+    let batch_challenges = sumchecks.draw_challenges(transcript)?;
+    let input_points = sumchecks.empty_input_points();
+
     sumchecks.validate_output_claims(&claims.outer)?;
 
     // The remainder consumes the uni-skip's reduced opening as its input claim
@@ -157,14 +164,6 @@ where
     let output_points =
         sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
 
-    // The remainder's coefficient table depends on its own bound point, so it is
-    // bound now that the batch has reduced; `expected_final_claim` evaluates the
-    // output `Expr` against it.
-    sumchecks.outer_remainder.bind_coefficients(
-        &tau,
-        uniskip_challenge,
-        batch.reduction.point.as_slice(),
-    )?;
     let expected_final_claim = sumchecks.expected_final_claim(
         &batch.coefficients,
         &input_points,

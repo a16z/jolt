@@ -30,9 +30,9 @@ pub struct Stage1OutputClaims<F: Field> {
 /// (the canonical 35 R1CS-input order), byte-identical to the previous explicit
 /// append loop.
 ///
-/// `expected_final_claim` additionally requires
-/// the member's late [`bind_coefficients`](OuterRemainder::bind_coefficients)
-/// (its coefficient table depends on the batch's own bound point).
+/// The member's `SpartanOuterPublic` coefficient table depends on the batch's own
+/// bound point, so it completes itself lazily: `derive_opening_points` captures
+/// the point and the first `derive_output_term` call builds the table.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(output_shape)]
 pub struct Stage1BatchSumchecks<F: Field> {

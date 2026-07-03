@@ -44,15 +44,6 @@ pub fn outer_remainder_input_values_from_uniskip_output<F: Field>(
     }
 }
 
-/// Wire the consumed opening *point* from the Spartan outer uni-skip. The remainder
-/// reads only the uni-skip's value, so the input point is left empty.
-pub fn outer_remainder_input_points_from_uniskip_output<F: Field>(
-) -> OuterRemainderInputClaims<Vec<F>> {
-    OuterRemainderInputClaims {
-        outer_uniskip: Vec::new(),
-    }
-}
-
 /// The expanded quadratic-form coefficients, indexed for O(1) resolution. Built
 /// once from [`JoltSpartanOuterRemainder::public_coefficients`] in the constructor
 /// so `derive_output_term` (called ~`n² + n + 1` times per proof) never rebuilds the
@@ -110,49 +101,63 @@ impl<F: Field> OuterRemainderCoefficients<F> {
 pub struct OuterRemainder<F: Field> {
     symbolic: relations::spartan::OuterRemainder,
     variable_count: usize,
-    /// Late-bound: the coefficient table depends on this sumcheck's own bound
-    /// point (the remainder challenges), which exists only after the batch
-    /// verifies, so it cannot be built in the constructor. Populated by
-    /// [`bind_coefficients`](Self::bind_coefficients); only the clear path's
-    /// `expected_output` / `derive_output_term` read it.
+    /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
+    /// three inputs to the `SpartanOuterPublic` coefficient table. Both exist
+    /// before this relation is constructed (the uni-skip step completes first).
+    tau: Vec<F>,
+    uniskip_challenge: F,
+    /// The relation's own bound point (the remainder challenges), captured by
+    /// [`derive_opening_points`](ConcreteSumcheck::derive_opening_points) — the
+    /// third coefficient-table input, which exists only after the batch reduces.
+    bound_point: std::sync::OnceLock<Vec<F>>,
+    /// The expanded coefficient table, built lazily on the first
+    /// `derive_output_term` call so the ZK path (which never evaluates the output
+    /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
     coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
 }
 
 impl<F: Field> OuterRemainder<F> {
-    pub fn new(dimensions: SpartanOuterDimensions) -> Self {
+    pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
         let variable_count = dimensions.variables().len();
         Self {
             symbolic: relations::spartan::OuterRemainder::new(dimensions),
             variable_count,
+            tau,
+            uniskip_challenge,
+            bound_point: std::sync::OnceLock::new(),
             coefficients: std::sync::OnceLock::new(),
         }
     }
 
-    /// Build the expanded `SpartanOuterPublic` coefficient table from `tau`, the
-    /// uni-skip reduction challenge, and this sumcheck's bound point. Sourced from
-    /// [`JoltSpartanOuterRemainder::public_coefficients`] — the same source the
-    /// BlindFold constraint uses — so the output-claim algebra cannot drift from
-    /// that constraint. Must run before `expected_output` (the stage-1 verifier
-    /// calls it right after the batch's opening points are derived).
-    pub fn bind_coefficients(
-        &self,
-        tau: &[F],
-        uniskip_challenge: F,
-        remainder_challenges: &[F],
-    ) -> Result<(), VerifierError> {
-        let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-            tau,
-            uniskip: uniskip_challenge,
-            remainder: remainder_challenges,
-        })
-        .map_err(public_input_failed)?;
-        let coefficients = OuterRemainderCoefficients::from_public_coefficients(
-            self.variable_count,
-            formula.public_coefficients(),
-        );
+    /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
+    /// `tau`, the uni-skip reduction challenge, and the captured bound point.
+    /// Sourced from [`JoltSpartanOuterRemainder::public_coefficients`] — the same
+    /// source the BlindFold constraint uses — so the output-claim algebra cannot
+    /// drift from that constraint.
+    fn coefficients(&self) -> Result<&OuterRemainderCoefficients<F>, VerifierError> {
+        if self.coefficients.get().is_none() {
+            let bound_point = self.bound_point.get().ok_or_else(|| {
+                public_input_failed(
+                    "Spartan outer remainder point not bound (derive_opening_points must run \
+                     before the output expression is evaluated)",
+                )
+            })?;
+            let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
+                tau: &self.tau,
+                uniskip: self.uniskip_challenge,
+                remainder: bound_point,
+            })
+            .map_err(public_input_failed)?;
+            let _ = self
+                .coefficients
+                .set(OuterRemainderCoefficients::from_public_coefficients(
+                    self.variable_count,
+                    formula.public_coefficients(),
+                ));
+        }
         self.coefficients
-            .set(coefficients)
-            .map_err(|_| public_input_failed("Spartan outer remainder coefficients already bound"))
+            .get()
+            .ok_or_else(|| public_input_failed("Spartan outer remainder coefficients unavailable"))
     }
 }
 
@@ -175,6 +180,17 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
         sumcheck_point: &[F],
         _input_points: &OuterRemainderInputClaims<Vec<F>>,
     ) -> Result<OuterRemainderOutputClaims<Vec<F>>, VerifierError> {
+        // Capture the bound point for the lazy coefficient-table build; reject a
+        // rebind at a different point (one bind per verification).
+        let bound_point = self
+            .bound_point
+            .get_or_init(|| sumcheck_point.to_vec())
+            .as_slice();
+        if bound_point != sumcheck_point {
+            return Err(public_input_failed(
+                "Spartan outer remainder point already bound at a different point",
+            ));
+        }
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(OuterRemainderOutputClaims {
             left_instruction_input: opening_point.clone(),
@@ -225,9 +241,7 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
         let JoltDerivedId::SpartanOuter(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        self.coefficients
-            .get()
-            .ok_or_else(|| public_input_failed("Spartan outer remainder coefficients not bound"))?
+        self.coefficients()?
             .resolve(*public_id)
             .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
     }
@@ -385,14 +399,16 @@ mod tests {
             .collect::<Vec<_>>();
         let factored_output = factored.expected_output_claim(&openings).unwrap();
 
-        let relation = OuterRemainder::new(dimensions);
-        relation
-            .bind_coefficients(&tau, uniskip_challenge, &remainder_challenges)
+        let relation = OuterRemainder::new(dimensions, tau, uniskip_challenge);
+        let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        // Capture the bound point (the third coefficient-table input); the table
+        // itself is built lazily by the first `derive_output_term` call.
+        let _ = relation
+            .derive_opening_points(&remainder_challenges, &input_points)
             .unwrap();
         let point = vec![Fr::from_u64(7); 1 + log_t];
         let output_values = output_values_from(&openings);
         let output_points = output_points_at(&point);
-        let input_points = outer_remainder_input_points_from_uniskip_output::<Fr>();
         let expanded_output = relation
             .expected_output(
                 &input_points,
