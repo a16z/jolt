@@ -18,6 +18,10 @@
 //!
 //! [`stage6_bytecode_read_raf_address_input`]: super::verify::stage6_bytecode_read_raf_address_input
 
+use jolt_claims::protocols::jolt::lattice::geometry::lattice_read_raf_public_values;
+use jolt_claims::protocols::jolt::lattice::relations::read_raf::{
+    LatticeReadRafAddressPhase, LatticeReadRafAddressPhaseInputClaims, LatticeReadRafCyclePhase,
+};
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafAddressPhaseInputClaims,
@@ -425,6 +429,187 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                 challenges
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+            },
+            |id| match id {
+                JoltDerivedId::BytecodeReadRaf(public_id) => public_values
+                    .value(*public_id)
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+            },
+        )
+    }
+}
+
+/// Wire the lattice address-phase inputs: the base stage-1..5 fold plus the
+/// store selector claim produced by the pre-address-phase
+/// `IncVirtualization` sumcheck.
+pub fn lattice_bytecode_read_raf_address_phase_inputs_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+    stage2: &Stage2ClearOutput<F>,
+    stage3: &Stage3ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+    stage5: &Stage5ClearOutput<F>,
+    store: OpeningClaim<F>,
+) -> Result<LatticeReadRafAddressPhaseInputClaims<OpeningClaim<F>>, VerifierError> {
+    Ok(LatticeReadRafAddressPhaseInputClaims {
+        base: bytecode_read_raf_address_phase_inputs_from_upstream(
+            stage1, stage2, stage3, stage4, stage5,
+        )?,
+        store,
+    })
+}
+
+/// Lattice-mode 6a: the six-stage input fold; full program mode, so no
+/// staged Val openings (the verifier evaluates every stage value, the store
+/// stage included, from public bytecode).
+pub struct LatticeBytecodeReadRafAddressPhase<F: Field> {
+    symbolic: LatticeReadRafAddressPhase,
+    _field: core::marker::PhantomData<F>,
+}
+
+impl<F: Field> LatticeBytecodeReadRafAddressPhase<F> {
+    pub fn new(dimensions: BytecodeReadRafDimensions) -> Self {
+        Self {
+            symbolic: LatticeReadRafAddressPhase::new(dimensions),
+            _field: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<F: Field> ConcreteSumcheck<F> for LatticeBytecodeReadRafAddressPhase<F> {
+    type Symbolic = LatticeReadRafAddressPhase;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
+
+    fn derive_opening_points<C: GetPoint<F>>(
+        &self,
+        sumcheck_point: &[F],
+        _inputs: &LatticeReadRafAddressPhaseInputClaims<C>,
+    ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
+        let r_address = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        Ok(BytecodeReadRafAddressPhaseOutputClaims {
+            intermediate: r_address,
+            val_stages: Vec::new(),
+        })
+    }
+}
+
+/// Lattice-mode 6b cycle phase: the base cycle relation with the sixth
+/// (store) stage value evaluated from public bytecode at the
+/// `IncVirtualization` cycle point.
+pub struct LatticeBytecodeReadRaf<'a, F: Field> {
+    symbolic: LatticeReadRafCyclePhase,
+    inputs: BytecodeReadRafCycleInputs<'a, F>,
+    inc_virtualization_cycle_point: Vec<F>,
+}
+
+impl<'a, F: Field> LatticeBytecodeReadRaf<'a, F> {
+    pub fn new(
+        inputs: BytecodeReadRafCycleInputs<'a, F>,
+        inc_virtualization_cycle_point: Vec<F>,
+    ) -> Self {
+        Self {
+            symbolic: LatticeReadRafCyclePhase::new(inputs.dimensions),
+            inputs,
+            inc_virtualization_cycle_point,
+        }
+    }
+}
+
+impl<F: Field> ConcreteSumcheck<F> for LatticeBytecodeReadRaf<'_, F> {
+    type Symbolic = LatticeReadRafCyclePhase;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
+
+    fn derive_opening_points<C: GetPoint<F>>(
+        &self,
+        sumcheck_point: &[F],
+        _inputs: &BytecodeReadRafInputClaims<C>,
+    ) -> Result<BytecodeReadRafOutputClaims<Vec<F>>, VerifierError> {
+        let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let bytecode_ra =
+            committed_address_chunks(&self.inputs.r_address, self.inputs.committed_chunk_bits)
+                .into_iter()
+                .map(|chunk| [chunk.as_slice(), r_cycle.as_slice()].concat())
+                .collect();
+        Ok(BytecodeReadRafOutputClaims { bytecode_ra })
+    }
+
+    fn expected_output<C: GetPoint<F>>(
+        &self,
+        _inputs: &BytecodeReadRafInputClaims<C>,
+        outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+        challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let gamma = challenges
+            .resolve_challenge(&JoltChallengeId::from(BytecodeReadRafChallenge::Gamma))
+            .ok_or(VerifierError::MissingStageClaimChallenge {
+                id: JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
+            })?;
+        let opening_point = outputs
+            .bytecode_ra
+            .first()
+            .map(GetPoint::point)
+            .ok_or_else(|| public_input_failed("bytecode cycle produced no openings"))?;
+        let log_t = self.inputs.dimensions.log_t();
+        let r_cycle = opening_point
+            .get(opening_point.len() - log_t..)
+            .ok_or_else(|| {
+                public_input_failed("bytecode cycle opening point shorter than log_t")
+            })?;
+        let public_values = lattice_read_raf_public_values::<F>(
+            BytecodeReadRafEvaluationInputs {
+                bytecode: self.inputs.bytecode,
+                r_address: &self.inputs.r_address,
+                r_cycle,
+                stage_cycle_points: [
+                    &self.inputs.stage_cycle_points[0],
+                    &self.inputs.stage_cycle_points[1],
+                    &self.inputs.stage_cycle_points[2],
+                    &self.inputs.stage_cycle_points[3],
+                    &self.inputs.stage_cycle_points[4],
+                ],
+                register_read_write_point: &self.inputs.register_read_write_point,
+                register_val_evaluation_point: &self.inputs.register_val_evaluation_point,
+                entry_bytecode_index: self.inputs.entry_bytecode_index,
+                stage1_gammas: &self.inputs.stage_gammas[0],
+                stage2_gammas: &self.inputs.stage_gammas[1],
+                stage3_gammas: &self.inputs.stage_gammas[2],
+                stage4_gammas: &self.inputs.stage_gammas[3],
+                stage5_gammas: &self.inputs.stage_gammas[4],
+            },
+            &self.inc_virtualization_cycle_point,
+        )
+        .map_err(public_input_failed)?;
+        let output_openings = bytecode::read_raf_output_openings(self.inputs.dimensions);
+        if outputs.bytecode_ra.len() != output_openings.bytecode_ra.len() {
+            return Err(public_input_failed(format!(
+                "bytecode RA claim count mismatch: expected {}, got {}",
+                output_openings.bytecode_ra.len(),
+                outputs.bytecode_ra.len()
+            )));
+        }
+        let bytecode_ra = outputs
+            .bytecode_ra
+            .iter()
+            .map(GetValue::value)
+            .collect::<Vec<_>>();
+        self.symbolic.output_expression::<F>().try_evaluate(
+            |id| {
+                for (index, opening) in output_openings.bytecode_ra.iter().enumerate() {
+                    if *id == *opening {
+                        return Ok(bytecode_ra[index]);
+                    }
+                }
+                Err(VerifierError::MissingOpeningClaim { id: *id })
+            },
+            |id| match id {
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(gamma),
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
             },
             |id| match id {
                 JoltDerivedId::BytecodeReadRaf(public_id) => public_values
