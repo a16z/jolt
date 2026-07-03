@@ -154,7 +154,7 @@ fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Fi
 /// *cell*, conventionally `C`) and no lifetimes, consts, or where-clause: the
 /// derive instantiates it at `F` (value form) and `Vec<F>` (point form), so any
 /// other shape would make those instantiations ill-formed. Errors clearly rather
-/// than emitting a mis-instantiated impl.
+/// than emitting a wrongly instantiated impl.
 fn ensure_single_cell_generic(generics: &syn::Generics) -> syn::Result<()> {
     let type_params = generics
         .params

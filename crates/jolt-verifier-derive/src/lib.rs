@@ -1233,7 +1233,7 @@ impl StageOptions {
 /// The macro supports exactly one generic type parameter (the field `F`): no
 /// extra generics, no lifetimes/consts, and no where-clause (any of which the
 /// generated aggregates would silently drop). Reject anything else with a clear
-/// error rather than mis-binding `F` or emitting wrong projections.
+/// error rather than binding the wrong `F` or emitting wrong projections.
 fn validate_generics(generics: &syn::Generics) -> syn::Result<()> {
     if let Some(where_clause) = &generics.where_clause {
         return Err(syn::Error::new_spanned(
