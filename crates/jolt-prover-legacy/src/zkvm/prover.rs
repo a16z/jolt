@@ -2250,24 +2250,18 @@ impl<
             );
         }
 
-        // 2. Sample gamma and compute powers for RLC
+        // 2. Draw the RLC batch challenges.
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
-        // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
-        // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
-        #[cfg(not(feature = "zk"))]
-        self.transcript.append_scalars(b"rlc_claims", &claims);
-        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        let super::final_opening::HomomorphicBatchChallenges {
+            gamma_powers,
+            joint_claim,
+        } = super::final_opening::homomorphic_batch_challenges(&mut self.transcript, &claims);
         #[cfg(feature = "zk")]
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
             .zip(&scaling_factors)
             .map(|(gamma, scale)| *gamma * *scale)
             .collect();
-        let joint_claim: F = gamma_powers
-            .iter()
-            .zip(claims.iter())
-            .map(|(gamma, claim)| *gamma * claim)
-            .sum();
 
         #[cfg(feature = "zk")]
         let opening_ids = stage8_opening_ids(
@@ -2720,7 +2714,6 @@ mod tests {
             &public_io,
             &proof,
             trusted_advice_commitment.as_ref(),
-            cfg!(feature = "zk"),
         )
     }
 

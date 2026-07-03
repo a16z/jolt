@@ -6,13 +6,13 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, HomomorphicBatch, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig},
+    config::{validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG},
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
@@ -53,7 +53,6 @@ pub fn verify<F, PCS, VC, T>(
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    zk: bool,
 ) -> Result<(), VerifierError>
 where
     F: Field + AppendToTranscript,
@@ -71,10 +70,9 @@ where
         public_io,
         proof,
         trusted_advice_commitment.is_some(),
-        zk,
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+    validate_proof_consistency(proof)?;
+    validate_proof_config(&JOLT_VERIFIER_CONFIG, proof)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -134,7 +132,7 @@ where
         &stage4,
         &stage6,
     )?;
-    let stage8 = stage8::verify(
+    let stage8 = stage8::verify::<_, _, _, _, _, HomomorphicBatch<PCS>>(
         &checked,
         preprocessing,
         proof,
@@ -202,7 +200,6 @@ pub fn verify_until_stage1<PCS, VC, T, ZkProof>(
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    zk: bool,
 ) -> Result<PreStage1VerifierState<T>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -216,10 +213,9 @@ where
         public_io,
         proof,
         trusted_advice_commitment.is_some(),
-        zk,
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+    validate_proof_consistency(proof)?;
+    validate_proof_config(&JOLT_VERIFIER_CONFIG, proof)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -258,7 +254,6 @@ pub fn validate_inputs<PCS, VC, ZkProof>(
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment_present: bool,
-    zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -273,7 +268,6 @@ where
         proof.one_hot_config,
         trusted_advice_commitment_present,
         proof.untrusted_advice_commitment.is_some(),
-        zk,
     )
 }
 
@@ -299,12 +293,12 @@ pub fn validate_inputs_from_parts<PCS, VC>(
     one_hot_config: JoltOneHotConfig,
     trusted_advice_commitment_present: bool,
     untrusted_advice_commitment_present: bool,
-    zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     let memory_layout = preprocessing.program.memory_layout();
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
@@ -629,12 +623,12 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 
 pub fn validate_proof_consistency<PCS, VC, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
-    zk: bool,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     validate_sumcheck_representation(
         &proof.stages.stage1_uni_skip_first_round_proof,
         "stage1_uni_skip_first_round_proof",
@@ -724,7 +718,9 @@ mod tests {
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
+    #[cfg(feature = "zk")]
+    use jolt_crypto::PedersenSetup;
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen, VectorCommitmentOpening};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::MultilinearPoly;
@@ -820,27 +816,30 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn accepts_standard_proof_consistency() {
         let proof = proof_with_zk(false, clear_claims());
 
-        assert!(validate_proof_consistency(&proof, false).is_ok());
+        assert!(validate_proof_consistency(&proof).is_ok());
     }
 
     #[test]
+    #[cfg(feature = "zk")]
     fn accepts_zk_proof_consistency() {
         let proof = proof_with_zk(true, zk_claims());
 
-        assert!(validate_proof_consistency(&proof, true).is_ok());
+        assert!(validate_proof_consistency(&proof).is_ok());
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn rejects_wrong_stage_representation() {
         let mut proof = proof_with_zk(false, clear_claims());
         proof.stages.stage5_sumcheck_proof =
             SumcheckProof::Committed(CommittedSumcheckProof::default());
 
         assert!(matches!(
-            validate_proof_consistency(&proof, false),
+            validate_proof_consistency(&proof),
             Err(VerifierError::ExpectedClearProof {
                 field: "stage5_sumcheck_proof",
             })
@@ -848,11 +847,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_verifier_zk_flag() {
+    #[cfg(feature = "zk")]
+    fn rejects_clear_stages_in_blindfold_build() {
         let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
-            validate_proof_consistency(&proof, true),
+            validate_proof_consistency(&proof),
             Err(VerifierError::ExpectedCommittedProof {
                 field: "stage1_uni_skip_first_round_proof",
             })
@@ -860,18 +860,25 @@ mod tests {
     }
 
     #[test]
-    fn checks_payload_for_selected_zk_flag() {
+    #[cfg(not(feature = "zk"))]
+    fn rejects_blindfold_payload_in_transparent_build() {
         assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(false, zk_claims()), false),
+            validate_proof_consistency(&proof_with_zk(false, zk_claims())),
             Err(VerifierError::UnexpectedBlindFoldProof)
         ));
+    }
+
+    #[test]
+    #[cfg(feature = "zk")]
+    fn rejects_clear_payload_in_blindfold_build() {
         assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(true, clear_claims()), true),
+            validate_proof_consistency(&proof_with_zk(true, clear_claims())),
             Err(VerifierError::UnexpectedOpeningClaims)
         ));
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn validate_inputs_normalizes_public_output() {
         let preprocessing = test_preprocessing();
         let mut public_io = JoltDevice {
@@ -882,7 +889,7 @@ mod tests {
         };
         let proof = proof_with_zk(false, clear_claims());
 
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
         assert!(checked.is_ok());
         let Ok(checked) = checked else {
             return;
@@ -894,7 +901,7 @@ mod tests {
         assert_eq!(checked.ram_K, proof.ram_K);
 
         public_io.outputs = vec![0, 0];
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false);
         assert!(checked.is_ok());
         let Ok(checked) = checked else {
             return;
@@ -909,7 +916,7 @@ mod tests {
         let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::MemoryLayoutMismatch)
         ));
     }
@@ -925,7 +932,7 @@ mod tests {
         proof.ram_K = 2;
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::InvalidRamK { got: 2, min: 4, .. })
         ));
     }
@@ -941,7 +948,7 @@ mod tests {
         proof.ram_K = 1 << 20;
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::InvalidRamK {
                 got,
                 min: 4,
@@ -951,6 +958,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "zk")]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -960,12 +968,13 @@ mod tests {
         let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, true),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::MissingVectorCommitmentSetup)
         ));
     }
 
     #[test]
+    #[cfg(feature = "zk")]
     fn validate_inputs_rejects_small_zk_vector_commitment_setup() {
         let mut preprocessing = test_preprocessing();
         preprocessing.vc_setup = Some(PedersenSetup::new(
@@ -979,7 +988,7 @@ mod tests {
         let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, true),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::InvalidVectorCommitmentCapacity { got: 1, .. })
         ));
     }

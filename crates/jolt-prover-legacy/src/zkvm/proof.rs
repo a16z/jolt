@@ -8,7 +8,7 @@
 use crate::zkvm::clear_claims::build_clear_claims;
 pub use jolt_verifier::VerifierError;
 use jolt_verifier::{
-    config::JoltProtocolConfig,
+    config::{CommitmentConfig, JoltProtocolConfig, ZkConfig},
     preprocessing::{
         CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
     },
@@ -435,7 +435,10 @@ where
     };
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+        protocol: JoltProtocolConfig {
+            zk: ZkConfig::Transparent,
+            commitment: CommitmentConfig::Homomorphic,
+        },
         commitments,
         stages,
         joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),
@@ -491,7 +494,10 @@ where
     };
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(true),
+        protocol: JoltProtocolConfig {
+            zk: ZkConfig::BlindFold,
+            commitment: CommitmentConfig::Homomorphic,
+        },
         commitments,
         stages,
         joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),

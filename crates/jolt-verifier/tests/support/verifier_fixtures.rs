@@ -157,7 +157,6 @@ impl VerifierFixtureCase {
             &self.public_io,
             &self.proof,
             self.trusted_advice_commitment.as_ref(),
-            false,
         )
     }
 }
@@ -178,7 +177,6 @@ impl ZkVerifierFixtureCase {
             &self.public_io,
             &self.proof,
             None,
-            true,
         )
     }
 }
@@ -527,7 +525,6 @@ fn assert_verifier_accepts(
         &public_io,
         &proof,
         fixture.trusted_advice_commitment.as_ref(),
-        cfg!(feature = "zk"),
     );
     assert!(
         result.is_ok(),
@@ -546,7 +543,6 @@ fn assert_verifier_rejects(
         &public_io,
         &proof,
         fixture.trusted_advice_commitment.as_ref(),
-        false,
     );
     assert!(
         result.is_err(),

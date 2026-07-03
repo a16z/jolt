@@ -66,6 +66,7 @@ pub mod claim_reductions;
 #[cfg(all(feature = "prover", not(feature = "zk")))]
 pub(crate) mod clear_claims;
 pub mod config;
+pub mod final_opening;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;

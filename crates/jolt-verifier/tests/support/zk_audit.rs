@@ -5,11 +5,11 @@ use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, HomomorphicBatch, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use jolt_verifier::{
-    config::{validate_proof_config, JoltProtocolConfig},
+    config::{validate_proof_config, JOLT_VERIFIER_CONFIG},
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -205,17 +205,15 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let config = JoltProtocolConfig::for_zk(true);
-    validate_proof_config(&config, proof)?;
+    validate_proof_config(&JOLT_VERIFIER_CONFIG, proof)?;
 
     let checked = validate_inputs(
         preprocessing,
         public_io,
         proof,
         trusted_advice_commitment.is_some(),
-        true,
     )?;
-    validate_proof_consistency(proof, true)?;
+    validate_proof_consistency(proof)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -273,7 +271,7 @@ where
         &stage4,
         &stage6,
     )?;
-    let stage8 = stage8::verify(
+    let stage8 = stage8::verify::<_, _, _, _, _, HomomorphicBatch<PCS>>(
         &checked,
         preprocessing,
         proof,

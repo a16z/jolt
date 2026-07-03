@@ -27,11 +27,11 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim,
-    ZkEvaluationClaim, ZkOpeningScheme,
+    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, EvaluationClaim,
+    VerifierOpeningClaim, ZkEvaluationClaim, ZkOpeningScheme,
 };
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Transcript};
 
 struct Stage8BatchEntry<'a, F: Field, C> {
     id: Stage8OpeningId,
@@ -47,10 +47,10 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     clippy::too_many_arguments,
     reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
 )]
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify<F, PCS, VC, T, ZkProof, B>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PCS::Proof>,
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
@@ -59,6 +59,14 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: Field,
+    // The homomorphism bounds below and the `Proof = PCS::Proof` pin serve
+    // only the ZK arm.
+    B: BatchOpeningScheme<
+        Field = F,
+        VerifierSetup = PCS::VerifierSetup,
+        Proof = PCS::Proof,
+        Statement = Vec<VerifierOpeningClaim<F, PCS::Output>>,
+    >,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
@@ -176,49 +184,20 @@ where
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    transcript.append(&LabelWithCount(b"rlc_claims", opening_claims.len() as u64));
-    for claim in &opening_claims {
-        claim.evaluation.value.append_to_transcript(transcript);
-    }
-    let gamma_powers = transcript.challenge_scalar_powers(opening_claims.len());
-
-    let joint_claim = gamma_powers
-        .iter()
-        .zip(&opening_claims)
-        .fold(PCS::Field::zero(), |claim, (gamma, opening)| {
-            claim + *gamma * opening.evaluation.value
-        });
-    let commitments = opening_claims
-        .iter()
-        .map(|claim| claim.commitment.clone())
-        .collect::<Vec<_>>();
-    let joint_commitment = PCS::combine(&commitments, &gamma_powers);
-    let constraint_coefficients = gamma_powers
-        .iter()
-        .zip(&entries)
-        .map(|(gamma, entry)| *gamma * entry.scale)
-        .collect::<Vec<_>>();
-
-    PCS::verify(
-        &joint_commitment,
-        pcs_opening_point.as_slice(),
-        joint_claim,
-        &proof.joint_opening_proof,
+    B::verify_batch(
         &preprocessing.pcs_setup,
+        opening_claims.clone(),
+        &proof.joint_opening_proof,
         transcript,
     )
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
-    EvaluationClaim::new(pcs_opening_point.clone(), joint_claim).append_to_transcript(transcript);
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
         opening_claims,
         opening_ids,
-        constraint_coefficients,
         pcs_opening_point,
-        joint_claim,
-        joint_commitment,
     }))
 }
 
@@ -229,9 +208,9 @@ where
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
-fn batch_entries<'a, F, PCS, VC, ZkProof>(
+fn batch_entries<'a, F, PCS, VC, ZkProof, JointOpeningProof>(
     preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    proof: &'a JoltProof<PCS, VC, ZkProof>,
+    proof: &'a JoltProof<PCS, VC, ZkProof, JointOpeningProof>,
     layout: JoltRaPolynomialLayout,
     trusted_advice_commitment: Option<&'a PCS::Output>,
     opening_point: &[F],

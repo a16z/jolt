@@ -104,27 +104,42 @@ Today the homomorphism assumption lives in three places:
 `HomomorphicBatch::{prove,verify}_batch` already internalizes (2)'s whole
 sequence behind `BatchOpeningScheme`. The change:
 
-- `JoltProof` and `verify` gain one type parameter
-  `B: BatchOpeningScheme<Field = F>` (default `HomomorphicBatch<PCS>` keeps
-  every existing call site compiling); `joint_opening_proof: PCS::Proof`
-  becomes `B::Proof`. The `HomomorphicCommitment` bound moves off the
-  top-level `verify` and into the `HomomorphicBatch` instantiation only.
+- There is no verifier-side mode trait (as built): the seam is
+  `jolt_openings::BatchOpeningScheme` itself. Stage 8 is generic over
+  `B: BatchOpeningScheme<…, Statement = Vec<VerifierOpeningClaim<…>>>` and
+  ends in `B::verify_batch`; entry points pin the strategy explicitly
+  (`stage8::verify::<…, HomomorphicBatch<PCS>>` — the packed entry point pins
+  the packed strategy in phase B). `JoltProof` carries the batch proof as a
+  plain defaulted type parameter (`JointOpeningProof = PCS::Proof`), so
+  stages 1–7 and the proof model stay free of capability bounds
+  (`AdditivelyHomomorphic`/`HomomorphicCommitment` live on the
+  `HomomorphicBatch` impl in jolt-openings). `config.rs` keeps only the
+  runtime axes (`JoltProtocolConfig`: zk × commitment). Both axes are
+  compile-time: `verify` takes no mode parameter — the build's `zk` feature
+  fixes `JOLT_VERIFIER_CONFIG`, and a proof self-describing another config is
+  rejected fail-closed.
 - Stage 8 keeps its existing claim/scale/point assembly (that part is
-  protocol geometry, not homomorphism) and ends in `B::verify_batch` with
-  `Vec<VerifierOpeningClaim>` instead of the inline RLC.
-- The prover calls `B::prove_batch`. Constraint: the current prover streams
-  the RLC (it regenerates bytecode-derived polynomials on the fly and never
-  materializes the joint polynomial), and that property is non-negotiable.
-  `HomomorphicBatch::Polynomials` is `Vec<&dyn MultilinearPoly>` combined
-  through the lazy `RlcSource`; where the prover's sources resist that shape,
-  **contorting `HomomorphicBatch` and the trait's GATs in jolt-openings is
-  the sanctioned move** — the trait exists to serve the production paths,
-  not the other way around. No per-PCS fork of the batch impl unless it
-  turns out strictly cleaner.
-- Transcript note: `HomomorphicBatch` absorbs a typed statement
-  (`VerifierRlcClaims`) where today's code appends a bare `rlc_claims` scalar
-  list. Prover and verifier switch in the same commit; old proofs do not
-  survive (none are stable artifacts yet).
+  protocol geometry, not homomorphism) and ends in `M::verify_final` with
+  `Vec<VerifierOpeningClaim>`; the inline RLC (absorb → powers → combine →
+  `PCS::verify`) is deleted, byte-identical transcript preserved
+  (`VerifierRlcClaims` absorption equals the old `rlc_claims` sequence).
+  `Stage8ClearOutput` sheds its unconsumed `joint_claim`/`joint_commitment`/
+  `constraint_coefficients` fields.
+- Prover side (as built): jolt-prover-legacy is a parallel trait world (its
+  own legacy `CommitmentScheme`), so the literal `B::prove_batch` call is not
+  meaningful there; instead the transcript-critical block (claims absorption
+  → `challenge_scalar_powers` → joint claim) is cut into
+  `zkvm/final_opening.rs::homomorphic_batch_challenges`, documented as the
+  prove half of the mode seam and required byte-identical to
+  `HomomorphicBatch::verify_batch`'s statement absorption. The streaming RLC
+  (regenerating bytecode-derived polynomials, never materializing the joint
+  polynomial) is untouched and non-negotiable. Phase B adds the packed prove
+  beside this seam; if unifying onto jolt-openings' trait ever pays,
+  **contorting `HomomorphicBatch` and the GATs is the sanctioned move**.
+- Transcript note (better than predicted): `VerifierRlcClaims`'s absorption
+  is byte-identical to the old `rlc_claims` sequence, so phase A changes the
+  transcript not at all — existing proofs keep verifying, which is why the
+  swap could land verifier-first against unchanged prover output.
 - ZK mode: the clear path moves to `B::verify_batch`; the BlindFold final
   opening **may** move to `B::verify_batch_zk` (`ZkBatchOpeningScheme`) for
   uniformity — stage 8 then has exactly two flavors, clear and zk, both
@@ -133,9 +148,11 @@ sequence behind `BatchOpeningScheme`. The change:
   fail-closed rejection, so the migration only ever exercises the Dory path
   the `host,zk` gate covers.
 
-Acceptance for phase A: `muldiv` e2e green in `host` and `host,zk`; no
-`HomomorphicCommitment` bound anywhere outside the `HomomorphicBatch`
-instantiation.
+Acceptance for phase A: `muldiv` e2e green in `host` and `host,zk`, plus the
+jolt-verifier soundness/tampering suite against real prover proofs. The
+clear final opening carries no homomorphism requirement of its own — those
+bounds survive only in `HomomorphicBatch`'s jolt-openings impl and stage 8's
+(homomorphic-only) ZK arm, which the packed mode never reaches.
 
 ### Phase B — config and gating (`dory` and `akita` as equals)
 
@@ -210,9 +227,12 @@ IdentityAtAddress}` (eq/identity MLEs at bound address points).
 
 ### Phase B — packed stage 8
 
-`stage8` grows a mode seam: one small trait (working name
-`FinalOpeningBatch`), two impls, chosen by the same `B` type parameter phase A
-introduced:
+Stage 8 already dispatches through `BatchOpeningScheme` (phase A); the packed
+path is a second impl chosen by the same `B` type parameter. Two enabling
+changes: the zk arm (Dory/BlindFold-only) moves out of the shared stage-8 fn
+into the homomorphic entry point's path, so the shared core drops its
+`AdditivelyHomomorphic`/`ZkOpeningScheme` bounds; and the statement type goes
+with `B` (`B::Statement`):
 
 - `HomomorphicBatch<PCS>`: today's path — unified point, embedding scales,
   `Vec<VerifierOpeningClaim>`.

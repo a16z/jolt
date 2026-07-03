@@ -18,10 +18,7 @@ impl From<JoltOpeningId> for Stage8OpeningId {
 pub struct Stage8ClearOutput<F: Field, C> {
     pub opening_claims: Vec<VerifierOpeningClaim<F, C>>,
     pub opening_ids: Vec<Stage8OpeningId>,
-    pub constraint_coefficients: Vec<F>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
-    pub joint_claim: F,
-    pub joint_commitment: C,
 }
 
 #[derive(Clone, Debug)]

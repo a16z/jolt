@@ -10,7 +10,7 @@ use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::JoltProtocolConfig,
+    config::{CommitmentConfig, JoltProtocolConfig, ZkConfig},
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
@@ -21,13 +21,14 @@ use crate::{
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "PCS::Field: Serialize, ZkProof: Serialize",
-    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
+    serialize = "PCS::Field: Serialize, ZkProof: Serialize, JointOpeningProof: Serialize",
+    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned, JointOpeningProof: serde::de::DeserializeOwned"
 ))]
 pub struct JoltProof<
     PCS,
     VC,
     ZkProof = BlindFoldProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
+    JointOpeningProof = <PCS as CommitmentScheme>::Proof,
 > where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -35,7 +36,7 @@ pub struct JoltProof<
     pub protocol: JoltProtocolConfig,
     pub commitments: JoltCommitments<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
-    pub joint_opening_proof: PCS::Proof,
+    pub joint_opening_proof: JointOpeningProof,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
@@ -45,7 +46,7 @@ pub struct JoltProof<
     pub trace_polynomial_order: TracePolynomialOrder,
 }
 
-impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+impl<PCS, VC, ZkProof, JointOpeningProof> JoltProof<PCS, VC, ZkProof, JointOpeningProof>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -57,7 +58,7 @@ where
     pub fn new(
         commitments: JoltCommitments<PCS::Output>,
         stages: JoltStageProofs<PCS::Field, VC>,
-        joint_opening_proof: PCS::Proof,
+        joint_opening_proof: JointOpeningProof,
         untrusted_advice_commitment: Option<PCS::Output>,
         claims: JoltProofClaims<PCS::Field, ZkProof>,
         trace_length: usize,
@@ -66,7 +67,10 @@ where
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
     ) -> Self {
-        let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
+        let protocol = JoltProtocolConfig {
+            zk: claims.zk_config(),
+            commitment: CommitmentConfig::Homomorphic,
+        };
         Self {
             protocol,
             commitments,
@@ -154,6 +158,13 @@ where
 {
     pub const fn is_zk(&self) -> bool {
         matches!(self, Self::Zk { .. })
+    }
+
+    pub const fn zk_config(&self) -> ZkConfig {
+        match self {
+            Self::Clear(_) => ZkConfig::Transparent,
+            Self::Zk { .. } => ZkConfig::BlindFold,
+        }
     }
 }
 
