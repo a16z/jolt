@@ -19,17 +19,10 @@ use jolt_riscv::CircuitFlags;
 use jolt_verifier::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
     stages::{
-        stage1::outputs::Stage1BatchOutputClaims,
-        stage2::outputs::Stage2BatchOutputClaims,
-        stage3::outputs::Stage3OutputClaims,
-        stage4::Stage4OutputClaims,
-        stage5::Stage5OutputClaims,
-        stage6a::outputs::Stage6aOutputClaims,
-        stage6b::outputs::{
-            Stage6bOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
-            UntrustedAdviceCyclePhaseOutputClaims,
-        },
-        stage7::outputs::Stage7OutputClaims,
+        stage1::outputs::Stage1BatchOutputClaims, stage2::outputs::Stage2BatchOutputClaims,
+        stage3::outputs::Stage3OutputClaims, stage4::Stage4OutputClaims,
+        stage5::Stage5OutputClaims, stage6a::outputs::Stage6aOutputClaims,
+        stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims,
     },
 };
 
