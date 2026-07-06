@@ -32,6 +32,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/hamming_booleanity.cu"),
     include_str!("cuda/core_booleanity_cycle.cu"),
     include_str!("cuda/core_booleanity_address.cu"),
+    include_str!("cuda/sparse_register.cu"),
     include_str!("cuda/ra_virtual_d4.cu"),
     include_str!("cuda/reduce.cu"),
 );
@@ -92,6 +93,7 @@ pub struct CudaKernelContext {
     ra_virtual_d4_pairs: CudaFunction,
     core_booleanity_cycle_pairs: CudaFunction,
     core_booleanity_address_pairs: CudaFunction,
+    sparse_register_round_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -373,6 +375,21 @@ pub struct CoreBooleanityAddressInputs<'a> {
     pub m: u32,
 }
 
+pub struct SparseRegisterRoundInputs<'a> {
+    pub val: &'a DeviceFrVec,
+    pub read_ra: &'a DeviceFrVec,
+    pub rd_wa: &'a DeviceFrVec,
+    pub prev_val: &'a DeviceFrVec,
+    pub next_val: &'a DeviceFrVec,
+    pub even_idx: &'a [i32],
+    pub odd_idx: &'a [i32],
+    pub pair: &'a [u32],
+    pub rd_inc: &'a DeviceFrVec,
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+    pub in_pairs: u32,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -420,6 +437,8 @@ impl CudaKernelContext {
             core_booleanity_cycle_pairs: module.load_function("core_booleanity_cycle_pairs")?,
             core_booleanity_address_pairs: module
                 .load_function("core_booleanity_address_pairs")?,
+            sparse_register_round_pairs: module
+                .load_function("sparse_register_round_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -996,6 +1015,88 @@ impl CudaKernelContext {
             let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
             // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block`
             // blocks; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok([
+            limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]),
+            limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]),
+        ])
+    }
+
+    pub fn sparse_register_round_poly(
+        &self,
+        inputs: SparseRegisterRoundInputs<'_>,
+    ) -> Result<[Fr; 2], CudaError> {
+        use num_traits::Zero;
+        let items = inputs.even_idx.len();
+        assert_eq!(inputs.odd_idx.len(), items, "even/odd work-item lists must match");
+        assert_eq!(inputs.pair.len(), items, "pair list must match work-item count");
+        if items == 0 {
+            return Ok([Fr::zero(); 2]);
+        }
+
+        let even_dev = self.stream.clone_htod(inputs.even_idx)?;
+        let odd_dev = self.stream.clone_htod(inputs.odd_idx)?;
+        let pair_dev = self.stream.clone_htod(inputs.pair)?;
+
+        const WIDTH: usize = 2;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (items as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let in_pairs_arg = inputs.in_pairs;
+        let items_arg = items as u64;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.sparse_register_round_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.val.buf)
+            .arg(&inputs.read_ra.buf)
+            .arg(&inputs.rd_wa.buf)
+            .arg(&inputs.prev_val.buf)
+            .arg(&inputs.next_val.buf)
+            .arg(&even_dev)
+            .arg(&odd_dev)
+            .arg(&pair_dev)
+            .arg(&inputs.rd_inc.buf)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&in_pairs_arg)
+            .arg(&items_arg);
+        // SAFETY: one thread per merged-column work-item reads its even/odd entry (or -1
+        // for absent) from the entry SoA, the per-pair rd_inc[2*pair]/[2*pair+1] and the
+        // e_in/e_out weight, writing one 2-lane tuple per block; shared memory holds
+        // `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block` blocks;
+            // shared memory holds `block` tuples.
             let _ = unsafe { launch.launch(cfg) }?;
             buf = out;
             len = out_blocks as usize;
@@ -3119,6 +3220,178 @@ mod tests {
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                     m: m as u32,
+                })
+                .unwrap();
+            prop_assert_eq!(got.to_vec(), expected.to_vec());
+        }
+
+        #[test]
+        #[ignore = "stub kernel; body not yet implemented"]
+        fn sparse_register_round_poly_matches_cpu(
+            log_pairs in 1usize..6,
+            high_round in proptest::bool::ANY,
+            s1 in 1usize..7,
+            s2 in 1usize..7,
+            seed in fr_strategy(),
+        ) {
+            use jolt_field::FieldAccumulator;
+
+            const COLS: usize = 4;
+            let num_pairs = 1usize << log_pairs;
+
+            let (e_in, e_out, in_pairs): (Vec<Fr>, Vec<Fr>, u32) = if high_round {
+                let e_in = vec![seed + Fr::from_u64(3)];
+                let e_out: Vec<Fr> = (0..2 * num_pairs)
+                    .map(|i| seed + Fr::from_u64((i + 11) as u64))
+                    .collect();
+                (e_in, e_out, 0)
+            } else {
+                let in_pairs = 1usize << (log_pairs / 2);
+                let out_len = num_pairs / in_pairs;
+                let e_in: Vec<Fr> = (0..2 * in_pairs)
+                    .map(|i| seed + Fr::from_u64((i + 5) as u64))
+                    .collect();
+                let e_out: Vec<Fr> = (0..out_len)
+                    .map(|i| seed + Fr::from_u64((i + 23) as u64))
+                    .collect();
+                (e_in, e_out, in_pairs as u32)
+            };
+
+            let mut val = Vec::new();
+            let mut read_ra = Vec::new();
+            let mut rd_wa = Vec::new();
+            let mut prev_val = Vec::new();
+            let mut next_val = Vec::new();
+            let mut even_idx: Vec<i32> = Vec::new();
+            let mut odd_idx: Vec<i32> = Vec::new();
+            let mut pair_arr: Vec<u32> = Vec::new();
+
+            for p in 0..num_pairs {
+                let mut even_map = [-1i32; COLS];
+                let mut odd_map = [-1i32; COLS];
+                for c in 0..COLS {
+                    if (p * 7 + c * 13 + s1) % 3 != 0 {
+                        let g = val.len();
+                        val.push(seed + Fr::from_u64((g + 1) as u64));
+                        read_ra.push(seed + Fr::from_u64((g + 100) as u64));
+                        rd_wa.push(seed + Fr::from_u64((g + 200) as u64));
+                        prev_val.push(Fr::from_u64((g + 7) as u64));
+                        next_val.push(Fr::from_u64((g + 9) as u64));
+                        even_map[c] = g as i32;
+                    }
+                    if (p * 11 + c * 5 + s2) % 3 != 0 {
+                        let g = val.len();
+                        val.push(seed + Fr::from_u64((g + 1) as u64));
+                        read_ra.push(seed + Fr::from_u64((g + 100) as u64));
+                        rd_wa.push(seed + Fr::from_u64((g + 200) as u64));
+                        prev_val.push(Fr::from_u64((g + 7) as u64));
+                        next_val.push(Fr::from_u64((g + 9) as u64));
+                        odd_map[c] = g as i32;
+                    }
+                }
+                for c in 0..COLS {
+                    if even_map[c] >= 0 || odd_map[c] >= 0 {
+                        even_idx.push(even_map[c]);
+                        odd_idx.push(odd_map[c]);
+                        pair_arr.push(p as u32);
+                    }
+                }
+            }
+
+            let rd_inc: Vec<Fr> = (0..2 * num_pairs)
+                .map(|i| seed + Fr::from_u64((i + 301) as u64))
+                .collect();
+
+            type Acc = <Fr as Field>::Accumulator;
+            let mut acc = [Acc::default(); 2];
+            for item in 0..even_idx.len() {
+                let p = pair_arr[item] as usize;
+                let ei = even_idx[item];
+                let oi = odd_idx[item];
+                let (v0, vd, r0, rd, w0, wd) = match (ei >= 0, oi >= 0) {
+                    (true, true) => {
+                        let e = ei as usize;
+                        let o = oi as usize;
+                        (
+                            val[e],
+                            val[o] - val[e],
+                            read_ra[e],
+                            read_ra[o] - read_ra[e],
+                            rd_wa[e],
+                            rd_wa[o] - rd_wa[e],
+                        )
+                    }
+                    (true, false) => {
+                        let e = ei as usize;
+                        (
+                            val[e],
+                            next_val[e] - val[e],
+                            read_ra[e],
+                            -read_ra[e],
+                            rd_wa[e],
+                            -rd_wa[e],
+                        )
+                    }
+                    (false, true) => {
+                        let o = oi as usize;
+                        (
+                            prev_val[o],
+                            val[o] - prev_val[o],
+                            Fr::from_u64(0),
+                            read_ra[o],
+                            Fr::from_u64(0),
+                            rd_wa[o],
+                        )
+                    }
+                    (false, false) => (
+                        Fr::from_u64(0),
+                        Fr::from_u64(0),
+                        Fr::from_u64(0),
+                        Fr::from_u64(0),
+                        Fr::from_u64(0),
+                        Fr::from_u64(0),
+                    ),
+                };
+                let inc0 = rd_inc[2 * p];
+                let inc_delta = rd_inc[2 * p + 1] - rd_inc[2 * p];
+                let body0 = w0 * (v0 + inc0) + r0 * v0;
+                let body2 = wd * (vd + inc_delta) + rd * vd;
+                let weight = if in_pairs == 0 {
+                    e_in[0] * (e_out[2 * p] + e_out[2 * p + 1])
+                } else {
+                    let ip = in_pairs as usize;
+                    let x_out = p / ip;
+                    let x_in = p % ip;
+                    e_out[x_out] * (e_in[2 * x_in] + e_in[2 * x_in + 1])
+                };
+                acc[0].fmadd(weight, body0);
+                acc[1].fmadd(weight, body2);
+            }
+            let expected = [acc[0].reduce(), acc[1].reduce()];
+
+            let c = ctx();
+            let val_dev = c.upload(&val).unwrap();
+            let read_ra_dev = c.upload(&read_ra).unwrap();
+            let rd_wa_dev = c.upload(&rd_wa).unwrap();
+            let prev_dev = c.upload(&prev_val).unwrap();
+            let next_dev = c.upload(&next_val).unwrap();
+            let rd_inc_dev = c.upload(&rd_inc).unwrap();
+            let e_in_dev = c.upload(&e_in).unwrap();
+            let e_out_dev = c.upload(&e_out).unwrap();
+            let got = c
+                .sparse_register_round_poly(SparseRegisterRoundInputs {
+                    val: &val_dev,
+                    read_ra: &read_ra_dev,
+                    rd_wa: &rd_wa_dev,
+                    prev_val: &prev_dev,
+                    next_val: &next_dev,
+                    even_idx: &even_idx,
+                    odd_idx: &odd_idx,
+                    pair: &pair_arr,
+                    rd_inc: &rd_inc_dev,
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                    in_pairs,
                 })
                 .unwrap();
             prop_assert_eq!(got.to_vec(), expected.to_vec());
