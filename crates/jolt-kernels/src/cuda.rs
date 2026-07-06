@@ -33,6 +33,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/core_booleanity_cycle.cu"),
     include_str!("cuda/core_booleanity_address.cu"),
     include_str!("cuda/sparse_register.cu"),
+    include_str!("cuda/instruction_raf_cycle.cu"),
     include_str!("cuda/ra_virtual_d4.cu"),
     include_str!("cuda/reduce.cu"),
 );
@@ -95,6 +96,7 @@ pub struct CudaKernelContext {
     core_booleanity_address_pairs: CudaFunction,
     sparse_register_round_pairs: CudaFunction,
     sparse_register_bind_kernel: CudaFunction,
+    instruction_raf_cycle_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -410,6 +412,13 @@ pub struct SparseRegisterEntries {
     pub next_val: DeviceFrVec,
 }
 
+pub struct InstructionRafCycleInputs<'a> {
+    pub combined: &'a DeviceFrVec,
+    pub chunks: &'a [&'a DeviceFrVec],
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -461,6 +470,8 @@ impl CudaKernelContext {
                 .load_function("sparse_register_round_pairs")?,
             sparse_register_bind_kernel: module
                 .load_function("sparse_register_bind")?,
+            instruction_raf_cycle_pairs: module
+                .load_function("instruction_raf_cycle_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -1192,6 +1203,102 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
         Ok(SparseRegisterEntries { val, read_ra, rd_wa, prev_val, next_val })
+    }
+
+    pub fn instruction_raf_cycle_round_poly(
+        &self,
+        inputs: InstructionRafCycleInputs<'_>,
+    ) -> Result<[Fr; 9], CudaError> {
+        use num_traits::Zero;
+        assert_eq!(inputs.chunks.len(), 8, "instruction raf cycle needs 8 ra chunks");
+        let half = inputs.combined.len() / 2;
+        for chunk in inputs.chunks {
+            assert_eq!(chunk.len(), half * 2, "instruction raf chunks must match combined length");
+        }
+        assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
+        assert_eq!(
+            inputs.e_in.len() * inputs.e_out.len(),
+            half,
+            "e_in * e_out must equal the row count"
+        );
+        if half == 0 {
+            return Ok([Fr::zero(); 9]);
+        }
+        let in_bits = inputs.e_in.len().trailing_zeros();
+
+        // Pack combined (factor 0) followed by the 8 ra chunks (factors 1..9).
+        let mut packed: CudaSlice<u64> = self.stream.alloc_zeros(9 * half * 2 * LIMBS)?;
+        self.stream.memcpy_dtod(
+            &inputs.combined.buf.slice(0..half * 2 * LIMBS),
+            &mut packed.slice_mut(0..half * 2 * LIMBS),
+        )?;
+        for (index, chunk) in inputs.chunks.iter().enumerate() {
+            let offset = (index + 1) * half * 2 * LIMBS;
+            self.stream.memcpy_dtod(
+                &chunk.buf.slice(0..half * 2 * LIMBS),
+                &mut packed.slice_mut(offset..offset + half * 2 * LIMBS),
+            )?;
+        }
+
+        const WIDTH: usize = 9;
+        let tuple = WIDTH * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (half as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let pair_stride_arg = half as u64;
+        let half_arg = half as u64;
+        let in_bits_arg = in_bits;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.instruction_raf_cycle_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&packed)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&pair_stride_arg)
+            .arg(&half_arg)
+            .arg(&in_bits_arg);
+        // SAFETY: one thread per row reads its pair from the 9 packed factors (combined +
+        // 8 ra chunks) and the e_in[row & mask] / e_out[row >> in_bits] weights, building
+        // the 9 degree-product evals in a thread-local buffer; shared memory holds `block`
+        // 9-lane tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 9-lane tuples across up to `block` blocks;
+            // shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok(std::array::from_fn(|e| {
+            limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]])
+        }))
     }
 
     pub fn hamming_booleanity_round_poly(
@@ -3588,6 +3695,81 @@ mod tests {
             prop_assert_eq!(entries.rd_wa.to_host().unwrap(), e_wa);
             prop_assert_eq!(entries.prev_val.to_host().unwrap(), e_prev);
             prop_assert_eq!(entries.next_val.to_host().unwrap(), e_next);
+        }
+
+        #[test]
+        #[ignore = "stub kernel; body not yet implemented"]
+        fn instruction_raf_cycle_round_poly_matches_cpu(
+            num_vars in 1usize..9,
+            point_seed in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            use crate::stage5::eval_product_9;
+            use jolt_field::FieldAccumulator;
+            use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+            let len = 1usize << num_vars;
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| point_seed + Fr::from_u64(i as u64))
+                .collect();
+            let combined: Vec<Fr> = (0..len)
+                .map(|j| seed + Fr::from_u64((j + 1) as u64))
+                .collect();
+            let chunks: Vec<Vec<Fr>> = (0..8)
+                .map(|c| {
+                    (0..len)
+                        .map(|j| seed + Fr::from_u64((c * len + j + 17) as u64))
+                        .collect()
+                })
+                .collect();
+
+            let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+            let e_in = split_eq.e_in_current();
+            let e_out = split_eq.e_out_current();
+            let in_bits = e_in.len().trailing_zeros() as usize;
+
+            type Acc = <Fr as Field>::Accumulator;
+            let mut outer = [Acc::default(); 9];
+            for (x_out, &eo) in e_out.iter().enumerate() {
+                let mut inner = [Acc::default(); 9];
+                let base = x_out << in_bits;
+                for (x_in, &ei) in e_in.iter().enumerate() {
+                    let group = base | x_in;
+                    let pairs: [(Fr, Fr); 9] = std::array::from_fn(|index| {
+                        if index == 0 {
+                            (combined[2 * group] * ei, combined[2 * group + 1] * ei)
+                        } else {
+                            let c = &chunks[index - 1];
+                            (c[2 * group], c[2 * group + 1])
+                        }
+                    });
+                    let evals = eval_product_9(&pairs);
+                    for (acc, eval) in inner.iter_mut().zip(evals) {
+                        acc.acc_add(eval);
+                    }
+                }
+                for (outer, inner) in outer.iter_mut().zip(inner) {
+                    outer.fmadd(eo, inner.reduce());
+                }
+            }
+            let expected: Vec<Fr> = outer.into_iter().map(|acc| acc.reduce()).collect();
+
+            let c = ctx();
+            let combined_dev = c.upload(&combined).unwrap();
+            let chunk_devs: Vec<DeviceFrVec> =
+                chunks.iter().map(|v| c.upload(v).unwrap()).collect();
+            let chunk_refs: Vec<&DeviceFrVec> = chunk_devs.iter().collect();
+            let e_in_dev = c.upload(e_in).unwrap();
+            let e_out_dev = c.upload(e_out).unwrap();
+            let got = c
+                .instruction_raf_cycle_round_poly(InstructionRafCycleInputs {
+                    combined: &combined_dev,
+                    chunks: &chunk_refs,
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                })
+                .unwrap();
+            prop_assert_eq!(got.to_vec(), expected);
         }
 
         #[test]

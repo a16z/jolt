@@ -3175,7 +3175,7 @@ fn instruction_read_raf_lookup_chunk(lookup_index: u128, chunk: usize, chunk_bit
 }
 
 #[inline(always)]
-fn eval_product_9<F: Field>(pairs: &[(F, F); 9]) -> [F; 9] {
+pub(crate) fn eval_product_9<F: Field>(pairs: &[(F, F); 9]) -> [F; 9] {
     let first = [
         pairs[0], pairs[1], pairs[2], pairs[3], pairs[4], pairs[5], pairs[6], pairs[7],
     ];
