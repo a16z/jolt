@@ -9,11 +9,16 @@
     reason = "kernel constructors mirror generated staged protocol inputs"
 )]
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
+#[cfg(feature = "cuda")]
+use jolt_field::Fr;
 use jolt_field::{Field, FieldAccumulator, FieldScalarAccumulator};
 use jolt_lookup_tables::{
     tables::{
@@ -1146,9 +1151,23 @@ where
                 claim = claim.symbol
             )
             .entered();
-            Stage5ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage5ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         } else {
-            Stage5ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage5ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         };
         let init_nanos = init_start.map_or(0, |start| start.elapsed().as_nanos());
         instances.push(Stage5BatchedInstance {
@@ -1382,6 +1401,7 @@ impl<F: Field> Stage5ProverInstanceState<F> {
         inputs: &Stage5ProverInputs<'_, F>,
         store: &Stage5ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage5KernelError> {
         match claim_relation(program, claim)? {
             Stage5Relation::InstructionReadRaf => {
@@ -1389,10 +1409,12 @@ impl<F: Field> Stage5ProverInstanceState<F> {
                     .map(Self::InstructionReadRaf)
             }
             Stage5Relation::RegistersValEvaluation => {
-                registers_val_evaluation_state(claim, inputs, store, active_scale).map(Self::Dense)
+                registers_val_evaluation_state(claim, inputs, store, active_scale, backend)
+                    .map(Self::Dense)
             }
             Stage5Relation::RamRaClaimReduction => {
-                ram_ra_claim_reduction_state(claim, inputs, store, active_scale).map(Self::Dense)
+                ram_ra_claim_reduction_state(claim, inputs, store, active_scale, backend)
+                    .map(Self::Dense)
             }
             relation @ Stage5Relation::Batched => Err(Stage5KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
@@ -1435,6 +1457,8 @@ struct DenseStage5State<F: Field> {
     terms: Vec<DenseTerm<F>>,
     outputs: Vec<FactorOutput>,
     active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaDenseState>,
 }
 
 #[derive(Clone)]
@@ -1448,6 +1472,49 @@ struct FactorOutput {
     name: &'static str,
     oracle: &'static str,
     factor: usize,
+}
+
+#[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_dense_state<F: Field>(
+    factors: &[Vec<F>],
+    terms: &[DenseTerm<F>],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let degree = terms.iter().map(|term| term.factors.len()).max()?;
+    if degree == 0 {
+        return None;
+    }
+    let fr_factors: Vec<Vec<Fr>> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .collect::<Option<_>>()?;
+    let mut term_coeffs = Vec::with_capacity(terms.len());
+    let mut term_factor_offsets = vec![0u32];
+    let mut term_factor_indices = Vec::new();
+    for term in terms {
+        term_coeffs.push(crate::cuda::into_fr(term.coefficient)?);
+        for &factor in &term.factors {
+            term_factor_indices.push(factor as u32);
+        }
+        term_factor_offsets.push(term_factor_indices.len() as u32);
+    }
+    let active_scale = crate::cuda::into_fr(active_scale)?;
+    cuda::CudaDenseState::new(
+        &fr_factors,
+        term_coeffs,
+        term_factor_offsets,
+        term_factor_indices,
+        degree,
+        active_scale,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -1552,19 +1619,30 @@ enum InstructionReadRafCycleRaFactors<F: Field> {
 }
 
 impl<F: Field> DenseStage5State<F> {
-    fn new(
+    fn new_with_backend(
         factors: Vec<Vec<F>>,
         terms: Vec<DenseTerm<F>>,
         outputs: Vec<FactorOutput>,
         active_scale: F,
+        backend: &'static str,
     ) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_dense_state(&factors, &terms, active_scale)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Self {
             factors,
             factor_scratch,
             terms,
             outputs,
             active_scale,
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
@@ -1586,6 +1664,20 @@ impl<F: Field> DenseStage5State<F> {
                 reason: "stage5 dense factors have inconsistent lengths",
             });
         }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage5 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
         let poly =
             round_poly_from_dense_terms(&self.factors, &self.terms, self.active_scale, relation)?;
         check_round_claim(
@@ -1598,6 +1690,14 @@ impl<F: Field> DenseStage5State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.factors.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
             self.factors
                 .par_iter_mut()
@@ -1613,6 +1713,14 @@ impl<F: Field> DenseStage5State<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage5Relation) -> Result<F, Stage5KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -3466,6 +3574,7 @@ fn ram_ra_claim_reduction_state<F: Field>(
     inputs: &Stage5ProverInputs<'_, F>,
     store: &Stage5ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<DenseStage5State<F>, Stage5KernelError> {
     let witness = inputs.ram_ra.ok_or(Stage5KernelError::MissingKernelInput {
         kernel: "jolt_stage5_batched",
@@ -3510,7 +3619,7 @@ fn ram_ra_claim_reduction_state<F: Field>(
         *combined += gamma * rw + gamma2 * val;
     }
 
-    Ok(DenseStage5State::new(
+    Ok(DenseStage5State::new_with_backend(
         vec![eq_combined, ram_ra],
         vec![DenseTerm {
             coefficient: F::one(),
@@ -3522,6 +3631,7 @@ fn ram_ra_claim_reduction_state<F: Field>(
             factor: 1,
         }],
         active_scale,
+        backend,
     ))
 }
 
@@ -3586,6 +3696,7 @@ fn registers_val_evaluation_state<F: Field>(
     inputs: &Stage5ProverInputs<'_, F>,
     store: &Stage5ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<DenseStage5State<F>, Stage5KernelError> {
     let witness = inputs
         .registers_val
@@ -3622,7 +3733,7 @@ fn registers_val_evaluation_state<F: Field>(
         lt.len(),
     )?;
 
-    Ok(DenseStage5State::new(
+    Ok(DenseStage5State::new_with_backend(
         vec![witness.rd_inc.to_vec(), rd_wa_at_address, lt],
         vec![DenseTerm {
             coefficient: F::one(),
@@ -3641,6 +3752,7 @@ fn registers_val_evaluation_state<F: Field>(
             },
         ],
         active_scale,
+        backend,
     ))
 }
 
