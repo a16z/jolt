@@ -3456,6 +3456,17 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     }
 
     fn cycle_round_poly(&self, previous_claim: F) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(q) = cuda.round_poly_q(self.d.e_in_current(), self.d.e_out_current()) {
+                if let (Some(q0), Some(q1)) =
+                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
+                {
+                    let adjusted_claim = previous_claim * self.eq_r_r_inv;
+                    return Ok(self.d.gruen_poly_deg_3(q0, q1, adjusted_claim) * self.eq_r_r);
+                }
+            }
+        }
         let h = self.h.as_ref().ok_or(Stage6KernelError::InvalidProof {
             driver: Stage6Relation::Booleanity.symbol(),
             reason: "booleanity cycle state is missing",
@@ -3510,17 +3521,6 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         previous_claim: F,
         h: &[Vec<F>],
     ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
-        #[cfg(feature = "cuda")]
-        if let Some(cuda) = &self.cuda {
-            if let Some(q) = cuda.round_poly_q(self.d.e_in_current(), self.d.e_out_current()) {
-                if let (Some(q0), Some(q1)) =
-                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
-                {
-                    let adjusted_claim = previous_claim * self.eq_r_r_inv;
-                    return Ok(self.d.gruen_poly_deg_3(q0, q1, adjusted_claim) * self.eq_r_r);
-                }
-            }
-        }
         let e_out = self.d.e_out_current();
         let e_in = self.d.e_in_current();
         let in_bits = e_in.len().trailing_zeros() as usize;
@@ -3587,6 +3587,8 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
                     .collect::<Vec<_>>();
                 let indices = std::mem::replace(&mut self.indices, Cow::Borrowed(&[]));
                 self.h = Some(CoreBooleanityHState::new(tables, indices));
+                #[cfg(feature = "cuda")]
+                self.maybe_build_cuda();
             }
         } else {
             self.d.bind(challenge);
@@ -3604,8 +3606,6 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             if let Some(h) = &mut self.h {
                 h.bind(challenge);
             }
-            #[cfg(feature = "cuda")]
-            self.maybe_build_cuda();
         }
     }
 
@@ -3614,9 +3614,19 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         if self.backend != "cuda" || self.cuda.is_some() {
             return;
         }
-        if let Some(CoreBooleanityHState::RoundN { h, .. }) = self.h.as_ref() {
-            self.cuda = cuda::CudaCoreBooleanityState::new(h, &self.gamma_powers[..self.num_polys]);
-        }
+        let Some(h_state) = self.h.as_ref() else {
+            return;
+        };
+        let rows = match h_state {
+            CoreBooleanityHState::Round1 { indices, .. } => indices.len(),
+            _ => return,
+        };
+        let dense: Vec<Vec<F>> = (0..self.num_polys)
+            .into_par_iter()
+            .map(|index| (0..rows).map(|j| h_state.get_bound_coeff(index, j)).collect())
+            .collect();
+        self.cuda =
+            cuda::CudaCoreBooleanityState::new(&dense, &self.gamma_powers[..self.num_polys]);
     }
 
     fn factor_eval(&self, index: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
