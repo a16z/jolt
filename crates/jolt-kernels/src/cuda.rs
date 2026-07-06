@@ -3698,7 +3698,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "stub kernel; body not yet implemented"]
         fn instruction_raf_cycle_round_poly_matches_cpu(
             num_vars in 1usize..9,
             point_seed in fr_strategy(),

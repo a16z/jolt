@@ -1405,7 +1405,7 @@ impl<F: Field> Stage5ProverInstanceState<F> {
     ) -> Result<Self, Stage5KernelError> {
         match claim_relation(program, claim)? {
             Stage5Relation::InstructionReadRaf => {
-                instruction_read_raf_state(program, claim, inputs, store, active_scale)
+                instruction_read_raf_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::InstructionReadRaf)
             }
             Stage5Relation::RegistersValEvaluation => {
@@ -1556,6 +1556,8 @@ struct InstructionReadRafStage5State<F: Field> {
     read_prefix_checkpoints: Vec<PrefixEval<F>>,
     cycle_state: Option<InstructionReadRafCycleState<F>>,
     outputs: Vec<InstructionReadRafOutputPlan>,
+    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
+    backend: &'static str,
 }
 
 struct InstructionReadRafLookupGroup<F: Field> {
@@ -1590,6 +1592,8 @@ struct InstructionReadRafCycleState<F: Field> {
     fixed_factor_scratch: Vec<Vec<F>>,
     ra_factors: InstructionReadRafCycleRaFactors<F>,
     split_eq: GruenSplitEqPolynomial<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaInstructionRafCycleState>,
 }
 
 enum InstructionReadRafCycleRaFactors<F: Field> {
@@ -2283,6 +2287,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             ra_factors,
             &self.r_reduction,
             Stage5Relation::InstructionReadRaf,
+            self.backend,
         )
     }
 
@@ -2594,6 +2599,7 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         ra_factors: InstructionReadRafCycleRaFactors<F>,
         r_reduction: &[F],
         relation: Stage5Relation,
+        backend: &'static str,
     ) -> Result<Self, Stage5KernelError> {
         let first_len = fixed_factors.first().map_or(0, Vec::len);
         if first_len == 0 || !first_len.is_power_of_two() {
@@ -2616,11 +2622,26 @@ impl<F: Field> InstructionReadRafCycleState<F> {
             r_reduction.len(),
         )?;
         let fixed_factor_scratch = (0..fixed_factors.len()).map(|_| Vec::new()).collect();
+        // The degree-9 cycle round poly uses fixed_factors[1] (combined) x 8 ra chunks.
+        // Only that shape is offloaded; ra_factors.len() must be 8.
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" && ra_factors.len() == 8 && fixed_factors.len() >= 2 {
+            cuda::CudaInstructionRafCycleState::new(
+                &fixed_factors[1],
+                &ra_factors.dense_chunk_vecs(),
+            )
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Ok(Self {
             fixed_factors,
             fixed_factor_scratch,
             ra_factors,
             split_eq: GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh),
+            #[cfg(feature = "cuda")]
+            cuda,
         })
     }
 
@@ -2630,6 +2651,27 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         active_scale: F,
         relation: Stage5Relation,
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(raw) =
+                cuda.round_poly_evals(self.split_eq.e_in_current(), self.split_eq.e_out_current())
+            {
+                let evals = raw
+                    .into_iter()
+                    .map(|value| crate::cuda::fr_into::<F>(value).map(|value| value * active_scale))
+                    .collect::<Option<Vec<F>>>();
+                if let Some(evals) = evals {
+                    let poly = self.split_eq.gruen_poly_from_evals(&evals, previous_claim);
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "instruction read raf cycle input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
         let evals = self.round_quotient_evals(active_scale);
         let poly = self.split_eq.gruen_poly_from_evals(&evals, previous_claim);
         check_round_claim(
@@ -2642,6 +2684,14 @@ impl<F: Field> InstructionReadRafCycleState<F> {
     }
 
     fn factor_eval(&self, index: usize) -> Option<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if index >= 2 {
+                if let Some(Ok(value)) = cuda.chunk_first(index - 2) {
+                    return crate::cuda::fr_into::<F>(value);
+                }
+            }
+        }
         match index {
             0 | 1 => self
                 .fixed_factors
@@ -2738,6 +2788,14 @@ impl<F: Field> InstructionReadRafCycleState<F> {
 
     fn bind(&mut self, challenge: F) {
         self.split_eq.bind(challenge);
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.fixed_factors.get(1).map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
             self.fixed_factors[1..]
                 .par_iter_mut()
@@ -2839,6 +2897,14 @@ impl<F: Field> InstructionReadRafCycleRaFactors<F> {
 
     fn factor_eval(&self, chunk: usize) -> Option<F> {
         (chunk < self.len()).then(|| self.get(chunk, 0))
+    }
+
+    #[cfg(feature = "cuda")]
+    fn dense_chunk_vecs(&self) -> Vec<Vec<F>> {
+        let len = self.current_len();
+        (0..self.len())
+            .map(|chunk| (0..len).map(|index| self.get(chunk, index)).collect())
+            .collect()
     }
 
     fn fill_eight_pairs(&self, row: usize, pairs: &mut [(F, F); 8]) {
@@ -3295,6 +3361,7 @@ fn instruction_read_raf_state<F: Field>(
     inputs: &Stage5ProverInputs<'_, F>,
     store: &Stage5ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<InstructionReadRafStage5State<F>, Stage5KernelError> {
     const LOG_K: usize = 128;
     const XLEN: usize = 64;
@@ -3402,6 +3469,7 @@ fn instruction_read_raf_state<F: Field>(
             .collect(),
         cycle_state: None,
         outputs,
+        backend,
     })
 }
 
