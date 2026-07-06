@@ -9,6 +9,9 @@
     reason = "kernel constructors mirror generated staged protocol inputs"
 )]
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::mem::MaybeUninit;
@@ -17,6 +20,8 @@ use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 use crate::split_eq::SplitEqState;
 use crate::stage2::Stage2RamAccess;
 use jolt_field::{Field, FieldAccumulator};
+#[cfg(feature = "cuda")]
+use jolt_field::Fr;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
@@ -1429,6 +1434,7 @@ where
                 inputs,
                 &store,
                 active_scale,
+                context.kernel.backend,
             )?,
         });
     }
@@ -1638,13 +1644,14 @@ impl<F: Field> Stage4ProverInstanceState<F> {
         inputs: &Stage4ProverInputs<'_, F>,
         store: &Stage4ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage4KernelError> {
         match claim_relation(program, claim)? {
             Stage4Relation::RegistersReadWrite => {
                 registers_read_write_state(claim, inputs, store, active_scale)
             }
             Stage4Relation::RamValCheck => {
-                ram_val_check_state(claim, inputs, store, active_scale).map(Self::Dense)
+                ram_val_check_state(claim, inputs, store, active_scale, backend).map(Self::Dense)
             }
             relation @ Stage4Relation::Batched => Err(Stage4KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
@@ -1681,13 +1688,14 @@ impl<F: Field> Stage4ProverInstanceState<F> {
     }
 }
 
-#[derive(Clone)]
 struct DenseStage4State<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
     terms: Vec<DenseTerm<F>>,
     outputs: Vec<FactorOutput>,
     active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaDenseState>,
 }
 
 #[derive(Clone)]
@@ -1703,6 +1711,49 @@ struct FactorOutput {
     factor: usize,
 }
 
+#[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_dense_state<F: Field>(
+    factors: &[Vec<F>],
+    terms: &[DenseTerm<F>],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let degree = terms.iter().map(|term| term.factors.len()).max()?;
+    if degree == 0 {
+        return None;
+    }
+    let fr_factors: Vec<Vec<Fr>> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .collect::<Option<_>>()?;
+    let mut term_coeffs = Vec::with_capacity(terms.len());
+    let mut term_factor_offsets = vec![0u32];
+    let mut term_factor_indices = Vec::new();
+    for term in terms {
+        term_coeffs.push(crate::cuda::into_fr(term.coefficient)?);
+        for &factor in &term.factors {
+            term_factor_indices.push(factor as u32);
+        }
+        term_factor_offsets.push(term_factor_indices.len() as u32);
+    }
+    let active_scale = crate::cuda::into_fr(active_scale)?;
+    cuda::CudaDenseState::new(
+        &fr_factors,
+        term_coeffs,
+        term_factor_offsets,
+        term_factor_indices,
+        degree,
+        active_scale,
+    )
+}
+
 impl<F: Field> DenseStage4State<F> {
     fn new(
         factors: Vec<Vec<F>>,
@@ -1710,13 +1761,33 @@ impl<F: Field> DenseStage4State<F> {
         outputs: Vec<FactorOutput>,
         active_scale: F,
     ) -> Self {
+        Self::new_with_backend(factors, terms, outputs, active_scale, "cpu")
+    }
+
+    fn new_with_backend(
+        factors: Vec<Vec<F>>,
+        terms: Vec<DenseTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+        backend: &'static str,
+    ) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_dense_state(&factors, &terms, active_scale)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Self {
             factors,
             factor_scratch,
             terms,
             outputs,
             active_scale,
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
@@ -1738,6 +1809,20 @@ impl<F: Field> DenseStage4State<F> {
                 reason: "stage4 dense factors have inconsistent lengths",
             });
         }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage4 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
         let poly =
             round_poly_from_dense_terms(&self.factors, &self.terms, self.active_scale, relation)?;
         check_round_claim(
@@ -1750,6 +1835,14 @@ impl<F: Field> DenseStage4State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.factors.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
             self.factors
                 .par_iter_mut()
@@ -1765,6 +1858,14 @@ impl<F: Field> DenseStage4State<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage4Relation) -> Result<F, Stage4KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -1792,7 +1893,6 @@ impl<F: Field> DenseStage4State<F> {
     }
 }
 
-#[derive(Clone)]
 struct SparseRegistersState<F: Field> {
     register_count: usize,
     trace_len: usize,
@@ -2921,6 +3021,7 @@ fn ram_val_check_state<F: Field>(
     inputs: &Stage4ProverInputs<'_, F>,
     store: &Stage4ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<DenseStage4State<F>, Stage4KernelError> {
     let witness = inputs.ram.ok_or(Stage4KernelError::MissingKernelInput {
         kernel: "jolt_stage4_batched",
@@ -2963,7 +3064,7 @@ fn ram_val_check_state<F: Field>(
         .par_iter_mut()
         .for_each(|value| *value += gamma);
 
-    Ok(DenseStage4State::new(
+    Ok(DenseStage4State::new_with_backend(
         vec![lt_plus_gamma, ram_ra_at_address, witness.ram_inc.to_vec()],
         vec![DenseTerm {
             coefficient: F::one(),
@@ -2982,6 +3083,7 @@ fn ram_val_check_state<F: Field>(
             },
         ],
         active_scale,
+        backend,
     ))
 }
 
