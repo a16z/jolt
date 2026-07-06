@@ -3036,7 +3036,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "stub kernel; body not yet implemented"]
         fn core_booleanity_address_round_poly_matches_cpu(
             log_k_chunk in 2usize..8,
             m_minus_1 in 0usize..6,

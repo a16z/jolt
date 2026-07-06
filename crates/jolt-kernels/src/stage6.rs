@@ -3298,6 +3298,8 @@ struct CoreBooleanityStage6State<'a, F: Field> {
     backend: &'static str,
     #[cfg(feature = "cuda")]
     cuda: Option<cuda::CudaCoreBooleanityState>,
+    #[cfg(feature = "cuda")]
+    cuda_address: Option<cuda::CudaCoreBooleanityAddressState>,
 }
 
 impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
@@ -3357,6 +3359,13 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         let mut f_table = ExpandingTable::new(chunk_domain, BindingOrder::LowToHigh);
         f_table.reset(F::one());
 
+        #[cfg(feature = "cuda")]
+        let cuda_address = if backend == "cuda" {
+            cuda::CudaCoreBooleanityAddressState::new(&g, &gamma_powers_square)
+        } else {
+            None
+        };
+
         Ok(Self {
             log_k_chunk,
             num_polys,
@@ -3377,6 +3386,8 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             backend,
             #[cfg(feature = "cuda")]
             cuda: None,
+            #[cfg(feature = "cuda")]
+            cuda_address,
         })
     }
 
@@ -3415,6 +3426,19 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
         let m = self.address_round + 1;
         let f_values = self.f_table.values();
+
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda_address {
+            if let Some(q) =
+                cuda.round_poly_q(f_values, self.b.e_in_current(), self.b.e_out_current(), m)
+            {
+                if let (Some(q0), Some(q1)) =
+                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
+                {
+                    return self.b.gruen_poly_deg_3(q0, q1, previous_claim);
+                }
+            }
+        }
 
         let quadratic_accs = self.b.fold_out_in(
             || [F::Accumulator::default(); 2],

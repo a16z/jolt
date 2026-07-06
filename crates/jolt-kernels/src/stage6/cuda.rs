@@ -1,8 +1,8 @@
 use jolt_field::{Field, Fr};
 
 use crate::cuda::{
-    CoreBooleanityCycleInputs, CudaError, DeviceFrVec, Gather8Inputs, HammingBooleanityInputs,
-    RaVirtualD4Inputs, RoundPolyTerms,
+    CoreBooleanityAddressInputs, CoreBooleanityCycleInputs, CudaError, DeviceFrVec, Gather8Inputs,
+    HammingBooleanityInputs, RaVirtualD4Inputs, RoundPolyTerms,
 };
 
 pub(crate) struct CudaBytecodeReadRafState {
@@ -262,6 +262,55 @@ impl CudaCoreBooleanityState {
 
     pub(crate) fn poly_first(&self, index: usize) -> Option<Result<Fr, CudaError>> {
         self.h.get(index).map(DeviceFrVec::first)
+    }
+}
+
+pub(crate) struct CudaCoreBooleanityAddressState {
+    g: Vec<DeviceFrVec>,
+    gamma_squares: Vec<Fr>,
+}
+
+impl CudaCoreBooleanityAddressState {
+    pub(crate) fn new<F: Field>(g: &[Vec<F>], gamma_squares: &[F]) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        if g.is_empty() || g.len() != gamma_squares.len() {
+            return None;
+        }
+        let device_g = g
+            .iter()
+            .map(|poly| ctx.upload(crate::cuda::as_fr_slice(poly)?).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let gamma_squares = gamma_squares
+            .iter()
+            .map(|g| crate::cuda::into_fr(*g))
+            .collect::<Option<Vec<Fr>>>()?;
+        Some(Self {
+            g: device_g,
+            gamma_squares,
+        })
+    }
+
+    pub(crate) fn round_poly_q<F: Field>(
+        &self,
+        f_values: &[F],
+        e_in: &[F],
+        e_out: &[F],
+        m: usize,
+    ) -> Option<[Fr; 2]> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let f_dev = crate::cuda::as_fr_slice(f_values)?;
+        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
+        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
+        let g_refs: Vec<&DeviceFrVec> = self.g.iter().collect();
+        ctx.core_booleanity_address_round_poly(CoreBooleanityAddressInputs {
+            g: &g_refs,
+            f_values: f_dev,
+            gamma_squares: &self.gamma_squares,
+            e_in: &e_in_dev,
+            e_out: &e_out_dev,
+            m: m as u32,
+        })
+        .ok()
     }
 }
 
