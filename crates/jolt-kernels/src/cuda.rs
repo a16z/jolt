@@ -94,6 +94,7 @@ pub struct CudaKernelContext {
     core_booleanity_cycle_pairs: CudaFunction,
     core_booleanity_address_pairs: CudaFunction,
     sparse_register_round_pairs: CudaFunction,
+    sparse_register_bind_kernel: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -390,6 +391,25 @@ pub struct SparseRegisterRoundInputs<'a> {
     pub in_pairs: u32,
 }
 
+pub struct SparseRegisterBindInputs<'a> {
+    pub val: &'a DeviceFrVec,
+    pub read_ra: &'a DeviceFrVec,
+    pub rd_wa: &'a DeviceFrVec,
+    pub prev_val: &'a DeviceFrVec,
+    pub next_val: &'a DeviceFrVec,
+    pub even_idx: &'a [i32],
+    pub odd_idx: &'a [i32],
+    pub challenge: Fr,
+}
+
+pub struct SparseRegisterEntries {
+    pub val: DeviceFrVec,
+    pub read_ra: DeviceFrVec,
+    pub rd_wa: DeviceFrVec,
+    pub prev_val: DeviceFrVec,
+    pub next_val: DeviceFrVec,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -439,6 +459,8 @@ impl CudaKernelContext {
                 .load_function("core_booleanity_address_pairs")?,
             sparse_register_round_pairs: module
                 .load_function("sparse_register_round_pairs")?,
+            sparse_register_bind_kernel: module
+                .load_function("sparse_register_bind")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -1108,6 +1130,68 @@ impl CudaKernelContext {
             limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]),
             limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]),
         ])
+    }
+
+    pub fn sparse_register_bind(
+        &self,
+        inputs: SparseRegisterBindInputs<'_>,
+    ) -> Result<SparseRegisterEntries, CudaError> {
+        let items = inputs.even_idx.len();
+        assert_eq!(inputs.odd_idx.len(), items, "even/odd work-item lists must match");
+
+        let make = |len: usize| -> Result<DeviceFrVec, CudaError> {
+            Ok(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf: self.stream.alloc_zeros(len * LIMBS)?,
+                len,
+                staging: self.staging.clone(),
+            })
+        };
+        let mut val = make(items)?;
+        let mut read_ra = make(items)?;
+        let mut rd_wa = make(items)?;
+        let mut prev_val = make(items)?;
+        let mut next_val = make(items)?;
+        if items == 0 {
+            return Ok(SparseRegisterEntries { val, read_ra, rd_wa, prev_val, next_val });
+        }
+
+        let even_dev = self.stream.clone_htod(inputs.even_idx)?;
+        let odd_dev = self.stream.clone_htod(inputs.odd_idx)?;
+        let challenge_dev = self.upload(&[inputs.challenge])?;
+
+        let block = BLOCK;
+        let blocks = (items as u32).div_ceil(block);
+        let items_arg = items as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.sparse_register_bind_kernel.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut val.buf)
+            .arg(&mut read_ra.buf)
+            .arg(&mut rd_wa.buf)
+            .arg(&mut prev_val.buf)
+            .arg(&mut next_val.buf)
+            .arg(&inputs.val.buf)
+            .arg(&inputs.read_ra.buf)
+            .arg(&inputs.rd_wa.buf)
+            .arg(&inputs.prev_val.buf)
+            .arg(&inputs.next_val.buf)
+            .arg(&even_dev)
+            .arg(&odd_dev)
+            .arg(&challenge_dev.buf)
+            .arg(&items_arg);
+        // SAFETY: one thread per output entry reads its even/odd source (or -1 for
+        // absent) from the input SoA and writes the linear-eval at `challenge` plus the
+        // carried prev_val/next_val into the freshly allocated output SoA of length
+        // `items`; no shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(SparseRegisterEntries { val, read_ra, rd_wa, prev_val, next_val })
     }
 
     pub fn hamming_booleanity_round_poly(
@@ -3226,7 +3310,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "stub kernel; body not yet implemented"]
         fn sparse_register_round_poly_matches_cpu(
             log_pairs in 1usize..6,
             high_round in proptest::bool::ANY,
@@ -3395,6 +3478,116 @@ mod tests {
                 })
                 .unwrap();
             prop_assert_eq!(got.to_vec(), expected.to_vec());
+        }
+
+        #[test]
+        fn sparse_register_bind_matches_cpu(
+            num_entries in 1usize..40,
+            s1 in 1usize..7,
+            challenge in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            let mut val = Vec::new();
+            let mut read_ra = Vec::new();
+            let mut rd_wa = Vec::new();
+            let mut prev_val = Vec::new();
+            let mut next_val = Vec::new();
+            let mut even_idx: Vec<i32> = Vec::new();
+            let mut odd_idx: Vec<i32> = Vec::new();
+
+            for item in 0..num_entries {
+                let mode = (item * 7 + s1) % 3;
+                let mut ei = -1i32;
+                let mut oi = -1i32;
+                if mode != 1 {
+                    let g = val.len();
+                    val.push(seed + Fr::from_u64((g + 1) as u64));
+                    read_ra.push(seed + Fr::from_u64((g + 100) as u64));
+                    rd_wa.push(seed + Fr::from_u64((g + 200) as u64));
+                    prev_val.push(Fr::from_u64((g + 7) as u64));
+                    next_val.push(Fr::from_u64((g + 9) as u64));
+                    ei = g as i32;
+                }
+                if mode != 0 {
+                    let g = val.len();
+                    val.push(seed + Fr::from_u64((g + 1) as u64));
+                    read_ra.push(seed + Fr::from_u64((g + 100) as u64));
+                    rd_wa.push(seed + Fr::from_u64((g + 200) as u64));
+                    prev_val.push(Fr::from_u64((g + 7) as u64));
+                    next_val.push(Fr::from_u64((g + 9) as u64));
+                    oi = g as i32;
+                }
+                even_idx.push(ei);
+                odd_idx.push(oi);
+            }
+
+            let lin = |low: Fr, high: Fr| low + challenge * (high - low);
+            let mut e_val = Vec::new();
+            let mut e_read = Vec::new();
+            let mut e_wa = Vec::new();
+            let mut e_prev = Vec::new();
+            let mut e_next = Vec::new();
+            for item in 0..num_entries {
+                let ei = even_idx[item];
+                let oi = odd_idx[item];
+                let (v, r, w, pv, nv) = match (ei >= 0, oi >= 0) {
+                    (true, true) => {
+                        let e = ei as usize;
+                        let o = oi as usize;
+                        (
+                            lin(val[e], val[o]),
+                            lin(read_ra[e], read_ra[o]),
+                            lin(rd_wa[e], rd_wa[o]),
+                            prev_val[e],
+                            next_val[o],
+                        )
+                    }
+                    (true, false) => {
+                        let e = ei as usize;
+                        (
+                            lin(val[e], next_val[e]),
+                            lin(read_ra[e], Fr::from_u64(0)),
+                            lin(rd_wa[e], Fr::from_u64(0)),
+                            prev_val[e],
+                            next_val[e],
+                        )
+                    }
+                    _ => {
+                        let o = oi as usize;
+                        (
+                            lin(prev_val[o], val[o]),
+                            lin(Fr::from_u64(0), read_ra[o]),
+                            lin(Fr::from_u64(0), rd_wa[o]),
+                            prev_val[o],
+                            next_val[o],
+                        )
+                    }
+                };
+                e_val.push(v);
+                e_read.push(r);
+                e_wa.push(w);
+                e_prev.push(pv);
+                e_next.push(nv);
+            }
+
+            let c = ctx();
+            let entries = c
+                .sparse_register_bind(SparseRegisterBindInputs {
+                    val: &c.upload(&val).unwrap(),
+                    read_ra: &c.upload(&read_ra).unwrap(),
+                    rd_wa: &c.upload(&rd_wa).unwrap(),
+                    prev_val: &c.upload(&prev_val).unwrap(),
+                    next_val: &c.upload(&next_val).unwrap(),
+                    even_idx: &even_idx,
+                    odd_idx: &odd_idx,
+                    challenge,
+                })
+                .unwrap();
+            prop_assert_eq!(entries.val.to_host().unwrap(), e_val);
+            prop_assert_eq!(entries.read_ra.to_host().unwrap(), e_read);
+            prop_assert_eq!(entries.rd_wa.to_host().unwrap(), e_wa);
+            prop_assert_eq!(entries.prev_val.to_host().unwrap(), e_prev);
+            prop_assert_eq!(entries.next_val.to_host().unwrap(), e_next);
         }
 
         #[test]
