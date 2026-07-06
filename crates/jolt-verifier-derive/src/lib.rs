@@ -909,8 +909,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // holds the wire *values* (`Inputs<F>` / `Outputs<F>`); `*Points` holds the
     // derived opening points (`Inputs<Vec<F>>` / `Outputs<Vec<F>>`). Only the
     // `OutputClaims` (values) aggregate is serialized (the wire form), so it alone
-    // derives serde; the empty serde bound suffices because `F: Field` already
-    // implies `Serialize + DeserializeOwned` through the member structs.
+    // derives serde. `F: Field` does not imply the serde traits, so the bounds are
+    // spelled explicitly (the workspace convention for claim structs), fully
+    // qualified so call sites need no serde imports.
     // `verify_clear`'s result: the single-instance reduction plus the named batching
     // coefficients.
     let clear_batch_struct = quote! {
@@ -920,6 +921,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub coefficients: #batching_coefficients_name<#f>,
         }
     };
+
+    let serialize_bound = format!("{f}: ::serde::Serialize");
+    let deserialize_bound = format!("{f}: for<'a> ::serde::Deserialize<'a>");
 
     Ok(quote! {
         #[derive(Clone, Debug, PartialEq, Eq)]
@@ -933,7 +937,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[derive(Clone, Debug, PartialEq, Eq, ::serde::Serialize, ::serde::Deserialize)]
-        #[serde(bound(serialize = "", deserialize = ""))]
+        #[serde(bound(serialize = #serialize_bound, deserialize = #deserialize_bound))]
         #vis struct #output_claims_name<#f: ::jolt_field::Field> {
             #(#output_claims_fields,)*
         }
