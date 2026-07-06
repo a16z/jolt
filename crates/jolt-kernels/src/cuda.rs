@@ -31,6 +31,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/hamming.cu"),
     include_str!("cuda/hamming_booleanity.cu"),
     include_str!("cuda/core_booleanity_cycle.cu"),
+    include_str!("cuda/core_booleanity_address.cu"),
     include_str!("cuda/ra_virtual_d4.cu"),
     include_str!("cuda/reduce.cu"),
 );
@@ -90,6 +91,7 @@ pub struct CudaKernelContext {
     hamming_booleanity_pairs: CudaFunction,
     ra_virtual_d4_pairs: CudaFunction,
     core_booleanity_cycle_pairs: CudaFunction,
+    core_booleanity_address_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -362,6 +364,15 @@ pub struct CoreBooleanityCycleInputs<'a> {
     pub e_out: &'a DeviceFrVec,
 }
 
+pub struct CoreBooleanityAddressInputs<'a> {
+    pub g: &'a [&'a DeviceFrVec],
+    pub f_values: &'a [Fr],
+    pub gamma_squares: &'a [Fr],
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+    pub m: u32,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -407,6 +418,8 @@ impl CudaKernelContext {
             hamming_booleanity_pairs: module.load_function("hamming_booleanity_pairs")?,
             ra_virtual_d4_pairs: module.load_function("ra_virtual_d4_pairs")?,
             core_booleanity_cycle_pairs: module.load_function("core_booleanity_cycle_pairs")?,
+            core_booleanity_address_pairs: module
+                .load_function("core_booleanity_address_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -857,6 +870,115 @@ impl CudaKernelContext {
         // h polys, the per-poly rho, and its e_in[row & mask] / e_out[row >> in_bits]
         // weights (in range since e_in*e_out == half), writing one 2-lane tuple per
         // block; shared memory holds `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block`
+            // blocks; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok([
+            limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]),
+            limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]),
+        ])
+    }
+
+    pub fn core_booleanity_address_round_poly(
+        &self,
+        inputs: CoreBooleanityAddressInputs<'_>,
+    ) -> Result<[Fr; 2], CudaError> {
+        use num_traits::Zero;
+        let num_polys = inputs.g.len();
+        assert!(num_polys > 0, "core booleanity address needs at least one g poly");
+        assert_eq!(inputs.gamma_squares.len(), num_polys);
+        let m = inputs.m as usize;
+        assert!(m >= 1, "core booleanity address block size exponent must be >= 1");
+        let block_len = 1usize << m;
+        let chunk_domain = inputs.g[0].len();
+        for g in inputs.g {
+            assert_eq!(g.len(), chunk_domain, "core booleanity g polys must have equal length");
+        }
+        assert_eq!(
+            inputs.f_values.len(),
+            1usize << (m - 1),
+            "f_values length must be 2^(m-1)"
+        );
+        let groups = chunk_domain / block_len;
+        assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
+        assert_eq!(
+            inputs.e_in.len() * inputs.e_out.len(),
+            groups,
+            "e_in * e_out must equal the group count"
+        );
+        if groups == 0 {
+            return Ok([Fr::zero(); 2]);
+        }
+        let in_bits = inputs.e_in.len().trailing_zeros();
+
+        let mut packed: CudaSlice<u64> = self.stream.alloc_zeros(num_polys * chunk_domain * LIMBS)?;
+        for (index, g) in inputs.g.iter().enumerate() {
+            let offset = index * chunk_domain * LIMBS;
+            self.stream.memcpy_dtod(
+                &g.buf.slice(0..chunk_domain * LIMBS),
+                &mut packed.slice_mut(offset..offset + chunk_domain * LIMBS),
+            )?;
+        }
+        let f_dev = self.upload(inputs.f_values)?;
+        let gamma_dev = self.upload(inputs.gamma_squares)?;
+
+        const WIDTH: usize = 2;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (groups as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let group_stride_arg = chunk_domain as u64;
+        let num_polys_arg = num_polys as u32;
+        let groups_arg = groups as u64;
+        let in_bits_arg = in_bits;
+        let m_arg = m as u32;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.core_booleanity_address_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&packed)
+            .arg(&f_dev.buf)
+            .arg(&gamma_dev.buf)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&group_stride_arg)
+            .arg(&num_polys_arg)
+            .arg(&groups_arg)
+            .arg(&in_bits_arg)
+            .arg(&m_arg);
+        // SAFETY: one thread per group folds a 2^m block of each of the num_polys packed
+        // g polys against the 2^(m-1) f_values, weighted by e_in[group & mask] /
+        // e_out[group >> in_bits] and the per-poly gamma_square, writing one 2-lane tuple
+        // per block; shared memory holds `block` tuples.
         let _ = unsafe { launch.launch(cfg) }?;
 
         let mut len = blocks as usize;
@@ -2908,6 +3030,96 @@ mod tests {
                     rho: &rho,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
+                })
+                .unwrap();
+            prop_assert_eq!(got.to_vec(), expected.to_vec());
+        }
+
+        #[test]
+        #[ignore = "stub kernel; body not yet implemented"]
+        fn core_booleanity_address_round_poly_matches_cpu(
+            log_k_chunk in 2usize..8,
+            m_minus_1 in 0usize..6,
+            num_polys in 1usize..5,
+            seed in fr_strategy(),
+        ) {
+            use jolt_field::FieldAccumulator;
+            use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+            let m = m_minus_1 + 1;
+            prop_assume!(m <= log_k_chunk);
+            let chunk_domain = 1usize << log_k_chunk;
+            let f_len = 1usize << (m - 1);
+
+            let r_address: Vec<Fr> = (0..log_k_chunk)
+                .map(|i| seed + Fr::from_u64((i + 1) as u64))
+                .collect();
+            let mut b = GruenSplitEqPolynomial::<Fr>::new(&r_address, BindingOrder::LowToHigh);
+            for i in 0..(m - 1) {
+                b.bind(seed + Fr::from_u64((i + 51) as u64));
+            }
+            let g: Vec<Vec<Fr>> = (0..num_polys)
+                .map(|p| {
+                    (0..chunk_domain)
+                        .map(|k| seed + Fr::from_u64((p * chunk_domain + k + 7) as u64))
+                        .collect()
+                })
+                .collect();
+            let f_values: Vec<Fr> =
+                (0..f_len).map(|k| seed + Fr::from_u64((k + 3) as u64)).collect();
+            let gamma_squares: Vec<Fr> =
+                (0..num_polys).map(|i| seed + Fr::from_u64((i + 101) as u64)).collect();
+
+            type Acc = <Fr as Field>::Accumulator;
+            let expected = b.fold_out_in(
+                || [Acc::default(); 2],
+                |inner, k_prime, _x_in, e_in| {
+                    for (g_i, &gamma_square) in g.iter().zip(&gamma_squares) {
+                        let mut eval_0 = Fr::zero();
+                        let mut eval_infty = Fr::zero();
+                        let block_start = k_prime << m;
+                        for (k, &g_k) in g_i[block_start..block_start + (1 << m)].iter().enumerate() {
+                            let k_m = k >> (m - 1);
+                            let f_k = f_values[k & ((1 << (m - 1)) - 1)];
+                            let g_times_f = g_k * f_k;
+                            let eval_inf = g_times_f * f_k;
+                            if k_m == 0 {
+                                eval_0 += eval_inf - g_times_f;
+                            }
+                            eval_infty += eval_inf;
+                        }
+                        let weight = e_in * gamma_square;
+                        inner[0].fmadd(weight, eval_0);
+                        inner[1].fmadd(weight, eval_infty);
+                    }
+                },
+                |_x_out, e_out, inner| {
+                    let mut outer = [Acc::default(); 2];
+                    outer[0].fmadd(e_out, inner[0].reduce());
+                    outer[1].fmadd(e_out, inner[1].reduce());
+                    outer
+                },
+                |mut left, right| {
+                    left[0].merge(right[0]);
+                    left[1].merge(right[1]);
+                    left
+                },
+            );
+            let expected = [expected[0].reduce(), expected[1].reduce()];
+
+            let c = ctx();
+            let g_devs: Vec<DeviceFrVec> = g.iter().map(|v| c.upload(v).unwrap()).collect();
+            let g_refs: Vec<&DeviceFrVec> = g_devs.iter().collect();
+            let e_in_dev = c.upload(b.e_in_current()).unwrap();
+            let e_out_dev = c.upload(b.e_out_current()).unwrap();
+            let got = c
+                .core_booleanity_address_round_poly(CoreBooleanityAddressInputs {
+                    g: &g_refs,
+                    f_values: &f_values,
+                    gamma_squares: &gamma_squares,
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                    m: m as u32,
                 })
                 .unwrap();
             prop_assert_eq!(got.to_vec(), expected.to_vec());
