@@ -346,13 +346,23 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
         JoltCommittedPolynomial::UntrustedAdvice => {
             advice_opening_claim_and_scale(JoltAdviceKind::Untrusted, opening_point, stage7)
         }
-        JoltCommittedPolynomial::BytecodeChunk(_) | JoltCommittedPolynomial::ProgramImageInit => {
-            // Committed-program members are not part of the prover-driven order
-            // produced by `stage8_final_opening_order`; `verify()` handles them
-            // directly from the precommitted finals.
+        JoltCommittedPolynomial::BytecodeChunk(_)
+        | JoltCommittedPolynomial::ProgramImageInit
+        | JoltCommittedPolynomial::UnsignedIncChunk(_)
+        | JoltCommittedPolynomial::UnsignedIncMsb
+        | JoltCommittedPolynomial::TrustedAdviceBytes
+        | JoltCommittedPolynomial::UntrustedAdviceBytes
+        | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+        | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+        | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+        | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+        | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+        | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+        | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+        | JoltCommittedPolynomial::ProgramImageBytes => {
             Err(VerifierError::FinalOpeningBatchFailed {
                 reason: format!(
-                    "committed-program polynomial {polynomial:?} is not part of the stage 8 prover order"
+                    "polynomial {polynomial:?} is not part of the stage 8 prover order"
                 ),
             })
         }

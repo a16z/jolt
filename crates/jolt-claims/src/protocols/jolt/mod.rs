@@ -1,4 +1,5 @@
 pub mod geometry;
+pub mod lattice;
 pub mod relations;
 
 mod ids;
@@ -20,18 +21,23 @@ pub use geometry::{
 };
 pub use ids::{
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
+    BytecodeChunkReconstructionChallenge, BytecodeChunkReconstructionPublic,
     BytecodeClaimReductionChallenge, BytecodeClaimReductionPublic, BytecodeReadRafChallenge,
-    BytecodeReadRafPublic, HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
-    IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
+    BytecodeReadRafPublic, BytecodeRegisterLane, HammingWeightClaimReductionChallenge,
+    HammingWeightClaimReductionPublic, IncClaimReductionChallenge, IncClaimReductionPublic,
+    IncVirtualizationChallenge, IncVirtualizationPublic, InstructionClaimReductionChallenge,
     InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
     JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId,
     JoltRelationId, JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
-    RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
-    RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
-    RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
-    RegistersClaimReductionChallenge, RegistersClaimReductionPublic, RegistersReadWriteChallenge,
-    RegistersReadWritePublic, RegistersValEvaluationPublic, SpartanOuterPublic,
-    SpartanProductVirtualizationPublic, SpartanShiftChallenge, SpartanShiftPublic,
+    ProgramImageReconstructionPublic, RamHammingBooleanityPublic, RamOutputCheckPublic,
+    RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
+    RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge,
+    RamValCheckPublic, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+    RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
+    SpartanOuterPublic, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
+    SpartanShiftPublic, TrustedAdviceReconstructionPublic, UnsignedIncChunkReconstructionChallenge,
+    UnsignedIncChunkReconstructionPublic, UntrustedAdviceReconstructionChallenge,
+    UntrustedAdviceReconstructionPublic,
 };

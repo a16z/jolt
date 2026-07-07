@@ -368,6 +368,27 @@ where
                         .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
+                JoltCommittedPolynomial::UnsignedIncChunk(_)
+                | JoltCommittedPolynomial::UnsignedIncMsb
+                | JoltCommittedPolynomial::TrustedAdviceBytes
+                | JoltCommittedPolynomial::UntrustedAdviceBytes
+                | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+                | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+                | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+                | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+                | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+                | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+                | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+                | JoltCommittedPolynomial::ProgramImageBytes => {
+                    // Lattice-mode polynomials open through the packed opening
+                    // (`lattice::packing::final_opening`), never the
+                    // homomorphic stage 8 RLC batch.
+                    return Err(VerifierError::FinalOpeningBatchFailed {
+                        reason: format!(
+                            "polynomial {polynomial:?} is not part of the stage 8 prover order"
+                        ),
+                    });
+                }
             };
         entries.push(Stage8BatchEntry {
             id: id.into(),
