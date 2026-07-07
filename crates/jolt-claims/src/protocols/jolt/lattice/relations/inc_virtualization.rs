@@ -206,31 +206,5 @@ mod tests {
         assert_eq!(IncVirtualization::id(), JoltRelationId::IncVirtualization);
         assert_eq!(relation.rounds(), 5);
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                ram_inc_read_write(),
-                ram_inc_val_check(),
-                rd_inc_read_write(),
-                rd_inc_val_evaluation(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![fused_inc_opening(), fused_inc_store_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(IncVirtualizationChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(IncVirtualizationPublic::EqRamReadWrite),
-                JoltDerivedId::from(IncVirtualizationPublic::EqRamValCheck),
-                JoltDerivedId::from(IncVirtualizationPublic::EqRegistersReadWrite),
-                JoltDerivedId::from(IncVirtualizationPublic::EqRegistersValEvaluation),
-            ]
-        );
     }
 }

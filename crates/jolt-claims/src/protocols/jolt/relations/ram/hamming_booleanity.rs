@@ -26,6 +26,7 @@ pub struct RamHammingBooleanityOutputClaims<C> {
 /// `RamHammingBooleanity` consumes no openings (its input claim is the constant
 /// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
 /// since the derive requires at least one `#[opening]` field.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamHammingBooleanityInputClaims<C> {
     _cell: PhantomData<C>,
 }
@@ -36,7 +37,7 @@ impl<C> Default for RamHammingBooleanityInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -139,14 +140,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![ram_hamming_weight()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle)]
-        );
     }
 }

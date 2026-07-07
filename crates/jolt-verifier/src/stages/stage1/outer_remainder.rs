@@ -30,69 +30,17 @@ use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
 };
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
-use crate::stages::stage1::outputs::SpartanOuterClaims;
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
-/// Project the serialized outer claims (the wire value-only form) into the
-/// remainder relation's produced-opening struct, preserving the canonical
-/// `SPARTAN_OUTER_R1CS_INPUTS` field order. The two structs intentionally duplicate
-/// the 35 R1CS-input fields: `SpartanOuterClaims` is the serialized proof form (with
-/// its nested flag struct), and `OuterRemainderOutputClaims` is the relation's
-/// GAT-cell form that `zip_openings` / the output `Expr` consume.
-pub fn outer_remainder_outputs_from_spartan_outer_claims<F: Field>(
-    outer: &SpartanOuterClaims<F>,
-) -> OuterRemainderOutputClaims<F> {
-    OuterRemainderOutputClaims {
-        left_instruction_input: outer.left_instruction_input,
-        right_instruction_input: outer.right_instruction_input,
-        product: outer.product,
-        should_branch: outer.should_branch,
-        pc: outer.pc,
-        unexpanded_pc: outer.unexpanded_pc,
-        imm: outer.imm,
-        ram_address: outer.ram_address,
-        rs1_value: outer.rs1_value,
-        rs2_value: outer.rs2_value,
-        rd_write_value: outer.rd_write_value,
-        ram_read_value: outer.ram_read_value,
-        ram_write_value: outer.ram_write_value,
-        left_lookup_operand: outer.left_lookup_operand,
-        right_lookup_operand: outer.right_lookup_operand,
-        next_unexpanded_pc: outer.next_unexpanded_pc,
-        next_pc: outer.next_pc,
-        next_is_virtual: outer.next_is_virtual,
-        next_is_first_in_sequence: outer.next_is_first_in_sequence,
-        lookup_output: outer.lookup_output,
-        should_jump: outer.should_jump,
-        add_operands: outer.flags.add_operands,
-        subtract_operands: outer.flags.subtract_operands,
-        multiply_operands: outer.flags.multiply_operands,
-        load: outer.flags.load,
-        store: outer.flags.store,
-        jump: outer.flags.jump,
-        write_lookup_output_to_rd: outer.flags.write_lookup_output_to_rd,
-        virtual_instruction: outer.flags.virtual_instruction,
-        assert: outer.flags.assert,
-        do_not_update_unexpanded_pc: outer.flags.do_not_update_unexpanded_pc,
-        advice: outer.flags.advice,
-        is_compressed: outer.flags.is_compressed,
-        is_first_in_sequence: outer.flags.is_first_in_sequence,
-        is_last_in_sequence: outer.flags.is_last_in_sequence,
-    }
-}
-
-/// Wire the consumed opening from the Spartan outer uni-skip's reduced output claim.
-/// Only the value feeds the input claim (the output point comes from this relation's
-/// own sumcheck point), so the input point is left empty.
-pub fn outer_remainder_inputs_from_uniskip_output<F: Field>(
+/// Wire the consumed opening *value* from the Spartan outer uni-skip's reduced output
+/// claim: only the value feeds the input claim (the output point comes from this
+/// relation's own sumcheck point).
+pub fn outer_remainder_input_values_from_uniskip_output<F: Field>(
     uniskip_output_claim: F,
-) -> OuterRemainderInputClaims<OpeningClaim<F>> {
+) -> OuterRemainderInputClaims<F> {
     OuterRemainderInputClaims {
-        outer_uniskip: OpeningClaim {
-            point: Vec::new(),
-            value: uniskip_output_claim,
-        },
+        outer_uniskip: uniskip_output_claim,
     }
 }
 
@@ -152,31 +100,64 @@ impl<F: Field> OuterRemainderCoefficients<F> {
 
 pub struct OuterRemainder<F: Field> {
     symbolic: relations::spartan::OuterRemainder,
-    coefficients: OuterRemainderCoefficients<F>,
+    variable_count: usize,
+    /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
+    /// three inputs to the `SpartanOuterPublic` coefficient table. Both exist
+    /// before this relation is constructed (the uni-skip step completes first).
+    tau: Vec<F>,
+    uniskip_challenge: F,
+    /// The relation's own bound point (the remainder challenges), captured by
+    /// [`derive_opening_points`](ConcreteSumcheck::derive_opening_points) — the
+    /// third coefficient-table input, which exists only after the batch reduces.
+    bound_point: std::sync::OnceLock<Vec<F>>,
+    /// The expanded coefficient table, built lazily on the first
+    /// `derive_output_term` call so the ZK path (which never evaluates the output
+    /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
+    coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
 }
 
 impl<F: Field> OuterRemainder<F> {
-    pub fn new(
-        dimensions: SpartanOuterDimensions,
-        tau: &[F],
-        uniskip_challenge: F,
-        remainder_challenges: &[F],
-    ) -> Result<Self, VerifierError> {
+    pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
         let variable_count = dimensions.variables().len();
-        let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-            tau,
-            uniskip: uniskip_challenge,
-            remainder: remainder_challenges,
-        })
-        .map_err(public_input_failed)?;
-        let coefficients = OuterRemainderCoefficients::from_public_coefficients(
-            variable_count,
-            formula.public_coefficients(),
-        );
-        Ok(Self {
+        Self {
             symbolic: relations::spartan::OuterRemainder::new(dimensions),
-            coefficients,
-        })
+            variable_count,
+            tau,
+            uniskip_challenge,
+            bound_point: std::sync::OnceLock::new(),
+            coefficients: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
+    /// `tau`, the uni-skip reduction challenge, and the captured bound point.
+    /// Sourced from [`JoltSpartanOuterRemainder::public_coefficients`] — the same
+    /// source the BlindFold constraint uses — so the output-claim algebra cannot
+    /// drift from that constraint.
+    fn coefficients(&self) -> Result<&OuterRemainderCoefficients<F>, VerifierError> {
+        if self.coefficients.get().is_none() {
+            let bound_point = self.bound_point.get().ok_or_else(|| {
+                public_input_failed(
+                    "Spartan outer remainder point not bound (derive_opening_points must run \
+                     before the output expression is evaluated)",
+                )
+            })?;
+            let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
+                tau: &self.tau,
+                uniskip: self.uniskip_challenge,
+                remainder: bound_point,
+            })
+            .map_err(public_input_failed)?;
+            let _ = self
+                .coefficients
+                .set(OuterRemainderCoefficients::from_public_coefficients(
+                    self.variable_count,
+                    formula.public_coefficients(),
+                ));
+        }
+        self.coefficients
+            .get()
+            .ok_or_else(|| public_input_failed("Spartan outer remainder coefficients unavailable"))
     }
 }
 
@@ -194,11 +175,22 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &OuterRemainderInputClaims<C>,
+        _input_points: &OuterRemainderInputClaims<Vec<F>>,
     ) -> Result<OuterRemainderOutputClaims<Vec<F>>, VerifierError> {
+        // Capture the bound point for the lazy coefficient-table build; reject a
+        // rebind at a different point (one bind per verification).
+        let bound_point = self
+            .bound_point
+            .get_or_init(|| sumcheck_point.to_vec())
+            .as_slice();
+        if bound_point != sumcheck_point {
+            return Err(public_input_failed(
+                "Spartan outer remainder point already bound at a different point",
+            ));
+        }
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(OuterRemainderOutputClaims {
             left_instruction_input: opening_point.clone(),
@@ -239,17 +231,17 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &OuterRemainderInputClaims<C>,
-        _outputs: &OuterRemainderOutputClaims<OpeningClaim<F>>,
+        _input_points: &OuterRemainderInputClaims<Vec<F>>,
+        _output_points: &OuterRemainderOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanOuter(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        self.coefficients
+        self.coefficients()?
             .resolve(*public_id)
             .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
     }
@@ -260,42 +252,79 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::OutputClaims;
-    use crate::stages::stage1::outputs::spartan_outer_claims_from_r1cs_inputs;
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
+    use jolt_claims::protocols::jolt::JoltOpeningId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
-    /// The 35 appended opening values (declaration order of
-    /// `OuterRemainderOutputClaims`) match the previous explicit append loop, which
-    /// iterated `SpartanOuterClaims::r1cs_input_claims` in `dimensions.variables()`
-    /// order. Equal value sequences ⇒ byte-identical Fiat-Shamir appends.
+    /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
+    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated absorb
+    /// (`append_output_claims`) reproduces the input order,
+    /// byte-identically. `canonical_order()` surfaces that field order as opening ids,
+    /// which must line up one-for-one with the R1CS inputs.
     #[test]
-    fn append_order_matches_legacy_r1cs_input_claims() {
-        let dimensions = SpartanOuterDimensions::rv64(3);
-        // Distinct values, one per R1CS input, in canonical order.
-        let values = SPARTAN_OUTER_R1CS_INPUTS
+    fn append_order_matches_r1cs_input_order() {
+        let expected = SPARTAN_OUTER_R1CS_INPUTS
             .iter()
             .copied()
-            .enumerate()
-            .map(|(index, variable)| (variable, Fr::from_u64(1_000 + index as u64)));
-        let outer = spartan_outer_claims_from_r1cs_inputs(values).unwrap();
+            .map(|variable| {
+                JoltOpeningId::virtual_polynomial(variable, JoltRelationId::SpartanOuter)
+            })
+            .collect::<Vec<_>>();
+        let openings = (0..SPARTAN_OUTER_R1CS_INPUTS.len() as u64)
+            .map(Fr::from_u64)
+            .collect::<Vec<_>>();
+        let relation_form = output_values_from(&openings);
 
-        let legacy = outer.r1cs_input_claims(&dimensions).unwrap();
-        let relation_form = outer_remainder_outputs_from_spartan_outer_claims(&outer);
-
-        assert_eq!(relation_form.opening_values(), legacy);
+        assert_eq!(relation_form.canonical_order(), expected);
     }
 
-    /// Fill all 35 produced openings with the given values (in canonical field /
-    /// `SPARTAN_OUTER_R1CS_INPUTS` order) at a shared opening point.
-    fn outputs_from_values(
-        values: &[Fr],
-        point: &[Fr],
-    ) -> OuterRemainderOutputClaims<OpeningClaim<Fr>> {
+    /// Fill all 35 produced opening *values* with the given values (in canonical
+    /// field / `SPARTAN_OUTER_R1CS_INPUTS` order).
+    fn output_values_from(values: &[Fr]) -> OuterRemainderOutputClaims<Fr> {
         let mut iter = values.iter().copied();
-        let mut next = || OpeningClaim {
-            point: point.to_vec(),
-            value: iter.next().unwrap(),
-        };
+        let mut next = || iter.next().unwrap();
+        OuterRemainderOutputClaims {
+            left_instruction_input: next(),
+            right_instruction_input: next(),
+            product: next(),
+            should_branch: next(),
+            pc: next(),
+            unexpanded_pc: next(),
+            imm: next(),
+            ram_address: next(),
+            rs1_value: next(),
+            rs2_value: next(),
+            rd_write_value: next(),
+            ram_read_value: next(),
+            ram_write_value: next(),
+            left_lookup_operand: next(),
+            right_lookup_operand: next(),
+            next_unexpanded_pc: next(),
+            next_pc: next(),
+            next_is_virtual: next(),
+            next_is_first_in_sequence: next(),
+            lookup_output: next(),
+            should_jump: next(),
+            add_operands: next(),
+            subtract_operands: next(),
+            multiply_operands: next(),
+            load: next(),
+            store: next(),
+            jump: next(),
+            write_lookup_output_to_rd: next(),
+            virtual_instruction: next(),
+            assert: next(),
+            do_not_update_unexpanded_pc: next(),
+            advice: next(),
+            is_compressed: next(),
+            is_first_in_sequence: next(),
+            is_last_in_sequence: next(),
+        }
+    }
+
+    /// All 35 produced opening *points* sharing a single opening point.
+    fn output_points_at(point: &[Fr]) -> OuterRemainderOutputClaims<Vec<Fr>> {
+        let next = || point.to_vec();
         OuterRemainderOutputClaims {
             left_instruction_input: next(),
             right_instruction_input: next(),
@@ -370,14 +399,23 @@ mod tests {
             .collect::<Vec<_>>();
         let factored_output = factored.expected_output_claim(&openings).unwrap();
 
-        let relation =
-            OuterRemainder::new(dimensions, &tau, uniskip_challenge, &remainder_challenges)
-                .unwrap();
+        let relation = OuterRemainder::new(dimensions, tau, uniskip_challenge);
+        let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        // Capture the bound point (the third coefficient-table input); the table
+        // itself is built lazily by the first `derive_output_term` call.
+        let _ = relation
+            .derive_opening_points(&remainder_challenges, &input_points)
+            .unwrap();
         let point = vec![Fr::from_u64(7); 1 + log_t];
-        let outputs = outputs_from_values(&openings, &point);
-        let inputs = outer_remainder_inputs_from_uniskip_output(Fr::from_u64(0));
+        let output_values = output_values_from(&openings);
+        let output_points = output_points_at(&point);
         let expanded_output = relation
-            .expected_output(&inputs, &outputs, &NoChallenges::default())
+            .expected_output(
+                &input_points,
+                &output_values,
+                &output_points,
+                &NoChallenges::default(),
+            )
             .unwrap();
 
         assert_eq!(expanded_output, factored_output);

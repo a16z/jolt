@@ -1,18 +1,15 @@
-//! The stage 6 booleanity sumcheck instances (address phase + cycle phase).
+//! The stage 6b booleanity cycle-phase sumcheck instance.
 //!
 //! Booleanity proves every one-hot `Ra` chunk (instruction, bytecode, RAM) is
 //! boolean. It runs in two phases: the stage-6a address phase binds the
 //! `log_k_chunk` address variables and stages the `BooleanityAddrClaim`
-//! intermediate; the stage-6b cycle phase binds the `log_t` cycle variables and
+//! intermediate; this stage-6b cycle phase binds the `log_t` cycle variables and
 //! opens the committed per-family `Ra` claims. The cycle phase's single public,
 //! `EqAddressCycle`, ties the full two-phase sumcheck point to the reference
 //! address/cycle drawn from the stage-5 instruction opening.
 
-use core::marker::PhantomData;
-
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::booleanity::{
-    BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims,
     BooleanityCyclePhaseChallenges, BooleanityInputClaims, BooleanityOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
@@ -22,57 +19,8 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
-
-/// The address phase consumes no openings (its input claim is the constant zero).
-/// (Verifier-side constructor for the moved [`BooleanityAddressPhaseInputClaims`].)
-pub fn booleanity_address_phase_inputs_from_upstream<F: Field>(
-) -> BooleanityAddressPhaseInputClaims<OpeningClaim<F>> {
-    BooleanityAddressPhaseInputClaims::default()
-}
-
-pub struct BooleanityAddressPhase<F: Field> {
-    symbolic: relations::booleanity::BooleanityAddressPhase,
-    _field: PhantomData<F>,
-}
-
-impl<F: Field> BooleanityAddressPhase<F> {
-    pub fn new(dimensions: BooleanityDimensions) -> Self {
-        Self {
-            symbolic: relations::booleanity::BooleanityAddressPhase::new(dimensions),
-            _field: PhantomData,
-        }
-    }
-}
-
-impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
-    type Symbolic = relations::booleanity::BooleanityAddressPhase;
-
-    fn symbolic(&self) -> &Self::Symbolic {
-        &self.symbolic
-    }
-
-    fn derive_opening_points<C: GetPoint<F>>(
-        &self,
-        sumcheck_point: &[F],
-        _inputs: &BooleanityAddressPhaseInputClaims<C>,
-    ) -> Result<BooleanityAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
-        // The address opening point (`booleanity_r_address`) is the reversed
-        // address sumcheck point; the cycle phase prepends it to its cycle point.
-        Ok(BooleanityAddressPhaseOutputClaims {
-            intermediate: sumcheck_point.iter().rev().copied().collect(),
-        })
-    }
-}
-
-/// The `BooleanityAddrClaim` intermediate consumed from the address phase.
-/// (Verifier-side constructor for the moved [`BooleanityInputClaims`].)
-pub fn booleanity_inputs_from_upstream<F: Field>(
-    address_phase: OpeningClaim<F>,
-) -> BooleanityInputClaims<OpeningClaim<F>> {
-    BooleanityInputClaims { address_phase }
-}
 
 pub struct Booleanity<F: Field> {
     symbolic: relations::booleanity::BooleanityCyclePhase,
@@ -115,10 +63,10 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &BooleanityInputClaims<C>,
+        _input_points: &BooleanityInputClaims<Vec<F>>,
     ) -> Result<BooleanityOutputClaims<Vec<F>>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         let opening_point = [self.r_address.as_slice(), r_cycle.as_slice()].concat();
@@ -130,11 +78,11 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &BooleanityInputClaims<C>,
-        outputs: &BooleanityOutputClaims<OpeningClaim<F>>,
+        _input_points: &BooleanityInputClaims<Vec<F>>,
+        output_points: &BooleanityOutputClaims<Vec<F>>,
         _challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
@@ -144,12 +92,11 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
         // (`r_address ++ r_cycle`): each half is the reverse of its phase's
         // sumcheck sub-point, and `EqAddressCycle` compares `[6a ++ 6b]` against
         // `reversed(reference_address) ++ reversed(reference_cycle)`.
-        let opening_point = outputs
-            .instruction_ra
+        let opening_point = output_points
+            .instruction_ra()
             .first()
-            .or_else(|| outputs.bytecode_ra.first())
-            .or_else(|| outputs.ram_ra.first())
-            .map(GetPoint::point)
+            .or_else(|| output_points.bytecode_ra().first())
+            .or_else(|| output_points.ram_ra().first())
             .ok_or_else(|| public_input_failed("booleanity produced no openings"))?;
         let log_k_chunk = self.dimensions.log_k_chunk;
         let (r_address, r_cycle) = opening_point.split_at(log_k_chunk);

@@ -20,6 +20,7 @@ use super::super::super::{
     BytecodeClaimReductionPublic, JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltVirtualPolynomial,
 };
+use super::super::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
 use super::super::dimensions::{
     log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
@@ -395,11 +396,11 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
 pub fn lane_weights<F: Field>(
     inputs: BytecodeLaneWeightInputs<'_, F>,
 ) -> Result<Vec<F>, JoltFormulaPointError> {
-    require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
-    require_len(inputs.stage2_gammas, 4)?;
-    require_len(inputs.stage3_gammas, 9)?;
-    require_len(inputs.stage4_gammas, 3)?;
-    require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
+    require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
+    require_len(inputs.stage2_gammas, BYTECODE_STAGE_GAMMA_COUNTS[1])?;
+    require_len(inputs.stage3_gammas, BYTECODE_STAGE_GAMMA_COUNTS[2])?;
+    require_len(inputs.stage4_gammas, BYTECODE_STAGE_GAMMA_COUNTS[3])?;
+    require_len(inputs.stage5_gammas, BYTECODE_STAGE_GAMMA_COUNTS[4])?;
     require_opening_point_len(inputs.register_read_write_point, REGISTER_ADDRESS_BITS)?;
     require_opening_point_len(inputs.register_val_evaluation_point, REGISTER_ADDRESS_BITS)?;
 

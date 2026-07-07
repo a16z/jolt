@@ -1,7 +1,6 @@
 use jolt_field::RingCore;
 
-use crate::util::extend_unique;
-use crate::{Expr, SumcheckDomain};
+use crate::{Expr, Source, SumcheckDomain};
 
 /// Pure symbolic description of one sumcheck relation: its id, sumcheck spec, and
 /// input/output algebra over the relation's id types. The expression methods are
@@ -23,12 +22,13 @@ pub trait SymbolicSumcheck {
     /// [`NoChallenges`](crate::NoChallenges).
     type Challenges<F>;
 
-    /// The relation's consumed-claim struct, generic over the opening *cell*
-    /// (`OpeningClaim<F>` | `Vec<F>` | `F`). A symbolic-only relation uses
-    /// [`NoInputs`](crate::NoInputs).
+    /// The relation's consumed-claim struct, generic over the opening *cell*,
+    /// instantiated at `F` (the serialized wire value) or `Vec<F>` (the derived
+    /// opening point). A symbolic-only relation uses [`NoInputs`](crate::NoInputs).
     type Inputs<C>;
-    /// The relation's produced-claim struct, generic over the opening *cell*. A
-    /// symbolic-only relation uses [`NoOutputs`](crate::NoOutputs).
+    /// The relation's produced-claim struct, generic over the opening *cell*
+    /// (`F` value | `Vec<F>` point). A symbolic-only relation uses
+    /// [`NoOutputs`](crate::NoOutputs).
     type Outputs<C>;
 
     fn new(shape: Self::Shape) -> Self;
@@ -61,98 +61,26 @@ pub trait SymbolicSumcheck {
         &self,
     ) -> Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>;
 
-    /// Openings referenced by either expression, input first, deduplicated.
-    fn required_openings<F: RingCore>(&self) -> Vec<Self::OpeningId>
+    /// The distinct opening ids this relation *produces*, read off its
+    /// [`output_expression`](Self::output_expression) — which references every
+    /// produced opening, expanded by the size parameters (it loops over indexed
+    /// families like lookup tables and RA chunks). This is the relation's expected
+    /// output-claim shape, derived symbolically so no relation hand-writes it; it
+    /// holds because the output check constrains every produced opening (an
+    /// unconstrained produced opening would be unsound). The field `F` only
+    /// instantiates the expression — the ids are field-independent.
+    fn expected_output_openings<F: RingCore>(&self) -> std::collections::BTreeSet<Self::OpeningId>
     where
-        Self::OpeningId: Clone + Eq,
+        Self::OpeningId: Ord,
     {
-        let mut ids = self.input_expression::<F>().required_openings();
-        extend_unique(&mut ids, &self.output_expression::<F>().required_openings());
-        ids
-    }
-
-    /// Derived values referenced by either expression, input first, deduplicated.
-    fn required_deriveds<F: RingCore>(&self) -> Vec<Self::DerivedId>
-    where
-        Self::DerivedId: Clone + Eq,
-    {
-        let mut ids = self.input_expression::<F>().required_deriveds();
-        extend_unique(&mut ids, &self.output_expression::<F>().required_deriveds());
-        ids
-    }
-
-    /// Fiat-Shamir challenges referenced by either expression, input first,
-    /// deduplicated. This is the canonical challenge set; it reproduces the
-    /// transcript-sync set the removed `with_input_challenges` declared.
-    fn required_challenges<F: RingCore>(&self) -> Vec<Self::ChallengeId>
-    where
-        Self::ChallengeId: Clone + Eq,
-    {
-        let mut ids = self.input_expression::<F>().required_challenges();
-        extend_unique(
-            &mut ids,
-            &self.output_expression::<F>().required_challenges(),
-        );
-        ids
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{challenge, derived, opening, Expr};
-    use jolt_field::Fr;
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    enum O {
-        A,
-        B,
-    }
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    enum P {
-        X,
-    }
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    enum Ch {
-        G,
-    }
-
-    struct Dummy;
-    impl SymbolicSumcheck for Dummy {
-        type RelationId = u8;
-        type OpeningId = O;
-        type DerivedId = P;
-        type ChallengeId = Ch;
-        type Shape = ();
-        type Challenges<F> = crate::NoChallenges<F>;
-        type Inputs<C> = crate::NoInputs<C>;
-        type Outputs<C> = crate::NoOutputs<C>;
-        fn new((): ()) -> Self {
-            Self
-        }
-        fn id() -> u8 {
-            7
-        }
-        fn rounds(&self) -> usize {
-            3
-        }
-        fn degree(&self) -> usize {
-            1
-        }
-        fn input_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {
-            opening(O::A) + challenge(Ch::G) * opening(O::B)
-        }
-        fn output_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {
-            derived(P::X) * opening(O::B)
-        }
-    }
-
-    #[test]
-    fn required_sets_are_input_then_output_deduped() {
-        let d = Dummy;
-        assert_eq!(d.required_openings::<Fr>(), vec![O::A, O::B]); // A from input, B from input
-        assert_eq!(d.required_deriveds::<Fr>(), vec![P::X]);
-        assert_eq!(d.required_challenges::<Fr>(), vec![Ch::G]);
-        assert_eq!(Dummy::id(), 7);
+        self.output_expression::<F>()
+            .terms
+            .into_iter()
+            .flat_map(|term| term.factors)
+            .filter_map(|factor| match factor {
+                Source::Opening(id) => Some(id),
+                _ => None,
+            })
+            .collect()
     }
 }

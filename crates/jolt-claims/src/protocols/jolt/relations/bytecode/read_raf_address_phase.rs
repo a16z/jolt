@@ -1,12 +1,13 @@
 //! The address phase of the bytecode read-RAF symbolic sumcheck.
 
 use jolt_field::RingCore;
-use jolt_riscv::{CircuitFlags, InstructionFlags, CIRCUIT_FLAGS};
+use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::{
     bytecode_read_raf_address_phase_opening, pc_spartan_outer, pc_spartan_shift, stage1_claim,
     stage2_claim, stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
+    BYTECODE_STAGE_GAMMA_COUNTS,
 };
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
@@ -34,17 +35,43 @@ pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
 /// opening the `read_raf_address_phase` input `Expr` folds (plus the two PC
 /// claims). The generic `input_claim` evaluates the bind from these via that
 /// `Expr`, so the gamma-folding formula lives in one place rather than a
-/// hand-written 25-opening resolver. The `op_flags` / `lookup_table_flags`
-/// families are indexed openings (`OpFlags(CIRCUIT_FLAGS[i])` /
-/// `LookupTableFlag(i)`).
-#[derive(Clone, Debug, InputClaims)]
+/// hand-written resolver. Each Spartan-outer circuit flag is its own field (the
+/// `OuterRemainderOutputClaims` idiom), in `CIRCUIT_FLAGS` order; the
+/// `lookup_table_flags` family is indexed (`LookupTableFlag(i)`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     #[opening(UnexpandedPC, from = SpartanOuter)]
     pub outer_unexpanded_pc: C,
     #[opening(Imm, from = SpartanOuter)]
     pub outer_imm: C,
-    #[opening(OpFlags(CIRCUIT_FLAGS), from = SpartanOuter)]
-    pub outer_op_flags: Vec<C>,
+    #[opening(OpFlags(CircuitFlags::AddOperands), from = SpartanOuter)]
+    pub outer_add_operands: C,
+    #[opening(OpFlags(CircuitFlags::SubtractOperands), from = SpartanOuter)]
+    pub outer_subtract_operands: C,
+    #[opening(OpFlags(CircuitFlags::MultiplyOperands), from = SpartanOuter)]
+    pub outer_multiply_operands: C,
+    #[opening(OpFlags(CircuitFlags::Load), from = SpartanOuter)]
+    pub outer_load: C,
+    #[opening(OpFlags(CircuitFlags::Store), from = SpartanOuter)]
+    pub outer_store: C,
+    #[opening(OpFlags(CircuitFlags::Jump), from = SpartanOuter)]
+    pub outer_jump: C,
+    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD), from = SpartanOuter)]
+    pub outer_write_lookup_output_to_rd: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanOuter)]
+    pub outer_virtual_instruction: C,
+    #[opening(OpFlags(CircuitFlags::Assert), from = SpartanOuter)]
+    pub outer_assert: C,
+    #[opening(OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC), from = SpartanOuter)]
+    pub outer_do_not_update_unexpanded_pc: C,
+    #[opening(OpFlags(CircuitFlags::Advice), from = SpartanOuter)]
+    pub outer_advice: C,
+    #[opening(OpFlags(CircuitFlags::IsCompressed), from = SpartanOuter)]
+    pub outer_is_compressed: C,
+    #[opening(OpFlags(CircuitFlags::IsFirstInSequence), from = SpartanOuter)]
+    pub outer_is_first_in_sequence: C,
+    #[opening(OpFlags(CircuitFlags::IsLastInSequence), from = SpartanOuter)]
+    pub outer_is_last_in_sequence: C,
     #[opening(PC, from = SpartanOuter)]
     pub outer_pc: C,
     #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
@@ -92,7 +119,7 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
 /// Fiat-Shamir challenges drawn by the address phase of the bytecode read-RAF
 /// sumcheck: the batching `gamma` plus the five per-stage gammas (the same set
 /// the full monolith folds).
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,
@@ -106,6 +133,29 @@ pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     pub stage4_gamma: F,
     #[challenge(BytecodeReadRafChallenge::Stage5Gamma)]
     pub stage5_gamma: F,
+}
+
+impl<F: jolt_field::Field> BytecodeReadRafAddressPhaseChallenges<F> {
+    /// Expand the five drawn per-stage scalars into the gamma-power vectors the
+    /// bytecode folds consume (`[1, γ, γ², …]` — the recurrence the prover's
+    /// `challenge_scalar_powers` applies to its single squeezed scalar), sized
+    /// by [`BYTECODE_STAGE_GAMMA_COUNTS`].
+    pub fn stage_gamma_powers(&self) -> [Vec<F>; 5] {
+        let stage_gammas = [
+            self.stage1_gamma,
+            self.stage2_gamma,
+            self.stage3_gamma,
+            self.stage4_gamma,
+            self.stage5_gamma,
+        ];
+        core::array::from_fn(|stage| {
+            let mut powers = vec![F::one(); BYTECODE_STAGE_GAMMA_COUNTS[stage]];
+            for index in 1..powers.len() {
+                powers[index] = powers[index - 1] * stage_gammas[stage];
+            }
+            powers
+        })
+    }
 }
 
 /// The address phase of the bytecode read-RAF sumcheck: the same folded input
@@ -162,20 +212,10 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
 mod tests {
     use super::*;
     use jolt_field::Fr;
+    use jolt_riscv::CIRCUIT_FLAGS;
 
     fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
         BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    fn stage_gammas() -> Vec<JoltChallengeId> {
-        vec![
-            JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
-            JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
-        ]
     }
 
     #[test]
@@ -187,10 +227,24 @@ mod tests {
             relation.degree(),
             dimensions(2).num_committed_ra_polys() + 1
         );
-        assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![bytecode_read_raf_address_phase_opening()]
-        );
+    }
+
+    /// Pins the circuit-flag coverage of the input claims struct: every
+    /// `CircuitFlags` variant has a `SpartanOuter` field (a newly added flag
+    /// missing its field would make the input `Expr` reference an unresolvable
+    /// opening).
+    #[test]
+    fn input_claims_cover_circuit_flags() {
+        let claims = BytecodeReadRafAddressPhaseInputClaims::<Fr>::default();
+        for flag in CIRCUIT_FLAGS {
+            let outer = JoltOpeningId::virtual_polynomial(
+                crate::protocols::jolt::JoltVirtualPolynomial::OpFlags(flag),
+                JoltRelationId::SpartanOuter,
+            );
+            assert!(
+                claims.resolve_input(&outer).is_some(),
+                "missing SpartanOuter input field for OpFlags({flag:?})",
+            );
+        }
     }
 }

@@ -41,7 +41,7 @@ pub struct SpartanShiftOutputClaims<C> {
 /// Consumed shift openings: the `Next*` PC/flag columns from stage 1's outer
 /// sumcheck and `next_is_noop` from stage 2's product remainder. Shift reads only
 /// these values, so the input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct SpartanShiftInputClaims<C> {
     #[opening(NextUnexpandedPC, from = SpartanOuter)]
     pub next_unexpanded_pc: C,
@@ -56,7 +56,7 @@ pub struct SpartanShiftInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct SpartanShiftChallenges<F> {
     #[challenge(SpartanShiftChallenge::Gamma)]
     pub gamma: F,
@@ -211,16 +211,5 @@ mod tests {
         assert_eq!(Shift::id(), JoltRelationId::SpartanShift);
         assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
         assert_eq!(relation.degree(), SHIFT_DEGREE);
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(SpartanShiftChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(SpartanShiftPublic::EqPlusOneOuter),
-                JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
-            ]
-        );
     }
 }

@@ -28,25 +28,28 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage6b::outputs::BytecodeReductionWeights;
 use crate::VerifierError;
 
 pub struct BytecodeReductionAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::AddressPhase,
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
-    r_bc: Vec<F>,
-    chunk_rbc_weights: Vec<F>,
-    lane_weights: Vec<F>,
+    /// The stage-6b bytecode cycle-phase output weights, consumed only by the
+    /// clear-only `derive_output_term` (`ChunkOutputWeight`). `None` in ZK (BlindFold
+    /// recomputes the weights), where this relation's `derive_output_term` never runs.
+    weights: Option<BytecodeReductionWeights<F>>,
 }
 
 impl<F: Field> BytecodeReductionAddressPhase<F> {
-    /// `weights` and `cycle_phase_variables` are the stage-6b bytecode cycle-phase
-    /// outputs; they (and the layout) are all known before the stage-7 sumcheck,
-    /// so a single construction serves both the input claim and the output check.
+    /// `weights` are the stage-6b bytecode cycle-phase outputs (`None` in ZK,
+    /// clear-only aux); `cycle_phase_variables` and the layout are known before the
+    /// stage-7 sumcheck, so a single construction serves both the input claim and
+    /// the output check.
     pub fn new(
         layout: &BytecodeClaimReductionLayout,
-        weights: BytecodeOutputWeightInputs<'_, F>,
+        weights: Option<BytecodeReductionWeights<F>>,
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
@@ -56,18 +59,20 @@ impl<F: Field> BytecodeReductionAddressPhase<F> {
             )),
             layout: layout.clone(),
             cycle_phase_variables,
-            r_bc: weights.r_bc.to_vec(),
-            chunk_rbc_weights: weights.chunk_rbc_weights.to_vec(),
-            lane_weights: weights.lane_weights.to_vec(),
+            weights,
         }
     }
 
-    fn output_weight_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
-        BytecodeOutputWeightInputs {
-            r_bc: &self.r_bc,
-            chunk_rbc_weights: &self.chunk_rbc_weights,
-            lane_weights: &self.lane_weights,
-        }
+    fn output_weight_inputs(&self) -> Result<BytecodeOutputWeightInputs<'_, F>, VerifierError> {
+        Ok(self
+            .weights
+            .as_ref()
+            .ok_or_else(|| {
+                bytecode_public_failed(
+                    "bytecode address phase has no output weights (ZK-only construction)",
+                )
+            })?
+            .as_inputs())
     }
 }
 
@@ -85,10 +90,16 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    /// The bytecode address phase is bound on the offset-0 prefix of the batch
+    /// challenge vector (two-phase reductions front-load the address rounds).
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
+        _input_points: &BytecodeReductionAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<BytecodeReductionAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -99,11 +110,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
-        outputs: &BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &BytecodeReductionAddressPhaseInputClaims<Vec<F>>,
+        output_points: &BytecodeReductionAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
@@ -112,13 +123,17 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let opening_point = outputs.chunks.first().map(GetPoint::point).ok_or_else(|| {
-            bytecode_public_failed("bytecode reduction produced no chunk openings")
-        })?;
+        let opening_point = output_points
+            .chunks()
+            .first()
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                bytecode_public_failed("bytecode reduction produced no chunk openings")
+            })?;
         let weights = self
             .layout
             .address_phase_final_output_weights_at_opening_point(
-                self.output_weight_inputs(),
+                self.output_weight_inputs()?,
                 opening_point,
             )
             .map_err(bytecode_public_failed)?;
@@ -133,16 +148,21 @@ pub struct ProgramImageReductionAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::program_image::AddressPhase,
     layout: ProgramImageClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
-    reference_opening_point: Vec<F>,
+    /// The RAM address point of the staged `ProgramImageInitContributionRw` opening
+    /// (from stage 4). Consumed only by the clear-only `derive_output_term`
+    /// (`FinalScale`), so it is `None` in ZK — where BlindFold recomputes the scale
+    /// and this relation's `derive_output_term` never runs.
+    reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: Field> ProgramImageReductionAddressPhase<F> {
     /// `reference_opening_point` is the RAM address point of the staged
-    /// `ProgramImageInitContributionRw` opening (from stage 4). It and the
-    /// cycle-phase variables are known before the stage-7 sumcheck.
+    /// `ProgramImageInitContributionRw` opening (from stage 4), `None` in ZK
+    /// (clear-only aux). It and the cycle-phase variables are known before the
+    /// stage-7 sumcheck.
     pub fn new(
         layout: &ProgramImageClaimReductionLayout,
-        reference_opening_point: Vec<F>,
+        reference_opening_point: Option<Vec<F>>,
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
@@ -170,10 +190,16 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    /// The program-image address phase is bound on the offset-0 prefix of the batch
+    /// challenge vector (two-phase reductions front-load the address rounds).
+    fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
+        Ok(0)
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
+        _input_points: &ProgramImageReductionAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<ProgramImageReductionAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .layout
@@ -184,11 +210,11 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
-        outputs: &ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
+        _input_points: &ProgramImageReductionAddressPhaseInputClaims<Vec<F>>,
+        output_points: &ProgramImageReductionAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
@@ -196,10 +222,15 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
+        let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
+            program_image_public_failed(
+                "program-image address phase has no reference opening point (ZK-only construction)",
+            )
+        })?;
         self.layout
             .address_phase_scale_at_opening_point(
-                &self.reference_opening_point,
-                outputs.program_image.point(),
+                reference_opening_point,
+                output_points.program_image(),
             )
             .map_err(program_image_public_failed)
     }

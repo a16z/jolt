@@ -67,9 +67,7 @@ impl SymbolicSumcheck for ClaimReduction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::field_inline::geometry::claim_reductions::registers::{
-        claim_reduction_input_openings, claim_reduction_output_openings,
-    };
+
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn dimensions() -> FieldRegistersTraceDimensions {
@@ -86,26 +84,6 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            claim_reduction_input_openings().to_vec()
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            claim_reduction_output_openings().to_vec()
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![FieldInlineChallengeId::from(
-                FieldRegistersClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![FieldInlineDerivedId::from(
-                FieldRegistersClaimReductionPublic::EqSpartan
-            )]
-        );
     }
 
     #[test]

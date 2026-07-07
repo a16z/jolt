@@ -12,49 +12,47 @@ pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafChallenges, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::instruction::InstructionReadRafDimensions, InstructionReadRafChallenge,
-    InstructionReadRafPublic, JoltChallengeId, JoltDerivedId, JoltRelationId,
+    geometry::instruction::InstructionReadRafDimensions, InstructionReadRafPublic, JoltDerivedId,
+    JoltRelationId,
 };
-use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
-use crate::stages::stage2::Stage2ClearOutput;
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::VerifierError;
 
-/// Wire the consumed openings from the upstream instruction claim-reduction
-/// (stage 2), applying the lookup-output fallback to the product remainder.
-/// All three share the claim-reduction opening point. (Verifier-side constructor
-/// for the moved [`InstructionReadRafInputClaims`].)
-pub fn instruction_read_raf_inputs_from_upstream<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-) -> InstructionReadRafInputClaims<OpeningClaim<F>> {
-    let reduction = &stage2.output_claims.instruction_claim_reduction;
-    let lookup_output = reduction.lookup_output.as_ref().map_or(
-        stage2.output_claims.product_remainder.lookup_output.value,
-        |claim| claim.value,
-    );
-    let point = stage2
-        .output_claims
-        .instruction_claim_reduction_point()
-        .to_vec();
+/// Wire the consumed opening *values* from the upstream instruction claim-reduction
+/// (stage 2). The reduced `lookup_output` wire cell is a cross-relation alias of
+/// the product remainder's; stage 2's generated `validate_aliases` (run inside its
+/// `expected_final_claim`) enforces their equality before this wiring reads it.
+/// Takes the ZK-agnostic stage-2 output-claims aggregate (both the clear and ZK
+/// stage-2 outputs expose it).
+pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
+    stage2: &Stage2BatchOutputClaims<F>,
+) -> InstructionReadRafInputClaims<F> {
+    let reduction = &stage2.instruction_claim_reduction;
     InstructionReadRafInputClaims {
-        lookup_output: OpeningClaim {
-            point: point.clone(),
-            value: lookup_output,
-        },
-        left_lookup_operand: OpeningClaim {
-            point: point.clone(),
-            value: reduction.left_lookup_operand.value,
-        },
-        right_lookup_operand: OpeningClaim {
-            point,
-            value: reduction.right_lookup_operand.value,
-        },
+        lookup_output: reduction.lookup_output,
+        left_lookup_operand: reduction.left_lookup_operand,
+        right_lookup_operand: reduction.right_lookup_operand,
+    }
+}
+
+/// Wire the consumed opening *points* from the upstream instruction claim-reduction
+/// (stage 2). All three share the claim-reduction opening point.
+pub fn instruction_read_raf_input_points_from_upstream<F: Field>(
+    stage2: &Stage2BatchOutputPoints<F>,
+) -> InstructionReadRafInputClaims<Vec<F>> {
+    let point = stage2.instruction_claim_reduction_point().to_vec();
+    InstructionReadRafInputClaims {
+        lookup_output: point.clone(),
+        left_lookup_operand: point.clone(),
+        right_lookup_operand: point,
     }
 }
 
@@ -81,20 +79,17 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-/// Reconstruct the instruction address point from the virtual-RA opening cells:
+/// Reconstruct the instruction address point from the virtual-RA opening points:
 /// each RA opening point is `chunk ++ r_cycle`, and the chunks tile the address
 /// in order, so stripping the trailing cycle and concatenating recovers it.
-pub(crate) fn reconstruct_r_address<F: Field, C: GetPoint<F>>(
-    outputs: &InstructionReadRafOutputClaims<C>,
+pub(crate) fn reconstruct_r_address<F: Field>(
+    output_points: &InstructionReadRafOutputClaims<Vec<F>>,
     cycle_len: usize,
 ) -> Vec<F> {
-    outputs
-        .instruction_ra
+    output_points
+        .instruction_ra()
         .iter()
-        .flat_map(|cell| {
-            let point = cell.point();
-            point[..point.len() - cycle_len].iter().copied()
-        })
+        .flat_map(|point| point[..point.len() - cycle_len].iter().copied())
         .collect()
 }
 
@@ -105,10 +100,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionReadRafInputClaims<C>,
+        _input_points: &InstructionReadRafInputClaims<Vec<F>>,
     ) -> Result<InstructionReadRafOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .dimensions
@@ -140,34 +135,28 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        inputs: &InstructionReadRafInputClaims<C>,
-        outputs: &InstructionReadRafOutputClaims<OpeningClaim<F>>,
+        input_points: &InstructionReadRafInputClaims<Vec<F>>,
+        output_points: &InstructionReadRafOutputClaims<Vec<F>>,
         challenges: &InstructionReadRafChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionReadRaf(public) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let r_cycle = outputs.instruction_raf_flag.point();
-        let r_address = reconstruct_r_address(outputs, r_cycle.len());
+        let r_cycle = output_points.instruction_raf_flag();
+        let r_address = reconstruct_r_address(output_points, r_cycle.len());
         // eq over the upstream instruction claim-reduction cycle point; all three
         // consumed openings share that point, so the lookup-output input carries it.
         let eq_reduction =
-            try_eq_mle(inputs.lookup_output.point(), r_cycle).map_err(public_input_failed)?;
+            try_eq_mle(input_points.lookup_output(), r_cycle).map_err(public_input_failed)?;
         let address_bits = self.dimensions.instruction_address_bits();
         let left = || OperandPolynomial::new(address_bits, OperandSide::Left).evaluate(&r_address);
         let right =
             || OperandPolynomial::new(address_bits, OperandSide::Right).evaluate(&r_address);
-        // The RAF publics fold the batching gamma into the operand evaluations. The
-        // gamma comes from the drawn `challenges` struct (the same value
-        // `draw_challenges` produced), not a stored scalar.
-        let gamma = challenges
-            .resolve_challenge(&JoltChallengeId::from(InstructionReadRafChallenge::Gamma))
-            .ok_or(VerifierError::MissingStageClaimChallenge {
-                id: JoltChallengeId::from(InstructionReadRafChallenge::Gamma),
-            })?;
+        // The RAF publics fold the batching gamma into the operand evaluations.
+        let gamma = challenges.gamma;
         let gamma2 = gamma * gamma;
         match public {
             InstructionReadRafPublic::EqTableValue(index) => {
@@ -186,5 +175,40 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
                 Ok(eq_reduction * (gamma2 * identity - gamma * left() - gamma2 * right()))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::ConcreteSumcheck;
+    use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
+    use jolt_claims::SymbolicSumcheck;
+    use jolt_field::Fr;
+
+    /// Locks the `expected_output_openings` invariant for the one stage-5 relation
+    /// with a size-parameter-dependent shape: the openings the read-RAF output `Expr`
+    /// references (looping over every lookup table and RA chunk) must be exactly the
+    /// geometry's `read_raf_output_openings` set. If they drift, the ZK
+    /// commitment-count and clear shape-check derived from the `Expr` would be wrong.
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn expected_output_openings_matches_geometry_shape() {
+        let dimensions = InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap();
+        let expected: std::collections::BTreeSet<_> = {
+            let openings = read_raf_output_openings(dimensions);
+            openings
+                .lookup_table_flags
+                .into_iter()
+                .chain(openings.instruction_ra)
+                .chain(std::iter::once(openings.instruction_raf_flag))
+                .collect()
+        };
+        assert_eq!(
+            InstructionReadRaf::<Fr>::new(dimensions)
+                .symbolic()
+                .expected_output_openings::<Fr>(),
+            expected,
+        );
     }
 }

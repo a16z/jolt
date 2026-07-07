@@ -46,7 +46,7 @@ pub struct InstructionInputOutputClaims<C> {
 /// Consumed instruction-input openings: the left/right virtualized instruction
 /// inputs reduced by stage 2's product remainder. The relation reads only these
 /// values, so the input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionInputInputClaims<C> {
     #[opening(RightInstructionInput, from = SpartanProductVirtualization)]
     pub right_instruction_input: C,
@@ -55,7 +55,7 @@ pub struct InstructionInputInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction input-virtualization sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionInputChallenges<F> {
     #[challenge(InstructionInputChallenge::Gamma)]
     pub gamma: F,
@@ -201,13 +201,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
         assert_eq!(relation.degree(), INPUT_VIRTUALIZATION_DEGREE);
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(InstructionInputChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(InstructionInputPublic::EqProduct)]
-        );
     }
 }

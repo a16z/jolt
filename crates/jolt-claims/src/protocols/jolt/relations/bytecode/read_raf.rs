@@ -298,20 +298,6 @@ mod tests {
             relation.degree(),
             dimensions(2).num_committed_ra_polys() + 1
         );
-        assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(0)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(1)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(2)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(3)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(4)),
-                JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-                JoltDerivedId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-                JoltDerivedId::from(BytecodeReadRafPublic::Entry),
-            ]
-        );
     }
 
     /// Every staged gamma the relation draws (`stage_gammas`) must resolve to a

@@ -16,6 +16,29 @@ use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use super::dimensions::JoltFormulaPointError;
 use super::error::require_len;
 
+/// Per-stage (1..=5) gamma-power vector lengths for the bytecode read-RAF stage
+/// folds — the arities of the prover's `challenge_scalar_powers` draws. The
+/// verifier stores each stage's single drawn scalar and expands it with
+/// [`stage_gamma_powers`], so these lengths are single-sourced with the
+/// fold-side `require_len` guards.
+///
+/// [`stage_gamma_powers`]: crate::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges::stage_gamma_powers
+pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
+    // Stage 1: UnexpandedPC, Imm, then one per circuit flag (all Spartan outer).
+    2 + NUM_CIRCUIT_FLAGS,
+    // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
+    // product-virtualization flags.
+    4,
+    // Stage 3: Imm (instruction input), UnexpandedPC (shift), the four
+    // operand-source flags, IsNoop, VirtualInstruction, IsFirstInSequence.
+    9,
+    // Stage 4: the RdWa, Rs1Ra, Rs2Ra register read-write openings.
+    3,
+    // Stage 5: RdWa (registers val evaluation), InstructionRafFlag, then one
+    // per lookup table flag.
+    2 + LookupTableKind::<XLEN>::COUNT,
+];
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafDimensions {
     log_t: usize,
@@ -288,11 +311,11 @@ pub fn read_raf_public_values<F>(
 where
     F: Field,
 {
-    require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
-    require_len(inputs.stage2_gammas, 4)?;
-    require_len(inputs.stage3_gammas, 9)?;
-    require_len(inputs.stage4_gammas, 3)?;
-    require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
+    require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
+    require_len(inputs.stage2_gammas, BYTECODE_STAGE_GAMMA_COUNTS[1])?;
+    require_len(inputs.stage3_gammas, BYTECODE_STAGE_GAMMA_COUNTS[2])?;
+    require_len(inputs.stage4_gammas, BYTECODE_STAGE_GAMMA_COUNTS[3])?;
+    require_len(inputs.stage5_gammas, BYTECODE_STAGE_GAMMA_COUNTS[4])?;
 
     let expected_domain = 1usize << inputs.r_address.len();
     if inputs.bytecode.len() != expected_domain {

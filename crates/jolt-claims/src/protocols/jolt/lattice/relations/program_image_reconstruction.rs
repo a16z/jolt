@@ -137,20 +137,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), 8 + 3);
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![final_program_image_opening()]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![program_image_bytes_opening()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                ProgramImageReconstructionPublic::ByteDecode
-            )]
-        );
     }
 }

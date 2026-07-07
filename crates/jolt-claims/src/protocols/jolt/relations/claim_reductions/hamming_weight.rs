@@ -17,8 +17,8 @@ use crate::{
 
 /// Produced one-hot `Ra` opening claims, grouped by family (instruction,
 /// bytecode, RAM) in canonical layout order. Every produced opening shares the
-/// single hamming-weight opening point. Generic over the cell (`F` on the wire,
-/// `Vec<F>` for ZK points, `OpeningClaim<F>` on the clear path).
+/// single hamming-weight opening point. Generic over the opening cell (`F` for
+/// the serialized wire value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -38,7 +38,7 @@ pub struct HammingWeightClaimReductionOutputClaims<C> {
 /// claim (from RAM hamming booleanity) plus the per-family booleanity and
 /// virtualization claims (each wired from its producing stage-6 relation).
 /// Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct HammingWeightClaimReductionInputClaims<C> {
     #[opening(RamHammingWeight, from = RamHammingBooleanity)]
     pub ram_hamming_weight: C,
@@ -57,7 +57,7 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the hamming-weight claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct HammingWeightClaimReductionChallenges<F> {
     #[challenge(HammingWeightClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -266,51 +266,12 @@ mod tests {
         let layout = layout(1, 1, 1)?;
         let relation = ClaimReduction::new(dimensions(layout));
 
-        let instruction = JoltRaPolynomial::Instruction(0);
-        let bytecode = JoltRaPolynomial::Bytecode(0);
-        let ram = JoltRaPolynomial::Ram(0);
-
         assert_eq!(
             ClaimReduction::id(),
             JoltRelationId::HammingWeightClaimReduction
         );
         assert_eq!(relation.rounds(), 8);
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                booleanity_claim(instruction),
-                virtualization_claim(instruction),
-                booleanity_claim(bytecode),
-                virtualization_claim(bytecode),
-                ram_hamming_weight(),
-                booleanity_claim(ram),
-                virtualization_claim(ram),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                reduced_claim(instruction),
-                reduced_claim(bytecode),
-                reduced_claim(ram),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                HammingWeightClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanity),
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(0)),
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(1)),
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(2)),
-            ]
-        );
         Ok(())
     }
 }

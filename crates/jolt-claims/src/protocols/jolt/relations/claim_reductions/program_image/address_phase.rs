@@ -26,7 +26,7 @@ pub struct ProgramImageReductionAddressPhaseOutputClaims<C> {
 }
 
 /// Consumed intermediate opening from the stage-6b program-image cycle phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct ProgramImageReductionAddressPhaseInputClaims<C> {
     #[opening(committed = ProgramImageInit, from = ProgramImageClaimReductionCyclePhase)]
     pub cycle_phase: C,
@@ -138,19 +138,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions.address_phase_total_rounds());
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![cycle_phase_program_image_opening()]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![final_program_image_opening()]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                ProgramImageClaimReductionPublic::FinalScale
-            )]
-        );
     }
 }

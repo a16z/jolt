@@ -27,7 +27,7 @@ impl<C> Default for OuterUniskipInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -38,8 +38,8 @@ impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<crate::OpeningClaim<F>
 }
 
 /// Produced Spartan outer univariate-skip opening (the single reduced
-/// univariate-skip value). Generic over the cell (`F` on the wire / serialized
-/// proof form, `OpeningClaim<F>` on the clear path).
+/// univariate-skip value). Generic over the opening cell (`F` for the serialized
+/// wire value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

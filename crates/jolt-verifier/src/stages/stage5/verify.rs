@@ -1,88 +1,64 @@
-use jolt_claims::protocols::jolt::{
-    geometry::{dimensions::JoltFormulaDimensions, instruction},
-    relations, JoltRelationId,
-};
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
-use num_traits::Zero;
 
 use super::{
     instruction_read_raf::{
-        instruction_read_raf_inputs_from_upstream, InstructionReadRaf,
-        InstructionReadRafInputClaims,
+        instruction_read_raf_input_points_from_upstream,
+        instruction_read_raf_input_values_from_upstream, InstructionReadRaf,
     },
     outputs::{
-        Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5OutputClaims, Stage5ZkOutput,
+        Stage5ClearOutput, Stage5InputClaims, Stage5InputPoints, Stage5Output, Stage5Sumchecks,
+        Stage5ZkOutput,
     },
     ram_ra_claim_reduction::{
-        ram_ra_claim_reduction_inputs_from_upstream, RamRaClaimReduction,
-        RamRaClaimReductionInputClaims,
+        ram_ra_claim_reduction_input_points_from_upstream,
+        ram_ra_claim_reduction_input_values_from_upstream, RamRaClaimReduction,
     },
     registers_val_evaluation::{
-        registers_val_evaluation_inputs_from_upstream, RegistersValEvaluation,
-        RegistersValEvaluationInputClaims,
+        registers_val_evaluation_input_points_from_upstream,
+        registers_val_evaluation_input_values_from_upstream, RegistersValEvaluation,
     },
 };
 use crate::{
     proof::JoltProof,
     stages::{
-        relations::{
-            check_relation_boolean_hypercube, zip_openings, ConcreteSumcheck, OpeningClaim,
-            OutputClaims,
-        },
-        stage2::Stage2Output,
-        stage4::Stage4Output,
+        stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
+        stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
         zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
 };
 
-/// Combine the three stage 5 expected output claims with the batch's coefficients,
-/// in canonical batch order (instruction read-RAF, RAM-RA reduction, register
-/// value-evaluation). Shared by the verifier and the prover so the combination
-/// cannot drift.
-pub fn stage5_expected_final_claim<F: Field>(
-    coefficients: &[F],
-    instruction_read_raf: F,
-    ram_ra_claim_reduction: F,
-    registers_val_evaluation: F,
-) -> Result<F, VerifierError> {
-    let [instruction_coefficient, ram_coefficient, registers_coefficient] = coefficients else {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: "Stage 5 batch verifier returned the wrong number of coefficients".to_string(),
-        });
-    };
-    Ok(*instruction_coefficient * instruction_read_raf
-        + *ram_coefficient * ram_ra_claim_reduction
-        + *registers_coefficient * registers_val_evaluation)
+/// Assemble the stage-5 consumed openings from the upstream clear outputs into the
+/// generated `Stage5InputClaims` aggregate. This is the single place the stage's
+/// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
+/// wires which upstream opening feeds which downstream input.
+fn stage5_input_values_from_upstream<F: Field>(
+    stage2: &Stage2BatchOutputClaims<F>,
+    stage4: &Stage4OutputClaims<F>,
+) -> Stage5InputClaims<F> {
+    Stage5InputClaims {
+        instruction_read_raf: instruction_read_raf_input_values_from_upstream(stage2),
+        ram_ra_claim_reduction: ram_ra_claim_reduction_input_values_from_upstream(stage2, stage4),
+        registers_val_evaluation: registers_val_evaluation_input_values_from_upstream(stage4),
+    }
 }
 
-/// Pair the produced stage-5 openings with their derived points (point + value
-/// together) from the wire claim values and each relation's opening points. Shared
-/// by the verifier and the prover so these opening claims are built once.
-pub fn stage5_output_claims_with_points<F: Field>(
-    claims: &Stage5OutputClaims<F>,
-    points: &Stage5OutputClaims<Vec<F>>,
-) -> Stage5OutputClaims<OpeningClaim<F>> {
-    Stage5OutputClaims {
-        instruction_read_raf: zip_openings(
-            &claims.instruction_read_raf,
-            &points.instruction_read_raf,
-        ),
-        ram_ra_claim_reduction: zip_openings(
-            &claims.ram_ra_claim_reduction,
-            &points.ram_ra_claim_reduction,
-        ),
-        registers_val_evaluation: zip_openings(
-            &claims.registers_val_evaluation,
-            &points.registers_val_evaluation,
-        ),
+/// Assemble the stage-5 consumed opening *points* from the upstream output-points
+/// aggregates. ZK-agnostic: both the clear and ZK stage-2/stage-4 outputs expose
+/// these, so the same wiring builds the input points in either mode.
+fn stage5_input_points_from_upstream<F: Field>(
+    stage2: &Stage2BatchOutputPoints<F>,
+    stage4: &Stage4OutputPoints<F>,
+) -> Stage5InputPoints<F> {
+    Stage5InputPoints {
+        instruction_read_raf: instruction_read_raf_input_points_from_upstream(stage2),
+        ram_ra_claim_reduction: ram_ra_claim_reduction_input_points_from_upstream(stage2, stage4),
+        registers_val_evaluation: registers_val_evaluation_input_points_from_upstream(stage4),
     }
 }
 
@@ -102,130 +78,36 @@ where
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = formula_dimensions.trace;
 
-    let instruction_claims =
-        relations::instruction::ReadRaf::new(formula_dimensions.instruction_read_raf);
-    let ram_claims = relations::ram::RaClaimReduction::new(trace_dimensions);
-    let registers_claims = relations::registers::ValEvaluation::new(trace_dimensions);
-
-    for (relation, domain, degree) in [
-        (
-            relations::instruction::ReadRaf::id(),
-            instruction_claims.domain(),
-            instruction_claims.degree(),
-        ),
-        (
-            relations::ram::RaClaimReduction::id(),
-            ram_claims.domain(),
-            ram_claims.degree(),
-        ),
-        (
-            relations::registers::ValEvaluation::id(),
-            registers_claims.domain(),
-            registers_claims.degree(),
-        ),
-    ] {
-        check_relation_boolean_hypercube(relation, domain, degree)?;
-    }
-    let instruction_relation = InstructionReadRaf::new(formula_dimensions.instruction_read_raf);
-    let ram_relation = RamRaClaimReduction::new(trace_dimensions, log_k);
-    let registers_relation = RegistersValEvaluation::new(trace_dimensions);
-
-    // Draw each relation's batching gamma in the inline order (instruction, then
-    // RAM); registers draws nothing. The drawn structs feed the input/output claims;
-    // their scalars also populate the stage aggregate carried downstream.
-    let instruction_challenges = instruction_relation.draw_challenges(transcript)?;
-    let ram_challenges = ram_relation.draw_challenges(transcript)?;
-    let registers_challenges = registers_relation.draw_challenges(transcript)?;
-    let challenges = Stage5Challenges {
-        instruction_gamma: instruction_challenges.gamma,
-        ram_gamma: ram_challenges.gamma,
+    let sumchecks = Stage5Sumchecks {
+        instruction_read_raf: InstructionReadRaf::new(formula_dimensions.instruction_read_raf),
+        ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, log_k),
+        registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
     };
 
-    let instruction_output_openings =
-        instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
-    let committed_output_claims = instruction_output_openings.opening_count()
-        + relations::ram::RamRaClaimReductionOutputClaims::<PCS::Field> {
-            ram_ra: PCS::Field::zero(),
-        }
-        .canonical_order()
-        .len()
-        + relations::registers::RegistersValEvaluationOutputClaims::<PCS::Field> {
-            rd_inc: PCS::Field::zero(),
-            rd_wa: PCS::Field::zero(),
-        }
-        .canonical_order()
-        .len();
+    // Draw each relation's batching gamma in declaration order (instruction, then
+    // RAM); registers draws nothing. The drawn challenges feed the input/output
+    // claims and populate the stage aggregate carried downstream.
+    let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk {
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
-        let statements = [
-            SumcheckStatement::new(instruction_claims.rounds(), instruction_claims.degree()),
-            SumcheckStatement::new(ram_claims.rounds(), ram_claims.degree()),
-            SumcheckStatement::new(registers_claims.rounds(), registers_claims.degree()),
-        ];
-        let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
-            &statements,
+        let consistency = sumchecks.verify_zk(&proof.stages.stage5_sumcheck_proof, transcript)?;
+        let batch_output_claims = committed::verify_output_claim_commitments(
+            checked,
             &proof.stages.stage5_sumcheck_proof,
-            transcript,
-        )
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: error.to_string(),
-        })?;
-        let batch_output_claims =
-            committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
-                checked,
-                proof: &proof.stages.stage5_sumcheck_proof,
-                proof_label: "stage5_sumcheck_proof",
-                output_claim_count: committed_output_claims,
-                stage: JoltRelationId::InstructionReadRaf,
-            })?;
+            "stage5_sumcheck_proof",
+            sumchecks.output_claim_count(),
+            JoltRelationId::InstructionReadRaf,
+        )?;
 
-        let instruction_point = consistency
-            .try_instance_point(instruction_claims.rounds())
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::InstructionReadRaf,
-                reason: error.to_string(),
-            })?;
-        let ram_point = consistency
-            .try_instance_point(ram_claims.rounds())
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: error.to_string(),
-            })?;
-        let registers_point = consistency
-            .try_instance_point(registers_claims.rounds())
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RegistersValEvaluation,
-                reason: error.to_string(),
-            })?;
-
-        // Map each relation's committed sumcheck point to its produced opening
-        // points, the point-only counterpart of the clear `output_claims`. The
-        // instruction relation ignores its inputs (empty point cells suffice); RAM
-        // and registers splice the fixed address/cycle prefixes from upstream points.
-        let empty = Vec::<PCS::Field>::new;
-        let instruction_inputs = InstructionReadRafInputClaims {
-            lookup_output: empty(),
-            left_lookup_operand: empty(),
-            right_lookup_operand: empty(),
-        };
-        let ram_inputs = RamRaClaimReductionInputClaims {
-            raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
-            read_write: stage2.output_points.ram_read_write_point().to_vec(),
-            val_check: stage4.output_points.ram_val_check_point().to_vec(),
-        };
-        let registers_inputs = RegistersValEvaluationInputClaims {
-            registers_val: stage4.output_points.registers_read_write_point().to_vec(),
-        };
-        let output_points = Stage5OutputClaims {
-            instruction_read_raf: instruction_relation
-                .derive_opening_points(&instruction_point, &instruction_inputs)?,
-            ram_ra_claim_reduction: ram_relation.derive_opening_points(&ram_point, &ram_inputs)?,
-            registers_val_evaluation: registers_relation
-                .derive_opening_points(&registers_point, &registers_inputs)?,
-        };
+        // Built via the same wiring as the clear path, off the ZK-agnostic upstream
+        // output points; `derive_opening_points` ignores the instruction relation's
+        // input points, so carrying the real claim-reduction point here is harmless.
+        let input_points =
+            stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
+        let output_points =
+            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
         let instruction_r_address = output_points.instruction_r_address();
 
         return Ok(Stage5Output::Zk(Stage5ZkOutput {
@@ -240,128 +122,45 @@ where
     let stage2 = stage2.clear()?;
     let stage4 = stage4.clear()?;
     let claims = &proof.clear_claims()?.stage5;
-    if claims.instruction_read_raf.lookup_table_flags.len()
-        != instruction_output_openings.lookup_table_flags.len()
-    {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: format!(
-                "lookup table flag claim count mismatch: expected {}, got {}",
-                instruction_output_openings.lookup_table_flags.len(),
-                claims.instruction_read_raf.lookup_table_flags.len()
-            ),
-        });
-    }
-    if claims.instruction_read_raf.instruction_ra.len()
-        != instruction_output_openings.instruction_ra.len()
-    {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: format!(
-                "instruction RA claim count mismatch: expected {}, got {}",
-                instruction_output_openings.instruction_ra.len(),
-                claims.instruction_read_raf.instruction_ra.len()
-            ),
-        });
-    }
+    sumchecks.validate_output_claims(claims)?;
 
     // The reduced lookup output aliases the product remainder's lookup output
-    // (same opening point and value); stage 2 validates that alias, which the
-    // instruction read-RAF input wiring relies on when it falls back to the
-    // product remainder.
-    let instruction_inputs = instruction_read_raf_inputs_from_upstream(stage2);
-    let ram_inputs = ram_ra_claim_reduction_inputs_from_upstream(stage2, stage4);
-    let registers_inputs = registers_val_evaluation_inputs_from_upstream(stage4);
+    // (same opening point and value); stage 2's generated `validate_aliases`
+    // enforced that equality, so the instruction read-RAF wiring reads the
+    // reduced wire cell directly.
+    let input_values =
+        stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
+    let input_points =
+        stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
 
-    let sumcheck_claims = [
-        SumcheckClaim::new(
-            instruction_claims.rounds(),
-            instruction_claims.degree(),
-            instruction_relation.input_claim(&instruction_inputs, &instruction_challenges)?,
-        ),
-        SumcheckClaim::new(
-            ram_claims.rounds(),
-            ram_claims.degree(),
-            ram_relation.input_claim(&ram_inputs, &ram_challenges)?,
-        ),
-        SumcheckClaim::new(
-            registers_claims.rounds(),
-            registers_claims.degree(),
-            registers_relation.input_claim(&registers_inputs, &registers_challenges)?,
-        ),
-    ];
-    let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &sumcheck_claims,
+    let batch = sumchecks.verify_clear(
+        &input_values,
+        &challenges,
         &proof.stages.stage5_sumcheck_proof,
         transcript,
-    )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltRelationId::InstructionReadRaf,
-        reason: error.to_string(),
-    })?;
-
-    let instruction_point = batch
-        .try_instance_point(instruction_claims.rounds())
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionReadRaf,
-            reason: error.to_string(),
-        })?;
-    let ram_point = batch
-        .try_instance_point(ram_claims.rounds())
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::RamRaClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let registers_point = batch
-        .try_instance_point(registers_claims.rounds())
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::RegistersValEvaluation,
-            reason: error.to_string(),
-        })?;
-
-    let points = Stage5OutputClaims {
-        instruction_read_raf: instruction_relation
-            .derive_opening_points(instruction_point, &instruction_inputs)?,
-        ram_ra_claim_reduction: ram_relation.derive_opening_points(ram_point, &ram_inputs)?,
-        registers_val_evaluation: registers_relation
-            .derive_opening_points(registers_point, &registers_inputs)?,
-    };
-    let output_claims = stage5_output_claims_with_points(claims, &points);
-
-    let instruction_output = instruction_relation.expected_output(
-        &instruction_inputs,
-        &output_claims.instruction_read_raf,
-        &instruction_challenges,
-    )?;
-    let ram_output = ram_relation.expected_output(
-        &ram_inputs,
-        &output_claims.ram_ra_claim_reduction,
-        &ram_challenges,
-    )?;
-    let registers_output = registers_relation.expected_output(
-        &registers_inputs,
-        &output_claims.registers_val_evaluation,
-        &registers_challenges,
     )?;
 
-    let expected_final_claim = stage5_expected_final_claim(
-        batch.batching_coefficients.as_slice(),
-        instruction_output,
-        ram_output,
-        registers_output,
+    let output_points =
+        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
+
+    let expected_final_claim = sumchecks.expected_final_claim(
+        &batch.coefficients,
+        &input_points,
+        claims,
+        &output_points,
+        &challenges,
     )?;
     if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::InstructionReadRaf,
-        });
+        return Err(VerifierError::StageClaimOutputMismatch { stage: 5 });
     }
 
-    claims.append_to_transcript(transcript);
+    sumchecks.append_output_claims(transcript, claims);
 
-    let instruction_r_address = output_claims.instruction_r_address();
+    let instruction_r_address = output_points.instruction_r_address();
     Ok(Stage5Output::Clear(Stage5ClearOutput {
         challenges,
-        output_claims,
+        output_values: claims.clone(),
+        output_points,
         instruction_r_address,
     }))
 }

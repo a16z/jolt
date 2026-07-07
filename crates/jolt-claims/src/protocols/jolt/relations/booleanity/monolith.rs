@@ -25,7 +25,7 @@ pub struct BooleanityOutputClaims<C> {
 }
 
 /// The `BooleanityAddrClaim` intermediate consumed from the address phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BooleanityInputClaims<C> {
     #[opening(BooleanityAddrClaim, from = Booleanity)]
     pub address_phase: C,
@@ -35,7 +35,7 @@ pub struct BooleanityInputClaims<C> {
 /// folding the RA family is built inside the `booleanity_cycle_output` geometry
 /// helper rather than appearing as a literal `challenge(..)` here, so this set is
 /// derived from `required_challenges()`, not a textual scan of the expressions.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BooleanityChallenges<F> {
     #[challenge(BooleanityChallenge::Gamma)]
     pub gamma: F,
@@ -167,18 +167,6 @@ mod tests {
         assert_eq!(Booleanity::id(), JoltRelationId::Booleanity);
         assert_eq!(relation.rounds(), 13);
         assert_eq!(relation.degree(), 3);
-        assert!(relation
-            .input_expression::<Fr>()
-            .required_openings()
-            .is_empty());
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
-        );
     }
 
     /// The `gamma` is folded inside `booleanity_cycle_output`, so it never appears
@@ -194,11 +182,6 @@ mod tests {
         assert_eq!(
             challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
             Some(Fr::from_u64(5)),
-        );
-        // The relation draws exactly this one challenge.
-        assert_eq!(
-            Booleanity::new(dimensions(1, 1, 1)).required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)],
         );
     }
 }

@@ -27,7 +27,7 @@ pub struct RegistersValEvaluationOutputClaims<C> {
 
 /// Consumed register value-evaluation opening, wired from the upstream register
 /// read-write checking.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RegistersValEvaluationInputClaims<C> {
     #[opening(RegistersVal, from = RegistersReadWriteChecking)]
     pub registers_val: C,
@@ -130,18 +130,5 @@ mod tests {
         assert_eq!(ValEvaluation::id(), JoltRelationId::RegistersValEvaluation);
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                registers_val_read_write(),
-                rd_inc_val_evaluation(),
-                rd_wa_val_evaluation(),
-            ]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle)]
-        );
     }
 }

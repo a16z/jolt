@@ -17,16 +17,8 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
-
-/// `RamHammingBooleanity` consumes no openings (its input claim is the constant
-/// zero), so its consumed-claim struct is empty. (Verifier-side constructor for
-/// the moved [`RamHammingBooleanityInputClaims`].)
-pub fn ram_hamming_booleanity_inputs_from_upstream<F: Field>(
-) -> RamHammingBooleanityInputClaims<OpeningClaim<F>> {
-    RamHammingBooleanityInputClaims::default()
-}
 
 pub struct RamHammingBooleanity<F: Field> {
     symbolic: relations::ram::HammingBooleanity,
@@ -60,10 +52,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RamHammingBooleanityInputClaims<C>,
+        _input_points: &RamHammingBooleanityInputClaims<Vec<F>>,
     ) -> Result<RamHammingBooleanityOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .trace_dimensions
@@ -74,11 +66,11 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &RamHammingBooleanityInputClaims<C>,
-        outputs: &RamHammingBooleanityOutputClaims<OpeningClaim<F>>,
+        _input_points: &RamHammingBooleanityInputClaims<Vec<F>>,
+        output_points: &RamHammingBooleanityOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
@@ -86,9 +78,8 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         };
         // `cycle_opening_point` reverses the sumcheck point, so recover the raw
         // sumcheck point (what `EqCycle` compares against) by reversing back.
-        let sumcheck_point = outputs
-            .ram_hamming_weight
-            .point()
+        let sumcheck_point = output_points
+            .ram_hamming_weight()
             .iter()
             .rev()
             .copied()

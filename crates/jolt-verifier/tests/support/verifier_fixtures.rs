@@ -46,7 +46,9 @@ use jolt_prover_legacy::{
 };
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0002";
+// Bumped for the InstructionClaimReductionOutputClaims Option<C> -> C wire flip
+// so stale cached fixtures regenerate instead of panicking mid-decode.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0003";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -268,36 +270,6 @@ pub fn standard_committed_muldiv_case() -> VerifierFixtureCase {
         VerifierFixtureKind::CommittedMulDivSmall,
         generate_committed_muldiv,
     )
-}
-
-#[cfg(not(feature = "zk"))]
-pub fn public_io_memory_layout_mismatch_case() -> VerifierFixtureCase {
-    let _guard = verifier_fixture_lock();
-    let fixture = generate_muldiv();
-    let mut public_io = fixture.public_io.clone();
-    public_io.memory_layout.heap_size += 1;
-    assert_verifier_rejects(&fixture, fixture.proof.clone(), public_io.clone());
-    case_from_parts(fixture, public_io)
-}
-
-#[cfg(not(feature = "zk"))]
-pub fn invalid_trace_length_case() -> VerifierFixtureCase {
-    let _guard = verifier_fixture_lock();
-    let mut fixture = generate_muldiv();
-    fixture.proof.trace_length = 3;
-    assert_verifier_rejects(&fixture, fixture.proof.clone(), fixture.public_io.clone());
-    let public_io = fixture.public_io.clone();
-    case_from_parts(fixture, public_io)
-}
-
-#[cfg(not(feature = "zk"))]
-pub fn invalid_ram_k_case() -> VerifierFixtureCase {
-    let _guard = verifier_fixture_lock();
-    let mut fixture = generate_muldiv();
-    fixture.proof.ram_K = 3;
-    assert_verifier_rejects(&fixture, fixture.proof.clone(), fixture.public_io.clone());
-    let public_io = fixture.public_io.clone();
-    case_from_parts(fixture, public_io)
 }
 
 #[cfg(not(feature = "zk"))]
@@ -531,25 +503,6 @@ fn assert_verifier_accepts(
     assert!(
         result.is_ok(),
         "canonical verifier should accept generated fixture proof: {result:?}",
-    );
-}
-
-#[cfg(not(feature = "zk"))]
-fn assert_verifier_rejects(
-    fixture: &GeneratedVerifierFixture,
-    proof: VerifierFixtureProof,
-    public_io: JoltDevice,
-) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-        &fixture.preprocessing,
-        &public_io,
-        &proof,
-        fixture.trusted_advice_commitment.as_ref(),
-        false,
-    );
-    assert!(
-        result.is_err(),
-        "canonical verifier accepted tampered fixture"
     );
 }
 

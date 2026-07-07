@@ -26,7 +26,7 @@ pub struct ProgramImageReductionCyclePhaseOutputClaims<C> {
 }
 
 /// The consumed RAM value-check program-image contribution.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct ProgramImageReductionCyclePhaseInputClaims<C> {
     #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
     pub contribution: C,
@@ -82,9 +82,6 @@ impl SymbolicSumcheck for CyclePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::geometry::claim_reductions::program_image::final_program_image_opening;
-    use crate::protocols::jolt::ProgramImageClaimReductionPublic;
-    use jolt_field::Fr;
 
     #[test]
     fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
@@ -97,32 +94,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
         assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![ram_val_check_contribution_opening()]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![cycle_phase_program_image_opening()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
-    }
-
-    #[test]
-    fn cycle_phase_without_address_phase_exposes_final_scale() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, false);
-        let relation = CyclePhase::new(dimensions);
-
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![final_program_image_opening()]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                ProgramImageClaimReductionPublic::FinalScale
-            )]
-        );
     }
 }

@@ -13,8 +13,8 @@ use crate::SymbolicSumcheck;
 use crate::{derived, opening, InputClaims, OutputClaims};
 
 /// The produced RAM `val_final` opening, sharing the single output-check opening
-/// point. Generic over the cell (`F` on the wire / serialized proof form,
-/// `OpeningClaim<F>` on the clear path).
+/// point. Generic over the opening cell (`F` for the serialized wire value,
+/// `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -29,6 +29,7 @@ pub struct RamOutputCheckOutputClaims<C> {
 /// The RAM output check consumes no openings (its input claim is the constant
 /// zero), so this carries only the cell marker. Hand-implements [`InputClaims`]
 /// since the derive requires at least one `#[opening]` field.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamOutputCheckInputClaims<C> {
     _cell: PhantomData<C>,
 }
@@ -39,7 +40,7 @@ impl<C> Default for RamOutputCheckInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -143,14 +144,5 @@ mod tests {
             read_write_dimensions().output_check_rounds()
         );
         assert_eq!(relation.degree(), 3);
-        assert_eq!(relation.required_openings::<Fr>(), vec![ram_val_final()]);
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(RamOutputCheckPublic::EqIoMask),
-                JoltDerivedId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
-            ]
-        );
     }
 }

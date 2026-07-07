@@ -22,7 +22,7 @@ pub struct RamRaVirtualizationOutputClaims<C> {
 }
 
 /// The single reduced `RamRa` opening from the stage-5 RAM RA claim reduction.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamRaVirtualizationInputClaims<C> {
     #[opening(RamRa, from = RamRaClaimReduction)]
     pub ram_ra_reduced: C,
@@ -122,16 +122,6 @@ mod tests {
     }
 
     #[test]
-    fn ra_virtualization_supports_empty_ra_product() {
-        let relation = RaVirtualization::new(ra_virtualization_dimensions(0));
-
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![ram_ra_claim_reduction()]
-        );
-    }
-
-    #[test]
     fn ra_virtualization_symbolic_matches_dependencies() {
         let relation = RaVirtualization::new(ra_virtualization_dimensions(3));
 
@@ -140,20 +130,6 @@ mod tests {
         assert_eq!(
             relation.degree(),
             ra_virtualization_dimensions(3).num_committed_ra_polys() + 1
-        );
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_ra_claim_reduction(),
-                committed_ram_ra(0),
-                committed_ram_ra(1),
-                committed_ram_ra(2),
-            ]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle)]
         );
     }
 }

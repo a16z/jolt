@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::JoltProtocolConfig,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
     VerifierError,
 };
 
@@ -50,38 +50,6 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Constructor mirrors the proof payload while keeping internal verifier claims private."
-    )]
-    pub fn new(
-        commitments: JoltCommitments<PCS::Output>,
-        stages: JoltStageProofs<PCS::Field, VC>,
-        joint_opening_proof: PCS::Proof,
-        untrusted_advice_commitment: Option<PCS::Output>,
-        claims: JoltProofClaims<PCS::Field, ZkProof>,
-        trace_length: usize,
-        ram_k: usize,
-        rw_config: JoltReadWriteConfig,
-        one_hot_config: JoltOneHotConfig,
-        trace_polynomial_order: TracePolynomialOrder,
-    ) -> Self {
-        let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
-        Self {
-            protocol,
-            commitments,
-            stages,
-            joint_opening_proof,
-            untrusted_advice_commitment,
-            claims,
-            trace_length,
-            ram_K: ram_k,
-            rw_config,
-            one_hot_config,
-            trace_polynomial_order,
-        }
-    }
-
     pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(claims) => Ok(claims),
@@ -165,7 +133,8 @@ pub struct ClearProofClaims<F: Field> {
     pub stage3: stage3::outputs::Stage3OutputClaims<F>,
     pub stage4: stage4::outputs::Stage4OutputClaims<F>,
     pub stage5: stage5::outputs::Stage5OutputClaims<F>,
-    pub stage6: stage6::outputs::Stage6OutputClaims<F>,
+    pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
+    pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
 }
 

@@ -13,8 +13,8 @@ use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
-/// the single read-write opening point. Generic over the cell (`F` on the wire /
-/// serialized proof form, `OpeningClaim<F>` on the clear path).
+/// the single read-write opening point. Generic over the opening cell (`F` for the
+/// serialized wire value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -34,7 +34,7 @@ pub struct RamReadWriteOutputClaims<C> {
 /// by the read-write checking sumcheck. The relation reads only these values (its
 /// output points come from its own sumcheck point and `product_tau_low`), so the
 /// input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamReadWriteInputClaims<C> {
     #[opening(RamReadValue, from = SpartanOuter)]
     pub ram_read_value: C,
@@ -43,7 +43,7 @@ pub struct RamReadWriteInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the RAM read/write-checking sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct RamReadWriteChallenges<F> {
     #[challenge(RamReadWriteChallenge::Gamma)]
     pub gamma: F,
@@ -170,24 +170,6 @@ mod tests {
             read_write_dimensions().read_write_rounds()
         );
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                ram_read_value(),
-                ram_write_value(),
-                ram_ra(),
-                ram_val(),
-                ram_inc()
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(RamReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RamReadWritePublic::EqCycle)]
-        );
     }
 
     #[test]
