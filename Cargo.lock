@@ -2973,6 +2973,7 @@ dependencies = [
  "strum 0.28.0",
  "tracer",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

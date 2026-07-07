@@ -218,21 +218,51 @@ pub(crate) struct CudaCoreBooleanityState {
 }
 
 impl CudaCoreBooleanityState {
-    pub(crate) fn new<F: Field>(h: &[Vec<F>], rho: &[F]) -> Option<Self> {
+    pub(crate) fn from_sparse_round1<F: Field>(
+        tables: &[Vec<F>],
+        indices: &[jolt_witness::Stage6BooleanityRow],
+        rho: &[F],
+    ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        if h.is_empty() || h.len() != rho.len() {
+        let num_polys = tables.len();
+        if num_polys == 0 || num_polys != rho.len() {
             return None;
         }
-        let device_h = h
-            .iter()
-            .map(|poly| ctx.upload(crate::cuda::as_fr_slice(poly)?).ok())
-            .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let chunk_domain = tables.first().map_or(0, Vec::len);
+        if chunk_domain == 0 || tables.iter().any(|t| t.len() != chunk_domain) {
+            return None;
+        }
+        let rows = indices.len();
+        let poly_stride = jolt_witness::STAGE6_BOOLEANITY_MAX_POLYS;
+
+        let mut flat_tables = Vec::with_capacity(num_polys * chunk_domain);
+        for table in tables {
+            flat_tables.extend_from_slice(crate::cuda::as_fr_slice(table)?);
+        }
+        let mut present_mask = Vec::with_capacity(rows);
+        let mut values = Vec::with_capacity(rows * poly_stride);
+        for row in indices {
+            present_mask.push(row.present_mask());
+            values.extend_from_slice(row.values());
+        }
+
+        let h = ctx
+            .core_booleanity_gather(crate::cuda::CoreBooleanityGatherInputs {
+                tables: &flat_tables,
+                present_mask: &present_mask,
+                values: &values,
+                num_polys,
+                chunk_domain,
+                rows,
+                poly_stride,
+            })
+            .ok()?;
         let rho = rho
             .iter()
             .map(|r| crate::cuda::into_fr(*r))
             .collect::<Option<Vec<Fr>>>()?;
         Some(Self {
-            h: device_h,
+            h,
             scratch: ctx.upload(&[]).ok()?,
             rho,
         })

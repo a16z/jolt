@@ -46,3 +46,4 @@ rayon.workspace = true
 serde.workspace = true
 strum.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -570,6 +570,16 @@ impl Stage6BooleanityRow {
     pub fn get(&self, index: usize) -> Option<u8> {
         ((self.present_mask & (1u64 << index)) != 0).then_some(self.values[index])
     }
+
+    #[inline]
+    pub fn present_mask(&self) -> u64 {
+        self.present_mask
+    }
+
+    #[inline]
+    pub fn values(&self) -> &[u8; STAGE6_BOOLEANITY_MAX_POLYS] {
+        &self.values
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -3642,22 +3642,19 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         if self.backend != "cuda" || self.cuda.is_some() {
             return;
         }
-        let Some(h_state) = self.h.as_ref() else {
+        let Some(CoreBooleanityHState::Round1 { tables, indices }) = self.h.as_ref() else {
             return;
         };
-        let rows = match h_state {
-            CoreBooleanityHState::Round1 { indices, .. } => indices.len(),
-            _ => return,
-        };
-        let dense: Vec<Vec<F>> =
-            crate::cuda::xfer_stats::timed(crate::cuda::xfer_stats::Phase::Materialize, || {
-                (0..self.num_polys)
-                    .into_par_iter()
-                    .map(|index| (0..rows).map(|j| h_state.get_bound_coeff(index, j)).collect())
-                    .collect()
-            });
-        self.cuda =
-            cuda::CudaCoreBooleanityState::new(&dense, &self.gamma_powers[..self.num_polys]);
+        self.cuda = crate::cuda::xfer_stats::timed(
+            crate::cuda::xfer_stats::Phase::Materialize,
+            || {
+                cuda::CudaCoreBooleanityState::from_sparse_round1(
+                    tables,
+                    indices.as_ref(),
+                    &self.gamma_powers[..self.num_polys],
+                )
+            },
+        );
     }
 
     fn factor_eval(&self, index: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {

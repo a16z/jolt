@@ -28,6 +28,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/gruen_round_poly.cu"),
     include_str!("cuda/uniskip.cu"),
     include_str!("cuda/gather8.cu"),
+    include_str!("cuda/core_booleanity_gather.cu"),
     include_str!("cuda/hamming.cu"),
     include_str!("cuda/hamming_booleanity.cu"),
     include_str!("cuda/core_booleanity_cycle.cu"),
@@ -89,6 +90,7 @@ pub struct CudaKernelContext {
     gruen_round_poly_pairs: CudaFunction,
     uniskip_pairs: CudaFunction,
     gather8_materialize: CudaFunction,
+    core_booleanity_gather: CudaFunction,
     hamming_pairs: CudaFunction,
     hamming_booleanity_pairs: CudaFunction,
     ra_virtual_d4_pairs: CudaFunction,
@@ -188,12 +190,10 @@ pub mod xfer_stats {
         pub h2d_calls: AtomicU64,
         pub d2h_bytes: AtomicU64,
         pub d2h_calls: AtomicU64,
-        // H2D calls bucketed by size: small (<64 KB), medium (<1 MB), large (>=1 MB).
         pub h2d_small: AtomicU64,
         pub h2d_medium: AtomicU64,
         pub h2d_large: AtomicU64,
         pub h2d_large_bytes: AtomicU64,
-        // Wall-clock nanos by CUDA-specific phase, to see which term scales worst with T.
         pub ns_materialize: AtomicU64,
         pub ns_upload: AtomicU64,
         pub ns_kernel: AtomicU64,
@@ -210,9 +210,6 @@ pub mod xfer_stats {
         *ON.get_or_init(|| std::env::var_os("JOLT_CUDA_XFER_STATS").is_some())
     }
 
-    // Retained so the perf report still shows a "pack D2D" line (now expected to be 0 after
-    // the per-round re-pack was replaced with device pointer arrays); wire back in if any
-    // future kernel reintroduces contiguous packing.
     #[inline]
     #[expect(dead_code)]
     pub(crate) fn add_pack_d2d(bytes: usize) {
@@ -253,7 +250,6 @@ pub mod xfer_stats {
         D2h,
     }
 
-    // Times `f`, adding elapsed nanos to the given phase bucket (only when stats enabled).
     #[inline]
     pub(crate) fn timed<T>(phase: Phase, f: impl FnOnce() -> T) -> T {
         if !enabled() {
@@ -413,21 +409,32 @@ type PinnedStaging = Arc<Mutex<PinnedPool>>;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 struct WitnessKey {
+    ptr: usize,
     len: usize,
-    hash: u64,
+    fingerprint: u64,
 }
 
 impl WitnessKey {
     fn of(witness: &[Fr]) -> Self {
-        let mut hash = 0xcbf2_9ce4_8422_2325u64;
-        for &value in witness {
-            for limb in fr_to_limbs(value) {
-                hash = (hash ^ limb).wrapping_mul(0x0000_0100_0000_01b3);
+        let len = witness.len();
+        let mut fingerprint = 0xcbf2_9ce4_8422_2325u64 ^ (len as u64);
+        if len > 0 {
+            let step = (len / 8).max(1);
+            let mut i = 0;
+            while i < len {
+                for limb in fr_to_limbs(witness[i]) {
+                    fingerprint = (fingerprint ^ limb).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+                i += step;
+            }
+            for limb in fr_to_limbs(witness[len - 1]) {
+                fingerprint = (fingerprint ^ limb).wrapping_mul(0x0000_0100_0000_01b3);
             }
         }
         Self {
-            len: witness.len(),
-            hash,
+            ptr: witness.as_ptr() as usize,
+            len,
+            fingerprint,
         }
     }
 }
@@ -485,6 +492,16 @@ pub struct Gather8Inputs<'a> {
     pub num_chunks: usize,
     pub table_len: usize,
     pub new_len: usize,
+}
+
+pub struct CoreBooleanityGatherInputs<'a> {
+    pub tables: &'a [Fr],
+    pub present_mask: &'a [u64],
+    pub values: &'a [u8],
+    pub num_polys: usize,
+    pub chunk_domain: usize,
+    pub rows: usize,
+    pub poly_stride: usize,
 }
 
 pub struct HammingRoundPolyInputs<'a> {
@@ -606,6 +623,7 @@ impl CudaKernelContext {
             gruen_round_poly_pairs: module.load_function("gruen_round_poly_pairs")?,
             uniskip_pairs: module.load_function("uniskip_pairs")?,
             gather8_materialize: module.load_function("gather8_materialize")?,
+            core_booleanity_gather: module.load_function("core_booleanity_gather")?,
             hamming_pairs: module.load_function("hamming_pairs")?,
             hamming_booleanity_pairs: module.load_function("hamming_booleanity_pairs")?,
             ra_virtual_d4_pairs: module.load_function("ra_virtual_d4_pairs")?,
@@ -652,10 +670,6 @@ impl CudaKernelContext {
         })
     }
 
-    // Build a device array holding each factor's base device pointer, so kernels can read
-    // the resident factors in place instead of re-packing them into one contiguous buffer
-    // every round. The uploaded array is tiny (one u64 per factor); the factor buffers
-    // themselves are never copied.
     fn factor_ptr_array(&self, factors: &[&DeviceFrVec]) -> Result<CudaSlice<u64>, CudaError> {
         use cudarc::driver::DevicePtr;
         let mut ptrs = Vec::with_capacity(factors.len());
@@ -1371,7 +1385,6 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
-        // Factor 0 = combined, factors 1..9 = the 8 ra chunks.
         let mut factors: Vec<&DeviceFrVec> = Vec::with_capacity(9);
         factors.push(inputs.combined);
         factors.extend_from_slice(inputs.chunks);
@@ -1657,6 +1670,88 @@ impl CudaKernelContext {
         Ok((0..num_chunks)
             .map(|chunk| unflatten(&raw[chunk * new_len * LIMBS..(chunk + 1) * new_len * LIMBS]))
             .collect())
+    }
+
+    pub fn core_booleanity_gather(
+        &self,
+        inputs: CoreBooleanityGatherInputs<'_>,
+    ) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let CoreBooleanityGatherInputs {
+            tables,
+            present_mask,
+            values,
+            num_polys,
+            chunk_domain,
+            rows,
+            poly_stride,
+        } = inputs;
+        assert_eq!(tables.len(), num_polys * chunk_domain, "tables shape");
+        assert_eq!(present_mask.len(), rows, "present_mask length");
+        assert_eq!(values.len(), rows * poly_stride, "values shape");
+        assert!(num_polys <= poly_stride, "num_polys within row stride");
+
+        let total = num_polys * rows;
+        if total == 0 {
+            return (0..num_polys)
+                .map(|_| {
+                    Ok(DeviceFrVec {
+                        stream: self.stream.clone(),
+                        buf: self.stream.alloc_zeros(0)?,
+                        len: 0,
+                        staging: self.staging.clone(),
+                    })
+                })
+                .collect();
+        }
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+
+        let tables_dev = self.upload(tables)?;
+        let mask_dev = self.stream.clone_htod(present_mask)?;
+        let values_dev = self.stream.clone_htod(values)?;
+
+        let num_polys_arg = num_polys as u64;
+        let chunk_domain_arg = chunk_domain as u64;
+        let rows_arg = rows as u64;
+        let poly_stride_arg = poly_stride as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.core_booleanity_gather.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(&tables_dev.buf)
+            .arg(&mask_dev)
+            .arg(&values_dev)
+            .arg(&num_polys_arg)
+            .arg(&chunk_domain_arg)
+            .arg(&rows_arg)
+            .arg(&poly_stride_arg);
+        // SAFETY: one thread per (poly, row) of `total` reads present_mask[row] and
+        // values[row*poly_stride + poly] (both in-range by the asserts above), gathers
+        // tables[poly*chunk_domain + value] when present (value is a u8 table position <
+        // chunk_domain), and writes out[poly*rows + row]. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        let mut polys = Vec::with_capacity(num_polys);
+        for i in 0..num_polys {
+            let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(rows * LIMBS)?;
+            self.stream.memcpy_dtod(
+                &out.slice(i * rows * LIMBS..(i + 1) * rows * LIMBS),
+                &mut buf,
+            )?;
+            polys.push(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len: rows,
+                staging: self.staging.clone(),
+            });
+        }
+        self.stream.synchronize()?;
+        Ok(polys)
     }
 
     pub fn uniskip_extended_evals(&self, inputs: UniskipInputs<'_>) -> Result<Vec<Fr>, CudaError> {
@@ -3249,6 +3344,69 @@ mod tests {
                 })
                 .unwrap();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn core_booleanity_gather_matches_cpu(
+            num_polys in 1usize..12,
+            log_rows in 0usize..8,
+            log_chunk_domain in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            const POLY_STRIDE: usize = 64;
+            let rows = 1usize << log_rows;
+            let chunk_domain = 1usize << log_chunk_domain;
+
+            let tables: Vec<Vec<Fr>> = (0..num_polys)
+                .map(|p| {
+                    (0..chunk_domain)
+                        .map(|e| seed + Fr::from_u64((p * chunk_domain + e + 1) as u64))
+                        .collect()
+                })
+                .collect();
+
+            let mut present_mask = vec![0u64; rows];
+            let mut values = vec![0u8; rows * POLY_STRIDE];
+            for j in 0..rows {
+                for p in 0..num_polys {
+                    if (j * 7 + p * 13) % 4 != 0 {
+                        present_mask[j] |= 1u64 << p;
+                        values[j * POLY_STRIDE + p] = ((j * 5 + p * 3) % chunk_domain) as u8;
+                    }
+                }
+            }
+
+            let expected: Vec<Vec<Fr>> = (0..num_polys)
+                .map(|p| {
+                    (0..rows)
+                        .map(|j| {
+                            if present_mask[j] & (1u64 << p) != 0 {
+                                tables[p][usize::from(values[j * POLY_STRIDE + p])]
+                            } else {
+                                Fr::from_u64(0)
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let flat_tables: Vec<Fr> = tables.iter().flatten().copied().collect();
+
+            let c = ctx();
+            let got = c
+                .core_booleanity_gather(CoreBooleanityGatherInputs {
+                    tables: &flat_tables,
+                    present_mask: &present_mask,
+                    values: &values,
+                    num_polys,
+                    chunk_domain,
+                    rows,
+                    poly_stride: POLY_STRIDE,
+                })
+                .unwrap();
+            let got_host: Vec<Vec<Fr>> =
+                got.iter().map(|d| d.to_host().unwrap()).collect();
+            prop_assert_eq!(got_host, expected);
         }
 
         #[test]
