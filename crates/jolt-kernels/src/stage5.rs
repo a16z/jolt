@@ -1593,7 +1593,7 @@ struct InstructionReadRafCycleState<F: Field> {
     ra_factors: InstructionReadRafCycleRaFactors<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg(feature = "cuda")]
-    cuda: Option<cuda::CudaInstructionRafCycleState>,
+    cuda: Option<cuda::CudaInstructionRafCycleSparse>,
 }
 
 enum InstructionReadRafCycleRaFactors<F: Field> {
@@ -2626,11 +2626,15 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         // Only that shape is offloaded; ra_factors.len() must be 8.
         #[cfg(feature = "cuda")]
         let cuda = if backend == "cuda" && ra_factors.len() == 8 && fixed_factors.len() >= 2 {
-            let chunk_vecs = crate::cuda::xfer_stats::timed(
-                crate::cuda::xfer_stats::Phase::Materialize,
-                || ra_factors.dense_chunk_vecs(),
-            );
-            cuda::CudaInstructionRafCycleState::new(&fixed_factors[1], &chunk_vecs)
+            crate::cuda::xfer_stats::timed(crate::cuda::xfer_stats::Phase::Materialize, || {
+                ra_factors
+                    .build_cuda_cycle_sparse(&fixed_factors[1])
+                    .or_else(|| {
+                        let chunk_vecs = ra_factors.dense_chunk_vecs();
+                        cuda::CudaInstructionRafCycleState::new(&fixed_factors[1], &chunk_vecs)
+                            .map(cuda::CudaInstructionRafCycleSparse::Dense)
+                    })
+            })
         } else {
             None
         };
@@ -2906,6 +2910,32 @@ impl<F: Field> InstructionReadRafCycleRaFactors<F> {
         (0..self.len())
             .map(|chunk| (0..len).map(|index| self.get(chunk, index)).collect())
             .collect()
+    }
+
+    #[cfg(feature = "cuda")]
+    fn build_cuda_cycle_sparse(
+        &self,
+        combined: &[F],
+    ) -> Option<cuda::CudaInstructionRafCycleSparse> {
+        match self {
+            Self::SparseRound1 {
+                tables,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let num_chunks = tables.len();
+                let source_rows = lookup_indices.len();
+                let mut values = vec![0u16; num_chunks * source_rows];
+                for (chunk, chunk_values) in values.chunks_mut(source_rows).enumerate() {
+                    for (value, &lookup_index) in chunk_values.iter_mut().zip(lookup_indices) {
+                        *value = instruction_read_raf_lookup_chunk(lookup_index, chunk, *chunk_bits)
+                            as u16;
+                    }
+                }
+                cuda::CudaInstructionRafCycleSparse::from_round1(tables, &values, combined)
+            }
+            _ => None,
+        }
     }
 
     fn fill_eight_pairs(&self, row: usize, pairs: &mut [(F, F); 8]) {

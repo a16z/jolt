@@ -1,7 +1,10 @@
 use jolt_field::Fr;
 use jolt_poly::UnivariatePoly;
 
-use crate::cuda::{CudaError, DeviceFrVec, InstructionRafCycleInputs, RoundPolyTerms};
+use crate::cuda::{
+    CudaError, DeviceFrVec, InstructionRafCycleInputs, InstructionRafCycleSparseInputs,
+    RoundPolyTerms,
+};
 
 pub(crate) struct CudaDenseState {
     factors: Vec<DeviceFrVec>,
@@ -90,6 +93,18 @@ impl CudaInstructionRafCycleState {
         })
     }
 
+    fn from_device(combined: DeviceFrVec, chunks: Vec<DeviceFrVec>) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        if chunks.len() != 8 {
+            return None;
+        }
+        Some(Self {
+            combined,
+            chunks,
+            scratch: ctx.upload(&[]).ok()?,
+        })
+    }
+
     pub(crate) fn round_poly_evals<F: jolt_field::Field>(
         &self,
         e_in: &[F],
@@ -119,5 +134,144 @@ impl CudaInstructionRafCycleState {
 
     pub(crate) fn chunk_first(&self, chunk: usize) -> Option<Result<Fr, CudaError>> {
         self.chunks.get(chunk).map(DeviceFrVec::first)
+    }
+}
+
+pub(crate) enum CudaInstructionRafCycleSparse {
+    Sparse {
+        round: u32,
+        tables: crate::cuda::CudaSlice<u64>,
+        values: crate::cuda::CudaSlice<u16>,
+        combined: DeviceFrVec,
+        combined_scratch: DeviceFrVec,
+        num_chunks: usize,
+        chunk_domain: usize,
+        source_rows: usize,
+    },
+    Dense(CudaInstructionRafCycleState),
+}
+
+impl CudaInstructionRafCycleSparse {
+    pub(crate) fn from_round1<F: jolt_field::Field>(
+        tables: &[Vec<F>],
+        values: &[u16],
+        combined: &[F],
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let num_chunks = tables.len();
+        if num_chunks != 8 {
+            return None;
+        }
+        let chunk_domain = tables.first().map_or(0, Vec::len);
+        if chunk_domain == 0 || tables.iter().any(|t| t.len() != chunk_domain) {
+            return None;
+        }
+        let source_rows = combined.len();
+        if source_rows == 0 || values.len() != num_chunks * source_rows {
+            return None;
+        }
+
+        let mut flat_tables: Vec<u64> = Vec::with_capacity(num_chunks * chunk_domain * 4);
+        for table in tables {
+            for v in crate::cuda::as_fr_slice(table)? {
+                flat_tables.extend_from_slice(&v.inner_limbs().0);
+            }
+        }
+
+        Some(Self::Sparse {
+            round: 1,
+            tables: ctx.upload_u64_slice(&flat_tables).ok()?,
+            values: ctx.upload_u16_slice(values).ok()?,
+            combined: ctx.upload(crate::cuda::as_fr_slice(combined)?).ok()?,
+            combined_scratch: ctx.upload(&[]).ok()?,
+            num_chunks,
+            chunk_domain,
+            source_rows,
+        })
+    }
+
+    pub(crate) fn round_poly_evals<F: jolt_field::Field>(
+        &self,
+        e_in: &[F],
+        e_out: &[F],
+    ) -> Option<[Fr; 9]> {
+        match self {
+            Self::Sparse {
+                round,
+                tables,
+                values,
+                combined,
+                num_chunks,
+                chunk_domain,
+                source_rows,
+                ..
+            } => {
+                let ctx = crate::cuda::shared_ctx()?;
+                let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
+                let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
+                ctx.instruction_raf_cycle_sparse_round_poly(InstructionRafCycleSparseInputs {
+                    tables,
+                    values,
+                    combined,
+                    num_chunks: *num_chunks,
+                    chunk_domain: *chunk_domain,
+                    source_rows: *source_rows,
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                    round: *round,
+                })
+                .ok()
+            }
+            Self::Dense(dense) => dense.round_poly_evals(e_in, e_out),
+        }
+    }
+
+    pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        match self {
+            Self::Sparse {
+                round,
+                tables,
+                values,
+                combined,
+                combined_scratch,
+                num_chunks,
+                chunk_domain,
+                source_rows,
+            } => {
+                let num_sets = 1usize << (*round - 1);
+                let set_elems = *num_chunks * *chunk_domain;
+                let bound = ctx.ra_virtual_d4_sparse_bind(tables, num_sets, set_elems, challenge)?;
+                ctx.bind(combined, combined_scratch, challenge)?;
+                if *round < 3 {
+                    *tables = bound;
+                    *round += 1;
+                    Ok(())
+                } else {
+                    let out_len = *source_rows >> 3;
+                    let chunks = ctx.instruction_raf_cycle_sparse_collapse(
+                        &bound,
+                        values,
+                        *num_chunks,
+                        *chunk_domain,
+                        *source_rows,
+                        out_len,
+                    )?;
+                    let combined = std::mem::replace(combined, ctx.upload(&[])?);
+                    let dense = CudaInstructionRafCycleState::from_device(combined, chunks)
+                        .ok_or(CudaError::Pool)?;
+                    *self = Self::Dense(dense);
+                    Ok(())
+                }
+            }
+            Self::Dense(dense) => dense.bind(challenge),
+        }
+    }
+
+    pub(crate) fn chunk_first(&self, chunk: usize) -> Option<Result<Fr, CudaError>> {
+        match self {
+            Self::Sparse { .. } => None,
+            Self::Dense(dense) => dense.chunk_first(chunk),
+        }
     }
 }

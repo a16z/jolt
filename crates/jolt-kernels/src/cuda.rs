@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cudarc::driver::{
-    result as cuda_result, CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig,
-    PushKernelArg,
+    result as cuda_result, CudaContext, CudaFunction, CudaStream, LaunchConfig, PushKernelArg,
 };
+pub use cudarc::driver::CudaSlice;
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 
 use jolt_field::Fr;
@@ -36,7 +36,10 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/core_booleanity_address.cu"),
     include_str!("cuda/sparse_register.cu"),
     include_str!("cuda/instruction_raf_cycle.cu"),
+    include_str!("cuda/instruction_raf_cycle_sparse.cu"),
     include_str!("cuda/ra_virtual_d4.cu"),
+    include_str!("cuda/ra_virtual_d4_sparse.cu"),
+    include_str!("cuda/bytecode_cycle_sparse.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -92,15 +95,23 @@ pub struct CudaKernelContext {
     uniskip_pairs: CudaFunction,
     gather8_materialize: CudaFunction,
     core_booleanity_gather: CudaFunction,
-    core_booleanity_sparse_round1_pairs: CudaFunction,
+    core_booleanity_sparse_pairs: CudaFunction,
+    core_booleanity_sparse_bind: CudaFunction,
+    core_booleanity_sparse_collapse8: CudaFunction,
     hamming_pairs: CudaFunction,
     hamming_booleanity_pairs: CudaFunction,
     ra_virtual_d4_pairs: CudaFunction,
+    ra_virtual_d4_sparse_pairs: CudaFunction,
+    ra_virtual_d4_sparse_bind: CudaFunction,
+    ra_virtual_d4_sparse_collapse: CudaFunction,
+    bytecode_cycle_sparse_pairs: CudaFunction,
     core_booleanity_cycle_pairs: CudaFunction,
     core_booleanity_address_pairs: CudaFunction,
     sparse_register_round_pairs: CudaFunction,
     sparse_register_bind_kernel: CudaFunction,
     instruction_raf_cycle_pairs: CudaFunction,
+    instruction_raf_cycle_sparse_pairs: CudaFunction,
+    instruction_raf_cycle_sparse_collapse: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -506,16 +517,18 @@ pub struct CoreBooleanityGatherInputs<'a> {
     pub poly_stride: usize,
 }
 
-pub struct CoreBooleanitySparseRound1Inputs<'a> {
-    pub tables: &'a DeviceFrVec,
-    pub present_mask: &'a [u64],
-    pub values: &'a [u8],
+pub struct CoreBooleanitySparseInputs<'a> {
+    pub tables: &'a CudaSlice<u64>,
+    pub present_mask: &'a CudaSlice<u64>,
+    pub values: &'a CudaSlice<u8>,
+    pub source_rows: usize,
     pub rho: &'a [Fr],
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
     pub num_polys: usize,
     pub chunk_domain: usize,
     pub poly_stride: usize,
+    pub round: u32,
 }
 
 pub struct HammingRoundPolyInputs<'a> {
@@ -537,6 +550,41 @@ pub struct RaVirtualD4Inputs<'a> {
     pub gamma_powers: &'a [Fr],
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
+}
+
+pub struct RaVirtualD4SparseInputs<'a> {
+    pub tables: &'a CudaSlice<u64>,
+    pub values: &'a CudaSlice<i16>,
+    pub num_chunks: usize,
+    pub chunk_domain: usize,
+    pub source_rows: usize,
+    pub gamma_powers: &'a [Fr],
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+    pub round: u32,
+}
+
+pub struct BytecodeCycleSparseInputs<'a> {
+    pub tables: &'a CudaSlice<u64>,
+    pub values: &'a CudaSlice<i16>,
+    pub combined_eq: &'a DeviceFrVec,
+    pub num_chunks: usize,
+    pub chunk_domain: usize,
+    pub source_rows: usize,
+    pub degree: usize,
+    pub round: u32,
+}
+
+pub struct InstructionRafCycleSparseInputs<'a> {
+    pub tables: &'a CudaSlice<u64>,
+    pub values: &'a CudaSlice<u16>,
+    pub combined: &'a DeviceFrVec,
+    pub num_chunks: usize,
+    pub chunk_domain: usize,
+    pub source_rows: usize,
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+    pub round: u32,
 }
 
 pub struct CoreBooleanityCycleInputs<'a> {
@@ -638,11 +686,21 @@ impl CudaKernelContext {
             uniskip_pairs: module.load_function("uniskip_pairs")?,
             gather8_materialize: module.load_function("gather8_materialize")?,
             core_booleanity_gather: module.load_function("core_booleanity_gather")?,
-            core_booleanity_sparse_round1_pairs: module
-                .load_function("core_booleanity_sparse_round1_pairs")?,
+            core_booleanity_sparse_pairs: module
+                .load_function("core_booleanity_sparse_pairs")?,
+            core_booleanity_sparse_bind: module
+                .load_function("core_booleanity_sparse_bind")?,
+            core_booleanity_sparse_collapse8: module
+                .load_function("core_booleanity_sparse_collapse8")?,
             hamming_pairs: module.load_function("hamming_pairs")?,
             hamming_booleanity_pairs: module.load_function("hamming_booleanity_pairs")?,
             ra_virtual_d4_pairs: module.load_function("ra_virtual_d4_pairs")?,
+            ra_virtual_d4_sparse_pairs: module.load_function("ra_virtual_d4_sparse_pairs")?,
+            ra_virtual_d4_sparse_bind: module.load_function("ra_virtual_d4_sparse_bind")?,
+            ra_virtual_d4_sparse_collapse: module
+                .load_function("ra_virtual_d4_sparse_collapse")?,
+            bytecode_cycle_sparse_pairs: module
+                .load_function("bytecode_cycle_sparse_pairs")?,
             core_booleanity_cycle_pairs: module.load_function("core_booleanity_cycle_pairs")?,
             core_booleanity_address_pairs: module
                 .load_function("core_booleanity_address_pairs")?,
@@ -652,6 +710,10 @@ impl CudaKernelContext {
                 .load_function("sparse_register_bind")?,
             instruction_raf_cycle_pairs: module
                 .load_function("instruction_raf_cycle_pairs")?,
+            instruction_raf_cycle_sparse_pairs: module
+                .load_function("instruction_raf_cycle_sparse_pairs")?,
+            instruction_raf_cycle_sparse_collapse: module
+                .load_function("instruction_raf_cycle_sparse_collapse")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -684,6 +746,28 @@ impl CudaKernelContext {
             len: values.len(),
             staging: self.staging.clone(),
         })
+    }
+
+    pub fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+        Ok(self.stream.clone_htod(values)?)
+    }
+
+    pub fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
+        Ok(self.stream.clone_htod(values)?)
+    }
+
+    pub fn upload_i16_slice(&self, values: &[i16]) -> Result<CudaSlice<i16>, CudaError> {
+        Ok(self.stream.clone_htod(values)?)
+    }
+
+    pub fn upload_u16_slice(&self, values: &[u16]) -> Result<CudaSlice<u16>, CudaError> {
+        Ok(self.stream.clone_htod(values)?)
+    }
+
+    pub fn download_u64(&self, buf: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
+        let out = self.stream.clone_dtoh(buf)?;
+        self.stream.synchronize()?;
+        Ok(out)
     }
 
     fn factor_ptr_array(&self, factors: &[&DeviceFrVec]) -> Result<CudaSlice<u64>, CudaError> {
@@ -1045,6 +1129,299 @@ impl CudaKernelContext {
         }))
     }
 
+    pub fn ra_virtual_d4_sparse_round_poly(
+        &self,
+        inputs: RaVirtualD4SparseInputs<'_>,
+    ) -> Result<[Fr; 4], CudaError> {
+        use num_traits::Zero;
+        let virtual_count = inputs.gamma_powers.len();
+        let round = inputs.round;
+        assert!((1..=3).contains(&round), "sparse round in 1..=3");
+        assert!(virtual_count > 0, "ra-virtual d4 needs at least one virtual");
+        assert_eq!(inputs.num_chunks, virtual_count * 4, "4 chunks per virtual");
+        assert_eq!(
+            inputs.values.len(),
+            inputs.num_chunks * inputs.source_rows,
+            "values shape (chunk-major)",
+        );
+        assert!(
+            inputs.source_rows.is_multiple_of(1usize << round),
+            "source rows split into 2^round groups per output",
+        );
+        let half = inputs.source_rows >> round;
+        assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
+        assert_eq!(inputs.e_in.len() * inputs.e_out.len(), half, "e_in * e_out == half");
+        if half == 0 {
+            return Ok([Fr::zero(); 4]);
+        }
+        let in_bits = inputs.e_in.len().trailing_zeros();
+        let gammas_dev = self.upload(inputs.gamma_powers)?;
+
+        const WIDTH: usize = 4;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (half as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let num_chunks_arg = inputs.num_chunks as u64;
+        let chunk_domain_arg = inputs.chunk_domain as u64;
+        let source_rows_arg = inputs.source_rows as u64;
+        let virtual_count_arg = virtual_count as u32;
+        let half_arg = half as u64;
+        let in_bits_arg = in_bits;
+        let round_arg = round;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.ra_virtual_d4_sparse_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(inputs.tables)
+            .arg(inputs.values)
+            .arg(&gammas_dev.buf)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&num_chunks_arg)
+            .arg(&chunk_domain_arg)
+            .arg(&source_rows_arg)
+            .arg(&virtual_count_arg)
+            .arg(&half_arg)
+            .arg(&in_bits_arg)
+            .arg(&round_arg);
+        // SAFETY: one thread per output row (of `half`) gathers, for each of the 4 chunks
+        // per virtual, a (lo,hi) pair by summing 2^(round-1) table-sets indexed via the
+        // resident chunk-major `values` (i16; -1 = absent) at source base=row<<round, runs
+        // the d4 product weighted by gamma/e_in/e_out, and writes one 4-lane tuple per block.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 4-lane tuples across up to `block` blocks.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok(core::array::from_fn(|e| {
+            limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]])
+        }))
+    }
+
+    pub fn ra_virtual_d4_sparse_bind(
+        &self,
+        tables: &CudaSlice<u64>,
+        num_sets: usize,
+        set_elems: usize,
+        challenge: Fr,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let total = num_sets * set_elems;
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(2 * total.max(1) * LIMBS)?;
+        if total == 0 {
+            return Ok(out);
+        }
+        let challenge_dev = self.upload(&[challenge])?;
+        let one_minus_dev = self.upload(&[<Fr as num_traits::One>::one() - challenge])?;
+        let set_elems_arg = set_elems as u64;
+        let num_sets_arg = num_sets as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.ra_virtual_d4_sparse_bind.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(tables)
+            .arg(&challenge_dev.buf)
+            .arg(&one_minus_dev.buf)
+            .arg(&set_elems_arg)
+            .arg(&num_sets_arg);
+        // SAFETY: one thread per input element i writes out[i]=(1-c)*in[i] and
+        // out[total+i]=c*in[i]; `out` sized for 2*total. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
+    }
+
+    pub fn ra_virtual_d4_sparse_collapse(
+        &self,
+        tables: &CudaSlice<u64>,
+        values: &CudaSlice<i16>,
+        num_chunks: usize,
+        chunk_domain: usize,
+        source_rows: usize,
+        out_len: usize,
+    ) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let total = num_chunks * out_len;
+        if total == 0 {
+            return (0..num_chunks)
+                .map(|_| {
+                    Ok(DeviceFrVec {
+                        stream: self.stream.clone(),
+                        buf: self.stream.alloc_zeros(0)?,
+                        len: 0,
+                        staging: self.staging.clone(),
+                    })
+                })
+                .collect();
+        }
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+        let num_chunks_arg = num_chunks as u64;
+        let chunk_domain_arg = chunk_domain as u64;
+        let source_rows_arg = source_rows as u64;
+        let out_len_arg = out_len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.ra_virtual_d4_sparse_collapse.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(tables)
+            .arg(values)
+            .arg(&num_chunks_arg)
+            .arg(&chunk_domain_arg)
+            .arg(&source_rows_arg)
+            .arg(&out_len_arg);
+        // SAFETY: one thread per (chunk, row) sums the 8 round-3 table-sets gathered via the
+        // chunk-major `values` at source 8j+set; `out` sized for num_chunks*out_len. No shared.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        let mut chunks = Vec::with_capacity(num_chunks);
+        for i in 0..num_chunks {
+            let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(out_len * LIMBS)?;
+            self.stream.memcpy_dtod(
+                &out.slice(i * out_len * LIMBS..(i + 1) * out_len * LIMBS),
+                &mut buf,
+            )?;
+            chunks.push(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len: out_len,
+                staging: self.staging.clone(),
+            });
+        }
+        self.stream.synchronize()?;
+        Ok(chunks)
+    }
+
+    pub fn bytecode_cycle_sparse_round_poly(
+        &self,
+        inputs: BytecodeCycleSparseInputs<'_>,
+    ) -> Result<Vec<Fr>, CudaError> {
+        use num_traits::Zero;
+        let round = inputs.round;
+        assert!((1..=3).contains(&round), "sparse round in 1..=3");
+        let degree = inputs.degree;
+        assert!((2..=8).contains(&degree), "bytecode cycle degree in 2..=8");
+        assert_eq!(
+            inputs.values.len(),
+            inputs.num_chunks * inputs.source_rows,
+            "values shape (chunk-major)",
+        );
+        assert!(
+            inputs.source_rows.is_multiple_of(1usize << round),
+            "source rows split into 2^round groups per output",
+        );
+        let half = inputs.source_rows >> round;
+        assert_eq!(inputs.combined_eq.len(), half * 2, "combined_eq length == 2*half");
+        if half == 0 {
+            return Ok(vec![Fr::zero(); degree]);
+        }
+
+        let points: Vec<Fr> = (0..degree)
+            .map(|p| <Fr as jolt_field::Field>::from_u64(if p == 0 { 0 } else { (p + 1) as u64 }))
+            .collect();
+        let points_dev = self.upload(&points)?;
+
+        let tuple = degree * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (half as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let num_chunks_arg = inputs.num_chunks as u64;
+        let chunk_domain_arg = inputs.chunk_domain as u64;
+        let source_rows_arg = inputs.source_rows as u64;
+        let half_arg = half as u64;
+        let degree_arg = degree as u32;
+        let round_arg = round;
+        let width_arg = degree as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.bytecode_cycle_sparse_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(inputs.tables)
+            .arg(inputs.values)
+            .arg(&inputs.combined_eq.buf)
+            .arg(&points_dev.buf)
+            .arg(&num_chunks_arg)
+            .arg(&chunk_domain_arg)
+            .arg(&source_rows_arg)
+            .arg(&half_arg)
+            .arg(&degree_arg)
+            .arg(&round_arg);
+        // SAFETY: one thread per output row (of `half`) gathers each chunk's (lo,hi) pair by
+        // summing 2^(round-1) table-sets via the chunk-major `values` at source base=row<<round,
+        // forms ra_product = prod_chunk (lo + slope*x) times (combined_eq low+slope*x) at each of
+        // `degree` points, writing one degree-lane tuple per block; shared holds `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums degree-lane tuples across up to `block` blocks.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok((0..degree)
+            .map(|e| limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]]))
+            .collect())
+    }
+
     pub fn core_booleanity_cycle_round_poly(
         &self,
         inputs: CoreBooleanityCycleInputs<'_>,
@@ -1134,23 +1511,23 @@ impl CudaKernelContext {
         ])
     }
 
-    pub fn core_booleanity_sparse_round1_round_poly(
+    pub fn core_booleanity_sparse_round_poly(
         &self,
-        inputs: CoreBooleanitySparseRound1Inputs<'_>,
+        inputs: CoreBooleanitySparseInputs<'_>,
     ) -> Result<[Fr; 2], CudaError> {
         use num_traits::Zero;
         let num_polys = inputs.num_polys;
-        assert!(num_polys > 0, "core booleanity sparse round1 needs at least one poly");
+        let round = inputs.round;
+        assert!((1..=3).contains(&round), "sparse round in 1..=3");
+        assert!(num_polys > 0, "core booleanity sparse needs at least one poly");
         assert_eq!(inputs.rho.len(), num_polys);
         assert!(num_polys <= inputs.poly_stride, "num_polys within row stride");
-        let source_rows = inputs.present_mask.len();
-        assert_eq!(
-            inputs.values.len(),
-            source_rows * inputs.poly_stride,
-            "values shape",
+        let source_rows = inputs.source_rows;
+        assert!(
+            source_rows.is_multiple_of(1usize << round),
+            "source rows split into 2^round groups per output",
         );
-        assert!(source_rows.is_multiple_of(2), "source rows form (2*row, 2*row+1) pairs");
-        let half = source_rows / 2;
+        let half = source_rows >> round;
         assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
         assert_eq!(
             inputs.e_in.len() * inputs.e_out.len(),
@@ -1162,8 +1539,6 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
-        let mask_dev = self.stream.clone_htod(inputs.present_mask)?;
-        let values_dev = self.stream.clone_htod(inputs.values)?;
         let rho_dev = self.upload(inputs.rho)?;
 
         const WIDTH: usize = 2;
@@ -1178,19 +1553,20 @@ impl CudaKernelContext {
         let poly_stride_arg = inputs.poly_stride as u64;
         let half_arg = half as u64;
         let in_bits_arg = in_bits;
+        let round_arg = round;
         let width_arg = WIDTH as u32;
         let cfg = LaunchConfig {
             grid_dim: (blocks, 1, 1),
             block_dim: (block, 1, 1),
             shared_mem_bytes: shared,
         };
-        let f = self.core_booleanity_sparse_round1_pairs.clone();
+        let f = self.core_booleanity_sparse_pairs.clone();
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&inputs.tables.buf)
-            .arg(&mask_dev)
-            .arg(&values_dev)
+            .arg(inputs.tables)
+            .arg(inputs.present_mask)
+            .arg(inputs.values)
             .arg(&rho_dev.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
@@ -1198,12 +1574,13 @@ impl CudaKernelContext {
             .arg(&chunk_domain_arg)
             .arg(&poly_stride_arg)
             .arg(&half_arg)
-            .arg(&in_bits_arg);
-        // SAFETY: one thread per output row gathers (h0,h1) for each of num_polys polys from
-        // the resident tables via present_mask[2*row|2*row+1] / values[..*poly_stride+poly]
-        // (all in-range by the asserts), applies the booleanity body weighted by
-        // e_in[row & mask] / e_out[row >> in_bits], and writes one 2-lane tuple per block;
-        // shared memory holds `block` tuples.
+            .arg(&in_bits_arg)
+            .arg(&round_arg);
+        // SAFETY: one thread per output row (of `half`) gathers (h0,h1) for each of num_polys
+        // polys by summing 2^(round-1) table-sets, indexed via the resident present_mask /
+        // values at source offsets base=row<<round (all in-range for source_rows), applies the
+        // booleanity body weighted by e_in[row & mask] / e_out[row >> in_bits], and writes one
+        // 2-lane tuple per block; shared memory holds `block` tuples.
         let _ = unsafe { launch.launch(cfg) }?;
 
         let mut len = blocks as usize;
@@ -1232,6 +1609,115 @@ impl CudaKernelContext {
             limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]),
             limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]),
         ])
+    }
+
+    pub fn core_booleanity_sparse_bind(
+        &self,
+        tables: &CudaSlice<u64>,
+        num_sets: usize,
+        set_elems: usize,
+        challenge: Fr,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let total = num_sets * set_elems;
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(2 * total.max(1) * LIMBS)?;
+        if total == 0 {
+            return Ok(out);
+        }
+        let challenge_dev = self.upload(&[challenge])?;
+        let one_minus_dev = self.upload(&[<Fr as num_traits::One>::one() - challenge])?;
+
+        let set_elems_arg = set_elems as u64;
+        let num_sets_arg = num_sets as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.core_booleanity_sparse_bind.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(tables)
+            .arg(&challenge_dev.buf)
+            .arg(&one_minus_dev.buf)
+            .arg(&set_elems_arg)
+            .arg(&num_sets_arg);
+        // SAFETY: one thread per element i of the `total` input elements writes
+        // out[i]=(1-c)*in[i] and out[total+i]=c*in[i]; `out` is sized for 2*total elements
+        // and `in`/challenge are read-only. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub fn core_booleanity_sparse_collapse8(
+        &self,
+        tables: &CudaSlice<u64>,
+        present_mask: &CudaSlice<u64>,
+        values: &CudaSlice<u8>,
+        num_polys: usize,
+        chunk_domain: usize,
+        poly_stride: usize,
+        out_len: usize,
+    ) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let total = num_polys * out_len;
+        if total == 0 {
+            return (0..num_polys)
+                .map(|_| {
+                    Ok(DeviceFrVec {
+                        stream: self.stream.clone(),
+                        buf: self.stream.alloc_zeros(0)?,
+                        len: 0,
+                        staging: self.staging.clone(),
+                    })
+                })
+                .collect();
+        }
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+
+        let num_polys_arg = num_polys as u64;
+        let chunk_domain_arg = chunk_domain as u64;
+        let poly_stride_arg = poly_stride as u64;
+        let out_len_arg = out_len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.core_booleanity_sparse_collapse8.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(tables)
+            .arg(present_mask)
+            .arg(values)
+            .arg(&num_polys_arg)
+            .arg(&chunk_domain_arg)
+            .arg(&poly_stride_arg)
+            .arg(&out_len_arg);
+        // SAFETY: one thread per (poly, row) of `total` sums the 8 round-3 table-sets gathered
+        // via present_mask[8j+set]/values[..] (in-range for the round-3 source rows), writing
+        // out[poly*out_len + j]; `out` sized for `total`. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        let mut polys = Vec::with_capacity(num_polys);
+        for i in 0..num_polys {
+            let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(out_len * LIMBS)?;
+            self.stream.memcpy_dtod(
+                &out.slice(i * out_len * LIMBS..(i + 1) * out_len * LIMBS),
+                &mut buf,
+            )?;
+            polys.push(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len: out_len,
+                staging: self.staging.clone(),
+            });
+        }
+        self.stream.synchronize()?;
+        Ok(polys)
     }
 
     pub fn core_booleanity_address_round_poly(
@@ -1565,6 +2051,170 @@ impl CudaKernelContext {
         Ok(std::array::from_fn(|e| {
             limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]])
         }))
+    }
+
+    pub fn instruction_raf_cycle_sparse_round_poly(
+        &self,
+        inputs: InstructionRafCycleSparseInputs<'_>,
+    ) -> Result<[Fr; 9], CudaError> {
+        use num_traits::Zero;
+        let round = inputs.round;
+        assert!((1..=3).contains(&round), "sparse round in 1..=3");
+        assert_eq!(inputs.num_chunks, 8, "instruction raf cycle sparse needs 8 ra chunks");
+        assert_eq!(
+            inputs.values.len(),
+            inputs.num_chunks * inputs.source_rows,
+            "values shape (chunk-major)",
+        );
+        assert!(
+            inputs.source_rows.is_multiple_of(1usize << round),
+            "source rows split into 2^round groups per output",
+        );
+        let half = inputs.source_rows >> round;
+        assert_eq!(inputs.combined.len(), half * 2, "combined length == 2*half");
+        assert!(inputs.e_in.len().is_power_of_two(), "e_in length must be a power of two");
+        assert_eq!(
+            inputs.e_in.len() * inputs.e_out.len(),
+            half,
+            "e_in * e_out must equal the row count"
+        );
+        if half == 0 {
+            return Ok([Fr::zero(); 9]);
+        }
+        let in_bits = inputs.e_in.len().trailing_zeros();
+
+        const WIDTH: usize = 9;
+        let tuple = WIDTH * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (half as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let num_chunks_arg = inputs.num_chunks as u64;
+        let chunk_domain_arg = inputs.chunk_domain as u64;
+        let source_rows_arg = inputs.source_rows as u64;
+        let half_arg = half as u64;
+        let in_bits_arg = in_bits;
+        let round_arg = round;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.instruction_raf_cycle_sparse_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(inputs.tables)
+            .arg(inputs.values)
+            .arg(&inputs.combined.buf)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&num_chunks_arg)
+            .arg(&chunk_domain_arg)
+            .arg(&source_rows_arg)
+            .arg(&half_arg)
+            .arg(&in_bits_arg)
+            .arg(&round_arg);
+        // SAFETY: one thread per output row (of `half`) forms 9 pairs: pair 0 = the dense
+        // `combined` linear pair scaled by e_in[row & mask], pairs 1..8 = each ra chunk's (lo,hi)
+        // gathered by summing 2^(round-1) table-sets via the chunk-major u16 `values` at source
+        // base=row<<round; irc_ep9 builds the degree-9 evals, weighted by e_out[row >> in_bits];
+        // shared holds `block` 9-lane tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 9-lane tuples across up to `block` blocks.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok(std::array::from_fn(|e| {
+            limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]])
+        }))
+    }
+
+    pub fn instruction_raf_cycle_sparse_collapse(
+        &self,
+        tables: &CudaSlice<u64>,
+        values: &CudaSlice<u16>,
+        num_chunks: usize,
+        chunk_domain: usize,
+        source_rows: usize,
+        out_len: usize,
+    ) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let total = num_chunks * out_len;
+        if total == 0 {
+            return (0..num_chunks)
+                .map(|_| {
+                    Ok(DeviceFrVec {
+                        stream: self.stream.clone(),
+                        buf: self.stream.alloc_zeros(0)?,
+                        len: 0,
+                        staging: self.staging.clone(),
+                    })
+                })
+                .collect();
+        }
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+        let num_chunks_arg = num_chunks as u64;
+        let chunk_domain_arg = chunk_domain as u64;
+        let source_rows_arg = source_rows as u64;
+        let out_len_arg = out_len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.instruction_raf_cycle_sparse_collapse.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(tables)
+            .arg(values)
+            .arg(&num_chunks_arg)
+            .arg(&chunk_domain_arg)
+            .arg(&source_rows_arg)
+            .arg(&out_len_arg);
+        // SAFETY: one thread per (chunk, row) sums the 8 round-3 table-sets gathered via the
+        // chunk-major u16 `values` at source 8j+set; `out` sized for num_chunks*out_len. No shared.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        let mut chunks = Vec::with_capacity(num_chunks);
+        for i in 0..num_chunks {
+            let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(out_len * LIMBS)?;
+            self.stream.memcpy_dtod(
+                &out.slice(i * out_len * LIMBS..(i + 1) * out_len * LIMBS),
+                &mut buf,
+            )?;
+            chunks.push(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len: out_len,
+                staging: self.staging.clone(),
+            });
+        }
+        self.stream.synchronize()?;
+        Ok(chunks)
     }
 
     pub fn hamming_booleanity_round_poly(
@@ -3526,9 +4176,9 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "stub kernel; body not yet implemented"]
-        fn core_booleanity_sparse_round1_round_poly_matches_cpu(
-            num_vars in 1usize..8,
+        fn core_booleanity_sparse_round_poly_matches_cpu(
+            round in 1u32..=3,
+            extra_vars in 1usize..6,
             num_polys in 1usize..12,
             log_chunk_domain in 1usize..6,
             seed in fr_strategy(),
@@ -3537,14 +4187,25 @@ mod tests {
             use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
             const POLY_STRIDE: usize = 64;
-            let out_len = 1usize << num_vars;
-            let source_rows = out_len * 2;
+            let num_sets = 1usize << (round - 1);
+            let out_vars = extra_vars;
+            let half = 1usize << out_vars;
+            let source_rows = half << round;
             let chunk_domain = 1usize << log_chunk_domain;
 
-            let tables: Vec<Vec<Fr>> = (0..num_polys)
-                .map(|p| {
-                    (0..chunk_domain)
-                        .map(|e| seed + Fr::from_u64((p * chunk_domain + e + 1) as u64))
+            // num_sets table-sets, packed set-major: [set][poly][entry].
+            let table_sets: Vec<Vec<Vec<Fr>>> = (0..num_sets)
+                .map(|s| {
+                    (0..num_polys)
+                        .map(|p| {
+                            (0..chunk_domain)
+                                .map(|e| {
+                                    seed + Fr::from_u64(
+                                        (s * 977 + p * chunk_domain + e + 1) as u64,
+                                    )
+                                })
+                                .collect()
+                        })
                         .collect()
                 })
                 .collect();
@@ -3560,9 +4221,9 @@ mod tests {
                 }
             }
 
-            let gather = |s: usize, p: usize| -> Fr {
+            let gather = |set: usize, s: usize, p: usize| -> Fr {
                 if present_mask[s] & (1u64 << p) != 0 {
-                    tables[p][usize::from(values[s * POLY_STRIDE + p])]
+                    table_sets[set][p][usize::from(values[s * POLY_STRIDE + p])]
                 } else {
                     Fr::from_u64(0)
                 }
@@ -3570,7 +4231,7 @@ mod tests {
 
             let rho: Vec<Fr> =
                 (0..num_polys).map(|i| seed + Fr::from_u64((i + 101) as u64)).collect();
-            let point: Vec<Fr> = (0..num_vars)
+            let point: Vec<Fr> = (0..=out_vars)
                 .map(|i| seed + Fr::from_u64((i + 1) as u64))
                 .collect();
             let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
@@ -3582,14 +4243,19 @@ mod tests {
             let mut outer = [Acc::default(); 2];
             for (x_out, &eo) in e_out.iter().enumerate() {
                 let mut inner = [Acc::default(); 2];
-                let base = x_out << in_bits;
+                let base_x = x_out << in_bits;
                 for (x_in, &ei) in e_in.iter().enumerate() {
-                    let j = base | x_in;
+                    let j = base_x | x_in;
+                    let base = j << round;
                     let mut c = Acc::default();
                     let mut q = Acc::default();
                     for (p, &rho_p) in rho.iter().enumerate() {
-                        let h0 = gather(2 * j, p);
-                        let h1 = gather(2 * j + 1, p);
+                        let mut h0 = Fr::from_u64(0);
+                        let mut h1 = Fr::from_u64(0);
+                        for set in 0..num_sets {
+                            h0 += gather(set, base + set, p);
+                            h1 += gather(set, base + num_sets + set, p);
+                        }
                         let delta = h1 - h0;
                         c.fmadd(h0, h0 - rho_p);
                         q.fmadd(delta, delta);
@@ -3603,24 +4269,140 @@ mod tests {
             let expected = [outer[0].reduce(), outer[1].reduce()];
 
             let c = ctx();
-            let flat_tables: Vec<Fr> = tables.iter().flatten().copied().collect();
-            let tables_dev = c.upload(&flat_tables).unwrap();
+            let flat_tables: Vec<u64> = table_sets
+                .iter()
+                .flat_map(|set| set.iter().flatten().flat_map(|v| v.inner_limbs().0))
+                .collect();
+            let tables_dev = c.upload_u64_slice(&flat_tables).unwrap();
+            let mask_dev = c.upload_u64_slice(&present_mask).unwrap();
+            let values_dev = c.upload_u8_slice(&values).unwrap();
             let e_in_dev = c.upload(e_in).unwrap();
             let e_out_dev = c.upload(e_out).unwrap();
             let got = c
-                .core_booleanity_sparse_round1_round_poly(CoreBooleanitySparseRound1Inputs {
+                .core_booleanity_sparse_round_poly(CoreBooleanitySparseInputs {
                     tables: &tables_dev,
-                    present_mask: &present_mask,
-                    values: &values,
+                    present_mask: &mask_dev,
+                    values: &values_dev,
+                    source_rows,
                     rho: &rho,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                     num_polys,
                     chunk_domain,
                     poly_stride: POLY_STRIDE,
+                    round,
                 })
                 .unwrap();
             prop_assert_eq!(got.to_vec(), expected.to_vec());
+        }
+
+        #[test]
+        fn core_booleanity_sparse_bind_matches_cpu(
+            log_num_sets in 0usize..3,
+            set_elems in 1usize..40,
+            challenge in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            let num_sets = 1usize << log_num_sets;
+            let input: Vec<Fr> = (0..num_sets * set_elems)
+                .map(|i| seed + Fr::from_u64((i + 1) as u64))
+                .collect();
+
+            let one_minus = Fr::from_u64(1) - challenge;
+            let mut expected = Vec::with_capacity(2 * num_sets * set_elems);
+            expected.extend(input.iter().map(|&v| one_minus * v));
+            expected.extend(input.iter().map(|&v| challenge * v));
+
+            let c = ctx();
+            let in_limbs: Vec<u64> =
+                input.iter().flat_map(|v| v.inner_limbs().0).collect();
+            let in_dev = c.upload_u64_slice(&in_limbs).unwrap();
+            let out = c
+                .core_booleanity_sparse_bind(&in_dev, num_sets, set_elems, challenge)
+                .unwrap();
+            let raw = c.download_u64(&out).unwrap();
+            let got: Vec<Fr> = raw
+                .chunks_exact(4)
+                .map(|c| Fr::from_bigint_unchecked(jolt_field::Limbs([c[0], c[1], c[2], c[3]])))
+                .collect();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn core_booleanity_sparse_collapse8_matches_cpu(
+            out_vars in 0usize..7,
+            num_polys in 1usize..12,
+            log_chunk_domain in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            const POLY_STRIDE: usize = 64;
+            let out_len = 1usize << out_vars;
+            let source_rows = out_len * 8;
+            let chunk_domain = 1usize << log_chunk_domain;
+
+            let table_sets: Vec<Vec<Vec<Fr>>> = (0..8)
+                .map(|s| {
+                    (0..num_polys)
+                        .map(|p| {
+                            (0..chunk_domain)
+                                .map(|e| {
+                                    seed + Fr::from_u64((s * 977 + p * chunk_domain + e + 1) as u64)
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let mut present_mask = vec![0u64; source_rows];
+            let mut values = vec![0u8; source_rows * POLY_STRIDE];
+            for s in 0..source_rows {
+                for p in 0..num_polys {
+                    if (s * 7 + p * 13) % 4 != 0 {
+                        present_mask[s] |= 1u64 << p;
+                        values[s * POLY_STRIDE + p] = ((s * 5 + p * 3) % chunk_domain) as u8;
+                    }
+                }
+            }
+
+            let expected: Vec<Vec<Fr>> = (0..num_polys)
+                .map(|p| {
+                    (0..out_len)
+                        .map(|j| {
+                            let mut acc = Fr::from_u64(0);
+                            for (set, table_set) in table_sets.iter().enumerate() {
+                                let s = 8 * j + set;
+                                if present_mask[s] & (1u64 << p) != 0 {
+                                    acc += table_set[p][usize::from(values[s * POLY_STRIDE + p])];
+                                }
+                            }
+                            acc
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let c = ctx();
+            let flat_tables: Vec<u64> = table_sets
+                .iter()
+                .flat_map(|set| set.iter().flatten().flat_map(|v| v.inner_limbs().0))
+                .collect();
+            let tables_dev = c.upload_u64_slice(&flat_tables).unwrap();
+            let mask_dev = c.upload_u64_slice(&present_mask).unwrap();
+            let values_dev = c.upload_u8_slice(&values).unwrap();
+            let got = c
+                .core_booleanity_sparse_collapse8(
+                    &tables_dev,
+                    &mask_dev,
+                    &values_dev,
+                    num_polys,
+                    chunk_domain,
+                    POLY_STRIDE,
+                    out_len,
+                )
+                .unwrap();
+            let got_host: Vec<Vec<Fr>> = got.iter().map(|d| d.to_host().unwrap()).collect();
+            prop_assert_eq!(got_host, expected);
         }
 
         #[test]
@@ -4316,6 +5098,489 @@ mod tests {
                 })
                 .unwrap();
             prop_assert_eq!(got.to_vec(), expected);
+        }
+
+        #[test]
+        fn ra_virtual_d4_sparse_round_poly_matches_cpu(
+            round in 1u32..=3,
+            extra_vars in 1usize..6,
+            num_virtuals in 1usize..4,
+            log_chunk_domain in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            use crate::stage6::accumulate_instruction_ra_d4_products;
+            use jolt_field::FieldAccumulator;
+            use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+            let num_chunks = 4 * num_virtuals;
+            let num_sets = 1usize << (round - 1);
+            let out_vars = extra_vars;
+            let half = 1usize << out_vars;
+            let source_rows = half << round;
+            let chunk_domain = 1usize << log_chunk_domain;
+
+            // num_sets table-sets, chunk-major within a set: [set][chunk][entry].
+            let table_sets: Vec<Vec<Vec<Fr>>> = (0..num_sets)
+                .map(|s| {
+                    (0..num_chunks)
+                        .map(|ch| {
+                            (0..chunk_domain)
+                                .map(|e| {
+                                    seed + Fr::from_u64(
+                                        (s * 977 + ch * chunk_domain + e + 1) as u64,
+                                    )
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            // chunk-major values: values[chunk * source_rows + source], -1 = absent.
+            let mut values = vec![-1i16; num_chunks * source_rows];
+            for ch in 0..num_chunks {
+                for s in 0..source_rows {
+                    if (ch * 7 + s * 13) % 4 != 0 {
+                        values[ch * source_rows + s] = ((ch * 5 + s * 3) % chunk_domain) as i16;
+                    }
+                }
+            }
+
+            let gather = |set: usize, ch: usize, s: usize| -> Fr {
+                let v = values[ch * source_rows + s];
+                if v >= 0 {
+                    table_sets[set][ch][v as usize]
+                } else {
+                    Fr::from_u64(0)
+                }
+            };
+            // Dense (lo,hi) for chunk `ch`, output row `row`: sum over sets, matching get_pair.
+            let pair = |ch: usize, row: usize| -> (Fr, Fr) {
+                let base = row << round;
+                let mut lo = Fr::from_u64(0);
+                let mut hi = Fr::from_u64(0);
+                for set in 0..num_sets {
+                    lo += gather(set, ch, base + set);
+                    hi += gather(set, ch, base + num_sets + set);
+                }
+                (lo, hi)
+            };
+
+            let gamma_powers: Vec<Fr> =
+                (0..num_virtuals).map(|v| seed + Fr::from_u64((v + 3) as u64)).collect();
+            let point: Vec<Fr> = (0..=out_vars)
+                .map(|i| seed + Fr::from_u64((i + 1) as u64))
+                .collect();
+            let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+            let e_in = split_eq.e_in_current();
+            let e_out = split_eq.e_out_current();
+            let in_bits = e_in.len().trailing_zeros() as usize;
+
+            type Acc = <Fr as Field>::Accumulator;
+            let mut expected_accs = [Acc::default(); 4];
+            for (x_out, &eo) in e_out.iter().enumerate() {
+                let mut inner = [Acc::default(); 4];
+                let base = x_out << in_bits;
+                for (x_in, &ei) in e_in.iter().enumerate() {
+                    let row = base | x_in;
+                    for (v, &gamma) in gamma_powers.iter().enumerate() {
+                        accumulate_instruction_ra_d4_products(
+                            ei * gamma,
+                            &mut inner,
+                            pair(v * 4, row),
+                            pair(v * 4 + 1, row),
+                            pair(v * 4 + 2, row),
+                            pair(v * 4 + 3, row),
+                        );
+                    }
+                }
+                for (acc, inner) in expected_accs.iter_mut().zip(inner) {
+                    acc.fmadd(eo, inner.reduce());
+                }
+            }
+            let expected: Vec<Fr> =
+                expected_accs.into_iter().map(FieldAccumulator::reduce).collect();
+
+            let c = ctx();
+            let flat_tables: Vec<u64> = table_sets
+                .iter()
+                .flat_map(|set| set.iter().flatten().flat_map(|v| v.inner_limbs().0))
+                .collect();
+            let tables_dev = c.upload_u64_slice(&flat_tables).unwrap();
+            let values_dev = c.upload_i16_slice(&values).unwrap();
+            let e_in_dev = c.upload(e_in).unwrap();
+            let e_out_dev = c.upload(e_out).unwrap();
+            let got = c
+                .ra_virtual_d4_sparse_round_poly(RaVirtualD4SparseInputs {
+                    tables: &tables_dev,
+                    values: &values_dev,
+                    num_chunks,
+                    chunk_domain,
+                    source_rows,
+                    gamma_powers: &gamma_powers,
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                    round,
+                })
+                .unwrap();
+            prop_assert_eq!(got.to_vec(), expected);
+        }
+
+        #[test]
+        fn ra_virtual_d4_sparse_collapse_matches_cpu(
+            out_vars in 0usize..7,
+            num_chunks in 1usize..12,
+            log_chunk_domain in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            let out_len = 1usize << out_vars;
+            let source_rows = out_len * 8;
+            let chunk_domain = 1usize << log_chunk_domain;
+
+            let table_sets: Vec<Vec<Vec<Fr>>> = (0..8)
+                .map(|s| {
+                    (0..num_chunks)
+                        .map(|ch| {
+                            (0..chunk_domain)
+                                .map(|e| {
+                                    seed + Fr::from_u64((s * 977 + ch * chunk_domain + e + 1) as u64)
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let mut values = vec![-1i16; num_chunks * source_rows];
+            for ch in 0..num_chunks {
+                for s in 0..source_rows {
+                    if (ch * 7 + s * 13) % 4 != 0 {
+                        values[ch * source_rows + s] = ((ch * 5 + s * 3) % chunk_domain) as i16;
+                    }
+                }
+            }
+
+            let expected: Vec<Vec<Fr>> = (0..num_chunks)
+                .map(|ch| {
+                    (0..out_len)
+                        .map(|j| {
+                            let mut acc = Fr::from_u64(0);
+                            for (set, table_set) in table_sets.iter().enumerate() {
+                                let v = values[ch * source_rows + (8 * j + set)];
+                                if v >= 0 {
+                                    acc += table_set[ch][v as usize];
+                                }
+                            }
+                            acc
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let c = ctx();
+            let flat_tables: Vec<u64> = table_sets
+                .iter()
+                .flat_map(|set| set.iter().flatten().flat_map(|v| v.inner_limbs().0))
+                .collect();
+            let tables_dev = c.upload_u64_slice(&flat_tables).unwrap();
+            let values_dev = c.upload_i16_slice(&values).unwrap();
+            let got = c
+                .ra_virtual_d4_sparse_collapse(
+                    &tables_dev,
+                    &values_dev,
+                    num_chunks,
+                    chunk_domain,
+                    source_rows,
+                    out_len,
+                )
+                .unwrap();
+            let got_host: Vec<Vec<Fr>> = got.iter().map(|d| d.to_host().unwrap()).collect();
+            prop_assert_eq!(got_host, expected);
+        }
+
+        #[test]
+        fn bytecode_cycle_sparse_round_poly_matches_cpu(
+            round in 1u32..=3,
+            extra_vars in 1usize..6,
+            num_chunks in 1usize..5,
+            log_chunk_domain in 1usize..6,
+            degree in 2usize..=6,
+            seed in fr_strategy(),
+        ) {
+            use jolt_field::FieldAccumulator;
+
+            let num_sets = 1usize << (round - 1);
+            let half = 1usize << extra_vars;
+            let source_rows = half << round;
+            let chunk_domain = 1usize << log_chunk_domain;
+
+            let table_sets: Vec<Vec<Vec<Fr>>> = (0..num_sets)
+                .map(|s| {
+                    (0..num_chunks)
+                        .map(|ch| {
+                            (0..chunk_domain)
+                                .map(|e| {
+                                    seed + Fr::from_u64((s * 977 + ch * chunk_domain + e + 1) as u64)
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let mut values = vec![-1i16; num_chunks * source_rows];
+            for ch in 0..num_chunks {
+                for s in 0..source_rows {
+                    if (ch * 7 + s * 13) % 4 != 0 {
+                        values[ch * source_rows + s] = ((ch * 5 + s * 3) % chunk_domain) as i16;
+                    }
+                }
+            }
+            let combined_eq: Vec<Fr> = (0..half * 2)
+                .map(|i| seed + Fr::from_u64((i + 51) as u64))
+                .collect();
+
+            let gather = |set: usize, ch: usize, s: usize| -> Fr {
+                let v = values[ch * source_rows + s];
+                if v >= 0 { table_sets[set][ch][v as usize] } else { Fr::from_u64(0) }
+            };
+            let pair = |ch: usize, row: usize| -> (Fr, Fr) {
+                let base = row << round;
+                let mut lo = Fr::from_u64(0);
+                let mut hi = Fr::from_u64(0);
+                for set in 0..num_sets {
+                    lo += gather(set, ch, base + set);
+                    hi += gather(set, ch, base + num_sets + set);
+                }
+                (lo, hi)
+            };
+            let point = |p: usize| -> Fr {
+                if p == 0 { Fr::from_u64(0) } else { Fr::from_u64((p + 1) as u64) }
+            };
+
+            type Acc = <Fr as Field>::Accumulator;
+            let mut evals = vec![Acc::default(); degree];
+            for row in 0..half {
+                for (p, eval) in evals.iter_mut().enumerate() {
+                    let x = point(p);
+                    let mut ra_product = Fr::from_u64(1);
+                    for ch in 0..num_chunks {
+                        let (lo, hi) = pair(ch, row);
+                        ra_product *= lo + (hi - lo) * x;
+                    }
+                    let clo = combined_eq[2 * row];
+                    let chi = combined_eq[2 * row + 1];
+                    let weighted = clo + (chi - clo) * x;
+                    eval.fmadd(ra_product, weighted);
+                }
+            }
+            let expected: Vec<Fr> = evals.into_iter().map(FieldAccumulator::reduce).collect();
+
+            let c = ctx();
+            let flat_tables: Vec<u64> = table_sets
+                .iter()
+                .flat_map(|set| set.iter().flatten().flat_map(|v| v.inner_limbs().0))
+                .collect();
+            let tables_dev = c.upload_u64_slice(&flat_tables).unwrap();
+            let values_dev = c.upload_i16_slice(&values).unwrap();
+            let combined_dev = c.upload(&combined_eq).unwrap();
+            let got = c
+                .bytecode_cycle_sparse_round_poly(BytecodeCycleSparseInputs {
+                    tables: &tables_dev,
+                    values: &values_dev,
+                    combined_eq: &combined_dev,
+                    num_chunks,
+                    chunk_domain,
+                    source_rows,
+                    degree,
+                    round,
+                })
+                .unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn instruction_raf_cycle_sparse_round_poly_matches_cpu(
+            round in 1u32..=3,
+            extra_vars in 1usize..6,
+            log_chunk_domain in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            use crate::stage5::eval_product_9;
+            use jolt_field::FieldAccumulator;
+            use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+            let num_chunks = 8usize;
+            let num_sets = 1usize << (round - 1);
+            let half = 1usize << extra_vars;
+            let source_rows = half << round;
+            let chunk_domain = 1usize << log_chunk_domain;
+
+            let table_sets: Vec<Vec<Vec<Fr>>> = (0..num_sets)
+                .map(|s| {
+                    (0..num_chunks)
+                        .map(|ch| {
+                            (0..chunk_domain)
+                                .map(|e| {
+                                    seed + Fr::from_u64((s * 977 + ch * chunk_domain + e + 1) as u64)
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            // Always-present u16 values (no sentinel): values[chunk * source_rows + source].
+            let mut values = vec![0u16; num_chunks * source_rows];
+            for ch in 0..num_chunks {
+                for s in 0..source_rows {
+                    values[ch * source_rows + s] = ((ch * 5 + s * 3) % chunk_domain) as u16;
+                }
+            }
+            let combined: Vec<Fr> = (0..half * 2)
+                .map(|i| seed + Fr::from_u64((i + 51) as u64))
+                .collect();
+
+            let gather = |set: usize, ch: usize, s: usize| -> Fr {
+                table_sets[set][ch][values[ch * source_rows + s] as usize]
+            };
+            let pair = |ch: usize, row: usize| -> (Fr, Fr) {
+                let base = row << round;
+                let mut lo = Fr::from_u64(0);
+                let mut hi = Fr::from_u64(0);
+                for set in 0..num_sets {
+                    lo += gather(set, ch, base + set);
+                    hi += gather(set, ch, base + num_sets + set);
+                }
+                (lo, hi)
+            };
+
+            let point: Vec<Fr> = (0..=extra_vars)
+                .map(|i| seed + Fr::from_u64((i + 1) as u64))
+                .collect();
+            let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+            let e_in = split_eq.e_in_current();
+            let e_out = split_eq.e_out_current();
+            let in_bits = e_in.len().trailing_zeros() as usize;
+
+            type Acc = <Fr as Field>::Accumulator;
+            let mut outer = [Acc::default(); 9];
+            for (x_out, &eo) in e_out.iter().enumerate() {
+                let mut inner = [Acc::default(); 9];
+                let base = x_out << in_bits;
+                for (x_in, &ei) in e_in.iter().enumerate() {
+                    let row = base | x_in;
+                    let pairs: [(Fr, Fr); 9] = std::array::from_fn(|index| {
+                        if index == 0 {
+                            (combined[2 * row] * ei, combined[2 * row + 1] * ei)
+                        } else {
+                            pair(index - 1, row)
+                        }
+                    });
+                    let evals = eval_product_9(&pairs);
+                    for (acc, eval) in inner.iter_mut().zip(evals) {
+                        acc.acc_add(eval);
+                    }
+                }
+                for (outer, inner) in outer.iter_mut().zip(inner) {
+                    outer.fmadd(eo, inner.reduce());
+                }
+            }
+            let expected: Vec<Fr> = outer.into_iter().map(|acc| acc.reduce()).collect();
+
+            let c = ctx();
+            let flat_tables: Vec<u64> = table_sets
+                .iter()
+                .flat_map(|set| set.iter().flatten().flat_map(|v| v.inner_limbs().0))
+                .collect();
+            let tables_dev = c.upload_u64_slice(&flat_tables).unwrap();
+            let values_dev = c.upload_u16_slice(&values).unwrap();
+            let combined_dev = c.upload(&combined).unwrap();
+            let e_in_dev = c.upload(e_in).unwrap();
+            let e_out_dev = c.upload(e_out).unwrap();
+            let got = c
+                .instruction_raf_cycle_sparse_round_poly(InstructionRafCycleSparseInputs {
+                    tables: &tables_dev,
+                    values: &values_dev,
+                    combined: &combined_dev,
+                    num_chunks,
+                    chunk_domain,
+                    source_rows,
+                    e_in: &e_in_dev,
+                    e_out: &e_out_dev,
+                    round,
+                })
+                .unwrap();
+            prop_assert_eq!(got.to_vec(), expected);
+        }
+
+        #[test]
+        fn instruction_raf_cycle_sparse_collapse_matches_cpu(
+            out_vars in 0usize..7,
+            log_chunk_domain in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            let num_chunks = 8usize;
+            let out_len = 1usize << out_vars;
+            let source_rows = out_len * 8;
+            let chunk_domain = 1usize << log_chunk_domain;
+
+            let table_sets: Vec<Vec<Vec<Fr>>> = (0..8)
+                .map(|s| {
+                    (0..num_chunks)
+                        .map(|ch| {
+                            (0..chunk_domain)
+                                .map(|e| {
+                                    seed + Fr::from_u64((s * 977 + ch * chunk_domain + e + 1) as u64)
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let mut values = vec![0u16; num_chunks * source_rows];
+            for ch in 0..num_chunks {
+                for s in 0..source_rows {
+                    values[ch * source_rows + s] = ((ch * 5 + s * 3) % chunk_domain) as u16;
+                }
+            }
+
+            let expected: Vec<Vec<Fr>> = (0..num_chunks)
+                .map(|ch| {
+                    (0..out_len)
+                        .map(|j| {
+                            let mut acc = Fr::from_u64(0);
+                            for (set, table_set) in table_sets.iter().enumerate() {
+                                let v = values[ch * source_rows + (8 * j + set)];
+                                acc += table_set[ch][v as usize];
+                            }
+                            acc
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let c = ctx();
+            let flat_tables: Vec<u64> = table_sets
+                .iter()
+                .flat_map(|set| set.iter().flatten().flat_map(|v| v.inner_limbs().0))
+                .collect();
+            let tables_dev = c.upload_u64_slice(&flat_tables).unwrap();
+            let values_dev = c.upload_u16_slice(&values).unwrap();
+            let got = c
+                .instruction_raf_cycle_sparse_collapse(
+                    &tables_dev,
+                    &values_dev,
+                    num_chunks,
+                    chunk_domain,
+                    source_rows,
+                    out_len,
+                )
+                .unwrap();
+            let got_host: Vec<Vec<Fr>> =
+                got.iter().map(|chunk| chunk.to_host().unwrap()).collect();
+            prop_assert_eq!(got_host, expected);
         }
     }
 

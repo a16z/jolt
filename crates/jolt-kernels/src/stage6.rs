@@ -2070,6 +2070,20 @@ impl<F: Field> BytecodeReadRafCycleFactors<F> {
         )
     }
 
+    #[cfg(feature = "cuda")]
+    fn build_cuda_cycle_sparse(
+        &self,
+        combined_eq: &[F],
+        degree: usize,
+    ) -> Option<cuda::CudaBytecodeReadRafState> {
+        match self {
+            Self::SparseRound1 { tables, indices } => {
+                cuda::CudaBytecodeReadRafState::new_cycle_sparse(tables, indices, combined_eq, degree)
+            }
+            _ => None,
+        }
+    }
+
     fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
         (self.get(chunk, 2 * row), self.get(chunk, 2 * row + 1))
     }
@@ -2856,17 +2870,22 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
 
         #[cfg(feature = "cuda")]
         if self.backend == "cuda" {
-            let chunk_vecs = crate::cuda::xfer_stats::timed(
+            self.cuda = crate::cuda::xfer_stats::timed(
                 crate::cuda::xfer_stats::Phase::Materialize,
-                || self.cycle_factors.dense_chunk_vecs(),
+                || {
+                    self.cycle_factors
+                        .build_cuda_cycle_sparse(&self.cycle_combined_eq, self.degree_bound)
+                        .or_else(|| {
+                            self.cycle_factors.dense_chunk_vecs().and_then(|chunk_vecs| {
+                                cuda::CudaBytecodeReadRafState::new_cycle(
+                                    &chunk_vecs,
+                                    &self.cycle_combined_eq,
+                                    self.degree_bound,
+                                )
+                            })
+                        })
+                },
             );
-            self.cuda = chunk_vecs.and_then(|chunk_vecs| {
-                cuda::CudaBytecodeReadRafState::new_cycle(
-                    &chunk_vecs,
-                    &self.cycle_combined_eq,
-                    self.degree_bound,
-                )
-            });
         }
     }
 
@@ -3301,7 +3320,7 @@ struct CoreBooleanityStage6State<'a, F: Field> {
     #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
     backend: &'static str,
     #[cfg(feature = "cuda")]
-    cuda: Option<cuda::CudaCoreBooleanityState>,
+    cuda: Option<cuda::CudaCoreBooleanitySparse>,
     #[cfg(feature = "cuda")]
     cuda_address: Option<cuda::CudaCoreBooleanityAddressState>,
 }
@@ -3648,7 +3667,7 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         self.cuda = crate::cuda::xfer_stats::timed(
             crate::cuda::xfer_stats::Phase::Materialize,
             || {
-                cuda::CudaCoreBooleanityState::from_sparse_round1(
+                cuda::CudaCoreBooleanitySparse::from_round1(
                     tables,
                     indices.as_ref(),
                     &self.gamma_powers[..self.num_polys],
@@ -4826,6 +4845,16 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
         Self::Round1 { tables, indices }
     }
 
+    #[cfg(feature = "cuda")]
+    fn build_cuda_round1(&self, gamma_powers: &[F]) -> Option<cuda::CudaRaVirtualD4Sparse> {
+        match self {
+            Self::Round1 { tables, indices } => {
+                cuda::CudaRaVirtualD4Sparse::from_round1(tables, indices, gamma_powers)
+            }
+            _ => None,
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             Self::Round1 { tables, .. } => tables.len(),
@@ -5368,6 +5397,18 @@ impl<F: Field> InstructionRaVirtualChunks<'_, F> {
             }
         }
     }
+
+    #[cfg(feature = "cuda")]
+    fn build_cuda_sparse(&self, gamma_powers: &[F]) -> Option<cuda::CudaRaVirtualD4Sparse> {
+        if let Self::Sparse(sparse) = self {
+            if let Some(state) = sparse.build_cuda_round1(gamma_powers) {
+                return Some(state);
+            }
+        }
+        let chunk_vecs = self.dense_chunk_vecs()?;
+        cuda::CudaRaVirtualD4State::new(&chunk_vecs, gamma_powers)
+            .map(cuda::CudaRaVirtualD4Sparse::Dense)
+    }
 }
 
 fn bind_dense_evals_to_vec<F: Field>(values: &[F], challenge: F) -> Vec<F> {
@@ -5392,7 +5433,7 @@ struct InstructionRaVirtualStage6State<'a, F: Field> {
     active_scale: F,
     backend: &'static str,
     #[cfg(feature = "cuda")]
-    cuda: Option<cuda::CudaRaVirtualD4State>,
+    cuda: Option<cuda::CudaRaVirtualD4Sparse>,
 }
 
 impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
@@ -5463,9 +5504,8 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
                 gamma_powers.clone()
             };
             crate::cuda::xfer_stats::timed(crate::cuda::xfer_stats::Phase::Materialize, || {
-                chunks.dense_chunk_vecs()
+                chunks.build_cuda_sparse(&d4_gamma)
             })
-            .and_then(|chunk_vecs| cuda::CudaRaVirtualD4State::new(&chunk_vecs, &d4_gamma))
         } else {
             None
         };
