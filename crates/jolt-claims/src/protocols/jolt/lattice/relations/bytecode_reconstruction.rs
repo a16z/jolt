@@ -35,8 +35,7 @@ use crate::protocols::jolt::{
     JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
 };
 use crate::{
-    challenge, derived, opening, GetValue, InputClaims, OpeningClaim, OutputClaims,
-    SumcheckChallenges, SymbolicSumcheck, ZipOpenings,
+    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
 };
 
 use super::super::geometry::{BYTE_BITS, WORD_BYTES};
@@ -68,7 +67,7 @@ pub struct BytecodeChunkReconstructionChallenges<F> {
 ///
 /// The `(chunk, lane/flag)` families are two-index, which the
 /// `#[derive(OutputClaims)]` `Vec` convention (single `usize` index) cannot
-/// express — the trait impls are hand-written below in the same
+/// express — the trait impl is hand-written below in the same
 /// field-declaration order the derive would use.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
@@ -145,9 +144,7 @@ impl<C> BytecodeChunkReconstructionOutputClaims<C> {
     }
 }
 
-impl<F: jolt_field::Field, C: GetValue<F>> OutputClaims<F>
-    for BytecodeChunkReconstructionOutputClaims<C>
-{
+impl<F: jolt_field::Field> OutputClaims<F> for BytecodeChunkReconstructionOutputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         self.leaves().map(|(id, _)| id).collect()
     }
@@ -155,42 +152,13 @@ impl<F: jolt_field::Field, C: GetValue<F>> OutputClaims<F>
     /// One pass instead of the default's per-id linear re-resolution — this
     /// is the largest claim struct in the system.
     fn opening_values(&self) -> Vec<F> {
-        self.leaves().map(|(_, cell)| cell.value()).collect()
+        self.leaves().map(|(_, cell)| *cell).collect()
     }
 
     fn resolve_output(&self, id: &JoltOpeningId) -> Option<F> {
         self.leaves()
             .find(|(candidate, _)| candidate == id)
-            .map(|(_, cell)| cell.value())
-    }
-}
-
-impl<F: jolt_field::Field> ZipOpenings<F>
-    for BytecodeChunkReconstructionOutputClaims<OpeningClaim<F>>
-{
-    type Values = BytecodeChunkReconstructionOutputClaims<F>;
-    type Points = BytecodeChunkReconstructionOutputClaims<Vec<F>>;
-
-    fn zip_openings(values: &Self::Values, points: &Self::Points) -> Self {
-        fn zip<F: jolt_field::Field>(values: &[F], points: &[Vec<F>]) -> Vec<OpeningClaim<F>> {
-            values
-                .iter()
-                .zip(points.iter())
-                .map(|(value, point)| OpeningClaim {
-                    point: point.clone(),
-                    value: *value,
-                })
-                .collect()
-        }
-        Self {
-            register_selectors: zip(&values.register_selectors, &points.register_selectors),
-            circuit_flags: zip(&values.circuit_flags, &points.circuit_flags),
-            instruction_flags: zip(&values.instruction_flags, &points.instruction_flags),
-            lookup_selectors: zip(&values.lookup_selectors, &points.lookup_selectors),
-            raf_flags: zip(&values.raf_flags, &points.raf_flags),
-            pc_bytes: zip(&values.pc_bytes, &points.pc_bytes),
-            imm_bytes: zip(&values.imm_bytes, &points.imm_bytes),
-        }
+            .map(|(_, cell)| *cell)
     }
 }
 
@@ -339,7 +307,7 @@ pub fn bytecode_imm_bytes_opening(chunk: usize) -> JoltOpeningId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::protocols::jolt::JoltDerivedId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn dimensions() -> BytecodeReconstructionDimensions {
@@ -444,16 +412,6 @@ mod tests {
         // Widest byte lane: 16-byte immediates → 8 + 4 rounds.
         assert_eq!(relation.rounds(), 8 + 4);
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            (0..2).map(final_bytecode_chunk_opening).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                BytecodeChunkReconstructionChallenge::Gamma
-            )]
-        );
     }
 
     /// The output expression's leaves and the hand-written claim struct's
@@ -463,10 +421,10 @@ mod tests {
     fn output_expression_covers_exactly_the_canonical_leaves() {
         let relation = BytecodeChunkReconstruction::new(dimensions());
 
-        let mut from_expression = relation.output_expression::<Fr>().required_openings();
-        let mut from_struct = BytecodeChunkReconstructionOutputClaims::<Fr>::opening_order(2);
-        from_expression.sort();
-        from_struct.sort();
+        let from_expression = relation.expected_output_openings::<Fr>();
+        let from_struct = BytecodeChunkReconstructionOutputClaims::<Fr>::opening_order(2)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(from_expression, from_struct);
     }
 

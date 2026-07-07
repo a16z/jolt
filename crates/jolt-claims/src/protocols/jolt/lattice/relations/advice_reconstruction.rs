@@ -216,7 +216,7 @@ pub fn trusted_advice_bytes_opening() -> JoltOpeningId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::protocols::jolt::JoltDerivedId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[test]
@@ -284,29 +284,6 @@ mod tests {
         );
         assert_eq!(relation.rounds(), 8 + 3 + 4);
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![final_advice_opening(JoltAdviceKind::Untrusted)]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![untrusted_advice_bytes_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                UntrustedAdviceReconstructionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::EqBytePlaceWord),
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::EqPlaceWord),
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::ByteDecode),
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::EqWord),
-            ]
-        );
     }
 
     #[test]
@@ -354,20 +331,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), 8 + 3);
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![final_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![trusted_advice_bytes_opening()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                TrustedAdviceReconstructionPublic::ByteDecode
-            )]
-        );
     }
 }

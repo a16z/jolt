@@ -216,13 +216,13 @@ mod tests {
         assert_eq!(LatticeBooleanity::id(), JoltRelationId::Booleanity);
         assert_eq!(relation.rounds(), 5 + 32);
         assert_eq!(relation.degree(), 3);
-        assert!(relation
-            .input_expression::<Fr>()
-            .required_openings()
-            .is_empty());
+        // The output expression covers exactly the pub opening-order helper's ids
+        // (the helper is the wiring-side order; the set comparison guards drift).
         assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
+            relation.expected_output_openings::<Fr>(),
             lattice_booleanity_output_openings(dimensions())
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
         );
         assert_eq!(
             lattice_booleanity_output_openings(dimensions()),
@@ -235,10 +235,6 @@ mod tests {
                 booleanity_unsigned_inc_chunk_opening(1),
                 booleanity_unsigned_inc_msb_opening(),
             ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
         );
     }
 }

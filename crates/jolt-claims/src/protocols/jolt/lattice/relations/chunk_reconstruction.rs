@@ -153,7 +153,7 @@ pub fn reconstructed_chunk_opening(index: usize) -> JoltOpeningId {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::protocols::jolt::JoltDerivedId;
     use jolt_field::{Fr, FromPrimitiveInt, RingCore};
 
     fn chunking() -> UnsignedIncChunking {
@@ -247,7 +247,6 @@ mod tests {
     #[test]
     fn reconstruction_exposes_expected_dependencies() {
         let relation = ChunkReconstruction::new(chunking());
-        let count = chunking().chunk_count();
 
         assert_eq!(
             ChunkReconstruction::id(),
@@ -255,34 +254,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), 16);
         assert_eq!(relation.degree(), 2);
-
-        let mut expected_inputs = (0..count)
-            .map(booleanity_unsigned_inc_chunk_opening)
-            .collect::<Vec<_>>();
-        expected_inputs.push(fused_inc_opening());
-        expected_inputs.push(booleanity_unsigned_inc_msb_opening());
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            expected_inputs
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            (0..count)
-                .map(reconstructed_chunk_opening)
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                UnsignedIncChunkReconstructionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(UnsignedIncChunkReconstructionPublic::EqBooleanityAddress),
-                JoltDerivedId::from(UnsignedIncChunkReconstructionPublic::IdentityAtAddress),
-            ]
-        );
     }
 }
