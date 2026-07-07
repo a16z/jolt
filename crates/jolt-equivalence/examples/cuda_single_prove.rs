@@ -24,9 +24,26 @@ fn main() {
     let _ = run_bolt_prover(&fixture, all_cuda_programs(&fixture));
 
     let (_cpu_state, cpu_ms) = run_bolt_prover(&fixture, all_cpu_programs(&fixture));
+
+    jolt_kernels::cuda::xfer_stats::reset();
     let (_cuda_state, cuda_ms) = run_bolt_prover(&fixture, all_cuda_programs(&fixture));
     println!(
         "log_t={log_t}: cpu={cpu_ms:.1} ms  cuda={cuda_ms:.1} ms  speedup={:.3}x",
         cpu_ms / cuda_ms
     );
+    if jolt_kernels::cuda::xfer_stats::enabled() {
+        let s = jolt_kernels::cuda::xfer_stats::snapshot();
+        let ms = |ns: u64| ns as f64 / 1e6;
+        let (materialize_ns, upload_ns, kernel_ns, d2h_ns) = (s[10], s[11], s[12], s[13]);
+        let instr = ms(materialize_ns) + ms(upload_ns) + ms(kernel_ns) + ms(d2h_ns);
+        println!(
+            "  cuda phases (ms): materialize={:.0}  upload={:.0}  kernel(bind)={:.0}  d2h={:.0}  | instrumented_sum={:.0}  remainder={:.0}",
+            ms(materialize_ns),
+            ms(upload_ns),
+            ms(kernel_ns),
+            ms(d2h_ns),
+            instr,
+            cuda_ms - instr
+        );
+    }
 }

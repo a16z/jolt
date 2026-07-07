@@ -69,9 +69,10 @@ fn cuda_backend_perf_oracle() {
     if jolt_kernels::cuda::xfer_stats::enabled() {
         jolt_kernels::cuda::xfer_stats::reset();
         let _ = run_bolt_prover(&fixture, all_cuda_programs(&fixture));
-        let [pack_b, pack_n, h2d_b, h2d_n, d2h_b, d2h_n, h2d_s, h2d_m, h2d_l, h2d_lb] =
+        let [pack_b, pack_n, h2d_b, h2d_n, d2h_b, d2h_n, h2d_s, h2d_m, h2d_l, h2d_lb, mat_ns, up_ns, kern_ns, d2h_ns] =
             jolt_kernels::cuda::xfer_stats::snapshot();
         let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
+        let ms = |ns: u64| ns as f64 / 1e6;
         println!("cuda transfer stats (single prove):");
         println!("  pack D2D: {:.1} MB over {pack_n} copies", mb(pack_b));
         println!("  H2D upload: {:.1} MB over {h2d_n} calls", mb(h2d_b));
@@ -80,5 +81,12 @@ fn cuda_backend_perf_oracle() {
             mb(h2d_lb)
         );
         println!("  D2H download: {:.3} MB over {d2h_n} calls", mb(d2h_b));
+        println!(
+            "  phase ms: materialize={:.0} upload={:.0} kernel(bind)={:.0} d2h={:.0}",
+            ms(mat_ns),
+            ms(up_ns),
+            ms(kern_ns),
+            ms(d2h_ns)
+        );
     }
 }

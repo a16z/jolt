@@ -2856,7 +2856,11 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
 
         #[cfg(feature = "cuda")]
         if self.backend == "cuda" {
-            self.cuda = self.cycle_factors.dense_chunk_vecs().and_then(|chunk_vecs| {
+            let chunk_vecs = crate::cuda::xfer_stats::timed(
+                crate::cuda::xfer_stats::Phase::Materialize,
+                || self.cycle_factors.dense_chunk_vecs(),
+            );
+            self.cuda = chunk_vecs.and_then(|chunk_vecs| {
                 cuda::CudaBytecodeReadRafState::new_cycle(
                     &chunk_vecs,
                     &self.cycle_combined_eq,
@@ -3645,10 +3649,13 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             CoreBooleanityHState::Round1 { indices, .. } => indices.len(),
             _ => return,
         };
-        let dense: Vec<Vec<F>> = (0..self.num_polys)
-            .into_par_iter()
-            .map(|index| (0..rows).map(|j| h_state.get_bound_coeff(index, j)).collect())
-            .collect();
+        let dense: Vec<Vec<F>> =
+            crate::cuda::xfer_stats::timed(crate::cuda::xfer_stats::Phase::Materialize, || {
+                (0..self.num_polys)
+                    .into_par_iter()
+                    .map(|index| (0..rows).map(|j| h_state.get_bound_coeff(index, j)).collect())
+                    .collect()
+            });
         self.cuda =
             cuda::CudaCoreBooleanityState::new(&dense, &self.gamma_powers[..self.num_polys]);
     }
@@ -5458,9 +5465,10 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             } else {
                 gamma_powers.clone()
             };
-            chunks
-                .dense_chunk_vecs()
-                .and_then(|chunk_vecs| cuda::CudaRaVirtualD4State::new(&chunk_vecs, &d4_gamma))
+            crate::cuda::xfer_stats::timed(crate::cuda::xfer_stats::Phase::Materialize, || {
+                chunks.dense_chunk_vecs()
+            })
+            .and_then(|chunk_vecs| cuda::CudaRaVirtualD4State::new(&chunk_vecs, &d4_gamma))
         } else {
             None
         };

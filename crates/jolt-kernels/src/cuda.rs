@@ -126,12 +126,14 @@ impl DeviceFrVec {
         }
         let n = self.len * LIMBS;
         xfer_stats::add_d2h(n * std::mem::size_of::<u64>());
-        let mut pool = lock_pool(&self.staging);
-        let staging = pool.ensure(self.stream.context(), n)?;
-        self.stream
-            .memcpy_dtoh(&self.buf.slice(0..n), staging.as_mut_slice(n))?;
-        self.stream.synchronize()?;
-        Ok(unflatten(staging.as_slice(n)))
+        xfer_stats::timed(xfer_stats::Phase::D2h, || {
+            let mut pool = lock_pool(&self.staging);
+            let staging = pool.ensure(self.stream.context(), n)?;
+            self.stream
+                .memcpy_dtoh(&self.buf.slice(0..n), staging.as_mut_slice(n))?;
+            self.stream.synchronize()?;
+            Ok(unflatten(staging.as_slice(n)))
+        })
     }
 
     pub fn try_clone(&self) -> Result<Self, CudaError> {
@@ -145,7 +147,9 @@ impl DeviceFrVec {
 
     pub fn first(&self) -> Result<Fr, CudaError> {
         xfer_stats::add_d2h(LIMBS * std::mem::size_of::<u64>());
-        let raw = self.stream.clone_dtoh(&self.buf.slice(0..LIMBS))?;
+        let raw = xfer_stats::timed(xfer_stats::Phase::D2h, || {
+            self.stream.clone_dtoh(&self.buf.slice(0..LIMBS))
+        })?;
         Ok(limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]))
     }
 }
@@ -189,6 +193,11 @@ pub mod xfer_stats {
         pub h2d_medium: AtomicU64,
         pub h2d_large: AtomicU64,
         pub h2d_large_bytes: AtomicU64,
+        // Wall-clock nanos by CUDA-specific phase, to see which term scales worst with T.
+        pub ns_materialize: AtomicU64,
+        pub ns_upload: AtomicU64,
+        pub ns_kernel: AtomicU64,
+        pub ns_d2h: AtomicU64,
     }
 
     fn counters() -> &'static Counters {
@@ -237,7 +246,34 @@ pub mod xfer_stats {
         }
     }
 
-    pub fn snapshot() -> [u64; 10] {
+    pub(crate) enum Phase {
+        Materialize,
+        Upload,
+        Kernel,
+        D2h,
+    }
+
+    // Times `f`, adding elapsed nanos to the given phase bucket (only when stats enabled).
+    #[inline]
+    pub(crate) fn timed<T>(phase: Phase, f: impl FnOnce() -> T) -> T {
+        if !enabled() {
+            return f();
+        }
+        let start = std::time::Instant::now();
+        let out = f();
+        let ns = start.elapsed().as_nanos() as u64;
+        let c = counters();
+        let bucket = match phase {
+            Phase::Materialize => &c.ns_materialize,
+            Phase::Upload => &c.ns_upload,
+            Phase::Kernel => &c.ns_kernel,
+            Phase::D2h => &c.ns_d2h,
+        };
+        let _ = bucket.fetch_add(ns, Ordering::Relaxed);
+        out
+    }
+
+    pub fn snapshot() -> [u64; 14] {
         let c = counters();
         [
             c.pack_d2d_bytes.load(Ordering::Relaxed),
@@ -250,6 +286,10 @@ pub mod xfer_stats {
             c.h2d_medium.load(Ordering::Relaxed),
             c.h2d_large.load(Ordering::Relaxed),
             c.h2d_large_bytes.load(Ordering::Relaxed),
+            c.ns_materialize.load(Ordering::Relaxed),
+            c.ns_upload.load(Ordering::Relaxed),
+            c.ns_kernel.load(Ordering::Relaxed),
+            c.ns_d2h.load(Ordering::Relaxed),
         ]
     }
 
@@ -266,6 +306,10 @@ pub mod xfer_stats {
             &c.h2d_medium,
             &c.h2d_large,
             &c.h2d_large_bytes,
+            &c.ns_materialize,
+            &c.ns_upload,
+            &c.ns_kernel,
+            &c.ns_d2h,
         ] {
             a.store(0, Ordering::Relaxed);
         }
@@ -589,14 +633,16 @@ impl CudaKernelContext {
         } else {
             let n = values.len() * LIMBS;
             xfer_stats::add_h2d(n * std::mem::size_of::<u64>());
-            let mut pool = lock_pool(&self.staging);
-            let staging = pool.ensure(self.stream.context(), n)?;
-            for (slot, &v) in staging.as_mut_slice(n).chunks_exact_mut(LIMBS).zip(values) {
-                slot.copy_from_slice(&fr_to_limbs(v));
-            }
-            let dev = self.stream.clone_htod(staging.as_slice(n))?;
-            self.stream.synchronize()?;
-            dev
+            xfer_stats::timed(xfer_stats::Phase::Upload, || {
+                let mut pool = lock_pool(&self.staging);
+                let staging = pool.ensure(self.stream.context(), n)?;
+                for (slot, &v) in staging.as_mut_slice(n).chunks_exact_mut(LIMBS).zip(values) {
+                    slot.copy_from_slice(&fr_to_limbs(v));
+                }
+                let dev = self.stream.clone_htod(staging.as_slice(n))?;
+                self.stream.synchronize()?;
+                Ok::<_, CudaError>(dev)
+            })?
         };
         Ok(DeviceFrVec {
             stream: self.stream.clone(),
@@ -1803,17 +1849,19 @@ impl CudaKernelContext {
         };
         let half_arg = half as u64;
         let f = self.bind.clone();
-        let mut launch = self.stream.launch_builder(&f);
-        let _ = launch
-            .arg(&mut scratch.buf)
-            .arg(&values.buf)
-            .arg(&challenge_dev)
-            .arg(&half_arg);
-        // SAFETY: each thread i reads values[2i], values[2i+1] and the single
-        // challenge, writing scratch[i]; scratch and values are distinct buffers
-        // holding >= half and 2*half elements respectively.
-        let _ = unsafe { launch.launch(cfg) }?;
-        self.stream.synchronize()?;
+        xfer_stats::timed(xfer_stats::Phase::Kernel, || {
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut scratch.buf)
+                .arg(&values.buf)
+                .arg(&challenge_dev)
+                .arg(&half_arg);
+            // SAFETY: each thread i reads values[2i], values[2i+1] and the single
+            // challenge, writing scratch[i]; scratch and values are distinct buffers
+            // holding >= half and 2*half elements respectively.
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()
+        })?;
 
         std::mem::swap(values, scratch);
         Ok(())
@@ -1843,17 +1891,19 @@ impl CudaKernelContext {
         };
         let half_arg = half as u64;
         let f = self.bind.clone();
-        let mut launch = self.stream.launch_builder(&f);
-        let _ = launch
-            .arg(&mut scratch.buf)
-            .arg(&values.buf)
-            .arg(&challenge_dev)
-            .arg(&half_arg);
-        // SAFETY: each thread i reads values[2i], values[2i+1] and the single
-        // challenge, writing scratch[i]; scratch and values are distinct buffers
-        // holding >= half and 2*half elements respectively.
-        let _ = unsafe { launch.launch(cfg) }?;
-        self.stream.synchronize()?;
+        xfer_stats::timed(xfer_stats::Phase::Kernel, || {
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut scratch.buf)
+                .arg(&values.buf)
+                .arg(&challenge_dev)
+                .arg(&half_arg);
+            // SAFETY: each thread i reads values[2i], values[2i+1] and the single
+            // challenge, writing scratch[i]; scratch and values are distinct buffers
+            // holding >= half and 2*half elements respectively.
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()
+        })?;
 
         std::mem::swap(values, scratch);
         Ok(())

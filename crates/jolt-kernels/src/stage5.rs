@@ -2626,10 +2626,11 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         // Only that shape is offloaded; ra_factors.len() must be 8.
         #[cfg(feature = "cuda")]
         let cuda = if backend == "cuda" && ra_factors.len() == 8 && fixed_factors.len() >= 2 {
-            cuda::CudaInstructionRafCycleState::new(
-                &fixed_factors[1],
-                &ra_factors.dense_chunk_vecs(),
-            )
+            let chunk_vecs = crate::cuda::xfer_stats::timed(
+                crate::cuda::xfer_stats::Phase::Materialize,
+                || ra_factors.dense_chunk_vecs(),
+            );
+            cuda::CudaInstructionRafCycleState::new(&fixed_factors[1], &chunk_vecs)
         } else {
             None
         };
