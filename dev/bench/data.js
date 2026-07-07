@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783124114170,
+  "lastUpdate": 1783457158203,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -120082,6 +120082,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 871764,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33ff41b6f12afe779877a1e89ebce0a8809a23b4",
+          "message": "feat: lattice/packed protocol semantics in jolt-claims (#1663)\n\n* refactor: reduce the packing api\n\n* fix: stabilize packed opening api\n\n* feat: jolt-akita\n\n* perf: one hot paths and other config\n\n* fix: tighten serde bounds for relaxed fields\n\n* fix: support akita with allocative clippy\n\n* fix: format jolt-akita manifest\n\n* chore: snapshot lattice claims prototype as jolt-claims-ref\n\nPreserves the working-tree lattice/Akita integration of jolt-claims as a\nfrozen reference crate before rebuilding the integration from first\nprinciples on top of origin/main's refactored jolt-claims and the\njolt-openings packing API. Nothing depends on jolt-claims-ref.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(claims): first-principles lattice/Akita module in jolt-claims\n\nAdds protocols/jolt/lattice: packed-column descriptions consumed by\njolt-openings::PrefixPacking (no parallel packing model), decode-view\nterm lists for byte/lane-decomposed columns, the fused-inc one-hotting\nrelation chain (IncVirtualization -> UnsignedIncClaimReduction ->\nUnsignedIncChunkReconstruction), a lattice Booleanity variant covering\nthe chunk/msb columns, untrusted-advice byte validity, and the\nfinal-opening discharge map replacing the homomorphic stage-8 RLC.\n\nThe fused-inc destination selector is the existing OpFlags(Store)\npolynomial, so store binding rides the bytecode read-raf val stages\n(LATTICE_BYTECODE_VAL_STAGES) with no dedicated relation. Base id enums\ngrow append-only variants; base-mode verifier/witness matches reject the\nlattice columns explicitly. Design: specs/lattice-claims.md; the old\nprototype is preserved as jolt-claims-ref.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(claims): drop UnsignedIncClaimReduction, fold shift into reconstruction\n\nThe +2^64 unsigned shift is a constant, hence free at any opening point;\nthe ported relation spent a log_T-round sumcheck on it and its output\ncarried no eq factor (structurally unsound as written). The chunk\nreconstruction's value leg now consumes FusedInc@IncVirtualization\ndirectly as FusedInc + 2^64·(1 − msb), and the UnsignedInc virtual\npolynomial is gone.\n\nAlso: verify ChunkReconstruction degree 2 (every leg is at most a\nproduct of two multilinears; the prototype's 3 was slack), cite\njolt-program's memory expansion as the source of per-cycle RAM/rd\nwrite disjointness behind the inc fusion, record the one-hot padding\ninvariant (padding rows are one-hot-of-zero, never all-zero) and the\nverifier-owns-staging responsibility in the spec, and mark enum Ord as\nprotocol data (PrefixPacking slots follow it).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* test(claims): lattice packing and decode semantics integration tests\n\nValidates the claimed identities against concrete multilinear\nevaluations, not just expression algebra: every packed column reads\nback through its PrefixPacking slot (P_i(x) = W(prefix ‖ x), pinning\nslot placement, arities, and the (symbol ‖ limb ‖ row) cell order);\nthe chunk decomposition reconstructs signed increments including the\npadding subtlety (zero inc encodes msb-hot, chunks at symbol 0); the\nbytecode lane decode terms reproduce the committed chunk evaluation\nacross all sub-columns; and the advice byte view decodes words while\nholding the per-position hamming sum at 1.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* chore: delete jolt-claims-ref snapshot\n\nThe rebuilt lattice module reached full parity with the prototype's\nsemantics, so the frozen reference crate is no longer needed. Recover\nit from commit 16727bef9 if ever wanted; the spec records the pointer.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(claims,openings): consolidate packing semantics into one file\n\nlattice/packing.rs now holds everything packed-witness: LatticeColumn,\nthe canonical registration (proof_packing/precommitted_packing return\njolt-openings' PrefixPacking directly — one source of truth for the\npacking API, no parallel (id, vars) vocabulary), the decode-view term\nbuilders, and the LatticeFinalOpening discharge map with the view\nvariants folded in (the LatticeView indirection is gone). views.rs and\ndischarge.rs are deleted; ids.rs keeps only the challenge/public leaf\nenums. jolt-claims now depends on jolt-openings directly.\n\njolt-openings gains the slight API surface this needs: PrefixSlot::\nprefix_index/packed_index are public (witness assembly places cells\nthrough them) and OpeningsError derives Clone/PartialEq/Eq so callers\ncan wrap it. A consistency test pins the discharge leaves against the\nbase final_opening_relation lattice arms.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(claims): apply /simplify findings to the lattice module\n\nReuse: the booleanity fold is one geometry helper (booleanity_output)\nshared by base and lattice variants; IncVirtualization reuses the base\nIncClaimReductionInputClaims struct and a shared inc_consumers_input\nexpression (geometry/claim_reductions/increments.rs); packed_column_leaf\nderives its leaves from committed_openings::final_opening_id (single\nowner, tautological sync test deleted); ceil_log2 replaced by\njolt_poly::math::Math::log_2; the semantics test's eval_mle delegates to\nPolynomial::evaluate.\n\nSimplification: LatticeBooleanityDimensions derives its chunking from\nbase.log_k_chunk (the invariant is now unforgeable); word_byte_column_\nvars is the one formula for advice/word byte arity (relation rounds ==\npacked arity by construction); UnsignedIncChunking drops its cached\nchunk_count; lattice/ids.rs merged into protocols/jolt/ids.rs (house\nconvention); dead surface removed (alphabet_size, advice_bytes_\npolynomial, WORD_BYTE_LIMB_BITS) and packed_column_leaf plus the two\nterm-builder helpers privatized; LatticeBooleanity reuses the base\nBooleanityChallenges.\n\nAltitude: the 17 exhaustive JoltChallengeId test matches across 9 base\nrelation files collapse to the codebase's majority '_ => zero' pattern\n(no more 9-file sweep per new relation); the stage8 stale\nlattice::discharge comments are fixed and the two rejection arms\nunified; jolt-openings' prefix_index returns to pub(crate) (packed_index\nis the public entry point).\n\nEfficiency: bytecode_chunk_decode_terms pre-allocates its 6.5k-term\nlist; the reconstruction's value_leg_scale is hoisted out of its loop.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix: address PR comments\n\n* refactor(claims): rename view/discharge vocabulary to codebase terms\n\n'Views' become 'reconstructions' — the word the module already uses for\nthe same idea (UnsignedIncChunkReconstruction: a value rebuilt as a\nweighted sum over one-hot cells): DecodeTerm -> ReconstructionTerm, the\n*_decode_terms builders -> *_reconstruction_terms, and the\nLatticeFinalOpening view variants -> AdviceWordReconstruction /\nBytecodeChunkReconstruction / ProgramImageWordReconstruction.\n\n'Discharge' prose becomes 'final opening' language, matching the base\nfinal_opening_relation / stage8_final_opening_order naming that\nLatticeFinalOpening/final_opening already follow. Spec, tests, verifier\ncomments, and the memory notes are updated to the same vocabulary; the\nprototype's PackingViewFormula name survives only as a historical\nreference in the spec's dropped-constructs table.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix: review comments\n\n* style: code redundancy\n\n* refactor(openings): backport lattice-claims API surface\n\nExtracted from feat/jolt-lattice-claims (67d125e3d), jolt-openings parts\nonly, so the later jolt-claims PR stacks on this branch without touching\njolt-openings: OpeningsError derives Clone/PartialEq/Eq (downstream wraps\nit via #[from] in comparable error enums), and PrefixSlot::packed_index\nreplaces packed_offset as the public cell-placement map — witness assembly\nand the selector table now place cells through the same method the lattice\nmodule uses.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01DWruamVxCJk1WkCTeYKFwb\n\n* style: minor cleanups\n\n* fix: drop unused akita-field direct dependency\n\nThe direct dep became unused when AKITA_FIELD_MODULUS was removed;\nakita-field/parallel stays active via akita-pcs/parallel.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_017i9CTPgTBwNSJ3tU9DDQYa\n\n* fix: PR comments\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Michael Zhu <8365992+moodlezoup@users.noreply.github.com>",
+          "timestamp": "2026-07-07T15:52:04-04:00",
+          "tree_id": "9a8ff18b7ec9fddf65a60c1e5816732f1a991a3a",
+          "url": "https://github.com/a16z/jolt/commit/33ff41b6f12afe779877a1e89ebce0a8809a23b4"
+        },
+        "date": 1783457154824,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0049,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861040,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.1159,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 506904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6016,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.481,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0814,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.088,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 202184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1871,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 862132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4725,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3782,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 17.8023,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 509036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.9285,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 504860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 25.4949,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1057428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 11.7717,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 647188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 79.7061,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2137356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2362,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2663,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.8764,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 862704,
             "unit": "KB",
             "extra": ""
           }
