@@ -1520,15 +1520,26 @@ fn build_cuda_dense_state<F: Field>(
 #[cfg(feature = "cuda")]
 fn build_cuda_registers_val_state<F: Field>(
     rd_inc: &[F],
-    rd_wa_at_address: &[F],
+    address_eq: &[F],
+    rd_write_addresses: &[Option<usize>],
+    register_count: usize,
     cycle_point: &[F],
     active_scale: F,
 ) -> Option<cuda::CudaDenseState> {
     let ctx = crate::cuda::shared_ctx()?;
+    let address_eq_fr = crate::cuda::as_fr_slice(address_eq)?;
+    let addresses: Vec<i16> = rd_write_addresses
+        .iter()
+        .map(|address| match address {
+            Some(address) if *address < register_count => Some(*address as i16),
+            Some(_) => None,
+            None => Some(-1),
+        })
+        .collect::<Option<Vec<i16>>>()?;
+    let rd_wa_dev = ctx.rd_wa_gather(address_eq_fr, &addresses).ok()?;
     let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
     let lt = ctx.lt_evals(cycle_point_fr).ok()?;
     let rd_inc_dev = ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?;
-    let rd_wa_dev = ctx.upload(crate::cuda::as_fr_slice(rd_wa_at_address)?).ok()?;
     cuda::CudaDenseState::from_device_factors(
         vec![rd_inc_dev, rd_wa_dev, lt],
         vec![crate::cuda::into_fr(F::one())?],
@@ -3865,7 +3876,6 @@ fn registers_val_evaluation_state<F: Field>(
     )?;
     let (address_point, cycle_point) = registers_val_point.split_at(register_rounds);
     let address_eq = EqPolynomial::<F>::evals(address_point, None);
-    let rd_wa_at_address = rd_wa_at_register_address(witness, &address_eq)?;
 
     let terms = vec![DenseTerm {
         coefficient: F::one(),
@@ -3886,22 +3896,27 @@ fn registers_val_evaluation_state<F: Field>(
 
     #[cfg(feature = "cuda")]
     if backend == "cuda" {
-        if let Some(cuda) = build_cuda_registers_val_state(
-            witness.rd_inc,
-            &rd_wa_at_address,
-            cycle_point,
-            active_scale,
-        ) {
-            return Ok(DenseStage5State::from_host_and_cuda(
-                vec![witness.rd_inc.to_vec(), rd_wa_at_address, Vec::new()],
-                terms,
-                outputs,
+        if let Some(rd_write_addresses) = witness.rd_write_addresses {
+            if let Some(cuda) = build_cuda_registers_val_state(
+                witness.rd_inc,
+                &address_eq,
+                rd_write_addresses,
+                witness.register_count,
+                cycle_point,
                 active_scale,
-                Some(cuda),
-            ));
+            ) {
+                return Ok(DenseStage5State::from_host_and_cuda(
+                    vec![witness.rd_inc.to_vec(), Vec::new(), Vec::new()],
+                    terms,
+                    outputs,
+                    active_scale,
+                    Some(cuda),
+                ));
+            }
         }
     }
 
+    let rd_wa_at_address = rd_wa_at_register_address(witness, &address_eq)?;
     let lt = lt_evals_big_endian(cycle_point);
     require_operand_count(
         "stage5.registers_val_evaluation.lt",

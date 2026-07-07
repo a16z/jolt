@@ -7,9 +7,13 @@ extern "C" __global__ void rd_wa_gather(
 ) {
     unsigned long c = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (c < trace_len) {
-        // STUB: body implemented after review. Intended:
-        //   out[c] = (addresses[c] >= 0 && addresses[c] < register_count)
-        //            ? address_eq[addresses[c]] : 0
-        for (int k = 0; k < 4; k++) out[c * 4 + k] = 0;
+        short addr = addresses[c];
+        if (addr >= 0 && (unsigned long)addr < register_count) {
+            u64 v[4];
+            load4(address_eq + (unsigned long)addr * 4, v);
+            store4(out + c * 4, v);
+        } else {
+            for (int k = 0; k < 4; k++) out[c * 4 + k] = 0;
+        }
     }
 }

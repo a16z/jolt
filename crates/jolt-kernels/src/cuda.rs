@@ -3366,7 +3366,7 @@ impl CudaKernelContext {
             .arg(&trace_len_arg)
             .arg(&register_count_arg);
         // SAFETY: one thread per cycle c reads addresses[c] and (if in range) address_eq[addr];
-        // out holds trace_len Fr. No shared memory. STUB body pending review.
+        // out holds trace_len Fr. No shared memory.
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
 
