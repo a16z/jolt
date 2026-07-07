@@ -124,7 +124,15 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             | JoltCommittedPolynomial::UnsignedIncChunk(_)
             | JoltCommittedPolynomial::UnsignedIncMsb
             | JoltCommittedPolynomial::TrustedAdviceBytes
-            | JoltCommittedPolynomial::UntrustedAdviceBytes => Err(WitnessError::UnknownOracle {
+            | JoltCommittedPolynomial::UntrustedAdviceBytes
+            | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+            | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+            | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+            | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+            | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+            | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+            | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+            | JoltCommittedPolynomial::ProgramImageBytes => Err(WitnessError::UnknownOracle {
                 namespace: JOLT_VM_NAMESPACE.name,
             }),
         }

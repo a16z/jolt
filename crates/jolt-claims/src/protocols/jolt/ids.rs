@@ -42,7 +42,10 @@ pub enum JoltRelationId {
     // index-based codecs of base-mode proofs stay stable.
     IncVirtualization,
     UnsignedIncChunkReconstruction,
-    AdviceBytesValidity,
+    UntrustedAdviceReconstruction,
+    TrustedAdviceReconstruction,
+    ProgramImageReconstruction,
+    BytecodeChunkReconstruction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -308,24 +311,72 @@ pub enum UnsignedIncChunkReconstructionPublic {
     /// address point.
     EqBooleanityAddress,
     /// The identity MLE `Σ_bit 2^bit · r_address[bit]` at the bound address
-    /// point — decodes a one-hot chunk opening into its symbol value.
+    /// point — decodes a one-hot chunk opening into its address value.
     IdentityAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum AdviceBytesValidityChallenge {
+pub enum UntrustedAdviceReconstructionChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum AdviceBytesValidityPublic {
-    /// `eq` over the full `(symbol ‖ limb ‖ word)` cell domain at the bound
-    /// point — weights the booleanity leg.
-    EqCell,
-    /// `eq` over the `(limb ‖ word)` sub-domain at the bound point — weights
-    /// the per-byte-position hamming leg (symbol variables are summed, not
+pub enum UntrustedAdviceReconstructionPublic {
+    /// `eq` over the full `(byte ‖ place ‖ word)` domain at the bound point —
+    /// weights the booleanity leg.
+    EqBytePlaceWord,
+    /// `eq` over the `(place ‖ word)` sub-domain at the bound point — weights
+    /// the per-byte-place hamming leg (byte variables are summed, not
     /// eq-bound).
-    EqLimbWord,
+    EqPlaceWord,
+    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
+    /// evaluation at the bound `(byte ‖ place)` coordinates — decodes the
+    /// one-hot entries into the little-endian word value.
+    ByteDecode,
+    /// `eq` of the bound word coordinates against the advice claim
+    /// reduction's word point — reduces the incoming word claim to this
+    /// relation's bound point.
+    EqWord,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum TrustedAdviceReconstructionPublic {
+    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
+    /// evaluation at the bound `(byte ‖ place)` coordinates (the word point
+    /// is fixed by the incoming claim, so no `eq` derived is needed).
+    ByteDecode,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProgramImageReconstructionPublic {
+    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
+    /// evaluation at the bound `(byte ‖ place)` coordinates (the word point
+    /// is fixed by the incoming claim).
+    ByteDecode,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum BytecodeChunkReconstructionChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum BytecodeChunkReconstructionPublic {
+    /// The register-selector block of `eq(r_lane)` weights as a 5-variable
+    /// multilinear, evaluated at the bound register coordinates.
+    RegisterSelectorWeight(BytecodeRegisterLane),
+    /// A single `eq(r_lane)` weight — the direct (0/1 flag) lanes, indexed by
+    /// lane position in the committed lane layout.
+    LaneWeight(usize),
+    /// The lookup-selector block of `eq(r_lane)` weights, evaluated at the
+    /// bound table-index coordinates.
+    LookupSelectorWeight,
+    /// The unexpanded-pc lane weight times the [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
+    /// evaluation at the bound `(byte ‖ place)` coordinates.
+    PcByteDecode,
+    /// The imm lane weight times the [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
+    /// evaluation at the bound `(byte ‖ place)` coordinates.
+    ImmByteDecode,
 }
 
 #[derive(
@@ -349,9 +400,25 @@ pub enum JoltChallengeId {
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
     IncVirtualization(IncVirtualizationChallenge),
     UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionChallenge),
-    AdviceBytesValidity(AdviceBytesValidityChallenge),
+    UntrustedAdviceReconstruction(UntrustedAdviceReconstructionChallenge),
+    BytecodeChunkReconstruction(BytecodeChunkReconstructionChallenge),
 }
 
+/// The register-selector lanes of a bytecode row, in committed lane order.
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum BytecodeRegisterLane {
+    Rs1,
+    Rs2,
+    Rd,
+}
+
+impl BytecodeRegisterLane {
+    pub const ALL: [Self; 3] = [Self::Rs1, Self::Rs2, Self::Rd];
+}
+
+/// WARNING: `Ord` is protocol data — the lattice `PrefixPacking` assigns
+/// slots by `(num_vars, Ord)` order, so reordering variants silently changes
+/// the packed witness layout.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltCommittedPolynomial {
     RdInc,
@@ -363,12 +430,50 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed columns (slots of the packed witness); base mode
-    // never constructs these. Appended for codec stability.
+    // Lattice-mode committed polynomials (slots of the packed witness); base
+    // mode never constructs these. Appended for codec stability.
     UnsignedIncChunk(usize),
     UnsignedIncMsb,
     TrustedAdviceBytes,
     UntrustedAdviceBytes,
+    // Lattice-mode precommitted bytecode decompositions: the per-lane one-hot /
+    // flag / byte decompositions of `BytecodeChunk(chunk)`, plus the program
+    // image byte encoding. Their claims are produced by the reconstruction
+    // relations.
+    BytecodeRegisterSelector {
+        chunk: usize,
+        lane: BytecodeRegisterLane,
+    },
+    BytecodeCircuitFlag {
+        chunk: usize,
+        flag: usize,
+    },
+    BytecodeInstructionFlag {
+        chunk: usize,
+        flag: usize,
+    },
+    BytecodeLookupSelector {
+        chunk: usize,
+    },
+    BytecodeRafFlag {
+        chunk: usize,
+    },
+    BytecodeUnexpandedPcBytes {
+        chunk: usize,
+    },
+    BytecodeImmBytes {
+        chunk: usize,
+    },
+    ProgramImageBytes,
+}
+
+impl JoltCommittedPolynomial {
+    pub fn advice_bytes(kind: JoltAdviceKind) -> Self {
+        match kind {
+            JoltAdviceKind::Trusted => Self::TrustedAdviceBytes,
+            JoltAdviceKind::Untrusted => Self::UntrustedAdviceBytes,
+        }
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -503,13 +608,16 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
-    IncVirtualization(IncVirtualizationPublic),
-    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
-    AdviceBytesValidity(AdviceBytesValidityPublic),
     #[from(ignore)]
     PublicInput(usize),
     #[from(ignore)]
     PublicOutput(usize),
+    IncVirtualization(IncVirtualizationPublic),
+    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
+    UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
+    TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
+    ProgramImageReconstruction(ProgramImageReconstructionPublic),
+    BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
 }
 
 #[cfg(test)]

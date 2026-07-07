@@ -16,14 +16,14 @@ use crate::{challenge, derived, opening, OutputClaims, SumcheckChallenges, Symbo
 /// The fused increment stream and its destination selector, produced at the
 /// bound cycle point. A cycle increments RAM (`store = 1`) or a register
 /// (`store = 0`), never both, so one committed one-hot decomposition serves
-/// both consumers — this halves the packed inc columns.
+/// both consumers — this halves the packed inc polynomials.
 ///
 /// The per-cycle disjointness comes from `jolt-program`'s memory expansion:
 /// ISA S-type stores carry no `rd`, and every read-modify-write instruction
 /// (the RV64A atomics, `crates/jolt-program/src/expand/memory/`) is lowered
 /// into a virtual sequence whose RAM-writing step is a plain store, with the
 /// `rd` write on a separate cycle. The offline store/rd disjointness check on
-/// the public bytecode re-verifies this per row.
+/// the public bytecode re-verifies this per row at preprocessing.
 ///
 /// The selector is the existing `OpFlags(Store)` virtual polynomial, so its
 /// opening is bound to the actual bytecode Store flag by the same read-raf

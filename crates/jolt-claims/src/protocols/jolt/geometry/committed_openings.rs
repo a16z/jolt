@@ -92,16 +92,28 @@ pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelati
         }
         JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
-        // Lattice-mode columns: `lattice::packing` derives its packed-claim
-        // leaves from this map, so it is the single owner. The
-        // `TrustedAdviceBytes` arm is a scheduling hint only — its packed
-        // claim is reconstruction-produced and has no relation leaf.
+        // Lattice-mode polynomials: `lattice::packing` derives its final
+        // claims from this map, so it is the single owner. Every packed
+        // polynomial's claim is produced by a relation (one claim per packed
+        // slot).
         JoltCommittedPolynomial::UnsignedIncChunk(_) => {
             JoltRelationId::UnsignedIncChunkReconstruction
         }
         JoltCommittedPolynomial::UnsignedIncMsb => JoltRelationId::Booleanity,
-        JoltCommittedPolynomial::UntrustedAdviceBytes => JoltRelationId::AdviceBytesValidity,
-        JoltCommittedPolynomial::TrustedAdviceBytes => JoltRelationId::AdviceClaimReduction,
+        JoltCommittedPolynomial::UntrustedAdviceBytes => {
+            JoltRelationId::UntrustedAdviceReconstruction
+        }
+        JoltCommittedPolynomial::TrustedAdviceBytes => JoltRelationId::TrustedAdviceReconstruction,
+        JoltCommittedPolynomial::ProgramImageBytes => JoltRelationId::ProgramImageReconstruction,
+        JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+        | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+        | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+        | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+        | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+        | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+        | JoltCommittedPolynomial::BytecodeImmBytes { .. } => {
+            JoltRelationId::BytecodeChunkReconstruction
+        }
     }
 }
 

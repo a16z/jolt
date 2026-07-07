@@ -1,6 +1,6 @@
 //! Lattice-mode booleanity: the base booleanity sumcheck (same
-//! `JoltRelationId::Booleanity`) extended so the packed one-hot inc columns
-//! are covered by the same boolean check as the `Ra` columns. Precedent for
+//! `JoltRelationId::Booleanity`) extended so the packed one-hot inc
+//! polynomials are covered by the same boolean check as the `Ra` families. Precedent for
 //! sharing a relation id across mode variants: the full/committed bytecode
 //! read-raf pair.
 
@@ -39,8 +39,8 @@ impl LatticeBooleanityDimensions {
 }
 
 /// Every boolean-checked opening at the booleanity point: the base `Ra`
-/// families at `(r_address ‖ r_cycle)`, the unsigned-inc chunk columns at the
-/// same point, and the msb column at `r_cycle` (it has no address variables).
+/// families at `(r_address ‖ r_cycle)`, the unsigned-inc chunks at the same
+/// point, and the msb at `r_cycle` (it has no address variables).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -61,7 +61,7 @@ pub struct LatticeBooleanityOutputClaims<C> {
 }
 
 /// The base booleanity fold extended past the `Ra` families with the
-/// unsigned-inc chunk columns and the msb column; the formula itself is the
+/// unsigned-inc chunk polynomials and the msb; the formula itself is the
 /// shared [`booleanity_output`] helper, so the two mode variants cannot
 /// diverge.
 pub struct LatticeBooleanity {
@@ -104,7 +104,7 @@ impl SymbolicSumcheck for LatticeBooleanity {
 }
 
 /// The boolean-checked openings in canonical order: base `Ra` families, then
-/// the chunk columns, then the msb.
+/// the chunk polynomials, then the msb.
 pub fn lattice_booleanity_output_openings(
     dimensions: LatticeBooleanityDimensions,
 ) -> Vec<JoltOpeningId> {
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn lattice_booleanity_extends_base_output_with_inc_columns() {
+    fn lattice_booleanity_extends_base_output_with_inc_polynomials() {
         let relation = LatticeBooleanity::new(dimensions());
 
         let instruction_ra = Fr::from_u64(3);

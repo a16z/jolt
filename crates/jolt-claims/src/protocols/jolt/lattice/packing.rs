@@ -1,119 +1,44 @@
-//! The packed-witness semantics in one place: the column ids, the canonical
-//! packing registration, the reconstruction term lists for decomposed columns,
-//! and the final-opening map.
+//! The packed-witness semantics in one place: the canonical packing
+//! registration and the final-opening map.
 //!
 //! `jolt-openings::PrefixPacking` is the single source of truth for slot
 //! assignment — [`proof_packing`]/[`precommitted_packing`] register the
-//! canonical column orderings with it and hand back the packing object
-//! itself; this module never does its own offset arithmetic.
+//! canonical polynomial orderings with it and hand back the packing object
+//! itself; this module never does its own offset arithmetic. A packing is
+//! keyed by [`JoltCommittedPolynomial`] directly: every logical polynomial
+//! of a packed witness is a (lattice-mode) committed polynomial.
 
-use jolt_field::{Field, FromPrimitiveInt};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_openings::PrefixPacking;
 use jolt_poly::math::Math;
-use jolt_poly::EqPolynomial;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
-use serde::{Deserialize, Serialize};
 
-use super::super::geometry::claim_reductions::bytecode::{
-    committed_lane_vars, BYTECODE_LANE_LAYOUT,
-};
 use super::super::geometry::committed_openings::final_opening_id;
 use super::super::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use super::super::geometry::error::JoltFormulaPointError;
 use super::super::geometry::ra::JoltRaPolynomialLayout;
-use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId};
+use super::super::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId};
 use super::geometry::{
-    byte_column_vars, one_hot_column_vars, word_byte_column_vars, LatticeGeometryError,
-    UnsignedIncChunking, WORD_BYTE_LIMBS,
+    byte_num_vars, word_byte_num_vars, LatticeGeometryError, UnsignedIncChunking,
 };
 
-/// The register-selector lanes of a bytecode row, in committed lane order.
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum BytecodeRegisterLane {
-    Rs1,
-    Rs2,
-    Rd,
-}
-
-impl BytecodeRegisterLane {
-    pub const ALL: [Self; 3] = [Self::Rs1, Self::Rs2, Self::Rd];
-}
-
-/// One column of a packed lattice witness — the `Id` fed to
-/// `jolt-openings::PrefixPacking`.
-///
-/// A column with in-protocol openings is a (lattice-mode) committed
-/// polynomial and wraps its [`JoltCommittedPolynomial`] id; a precommitted
-/// sub-column is only ever reached through a reconstruction and gets its own
-/// variant with no opening-id identity.
-///
-/// WARNING: `Ord` is protocol data — `PrefixPacking` assigns slots by
-/// `(arity, Id)` order, so reordering variants here (or in
-/// `JoltCommittedPolynomial`) silently changes the packed witness layout.
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum LatticeColumn {
-    Committed(JoltCommittedPolynomial),
-    BytecodeRegisterSelector {
-        chunk: usize,
-        lane: BytecodeRegisterLane,
-    },
-    BytecodeCircuitFlag {
-        chunk: usize,
-        flag: usize,
-    },
-    BytecodeInstructionFlag {
-        chunk: usize,
-        flag: usize,
-    },
-    BytecodeLookupSelector {
-        chunk: usize,
-    },
-    BytecodeRafFlag {
-        chunk: usize,
-    },
-    BytecodeUnexpandedPcBytes {
-        chunk: usize,
-    },
-    BytecodeImmBytes {
-        chunk: usize,
-    },
-    ProgramImageBytes,
-}
-
-impl LatticeColumn {
-    pub fn advice_bytes(kind: JoltAdviceKind) -> Self {
-        Self::Committed(match kind {
-            JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdviceBytes,
-            JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdviceBytes,
-        })
-    }
-}
-
-impl From<JoltCommittedPolynomial> for LatticeColumn {
-    fn from(polynomial: JoltCommittedPolynomial) -> Self {
-        Self::Committed(polynomial)
-    }
-}
-
-/// Shape of the per-proof packed commitment: every prover-supplied column is
-/// a slot of one packed witness, so a single Akita opening covers the
+/// Shape of the per-proof packed commitment: every prover-supplied
+/// polynomial is a slot of one packed witness, so a single Akita opening covers the
 /// whole set (Akita has no commitment homomorphism to RLC separate
 /// commitments with).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProofPackingShape {
     pub ra_layout: JoltRaPolynomialLayout,
     pub log_t: usize,
-    /// Shared one-hot chunk size: the address bits of each `Ra` column and
+    /// Shared one-hot chunk size: the address bits of each `Ra` family and
     /// the width of each unsigned-inc chunk (equal by the shared-final-point
-    /// invariant).
+    /// convention).
     pub log_k_chunk: usize,
     /// `Some(word_vars)` when untrusted advice is committed.
     pub untrusted_advice_word_vars: Option<usize>,
 }
 
 /// Shape of the preprocessing-time packed commitment (committed-program
-/// mode): bytecode lane sub-columns, program image bytes, trusted advice
+/// mode): the per-lane bytecode decompositions, program image bytes, trusted advice
 /// bytes. All public or verifier-trusted, so their one-hot structure is
 /// checked offline rather than by in-protocol relations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,356 +46,186 @@ pub struct PrecommittedPackingShape {
     pub bytecode_chunks: usize,
     /// Log of the row count of one bytecode chunk.
     pub log_bytecode_rows: usize,
-    /// Byte limbs of one immediate lane (the field's canonical byte width).
+    /// Byte places of one immediate lane (the field's canonical byte width).
     pub imm_byte_width: usize,
     pub program_image_log_words: Option<usize>,
     pub trusted_advice_word_vars: Option<usize>,
 }
 
-/// Registers the canonical per-proof column ordering and returns the packing.
+/// Registers the canonical per-proof polynomial ordering and returns the
+/// packing.
 pub fn proof_packing(
     shape: &ProofPackingShape,
-) -> Result<PrefixPacking<LatticeColumn>, LatticeGeometryError> {
-    Ok(PrefixPacking::new(proof_columns(shape)?)?)
+) -> Result<PrefixPacking<JoltCommittedPolynomial>, LatticeGeometryError> {
+    Ok(PrefixPacking::new(proof_polynomials(shape)?)?)
 }
 
-/// Registers the canonical precommitted column ordering and returns the
+/// Registers the canonical precommitted polynomial ordering and returns the
 /// packing.
 pub fn precommitted_packing(
     shape: &PrecommittedPackingShape,
-) -> Result<PrefixPacking<LatticeColumn>, LatticeGeometryError> {
-    Ok(PrefixPacking::new(precommitted_columns(shape)?)?)
+) -> Result<PrefixPacking<JoltCommittedPolynomial>, LatticeGeometryError> {
+    Ok(PrefixPacking::new(precommitted_polynomials(shape)?)?)
 }
 
-fn proof_columns(
+fn proof_polynomials(
     shape: &ProofPackingShape,
-) -> Result<Vec<(LatticeColumn, usize)>, LatticeGeometryError> {
+) -> Result<Vec<(JoltCommittedPolynomial, usize)>, LatticeGeometryError> {
     let chunking = UnsignedIncChunking::new(shape.log_k_chunk)?;
     let one_hot_vars = shape.log_k_chunk + shape.log_t;
 
-    let mut columns = Vec::new();
-    columns.extend(
+    let mut polynomials = Vec::new();
+    polynomials.extend(
         shape
             .ra_layout
             .committed_polynomials()
-            .map(|polynomial| (LatticeColumn::from(polynomial), one_hot_vars)),
+            .map(|polynomial| (polynomial, one_hot_vars)),
     );
-    columns.extend((0..chunking.chunk_count()).map(|index| {
+    polynomials.extend((0..chunking.chunk_count()).map(|index| {
         (
-            LatticeColumn::from(JoltCommittedPolynomial::UnsignedIncChunk(index)),
+            JoltCommittedPolynomial::UnsignedIncChunk(index),
             one_hot_vars,
         )
     }));
-    columns.push((
-        LatticeColumn::from(JoltCommittedPolynomial::UnsignedIncMsb),
-        shape.log_t,
-    ));
+    polynomials.push((JoltCommittedPolynomial::UnsignedIncMsb, shape.log_t));
     if let Some(word_vars) = shape.untrusted_advice_word_vars {
-        columns.push((
-            LatticeColumn::advice_bytes(JoltAdviceKind::Untrusted),
-            word_byte_column_vars(word_vars),
+        polynomials.push((
+            JoltCommittedPolynomial::advice_bytes(JoltAdviceKind::Untrusted),
+            word_byte_num_vars(word_vars),
         ));
     }
-    Ok(columns)
+    Ok(polynomials)
 }
 
-fn precommitted_columns(
+fn precommitted_polynomials(
     shape: &PrecommittedPackingShape,
-) -> Result<Vec<(LatticeColumn, usize)>, LatticeGeometryError> {
+) -> Result<Vec<(JoltCommittedPolynomial, usize)>, LatticeGeometryError> {
     let log_rows = shape.log_bytecode_rows;
-    let selector_vars = one_hot_column_vars(REGISTER_ADDRESS_BITS, 1, log_rows)?;
+    let selector_vars = REGISTER_ADDRESS_BITS + log_rows;
     let lookup_vars = LookupTableKind::<XLEN>::COUNT.log_2() + log_rows;
 
-    let mut columns = Vec::new();
+    let mut polynomials = Vec::new();
     for chunk in 0..shape.bytecode_chunks {
-        columns.extend(BytecodeRegisterLane::ALL.into_iter().map(|lane| {
+        polynomials.extend(BytecodeRegisterLane::ALL.into_iter().map(|lane| {
             (
-                LatticeColumn::BytecodeRegisterSelector { chunk, lane },
+                JoltCommittedPolynomial::BytecodeRegisterSelector { chunk, lane },
                 selector_vars,
             )
         }));
-        columns.extend(
-            (0..NUM_CIRCUIT_FLAGS)
-                .map(|flag| (LatticeColumn::BytecodeCircuitFlag { chunk, flag }, log_rows)),
-        );
-        columns.extend((0..NUM_INSTRUCTION_FLAGS).map(|flag| {
+        polynomials.extend((0..NUM_CIRCUIT_FLAGS).map(|flag| {
             (
-                LatticeColumn::BytecodeInstructionFlag { chunk, flag },
+                JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag },
                 log_rows,
             )
         }));
-        columns.push((LatticeColumn::BytecodeLookupSelector { chunk }, lookup_vars));
-        columns.push((LatticeColumn::BytecodeRafFlag { chunk }, log_rows));
-        columns.push((
-            LatticeColumn::BytecodeUnexpandedPcBytes { chunk },
-            word_byte_column_vars(log_rows),
+        polynomials.extend((0..NUM_INSTRUCTION_FLAGS).map(|flag| {
+            (
+                JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag },
+                log_rows,
+            )
+        }));
+        polynomials.push((
+            JoltCommittedPolynomial::BytecodeLookupSelector { chunk },
+            lookup_vars,
         ));
-        columns.push((
-            LatticeColumn::BytecodeImmBytes { chunk },
-            byte_column_vars(shape.imm_byte_width, log_rows)?,
+        polynomials.push((JoltCommittedPolynomial::BytecodeRafFlag { chunk }, log_rows));
+        polynomials.push((
+            JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk },
+            word_byte_num_vars(log_rows),
+        ));
+        polynomials.push((
+            JoltCommittedPolynomial::BytecodeImmBytes { chunk },
+            byte_num_vars(shape.imm_byte_width, log_rows)?,
         ));
     }
     if let Some(log_words) = shape.program_image_log_words {
-        columns.push((
-            LatticeColumn::ProgramImageBytes,
-            word_byte_column_vars(log_words),
+        polynomials.push((
+            JoltCommittedPolynomial::ProgramImageBytes,
+            word_byte_num_vars(log_words),
         ));
     }
     if let Some(word_vars) = shape.trusted_advice_word_vars {
-        columns.push((
-            LatticeColumn::advice_bytes(JoltAdviceKind::Trusted),
-            word_byte_column_vars(word_vars),
+        polynomials.push((
+            JoltCommittedPolynomial::advice_bytes(JoltAdviceKind::Trusted),
+            word_byte_num_vars(word_vars),
         ));
     }
-    Ok(columns)
-}
-
-/// One weighted cell of a reconstruction: the logical value being rebuilt equals
-/// `Σ_terms weight · Column(cell ‖ row_point)`, where `cell` indexes the
-/// column's `(symbol ‖ limb)` prefix (msb-first, limbs rounded to a power of
-/// two).
-///
-/// A weighted sum with non-`eq` weights is not a single packed evaluation
-/// claim, so reconstructions are resolved by a reduction over the cell
-/// variables (or folded into an existing reduction) on the verifier side; the
-/// term list is the semantics both sides must agree on.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReconstructionTerm<F> {
-    pub column: LatticeColumn,
-    pub cell: usize,
-    pub weight: F,
-}
-
-impl<F> ReconstructionTerm<F> {
-    pub fn new(column: LatticeColumn, cell: usize, weight: F) -> Self {
-        Self {
-            column,
-            cell,
-            weight,
-        }
-    }
-}
-
-/// Little-endian byte reconstruction: `Σ_{limb, symbol} 256^limb · symbol ·
-/// Column(symbol ‖ limb ‖ row)`, each term additionally scaled by `scale`.
-/// The zero symbol carries weight zero and is omitted.
-fn scaled_byte_reconstruction_terms<F: Field + FromPrimitiveInt>(
-    column: LatticeColumn,
-    limbs: usize,
-    scale: F,
-) -> Vec<ReconstructionTerm<F>> {
-    let limb_bits = limbs.log_2();
-    let mut terms = Vec::with_capacity(limbs * 256);
-    let mut place = scale;
-    for limb in 0..limbs {
-        for symbol in 1..256usize {
-            terms.push(ReconstructionTerm::new(
-                column,
-                (symbol << limb_bits) | limb,
-                place * F::from_u64(symbol as u64),
-            ));
-        }
-        place *= F::from_u64(256);
-    }
-    terms
-}
-
-pub fn byte_reconstruction_terms<F: Field + FromPrimitiveInt>(
-    column: LatticeColumn,
-    limbs: usize,
-) -> Vec<ReconstructionTerm<F>> {
-    scaled_byte_reconstruction_terms(column, limbs, F::one())
-}
-
-/// `Σ_symbol weight[symbol] · Column(symbol ‖ row)` for a single-limb one-hot
-/// column.
-fn weighted_symbol_terms<F>(
-    column: LatticeColumn,
-    weights: impl IntoIterator<Item = F>,
-) -> Vec<ReconstructionTerm<F>> {
-    weights
-        .into_iter()
-        .enumerate()
-        .map(|(symbol, weight)| ReconstructionTerm::new(column, symbol, weight))
-        .collect()
-}
-
-/// The advice word reconstruction: `advice(word) = Σ_limb 256^limb · byte(word, limb)`.
-pub fn advice_word_reconstruction_terms<F: Field + FromPrimitiveInt>(
-    kind: JoltAdviceKind,
-) -> Vec<ReconstructionTerm<F>> {
-    byte_reconstruction_terms(LatticeColumn::advice_bytes(kind), WORD_BYTE_LIMBS)
-}
-
-pub fn program_image_word_reconstruction_terms<F: Field + FromPrimitiveInt>(
-) -> Vec<ReconstructionTerm<F>> {
-    byte_reconstruction_terms(LatticeColumn::ProgramImageBytes, WORD_BYTE_LIMBS)
-}
-
-/// The lane reconstruction of one committed bytecode chunk: rebuilds
-/// `BytecodeChunk(chunk)(lane_point ‖ row_point)` as a weighted sum over the
-/// chunk's sub-columns, weighting each lane by the `eq` evaluation of
-/// `lane_point` at its lane index.
-pub fn bytecode_chunk_reconstruction_terms<F: Field + FromPrimitiveInt>(
-    chunk: usize,
-    lane_point: &[F],
-    imm_byte_width: usize,
-) -> Result<Vec<ReconstructionTerm<F>>, JoltFormulaPointError> {
-    let lane_vars = committed_lane_vars();
-    if lane_point.len() != lane_vars {
-        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
-            expected: lane_vars,
-            got: lane_point.len(),
-        });
-    }
-    let lane_weights = EqPolynomial::<F>::evals(lane_point, None);
-    let layout = BYTECODE_LANE_LAYOUT;
-    let register_count = 1usize << REGISTER_ADDRESS_BITS;
-
-    let mut terms = Vec::with_capacity(
-        3 * register_count
-            + 255 * (WORD_BYTE_LIMBS + imm_byte_width)
-            + NUM_CIRCUIT_FLAGS
-            + NUM_INSTRUCTION_FLAGS
-            + LookupTableKind::<XLEN>::COUNT
-            + 1,
-    );
-    for (lane, start) in [
-        (BytecodeRegisterLane::Rs1, layout.rs1_start),
-        (BytecodeRegisterLane::Rs2, layout.rs2_start),
-        (BytecodeRegisterLane::Rd, layout.rd_start),
-    ] {
-        terms.extend(weighted_symbol_terms(
-            LatticeColumn::BytecodeRegisterSelector { chunk, lane },
-            lane_weights[start..start + register_count].iter().copied(),
-        ));
-    }
-    terms.extend(scaled_byte_reconstruction_terms(
-        LatticeColumn::BytecodeUnexpandedPcBytes { chunk },
-        WORD_BYTE_LIMBS,
-        lane_weights[layout.unexp_pc_idx],
-    ));
-    terms.extend(scaled_byte_reconstruction_terms(
-        LatticeColumn::BytecodeImmBytes { chunk },
-        imm_byte_width,
-        lane_weights[layout.imm_idx],
-    ));
-    for flag in 0..NUM_CIRCUIT_FLAGS {
-        terms.push(ReconstructionTerm::new(
-            LatticeColumn::BytecodeCircuitFlag { chunk, flag },
-            0,
-            lane_weights[layout.circuit_start + flag],
-        ));
-    }
-    for flag in 0..NUM_INSTRUCTION_FLAGS {
-        terms.push(ReconstructionTerm::new(
-            LatticeColumn::BytecodeInstructionFlag { chunk, flag },
-            0,
-            lane_weights[layout.instr_start + flag],
-        ));
-    }
-    terms.extend(weighted_symbol_terms(
-        LatticeColumn::BytecodeLookupSelector { chunk },
-        lane_weights[layout.lookup_start..layout.lookup_start + LookupTableKind::<XLEN>::COUNT]
-            .iter()
-            .copied(),
-    ));
-    terms.push(ReconstructionTerm::new(
-        LatticeColumn::BytecodeRafFlag { chunk },
-        0,
-        lane_weights[layout.raf_flag_idx],
-    ));
-
-    Ok(terms)
+    Ok(polynomials)
 }
 
 /// How one committed polynomial's final opening is resolved in lattice mode —
 /// the replacement for the base stage-8 RLC batch (which needs the commitment
 /// homomorphism Akita lacks).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Claims flow through the relation DAG until, per polynomial, one claim
+/// remains that no relation consumes — its **final claim**. In lattice mode
+/// that claim is either settled by the packed witness opening (`Packed`) or
+/// never exists because every claim on the polynomial is consumed by a
+/// lattice relation (`Virtualized`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LatticeFinalOpening {
-    /// One `PrefixPackedClaim` on the packed witness. `leaf` names the
-    /// relation output the claim's value comes from; `None` means the claim
-    /// is produced by the reconstruction reduction rather than a relation
-    /// (trusted-advice bytes and the precommitted sub-columns).
-    Packed {
-        column: LatticeColumn,
-        leaf: Option<JoltOpeningId>,
-    },
-    /// A word-valued advice polynomial, rebuilt through
-    /// [`advice_word_reconstruction_terms`].
-    AdviceWordReconstruction { kind: JoltAdviceKind },
-    /// A committed `BytecodeChunk(chunk)`, rebuilt through
-    /// [`bytecode_chunk_reconstruction_terms`].
-    BytecodeChunkReconstruction { chunk: usize },
-    /// A program-image word, rebuilt through
-    /// [`program_image_word_reconstruction_terms`].
-    ProgramImageWordReconstruction,
+    /// One evaluation claim on the packed witness. `final_claim` names the
+    /// producing relation output — the `(polynomial, relation)` opening id
+    /// whose bound point and claimed value become this slot's
+    /// `(id, EvaluationClaim)` in the packed statement. The packed witness
+    /// admits exactly one claim per slot, so this is total — a packed
+    /// polynomial without a producing relation cannot exist.
+    Packed { final_claim: JoltOpeningId },
     /// Never PCS-opened: the polynomial's consumer claims leave the base PIOP
-    /// through lattice relations (the `IncVirtualization` chain).
+    /// through lattice relations (the `IncVirtualization` chain, the
+    /// advice / bytecode-chunk / program-image reconstruction relations).
     Virtualized,
 }
 
 /// The final-opening resolution for each committed polynomial. Total over
 /// `JoltCommittedPolynomial` so a new committed polynomial cannot land in
-/// lattice mode without a resolution decision.
+/// lattice mode without a resolution decision. The leaves derive from the
+/// base `committed_openings::final_opening_id`, the single owner of the
+/// polynomial→relation mapping.
 pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening {
     match polynomial {
+        // Consumed by the IncVirtualization chain.
         JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
             LatticeFinalOpening::Virtualized
         }
+        // Word/lane-valued polynomials whose claims are settled against their
+        // one-hot decompositions by the reconstruction relations.
+        JoltCommittedPolynomial::TrustedAdvice
+        | JoltCommittedPolynomial::UntrustedAdvice
+        | JoltCommittedPolynomial::BytecodeChunk(_)
+        | JoltCommittedPolynomial::ProgramImageInit => LatticeFinalOpening::Virtualized,
+        // Packed polynomials: one claim each, produced by the named relation.
         JoltCommittedPolynomial::InstructionRa(_)
         | JoltCommittedPolynomial::BytecodeRa(_)
         | JoltCommittedPolynomial::RamRa(_)
         | JoltCommittedPolynomial::UnsignedIncChunk(_)
         | JoltCommittedPolynomial::UnsignedIncMsb
         | JoltCommittedPolynomial::TrustedAdviceBytes
-        | JoltCommittedPolynomial::UntrustedAdviceBytes => LatticeFinalOpening::Packed {
-            column: LatticeColumn::from(polynomial),
-            leaf: packed_column_leaf(LatticeColumn::from(polynomial)),
+        | JoltCommittedPolynomial::UntrustedAdviceBytes
+        | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+        | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+        | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+        | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+        | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+        | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+        | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+        | JoltCommittedPolynomial::ProgramImageBytes => LatticeFinalOpening::Packed {
+            final_claim: final_opening_id(polynomial),
         },
-        JoltCommittedPolynomial::TrustedAdvice => LatticeFinalOpening::AdviceWordReconstruction {
-            kind: JoltAdviceKind::Trusted,
-        },
-        JoltCommittedPolynomial::UntrustedAdvice => LatticeFinalOpening::AdviceWordReconstruction {
-            kind: JoltAdviceKind::Untrusted,
-        },
-        JoltCommittedPolynomial::BytecodeChunk(chunk) => {
-            LatticeFinalOpening::BytecodeChunkReconstruction { chunk }
-        }
-        JoltCommittedPolynomial::ProgramImageInit => {
-            LatticeFinalOpening::ProgramImageWordReconstruction
-        }
-    }
-}
-
-/// The relation output supplying a packed column's claim value, or `None`
-/// when the reconstruction reduction produces it (reconstruction-only sub-columns and
-/// trusted-advice bytes, which have no in-protocol validity relation).
-///
-/// The polynomial→relation mapping itself is owned by the base
-/// `committed_openings::final_opening_id`; this only classifies which packed
-/// columns have a relation leaf at all.
-fn packed_column_leaf(column: LatticeColumn) -> Option<JoltOpeningId> {
-    let LatticeColumn::Committed(polynomial) = column else {
-        return None;
-    };
-    match polynomial {
-        JoltCommittedPolynomial::InstructionRa(_)
-        | JoltCommittedPolynomial::BytecodeRa(_)
-        | JoltCommittedPolynomial::RamRa(_)
-        | JoltCommittedPolynomial::UnsignedIncChunk(_)
-        | JoltCommittedPolynomial::UnsignedIncMsb
-        | JoltCommittedPolynomial::UntrustedAdviceBytes => Some(final_opening_id(polynomial)),
-        _ => None,
     }
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::panic)]
+#[expect(clippy::unwrap_used)]
 mod tests {
+    use super::super::relations::advice_reconstruction::{
+        trusted_advice_bytes_opening, untrusted_advice_bytes_opening,
+    };
+    use super::super::relations::bytecode_reconstruction::{
+        bytecode_imm_bytes_opening, bytecode_raf_flag_opening, bytecode_register_selector_opening,
+    };
+    use super::super::relations::program_image_reconstruction::program_image_bytes_opening;
     use super::*;
-    use jolt_field::Fr;
 
     fn proof_shape() -> ProofPackingShape {
         ProofPackingShape {
@@ -481,26 +236,36 @@ mod tests {
         }
     }
 
+    fn precommitted_shape() -> PrecommittedPackingShape {
+        PrecommittedPackingShape {
+            bytecode_chunks: 2,
+            log_bytecode_rows: 6,
+            imm_byte_width: 16,
+            program_image_log_words: Some(10),
+            trusted_advice_word_vars: Some(4),
+        }
+    }
+
     #[test]
     fn proof_packing_covers_every_committed_lattice_polynomial() {
         let packing = proof_packing(&proof_shape()).unwrap();
 
-        // 4 Ra columns + 8 inc chunks + msb + untrusted advice bytes.
+        // 4 Ra polynomials + 8 inc chunks + msb + untrusted advice bytes.
         assert_eq!(packing.iter().count(), 4 + 8 + 1 + 1);
         assert_eq!(
-            packing[&LatticeColumn::from(JoltCommittedPolynomial::InstructionRa(0))].num_vars,
+            packing[&JoltCommittedPolynomial::InstructionRa(0)].num_vars,
             13
         );
         assert_eq!(
-            packing[&LatticeColumn::from(JoltCommittedPolynomial::UnsignedIncChunk(7))].num_vars,
+            packing[&JoltCommittedPolynomial::UnsignedIncChunk(7)].num_vars,
             13
         );
         assert_eq!(
-            packing[&LatticeColumn::from(JoltCommittedPolynomial::UnsignedIncMsb)].num_vars,
+            packing[&JoltCommittedPolynomial::UnsignedIncMsb].num_vars,
             5
         );
         assert_eq!(
-            packing[&LatticeColumn::from(JoltCommittedPolynomial::UntrustedAdviceBytes)].num_vars,
+            packing[&JoltCommittedPolynomial::UntrustedAdviceBytes].num_vars,
             8 + 3 + 4
         );
     }
@@ -519,19 +284,12 @@ mod tests {
 
     #[test]
     fn precommitted_packing_covers_every_bytecode_lane() {
-        let shape = PrecommittedPackingShape {
-            bytecode_chunks: 2,
-            log_bytecode_rows: 6,
-            imm_byte_width: 16,
-            program_image_log_words: Some(10),
-            trusted_advice_word_vars: None,
-        };
-        let packing = precommitted_packing(&shape).unwrap();
+        let packing = precommitted_packing(&precommitted_shape()).unwrap();
 
         let per_chunk = 3 + NUM_CIRCUIT_FLAGS + NUM_INSTRUCTION_FLAGS + 4;
-        assert_eq!(packing.iter().count(), 2 * per_chunk + 1);
+        assert_eq!(packing.iter().count(), 2 * per_chunk + 2);
         assert_eq!(
-            packing[&LatticeColumn::BytecodeRegisterSelector {
+            packing[&JoltCommittedPolynomial::BytecodeRegisterSelector {
                 chunk: 1,
                 lane: BytecodeRegisterLane::Rd,
             }]
@@ -539,169 +297,97 @@ mod tests {
             REGISTER_ADDRESS_BITS + 6,
         );
         assert_eq!(
-            packing[&LatticeColumn::BytecodeCircuitFlag { chunk: 0, flag: 0 }].num_vars,
+            packing[&JoltCommittedPolynomial::BytecodeCircuitFlag { chunk: 0, flag: 0 }].num_vars,
             6
         );
         assert_eq!(
-            packing[&LatticeColumn::BytecodeUnexpandedPcBytes { chunk: 1 }].num_vars,
+            packing[&JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk: 1 }].num_vars,
             8 + 3 + 6
         );
         assert_eq!(
-            packing[&LatticeColumn::BytecodeImmBytes { chunk: 0 }].num_vars,
+            packing[&JoltCommittedPolynomial::BytecodeImmBytes { chunk: 0 }].num_vars,
             8 + 4 + 6
         );
         assert_eq!(
-            packing[&LatticeColumn::ProgramImageBytes].num_vars,
+            packing[&JoltCommittedPolynomial::ProgramImageBytes].num_vars,
             8 + 3 + 10
         );
     }
 
     #[test]
-    fn packing_registration_is_deterministic() {
-        assert_eq!(
-            proof_packing(&proof_shape()).unwrap(),
-            proof_packing(&proof_shape()).unwrap()
-        );
+    fn word_and_lane_valued_polynomials_are_virtualized() {
+        for polynomial in [
+            JoltCommittedPolynomial::RdInc,
+            JoltCommittedPolynomial::RamInc,
+            JoltCommittedPolynomial::TrustedAdvice,
+            JoltCommittedPolynomial::UntrustedAdvice,
+            JoltCommittedPolynomial::BytecodeChunk(3),
+            JoltCommittedPolynomial::ProgramImageInit,
+        ] {
+            assert_eq!(final_opening(polynomial), LatticeFinalOpening::Virtualized);
+        }
     }
 
+    /// Every packed polynomial's claim is produced by its reconstruction /
+    /// reduction relation — the final claim is total, including the
+    /// precommitted bytecode/program-image decompositions.
     #[test]
-    fn incs_are_virtualized_and_never_opened() {
-        assert_eq!(
-            final_opening(JoltCommittedPolynomial::RdInc),
-            LatticeFinalOpening::Virtualized
-        );
-        assert_eq!(
-            final_opening(JoltCommittedPolynomial::RamInc),
-            LatticeFinalOpening::Virtualized
-        );
-    }
-
-    #[test]
-    fn decomposed_polynomials_resolve_through_reconstructions() {
-        assert_eq!(
-            final_opening(JoltCommittedPolynomial::BytecodeChunk(3)),
-            LatticeFinalOpening::BytecodeChunkReconstruction { chunk: 3 }
-        );
-        assert_eq!(
-            final_opening(JoltCommittedPolynomial::UntrustedAdvice),
-            LatticeFinalOpening::AdviceWordReconstruction {
-                kind: JoltAdviceKind::Untrusted
-            }
-        );
-        assert_eq!(
-            final_opening(JoltCommittedPolynomial::ProgramImageInit),
-            LatticeFinalOpening::ProgramImageWordReconstruction
-        );
-    }
-
-    #[test]
-    fn every_proof_packed_column_has_a_claim_source() {
-        let packing = proof_packing(&proof_shape()).unwrap();
-        for (column, _) in &packing {
-            let leaf = packed_column_leaf(*column).unwrap();
-            let LatticeColumn::Committed(polynomial) = column else {
-                panic!("proof packed columns are committed polynomials");
-            };
+    fn packed_final_claims_name_the_producing_relations() {
+        for (polynomial, final_claim) in [
+            (
+                JoltCommittedPolynomial::UntrustedAdviceBytes,
+                untrusted_advice_bytes_opening(),
+            ),
+            (
+                JoltCommittedPolynomial::TrustedAdviceBytes,
+                trusted_advice_bytes_opening(),
+            ),
+            (
+                JoltCommittedPolynomial::ProgramImageBytes,
+                program_image_bytes_opening(),
+            ),
+            (
+                JoltCommittedPolynomial::BytecodeRegisterSelector {
+                    chunk: 1,
+                    lane: BytecodeRegisterLane::Rd,
+                },
+                bytecode_register_selector_opening(1, BytecodeRegisterLane::Rd),
+            ),
+            (
+                JoltCommittedPolynomial::BytecodeRafFlag { chunk: 0 },
+                bytecode_raf_flag_opening(0),
+            ),
+            (
+                JoltCommittedPolynomial::BytecodeImmBytes { chunk: 2 },
+                bytecode_imm_bytes_opening(2),
+            ),
+        ] {
             assert_eq!(
-                final_opening(*polynomial),
-                LatticeFinalOpening::Packed {
-                    column: *column,
-                    leaf: Some(leaf)
-                }
+                final_opening(polynomial),
+                LatticeFinalOpening::Packed { final_claim }
             );
         }
     }
 
     #[test]
-    fn reconstruction_only_columns_have_no_relation_leaf() {
-        assert_eq!(packed_column_leaf(LatticeColumn::ProgramImageBytes), None);
-        // Trusted-advice bytes intentionally have no relation leaf: their
-        // packed claim is reconstruction-produced (the base map's arm is only
-        // a scheduling hint).
-        assert_eq!(
-            packed_column_leaf(LatticeColumn::Committed(
-                JoltCommittedPolynomial::TrustedAdviceBytes
-            )),
-            None
-        );
-        assert_eq!(
-            final_opening(JoltCommittedPolynomial::TrustedAdviceBytes),
-            LatticeFinalOpening::Packed {
-                column: LatticeColumn::Committed(JoltCommittedPolynomial::TrustedAdviceBytes),
-                leaf: None,
-            }
-        );
+    fn every_proof_packed_polynomial_has_a_claim_source() {
+        let packing = proof_packing(&proof_shape()).unwrap();
+        for (polynomial, _) in &packing {
+            assert!(matches!(
+                final_opening(*polynomial),
+                LatticeFinalOpening::Packed { .. }
+            ));
+        }
     }
 
     #[test]
-    fn byte_reconstruction_terms_weight_little_endian_places() {
-        let terms = byte_reconstruction_terms::<Fr>(LatticeColumn::ProgramImageBytes, 8);
-
-        // 255 nonzero symbols per limb; the zero symbol contributes nothing.
-        assert_eq!(terms.len(), 8 * 255);
-        let term = &terms[6]; // limb 0, symbol 7
-        assert_eq!(term.cell, 7 << 3, "cell packs (symbol ‖ limb) msb-first");
-        assert_eq!(term.weight, Fr::from_u64(7));
-
-        let second_limb = &terms[255 + 2]; // limb 1, symbol 3
-        assert_eq!(second_limb.cell, (3 << 3) | 1);
-        assert_eq!(second_limb.weight, Fr::from_u64(3 * 256));
-    }
-
-    #[test]
-    fn byte_reconstruction_recovers_words() {
-        let word: u64 = 0x0123_4567_89ab_cdef;
-        let terms = advice_word_reconstruction_terms::<Fr>(JoltAdviceKind::Untrusted);
-
-        // Evaluate the view against the one-hot indicator of `word`'s bytes.
-        let value = terms
-            .iter()
-            .filter(|term| {
-                let limb = term.cell & 0b111;
-                let symbol = term.cell >> 3;
-                (word >> (8 * limb)) & 0xff == symbol as u64
-            })
-            .fold(Fr::from_u64(0), |acc, term| acc + term.weight);
-        assert_eq!(value, Fr::from_u64(word));
-    }
-
-    #[test]
-    fn bytecode_chunk_reconstruction_covers_every_lane_exactly_once() {
-        let lane_point = (0..committed_lane_vars())
-            .map(|i| Fr::from_u64(3 + i as u64))
-            .collect::<Vec<_>>();
-        let terms = bytecode_chunk_reconstruction_terms::<Fr>(1, &lane_point, 16).unwrap();
-
-        let register_count = 1usize << REGISTER_ADDRESS_BITS;
-        let expected = 3 * register_count
-            + 255 * WORD_BYTE_LIMBS
-            + 255 * 16
-            + NUM_CIRCUIT_FLAGS
-            + NUM_INSTRUCTION_FLAGS
-            + LookupTableKind::<XLEN>::COUNT
-            + 1;
-        assert_eq!(terms.len(), expected);
-        assert!(terms
-            .iter()
-            .all(|term| !matches!(term.column, LatticeColumn::Committed(_))));
-
-        let lane_weights = EqPolynomial::<Fr>::evals(&lane_point, None);
-        let raf = terms
-            .iter()
-            .find(|term| matches!(term.column, LatticeColumn::BytecodeRafFlag { chunk: 1 }))
-            .unwrap();
-        assert_eq!(raf.weight, lane_weights[BYTECODE_LANE_LAYOUT.raf_flag_idx]);
-    }
-
-    #[test]
-    fn bytecode_chunk_reconstruction_rejects_wrong_lane_arity() {
-        let lane_point = vec![Fr::from_u64(1); 3];
-        assert_eq!(
-            bytecode_chunk_reconstruction_terms::<Fr>(0, &lane_point, 16),
-            Err(JoltFormulaPointError::OpeningPointLengthMismatch {
-                expected: committed_lane_vars(),
-                got: 3,
-            })
-        );
+    fn every_precommitted_packed_polynomial_has_a_claim_source() {
+        let packing = precommitted_packing(&precommitted_shape()).unwrap();
+        for (polynomial, _) in &packing {
+            assert!(matches!(
+                final_opening(*polynomial),
+                LatticeFinalOpening::Packed { .. }
+            ));
+        }
     }
 }

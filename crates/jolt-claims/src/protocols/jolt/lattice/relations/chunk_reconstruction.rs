@@ -1,5 +1,5 @@
 //! Unsigned-inc chunk reconstruction: one sumcheck over the chunk address
-//! bits carrying three γ-batched legs per chunk column:
+//! bits carrying three γ-batched legs per chunk polynomial:
 //!
 //! - **hamming**: `Σ_addr chunk_j(addr, r_cycle) = 1` — the exactly-one-hot
 //!   row property (claimed sum `1`, no address weighting),
@@ -40,8 +40,8 @@ use super::booleanity::{
 };
 use super::inc_virtualization::fused_inc_opening;
 
-/// The chunk openings at the final shared address point — the leaf claims the
-/// packed opening consumes for the `UnsignedIncChunk` columns.
+/// The chunk openings at the final shared address point — the final claims
+/// the packed opening consumes for the `UnsignedIncChunk` slots.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

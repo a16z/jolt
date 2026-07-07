@@ -371,8 +371,16 @@ where
                 JoltCommittedPolynomial::UnsignedIncChunk(_)
                 | JoltCommittedPolynomial::UnsignedIncMsb
                 | JoltCommittedPolynomial::TrustedAdviceBytes
-                | JoltCommittedPolynomial::UntrustedAdviceBytes => {
-                    // Lattice-mode columns open through the packed opening
+                | JoltCommittedPolynomial::UntrustedAdviceBytes
+                | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+                | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+                | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+                | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+                | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+                | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+                | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+                | JoltCommittedPolynomial::ProgramImageBytes => {
+                    // Lattice-mode polynomials open through the packed opening
                     // (`lattice::packing::final_opening`), never the
                     // homomorphic stage 8 RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {

@@ -351,11 +351,15 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
         | JoltCommittedPolynomial::UnsignedIncChunk(_)
         | JoltCommittedPolynomial::UnsignedIncMsb
         | JoltCommittedPolynomial::TrustedAdviceBytes
-        | JoltCommittedPolynomial::UntrustedAdviceBytes => {
-            // Committed-program members are handled by `verify()` directly
-            // from the precommitted finals; lattice columns open through the
-            // packed opening (`lattice::packing::final_opening`), never the
-            // homomorphic stage 8 RLC batch.
+        | JoltCommittedPolynomial::UntrustedAdviceBytes
+        | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+        | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+        | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+        | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+        | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+        | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+        | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+        | JoltCommittedPolynomial::ProgramImageBytes => {
             Err(VerifierError::FinalOpeningBatchFailed {
                 reason: format!(
                     "polynomial {polynomial:?} is not part of the stage 8 prover order"
