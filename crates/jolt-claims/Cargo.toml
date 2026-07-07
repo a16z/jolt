@@ -18,6 +18,7 @@ jolt-claims-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-poly.workspace = true
+jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true

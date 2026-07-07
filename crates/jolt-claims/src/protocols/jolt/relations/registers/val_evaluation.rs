@@ -79,7 +79,7 @@ impl SymbolicSumcheck for ValEvaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::protocols::jolt::JoltDerivedId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn trace_dimensions() -> TraceDimensions {
@@ -111,23 +111,7 @@ mod tests {
                 id if id == rd_wa_val_evaluation() => wa,
                 _ => zero,
             },
-            |id| match *id {
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
-            },
+            |_| zero,
             |id| match *id {
                 JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                     lt_cycle

@@ -47,7 +47,19 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
             }
             OracleRef::Committed(
                 JoltCommittedPolynomial::BytecodeChunk(_)
-                | JoltCommittedPolynomial::ProgramImageInit,
+                | JoltCommittedPolynomial::ProgramImageInit
+                | JoltCommittedPolynomial::UnsignedIncChunk(_)
+                | JoltCommittedPolynomial::UnsignedIncMsb
+                | JoltCommittedPolynomial::TrustedAdviceBytes
+                | JoltCommittedPolynomial::UntrustedAdviceBytes
+                | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+                | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+                | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+                | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+                | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+                | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+                | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+                | JoltCommittedPolynomial::ProgramImageBytes,
             ) => {
                 return Err(WitnessError::UnknownOracle {
                     namespace: JOLT_VM_NAMESPACE.name,
