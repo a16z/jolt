@@ -1517,6 +1517,28 @@ fn build_cuda_dense_state<F: Field>(
     )
 }
 
+#[cfg(feature = "cuda")]
+fn build_cuda_registers_val_state<F: Field>(
+    rd_inc: &[F],
+    rd_wa_at_address: &[F],
+    cycle_point: &[F],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
+    let lt = ctx.lt_evals(cycle_point_fr).ok()?;
+    let rd_inc_dev = ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?;
+    let rd_wa_dev = ctx.upload(crate::cuda::as_fr_slice(rd_wa_at_address)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![rd_inc_dev, rd_wa_dev, lt],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 3],
+        vec![0, 1, 2],
+        3,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum InstructionReadRafOutputKind {
     LookupTableFlag(usize),
@@ -1650,24 +1672,30 @@ impl<F: Field> DenseStage5State<F> {
         }
     }
 
+    #[cfg(feature = "cuda")]
+    fn from_host_and_cuda(
+        factors: Vec<Vec<F>>,
+        terms: Vec<DenseTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+        cuda: Option<cuda::CudaDenseState>,
+    ) -> Self {
+        let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        Self {
+            factors,
+            factor_scratch,
+            terms,
+            outputs,
+            active_scale,
+            cuda,
+        }
+    }
+
     fn round_poly(
         &self,
         previous_claim: F,
         relation: Stage5Relation,
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
-        let first_len = self.factors.first().map_or(0, Vec::len);
-        if first_len == 0 || !first_len.is_power_of_two() {
-            return Err(Stage5KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage5 dense factor has invalid length",
-            });
-        }
-        if self.factors.iter().any(|factor| factor.len() != first_len) {
-            return Err(Stage5KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage5 dense factors have inconsistent lengths",
-            });
-        }
         #[cfg(feature = "cuda")]
         if let Some(cuda) = &self.cuda {
             if let Ok(poly) = cuda.round_poly() {
@@ -1681,6 +1709,19 @@ impl<F: Field> DenseStage5State<F> {
                     return Ok(poly);
                 }
             }
+        }
+        let first_len = self.factors.first().map_or(0, Vec::len);
+        if first_len == 0 || !first_len.is_power_of_two() {
+            return Err(Stage5KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage5 dense factor has invalid length",
+            });
+        }
+        if self.factors.iter().any(|factor| factor.len() != first_len) {
+            return Err(Stage5KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage5 dense factors have inconsistent lengths",
+            });
         }
         let poly =
             round_poly_from_dense_terms(&self.factors, &self.terms, self.active_scale, relation)?;
@@ -3825,6 +3866,42 @@ fn registers_val_evaluation_state<F: Field>(
     let (address_point, cycle_point) = registers_val_point.split_at(register_rounds);
     let address_eq = EqPolynomial::<F>::evals(address_point, None);
     let rd_wa_at_address = rd_wa_at_register_address(witness, &address_eq)?;
+
+    let terms = vec![DenseTerm {
+        coefficient: F::one(),
+        factors: vec![0, 1, 2],
+    }];
+    let outputs = vec![
+        FactorOutput {
+            name: "stage5.registers_val_evaluation.eval.RdInc",
+            oracle: "RdInc",
+            factor: 0,
+        },
+        FactorOutput {
+            name: "stage5.registers_val_evaluation.eval.RdWa",
+            oracle: "RdWa",
+            factor: 1,
+        },
+    ];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = build_cuda_registers_val_state(
+            witness.rd_inc,
+            &rd_wa_at_address,
+            cycle_point,
+            active_scale,
+        ) {
+            return Ok(DenseStage5State::from_host_and_cuda(
+                vec![witness.rd_inc.to_vec(), rd_wa_at_address, Vec::new()],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
     let lt = lt_evals_big_endian(cycle_point);
     require_operand_count(
         "stage5.registers_val_evaluation.lt",
@@ -3834,22 +3911,8 @@ fn registers_val_evaluation_state<F: Field>(
 
     Ok(DenseStage5State::new_with_backend(
         vec![witness.rd_inc.to_vec(), rd_wa_at_address, lt],
-        vec![DenseTerm {
-            coefficient: F::one(),
-            factors: vec![0, 1, 2],
-        }],
-        vec![
-            FactorOutput {
-                name: "stage5.registers_val_evaluation.eval.RdInc",
-                oracle: "RdInc",
-                factor: 0,
-            },
-            FactorOutput {
-                name: "stage5.registers_val_evaluation.eval.RdWa",
-                oracle: "RdWa",
-                factor: 1,
-            },
-        ],
+        terms,
+        outputs,
         active_scale,
         backend,
     ))

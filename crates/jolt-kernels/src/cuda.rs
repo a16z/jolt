@@ -19,6 +19,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/fma.cu"),
     include_str!("cuda/bind.cu"),
     include_str!("cuda/eq_double.cu"),
+    include_str!("cuda/lt_double.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
     include_str!("cuda/dense_outer.cu"),
@@ -82,6 +83,7 @@ pub struct CudaKernelContext {
     fma: CudaFunction,
     bind: CudaFunction,
     eq_double: CudaFunction,
+    lt_double: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
     row_dots: CudaFunction,
@@ -673,6 +675,7 @@ impl CudaKernelContext {
             fma: module.load_function("fma_kernel")?,
             bind: module.load_function("bind_kernel")?,
             eq_double: module.load_function("eq_double")?,
+            lt_double: module.load_function("lt_double")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
             row_dots: module.load_function("row_dots_kernel")?,
@@ -3275,6 +3278,57 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn lt_evals(&self, point: &[Fr]) -> Result<DeviceFrVec, CudaError> {
+        use num_traits::Zero;
+        let total = 1usize << point.len();
+        if point.is_empty() {
+            let mut cur: CudaSlice<u64> = self.stream.alloc_zeros(LIMBS)?;
+            self.stream
+                .memcpy_htod(&fr_to_limbs(Fr::zero()), &mut cur.slice_mut(0..LIMBS))?;
+            self.stream.synchronize()?;
+            return Ok(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf: cur,
+                len: 1,
+                staging: self.staging.clone(),
+            });
+        }
+
+        let mut cur: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+        let mut next: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+        let mut size_in = 1usize;
+        for &r_j in point.iter().rev() {
+            let challenge_dev = self.stream.clone_htod(&fr_to_limbs(r_j))?;
+            let size_in_arg = size_in as u64;
+            let cfg = LaunchConfig {
+                grid_dim: ((size_in as u32).div_ceil(BLOCK), 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            let f = self.lt_double.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut next)
+                .arg(&cur)
+                .arg(&challenge_dev)
+                .arg(&size_in_arg);
+            // SAFETY: each thread i reads cur[i] (size_in elements) and the single challenge,
+            // writing next[i] and next[size_in + i]; cur and next are distinct buffers holding
+            // >= 2*size_in elements after this round.
+            let _ = unsafe { launch.launch(cfg) }?;
+            std::mem::swap(&mut cur, &mut next);
+            size_in *= 2;
+        }
+        self.stream.synchronize()?;
+
+        Ok(DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: cur,
+            len: total,
+            staging: self.staging.clone(),
+        })
+    }
+
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         use num_traits::{One, Zero};
         if values.len == 0 {
@@ -3845,6 +3899,23 @@ mod tests {
             let expected = jolt_poly::EqPolynomial::<Fr>::evals(&r, scaling);
             let c = ctx();
             let got = c.eq_evals(&r, scaling).unwrap().to_host().unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn lt_evals_matches_cpu(
+            point in prop::collection::vec(fr_strategy(), 0..12),
+        ) {
+            let mut expected = vec![Fr::zero(); 1usize << point.len()];
+            for (index, r) in point.iter().rev().enumerate() {
+                let (left, right) = expected.split_at_mut(1usize << index);
+                left.iter_mut().zip(right).for_each(|(left, right)| {
+                    *right = *left * *r;
+                    *left += *r - *right;
+                });
+            }
+            let c = ctx();
+            let got = c.lt_evals(&point).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
 
