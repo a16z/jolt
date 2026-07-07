@@ -20,6 +20,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/bind.cu"),
     include_str!("cuda/eq_double.cu"),
     include_str!("cuda/lt_double.cu"),
+    include_str!("cuda/rd_wa_gather.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
     include_str!("cuda/dense_outer.cu"),
@@ -84,6 +85,7 @@ pub struct CudaKernelContext {
     bind: CudaFunction,
     eq_double: CudaFunction,
     lt_double: CudaFunction,
+    rd_wa_gather: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
     row_dots: CudaFunction,
@@ -676,6 +678,7 @@ impl CudaKernelContext {
             bind: module.load_function("bind_kernel")?,
             eq_double: module.load_function("eq_double")?,
             lt_double: module.load_function("lt_double")?,
+            rd_wa_gather: module.load_function("rd_wa_gather")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
             row_dots: module.load_function("row_dots_kernel")?,
@@ -3329,6 +3332,52 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn rd_wa_gather(
+        &self,
+        address_eq: &[Fr],
+        addresses: &[i16],
+    ) -> Result<DeviceFrVec, CudaError> {
+        let trace_len = addresses.len();
+        let register_count = address_eq.len();
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(trace_len.max(1) * LIMBS)?;
+        if trace_len == 0 {
+            return Ok(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf: out,
+                len: 0,
+                staging: self.staging.clone(),
+            });
+        }
+        let address_eq_dev = self.upload(address_eq)?;
+        let addresses_dev = self.upload_i16_slice(addresses)?;
+        let trace_len_arg = trace_len as u64;
+        let register_count_arg = register_count as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((trace_len as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.rd_wa_gather.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(&address_eq_dev.buf)
+            .arg(&addresses_dev)
+            .arg(&trace_len_arg)
+            .arg(&register_count_arg);
+        // SAFETY: one thread per cycle c reads addresses[c] and (if in range) address_eq[addr];
+        // out holds trace_len Fr. No shared memory. STUB body pending review.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        Ok(DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: out,
+            len: trace_len,
+            staging: self.staging.clone(),
+        })
+    }
+
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         use num_traits::{One, Zero};
         if values.len == 0 {
@@ -3916,6 +3965,35 @@ mod tests {
             }
             let c = ctx();
             let got = c.lt_evals(&point).unwrap().to_host().unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn rd_wa_gather_matches_cpu(
+            log_trace in 1usize..12,
+            register_count in 1usize..40,
+            seed in fr_strategy(),
+        ) {
+            let trace_len = 1usize << log_trace;
+            let address_eq: Vec<Fr> = (0..register_count)
+                .map(|i| seed + Fr::from_u64(i as u64 + 1))
+                .collect();
+            let addresses: Vec<i16> = (0..trace_len)
+                .map(|c| {
+                    if (c * 7 + 3) % 5 == 0 {
+                        -1
+                    } else {
+                        ((c * 13) % register_count) as i16
+                    }
+                })
+                .collect();
+            let expected: Vec<Fr> = addresses
+                .iter()
+                .map(|&a| if a < 0 { Fr::zero() } else { address_eq[a as usize] })
+                .collect();
+
+            let c = ctx();
+            let got = c.rd_wa_gather(&address_eq, &addresses).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
 
