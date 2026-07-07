@@ -2,8 +2,7 @@
 //!
 //! Runs the real expansion (`expand_instruction`) for one instruction and prints
 //! it as a Lean `Program`: a chain of `.instr (.<Opcode> …) <|` lines ending in
-//! `.done RETIRE_SUCCESS`, mirroring `JoltISA/Instruction.lean`. Both arms of the
-//! `rd==x0` branch are shown.
+//! `.done RETIRE_SUCCESS`, mirroring the hand crafted `JoltISA/Instruction.lean`.
 //!
 //! Usage: `cargo run -p jolt-lean-gen -- LB`  (prints to stdout for now).
 
@@ -104,7 +103,7 @@ fn lean_imm(name: &str, imm: i128) -> String {
 }
 
 // Build the Lean `.instr (.<Opcode> …) <|` line for one final row. The operand
-// order per opcode mirrors the `Instr` constructors in `Instruction.lean`.
+// order per opcode mirrors the `Instr` constructors in hand crafted lean file `Instruction.lean`.
 // `load_class` ("normal"/"amo") is the `LD` Sail fault class; `align_fault` is the
 // `ExceptionType` for alignment asserts. Both are derived from the source kind.
 fn lean_instr(row: &JoltInstructionRow, load_class: &str, align_fault: &str) -> String {
@@ -115,6 +114,8 @@ fn lean_instr(row: &JoltInstructionRow, load_class: &str, align_fault: &str) -> 
     let rs2 = operand(o.rs2);
     let imm = lean_imm(name, o.imm);
 
+    // Hand code script for each instructions args in lean op-code format.
+    // Then AI checked, like the lazy feck that I am.
     let args: String = match name {
         // dst, lhs, rhs
         "ADD"
@@ -193,6 +194,8 @@ fn lean_instr(row: &JoltInstructionRow, load_class: &str, align_fault: &str) -> 
 
 // Find the source instruction kind whose mnemonic matches `name` (e.g. "LB").
 fn kind_from_name(name: &str) -> Option<SourceInstructionKind> {
+    // The list of instructions can be found at
+    // jolt/crates/jolt-riscv/src/lib.rs:22
     SourceInstructionKind::ALL
         .iter()
         .copied()
@@ -223,9 +226,17 @@ fn is_unsupported(kind: SourceInstructionKind) -> bool {
     )
 }
 
+// Helper function that tells me if a given RISC-V (or custom instruction)
+// is (1) Expandable or not (2) If it is expandable,then do we currently support auto-extaction?
+// (we should for most instructions, but some system instruction lean defs are still open)
+// (3) If all checks pass, then we label the instruction as expandable.
+// Note that the list of expandable but unsupported instructions is hand coded
+// 17 lines above this line.
 fn classify(kind: SourceInstructionKind) -> Class {
     // Mirror the expander's own decision (`dispatch_source`): only `is_source_only`
     // kinds get expanded; everything else takes the native path.
+    // NOTE: this is pulled from the existing grammar.rs file that is currently used by
+    // by jolt to expand. This ensures we are consistent with the rest of the codebase.
     if !is_source_only(kind) {
         Class::NotExpandable
     } else if is_unsupported(kind) {
@@ -238,8 +249,11 @@ fn classify(kind: SourceInstructionKind) -> Class {
 // Expand `kind` and print it as a Lean `Program`, both arms of the rd==x0 branch.
 fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
     let n = kind.name();
-    // The top-level alignment assert reports a store/AMO align fault for any
-    // memory write or atomic, and a load align fault for a plain load.
+
+    // Exception Type modelling to match current Sail spec.
+    // Atomics or stores fail with different exception terms compared to ordinary load
+    // instructions.
+    // We need to tell the translator what the exceotion type is.
     let write_or_atomic = n.starts_with("AMO")
         || n.starts_with("LR")
         || matches!(n, "SB" | "SH" | "SW" | "SD" | "SCD" | "SCW");
@@ -248,12 +262,8 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
     } else {
         "(ExceptionType.E_Load_Addr_Align ())"
     };
-    // The internal aligned-doubleword `LD` is the read side of an atomic (`.amo`)
-    // only for true atomics. A plain store's read-modify-write read is a normal
-    // load: its address is always 8-aligned, so the fault class is unreachable at
-    // runtime (`Semantics.lean` consults it only on a misaligned address) and
-    // merely selects the Sail exception class the proof layer expects there.
-    // Match the hand-written Lean, which uses `.normal` for plain stores.
+
+    // Load class is a also sail artefact.
     let atomic = n.starts_with("AMO") || n.starts_with("LR") || matches!(n, "SCD" | "SCW");
     let load_class = if atomic { "amo" } else { "normal" };
 
@@ -274,6 +284,9 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
             is_compressed: false,
         };
         let input = SourceInstruction::new(kind, row);
+        // re-using existing expansion structure from program expansion
+        // The only change we've done to the tracer code is that we've made
+        // certain structs printable via the debug proc-macro.
         let expanded = expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)?;
         println!("{arm}:");
         for instruction in expanded {
@@ -326,8 +339,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return emit_all();
     }
 
+    // Example invocation is cargo run -q -p jolt-lean-gen -- LW
+    // so here arg would LW, and as its a valid instructon as per
+    // the enumerations of SourceInstruction
     let kind = kind_from_name(&arg).ok_or_else(|| format!("unknown instruction: {arg}"))?;
+
     match classify(kind) {
+        // emit_program does ALL the heavy lifting for a given instruction.
         Class::Expand => emit_program(kind)?,
         Class::Unsupported => {
             println!("-- unsupported (hand-coded for now): {}", kind.name());
