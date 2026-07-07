@@ -125,6 +125,7 @@ impl DeviceFrVec {
             return Ok(Vec::new());
         }
         let n = self.len * LIMBS;
+        xfer_stats::add_d2h(n * std::mem::size_of::<u64>());
         let mut pool = lock_pool(&self.staging);
         let staging = pool.ensure(self.stream.context(), n)?;
         self.stream
@@ -143,6 +144,7 @@ impl DeviceFrVec {
     }
 
     pub fn first(&self) -> Result<Fr, CudaError> {
+        xfer_stats::add_d2h(LIMBS * std::mem::size_of::<u64>());
         let raw = self.stream.clone_dtoh(&self.buf.slice(0..LIMBS))?;
         Ok(limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]))
     }
@@ -168,6 +170,106 @@ pub(crate) fn shared_ctx() -> Option<&'static CudaKernelContext> {
     use std::sync::OnceLock;
     static CTX: OnceLock<Option<CudaKernelContext>> = OnceLock::new();
     CTX.get_or_init(|| CudaKernelContext::new(0).ok()).as_ref()
+}
+
+pub mod xfer_stats {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+
+    #[derive(Default)]
+    pub struct Counters {
+        pub pack_d2d_bytes: AtomicU64,
+        pub pack_d2d_calls: AtomicU64,
+        pub h2d_bytes: AtomicU64,
+        pub h2d_calls: AtomicU64,
+        pub d2h_bytes: AtomicU64,
+        pub d2h_calls: AtomicU64,
+        // H2D calls bucketed by size: small (<64 KB), medium (<1 MB), large (>=1 MB).
+        pub h2d_small: AtomicU64,
+        pub h2d_medium: AtomicU64,
+        pub h2d_large: AtomicU64,
+        pub h2d_large_bytes: AtomicU64,
+    }
+
+    fn counters() -> &'static Counters {
+        static C: OnceLock<Counters> = OnceLock::new();
+        C.get_or_init(Counters::default)
+    }
+
+    pub fn enabled() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("JOLT_CUDA_XFER_STATS").is_some())
+    }
+
+    // Retained so the perf report still shows a "pack D2D" line (now expected to be 0 after
+    // the per-round re-pack was replaced with device pointer arrays); wire back in if any
+    // future kernel reintroduces contiguous packing.
+    #[inline]
+    #[expect(dead_code)]
+    pub(crate) fn add_pack_d2d(bytes: usize) {
+        if enabled() {
+            let _ = counters().pack_d2d_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            let _ = counters().pack_d2d_calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn add_h2d(bytes: usize) {
+        if enabled() {
+            let _ = counters().h2d_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            let _ = counters().h2d_calls.fetch_add(1, Ordering::Relaxed);
+            if bytes < 64 * 1024 {
+                let _ = counters().h2d_small.fetch_add(1, Ordering::Relaxed);
+            } else if bytes < 1024 * 1024 {
+                let _ = counters().h2d_medium.fetch_add(1, Ordering::Relaxed);
+            } else {
+                let _ = counters().h2d_large.fetch_add(1, Ordering::Relaxed);
+                let _ = counters().h2d_large_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn add_d2h(bytes: usize) {
+        if enabled() {
+            let _ = counters().d2h_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            let _ = counters().d2h_calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn snapshot() -> [u64; 10] {
+        let c = counters();
+        [
+            c.pack_d2d_bytes.load(Ordering::Relaxed),
+            c.pack_d2d_calls.load(Ordering::Relaxed),
+            c.h2d_bytes.load(Ordering::Relaxed),
+            c.h2d_calls.load(Ordering::Relaxed),
+            c.d2h_bytes.load(Ordering::Relaxed),
+            c.d2h_calls.load(Ordering::Relaxed),
+            c.h2d_small.load(Ordering::Relaxed),
+            c.h2d_medium.load(Ordering::Relaxed),
+            c.h2d_large.load(Ordering::Relaxed),
+            c.h2d_large_bytes.load(Ordering::Relaxed),
+        ]
+    }
+
+    pub fn reset() {
+        let c = counters();
+        for a in [
+            &c.pack_d2d_bytes,
+            &c.pack_d2d_calls,
+            &c.h2d_bytes,
+            &c.h2d_calls,
+            &c.d2h_bytes,
+            &c.d2h_calls,
+            &c.h2d_small,
+            &c.h2d_medium,
+            &c.h2d_large,
+            &c.h2d_large_bytes,
+        ] {
+            a.store(0, Ordering::Relaxed);
+        }
+    }
 }
 
 pub(crate) fn as_fr_slice<F: jolt_field::Field>(values: &[F]) -> Option<&[Fr]> {
@@ -486,6 +588,7 @@ impl CudaKernelContext {
             self.stream.alloc_zeros(0)?
         } else {
             let n = values.len() * LIMBS;
+            xfer_stats::add_h2d(n * std::mem::size_of::<u64>());
             let mut pool = lock_pool(&self.staging);
             let staging = pool.ensure(self.stream.context(), n)?;
             for (slot, &v) in staging.as_mut_slice(n).chunks_exact_mut(LIMBS).zip(values) {
@@ -501,6 +604,25 @@ impl CudaKernelContext {
             len: values.len(),
             staging: self.staging.clone(),
         })
+    }
+
+    // Build a device array holding each factor's base device pointer, so kernels can read
+    // the resident factors in place instead of re-packing them into one contiguous buffer
+    // every round. The uploaded array is tiny (one u64 per factor); the factor buffers
+    // themselves are never copied.
+    fn factor_ptr_array(&self, factors: &[&DeviceFrVec]) -> Result<CudaSlice<u64>, CudaError> {
+        use cudarc::driver::DevicePtr;
+        let mut ptrs = Vec::with_capacity(factors.len());
+        let mut guards = Vec::with_capacity(factors.len());
+        for factor in factors {
+            let (ptr, guard) = factor.buf.device_ptr(&self.stream);
+            ptrs.push(ptr);
+            guards.push(guard);
+        }
+        let array = self.stream.clone_htod(&ptrs)?;
+        self.stream.synchronize()?;
+        drop(guards);
+        Ok(array)
     }
 
     pub fn resident_witness(&self, witness: &[Fr]) -> Result<Arc<DeviceFrVec>, CudaError> {
@@ -782,15 +904,7 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
-        let mut packed: CudaSlice<u64> =
-            self.stream.alloc_zeros(inputs.chunks.len() * half * 2 * LIMBS)?;
-        for (index, chunk) in inputs.chunks.iter().enumerate() {
-            let offset = index * half * 2 * LIMBS;
-            self.stream.memcpy_dtod(
-                &chunk.buf.slice(0..half * 2 * LIMBS),
-                &mut packed.slice_mut(offset..offset + half * 2 * LIMBS),
-            )?;
-        }
+        let factor_ptrs = self.factor_ptr_array(inputs.chunks)?;
         let gammas_dev = self.upload(inputs.gamma_powers)?;
 
         const WIDTH: usize = 4;
@@ -814,7 +928,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&gammas_dev.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
@@ -878,15 +992,7 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
-        let mut packed: CudaSlice<u64> =
-            self.stream.alloc_zeros(num_polys * half * 2 * LIMBS)?;
-        for (index, h) in inputs.h_polys.iter().enumerate() {
-            let offset = index * half * 2 * LIMBS;
-            self.stream.memcpy_dtod(
-                &h.buf.slice(0..half * 2 * LIMBS),
-                &mut packed.slice_mut(offset..offset + half * 2 * LIMBS),
-            )?;
-        }
+        let factor_ptrs = self.factor_ptr_array(inputs.h_polys)?;
         let rho_dev = self.upload(inputs.rho)?;
 
         const WIDTH: usize = 2;
@@ -910,7 +1016,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&rho_dev.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
@@ -984,14 +1090,7 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
-        let mut packed: CudaSlice<u64> = self.stream.alloc_zeros(num_polys * chunk_domain * LIMBS)?;
-        for (index, g) in inputs.g.iter().enumerate() {
-            let offset = index * chunk_domain * LIMBS;
-            self.stream.memcpy_dtod(
-                &g.buf.slice(0..chunk_domain * LIMBS),
-                &mut packed.slice_mut(offset..offset + chunk_domain * LIMBS),
-            )?;
-        }
+        let factor_ptrs = self.factor_ptr_array(inputs.g)?;
         let f_dev = self.upload(inputs.f_values)?;
         let gamma_dev = self.upload(inputs.gamma_squares)?;
 
@@ -1017,7 +1116,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&f_dev.buf)
             .arg(&gamma_dev.buf)
             .arg(&inputs.e_in.buf)
@@ -1226,19 +1325,11 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
-        // Pack combined (factor 0) followed by the 8 ra chunks (factors 1..9).
-        let mut packed: CudaSlice<u64> = self.stream.alloc_zeros(9 * half * 2 * LIMBS)?;
-        self.stream.memcpy_dtod(
-            &inputs.combined.buf.slice(0..half * 2 * LIMBS),
-            &mut packed.slice_mut(0..half * 2 * LIMBS),
-        )?;
-        for (index, chunk) in inputs.chunks.iter().enumerate() {
-            let offset = (index + 1) * half * 2 * LIMBS;
-            self.stream.memcpy_dtod(
-                &chunk.buf.slice(0..half * 2 * LIMBS),
-                &mut packed.slice_mut(offset..offset + half * 2 * LIMBS),
-            )?;
-        }
+        // Factor 0 = combined, factors 1..9 = the 8 ra chunks.
+        let mut factors: Vec<&DeviceFrVec> = Vec::with_capacity(9);
+        factors.push(inputs.combined);
+        factors.extend_from_slice(inputs.chunks);
+        let factor_ptrs = self.factor_ptr_array(&factors)?;
 
         const WIDTH: usize = 9;
         let tuple = WIDTH * LIMBS;
@@ -1262,16 +1353,16 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
             .arg(&pair_stride_arg)
             .arg(&half_arg)
             .arg(&in_bits_arg);
-        // SAFETY: one thread per row reads its pair from the 9 packed factors (combined +
-        // 8 ra chunks) and the e_in[row & mask] / e_out[row >> in_bits] weights, building
-        // the 9 degree-product evals in a thread-local buffer; shared memory holds `block`
-        // 9-lane tuples.
+        // SAFETY: one thread per row reads its pair from the 9 factors (combined + 8 ra
+        // chunks) via the device pointer array and the e_in[row & mask] / e_out[row >>
+        // in_bits] weights, building the 9 degree-product evals in a thread-local buffer;
+        // shared memory holds `block` 9-lane tuples.
         let _ = unsafe { launch.launch(cfg) }?;
 
         let mut len = blocks as usize;
@@ -1396,19 +1487,8 @@ impl CudaKernelContext {
             return Ok([Fr::zero(); 2]);
         }
 
-        let pack = |polys: &[&DeviceFrVec]| -> Result<CudaSlice<u64>, CudaError> {
-            let mut packed: CudaSlice<u64> = self.stream.alloc_zeros(num_ra * len * LIMBS)?;
-            for (index, poly) in polys.iter().enumerate() {
-                let offset = index * len * LIMBS;
-                self.stream.memcpy_dtod(
-                    &poly.buf.slice(0..len * LIMBS),
-                    &mut packed.slice_mut(offset..offset + len * LIMBS),
-                )?;
-            }
-            Ok(packed)
-        };
-        let g_packed = pack(inputs.g)?;
-        let eq_virt_packed = pack(inputs.eq_virt)?;
+        let g_packed = self.factor_ptr_array(inputs.g)?;
+        let eq_virt_packed = self.factor_ptr_array(inputs.eq_virt)?;
         let gammas_dev = self.upload(inputs.gamma_powers)?;
         let two_dev = self.stream.clone_htod(&fr_to_limbs(Fr::from_u64(2)))?;
 
@@ -1865,15 +1945,7 @@ impl CudaKernelContext {
             return Ok(vec![Fr::zero(); width]);
         }
 
-        let mut packed: CudaSlice<u64> =
-            self.stream.alloc_zeros(terms.factors.len() * pair_stride * 2 * LIMBS)?;
-        for (index, factor) in terms.factors.iter().enumerate() {
-            let offset = index * pair_stride * 2 * LIMBS;
-            self.stream.memcpy_dtod(
-                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
-                &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
-            )?;
-        }
+        let factor_ptrs = self.factor_ptr_array(terms.factors)?;
 
         let coeffs_dev = self.upload(terms.term_coeffs)?;
         let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
@@ -1901,7 +1973,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&coeffs_dev.buf)
             .arg(&offsets_dev)
             .arg(&indices_dev)
@@ -1909,9 +1981,10 @@ impl CudaKernelContext {
             .arg(&num_terms_arg)
             .arg(&degree_arg)
             .arg(&half_arg);
-        // SAFETY: one thread per row reads its pair from each packed factor and the
-        // term tables (bounded by offsets), building the width=degree+1 monomial
-        // coefficients in a thread-local buffer; shared memory holds `block` tuples.
+        // SAFETY: one thread per row reads its pair from each factor (via the device
+        // pointer array) and the term tables (bounded by offsets), building the
+        // width=degree+1 monomial coefficients in a thread-local buffer; shared memory
+        // holds `block` tuples. factor_ptrs stays alive until the launch is scheduled.
         let _ = unsafe { launch.launch(cfg) }?;
 
         let mut len = blocks as usize;
@@ -1976,15 +2049,7 @@ impl CudaKernelContext {
             return Ok(vec![Fr::zero(); num_evals]);
         }
 
-        let mut packed: CudaSlice<u64> =
-            self.stream.alloc_zeros(terms.factors.len() * pair_stride * 2 * LIMBS)?;
-        for (index, factor) in terms.factors.iter().enumerate() {
-            let offset = index * pair_stride * 2 * LIMBS;
-            self.stream.memcpy_dtod(
-                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
-                &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
-            )?;
-        }
+        let factor_ptrs = self.factor_ptr_array(terms.factors)?;
 
         let points_dev = self.upload(points)?;
         let coeffs_dev = self.upload(terms.term_coeffs)?;
@@ -2014,7 +2079,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&points_dev.buf)
             .arg(&coeffs_dev.buf)
             .arg(&offsets_dev)
@@ -2078,15 +2143,7 @@ impl CudaKernelContext {
         let low_round = inputs.e_in.len() > 1;
         let in_pairs = inputs.e_in.len() / 2;
 
-        let mut packed: CudaSlice<u64> =
-            self.stream.alloc_zeros(inputs.factors.len() * pair_stride * 2 * LIMBS)?;
-        for (index, factor) in inputs.factors.iter().enumerate() {
-            let offset = index * pair_stride * 2 * LIMBS;
-            self.stream.memcpy_dtod(
-                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
-                &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
-            )?;
-        }
+        let factor_ptrs = self.factor_ptr_array(inputs.factors)?;
 
         let coeffs_dev = self.upload(inputs.term_coeffs)?;
         let offsets_dev = self.stream.clone_htod(inputs.term_factor_offsets)?;
@@ -2114,7 +2171,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&coeffs_dev.buf)
             .arg(&offsets_dev)
             .arg(&indices_dev)
@@ -2187,15 +2244,7 @@ impl CudaKernelContext {
         }
         let in_bits = e_in.len().trailing_zeros();
 
-        let mut packed: CudaSlice<u64> =
-            self.stream.alloc_zeros(terms.factors.len() * pair_stride * 2 * LIMBS)?;
-        for (index, factor) in terms.factors.iter().enumerate() {
-            let offset = index * pair_stride * 2 * LIMBS;
-            self.stream.memcpy_dtod(
-                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
-                &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
-            )?;
-        }
+        let factor_ptrs = self.factor_ptr_array(terms.factors)?;
 
         let points: Vec<Fr> = (0..degree)
             .map(|e| Fr::from_u64(if e == 0 { 0 } else { (e + 1) as u64 }))
@@ -2227,7 +2276,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut buf)
-            .arg(&packed)
+            .arg(&factor_ptrs)
             .arg(&points_dev.buf)
             .arg(&coeffs_dev.buf)
             .arg(&offsets_dev)

@@ -1,7 +1,7 @@
 extern "C" __global__ void hamming_pairs(
     u64 *__restrict__ out,
-    const u64 *__restrict__ g,
-    const u64 *__restrict__ eq_virt,
+    const u64 *const *__restrict__ g_ptrs,
+    const u64 *const *__restrict__ eq_virt_ptrs,
     const u64 *__restrict__ eq_bool,
     const u64 *__restrict__ gamma_powers,
     const u64 *__restrict__ two,
@@ -29,8 +29,8 @@ extern "C" __global__ void hamming_pairs(
         for (int k = 0; k < 4; k++) { eval0[k] = 0; eval1[k] = 0; }
 
         for (unsigned int i = 0; i < num_ra; i++) {
-            const u64 *gi = g + i * pair_stride * 2 * 4;
-            const u64 *evi = eq_virt + i * pair_stride * 2 * 4;
+            const u64 *gi = g_ptrs[i];
+            const u64 *evi = eq_virt_ptrs[i];
 
             u64 g_lo[4], g_hi[4], g1[4];
             load4(gi + (row * 2) * 4, g_lo);

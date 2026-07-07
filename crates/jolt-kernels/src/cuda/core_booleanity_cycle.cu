@@ -1,6 +1,6 @@
 extern "C" __global__ void core_booleanity_cycle_pairs(
     u64 *__restrict__ out,
-    const u64 *__restrict__ h_polys,
+    const u64 *const *__restrict__ h_ptrs,
     const u64 *__restrict__ rho,
     const u64 *__restrict__ e_in,
     const u64 *__restrict__ e_out,
@@ -24,7 +24,7 @@ extern "C" __global__ void core_booleanity_cycle_pairs(
         u64 c_sum[4], q_sum[4];
         for (int k = 0; k < 4; k++) { c_sum[k] = 0; q_sum[k] = 0; }
         for (unsigned int i = 0; i < num_polys; i++) {
-            const u64 *h = h_polys + (unsigned long)i * pair_stride * 2 * 4;
+            const u64 *h = h_ptrs[i];
             u64 h0[4], h1[4];
             load4(h + (row * 2) * 4, h0);
             load4(h + (row * 2 + 1) * 4, h1);

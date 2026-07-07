@@ -107,7 +107,7 @@ __device__ __forceinline__ void irc_ep9(const u64 *lo, const u64 *hi, u64 *out) 
 
 extern "C" __global__ void instruction_raf_cycle_pairs(
     u64 *__restrict__ out,
-    const u64 *__restrict__ factors,
+    const u64 *const *__restrict__ factor_ptrs,
     const u64 *__restrict__ e_in,
     const u64 *__restrict__ e_out,
     unsigned long pair_stride,
@@ -128,15 +128,16 @@ extern "C" __global__ void instruction_raf_cycle_pairs(
         u64 lo[9 * 4], hi[9 * 4];
         // Factor 0 = combined, with e_in folded into its linear pair only.
         {
+            const u64 *combined = factor_ptrs[0];
             u64 c0[4], c1[4];
-            load4(factors + (row * 2) * 4, c0);
-            load4(factors + (row * 2 + 1) * 4, c1);
+            load4(combined + (row * 2) * 4, c0);
+            load4(combined + (row * 2 + 1) * 4, c1);
             fr_mul(c0, ein, lo + 0);
             fr_mul(c1, ein, hi + 0);
         }
         // Factors 1..8 = the 8 ra chunks.
         for (int c = 0; c < 8; c++) {
-            const u64 *factor = factors + (unsigned long)(c + 1) * pair_stride * 2 * 4;
+            const u64 *factor = factor_ptrs[c + 1];
             load4(factor + (row * 2) * 4, lo + (c + 1) * 4);
             load4(factor + (row * 2 + 1) * 4, hi + (c + 1) * 4);
         }

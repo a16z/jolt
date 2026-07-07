@@ -1,6 +1,6 @@
 extern "C" __global__ void core_booleanity_address_pairs(
     u64 *__restrict__ out,
-    const u64 *__restrict__ g_polys,
+    const u64 *const *__restrict__ g_ptrs,
     const u64 *__restrict__ f_values,
     const u64 *__restrict__ gamma_squares,
     const u64 *__restrict__ e_in,
@@ -27,7 +27,7 @@ extern "C" __global__ void core_booleanity_address_pairs(
         unsigned int f_mask = (1u << (m - 1)) - 1;
         unsigned long block_start = group << m;
         for (unsigned int i = 0; i < num_polys; i++) {
-            const u64 *g = g_polys + (unsigned long)i * group_stride * 4;
+            const u64 *g = g_ptrs[i];
             u64 eval_0[4], eval_infty[4];
             for (int k = 0; k < 4; k++) { eval_0[k] = 0; eval_infty[k] = 0; }
             for (unsigned int k = 0; k < block_len; k++) {

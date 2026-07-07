@@ -1,6 +1,6 @@
 extern "C" __global__ void gruen_round_poly_pairs(
     u64 *__restrict__ out,
-    const u64 *__restrict__ factors,
+    const u64 *const *__restrict__ factor_ptrs,
     const u64 *__restrict__ term_coeffs,
     const unsigned int *__restrict__ term_offsets,
     const unsigned int *__restrict__ term_indices,
@@ -44,7 +44,7 @@ extern "C" __global__ void gruen_round_poly_pairs(
             unsigned int start = term_offsets[t];
             unsigned int end = term_offsets[t + 1];
             for (unsigned int s = start; s < end; s++) {
-                const u64 *factor = factors + term_indices[s] * pair_stride * 2 * 4;
+                const u64 *factor = factor_ptrs[term_indices[s]];
                 u64 lo[4], hi[4], delta[4], tmp[4];
                 load4(factor + (row * 2) * 4, lo);
                 load4(factor + (row * 2 + 1) * 4, hi);

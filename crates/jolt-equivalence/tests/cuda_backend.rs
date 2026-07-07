@@ -65,4 +65,20 @@ fn cuda_backend_perf_oracle() {
     let cuda = median_f64(&cuda_ms).expect("cuda median");
     println!("end-to-end prove (log_T={LOG_T}, {RUNS} runs, median ms):");
     println!("  cpu={cpu:.3}  cuda={cuda:.3}  speedup={:.3}x", cpu / cuda);
+
+    if jolt_kernels::cuda::xfer_stats::enabled() {
+        jolt_kernels::cuda::xfer_stats::reset();
+        let _ = run_bolt_prover(&fixture, all_cuda_programs(&fixture));
+        let [pack_b, pack_n, h2d_b, h2d_n, d2h_b, d2h_n, h2d_s, h2d_m, h2d_l, h2d_lb] =
+            jolt_kernels::cuda::xfer_stats::snapshot();
+        let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
+        println!("cuda transfer stats (single prove):");
+        println!("  pack D2D: {:.1} MB over {pack_n} copies", mb(pack_b));
+        println!("  H2D upload: {:.1} MB over {h2d_n} calls", mb(h2d_b));
+        println!(
+            "    by size: small(<64KB)={h2d_s}  medium(<1MB)={h2d_m}  large(>=1MB)={h2d_l} ({:.1} MB)",
+            mb(h2d_lb)
+        );
+        println!("  D2H download: {:.3} MB over {d2h_n} calls", mb(d2h_b));
+    }
 }

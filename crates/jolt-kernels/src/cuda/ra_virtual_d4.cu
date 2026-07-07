@@ -1,13 +1,12 @@
 __device__ __forceinline__ void ra_d4_virtual_product(
-    const u64 *__restrict__ chunks,
-    unsigned long pair_stride,
+    const u64 *const *__restrict__ factor_ptrs,
     unsigned long row,
     unsigned int base,
     u64 *prod
 ) {
     u64 lo[4][4], hi[4][4];
     for (int i = 0; i < 4; i++) {
-        const u64 *c = chunks + (unsigned long)(base + i) * pair_stride * 2 * 4;
+        const u64 *c = factor_ptrs[base + i];
         load4(c + (row * 2) * 4, lo[i]);
         load4(c + (row * 2 + 1) * 4, hi[i]);
     }
@@ -46,7 +45,7 @@ __device__ __forceinline__ void ra_d4_virtual_product(
 
 extern "C" __global__ void ra_virtual_d4_pairs(
     u64 *__restrict__ out,
-    const u64 *__restrict__ chunks,
+    const u64 *const *__restrict__ factor_ptrs,
     const u64 *__restrict__ gamma_powers,
     const u64 *__restrict__ e_in,
     const u64 *__restrict__ e_out,
@@ -71,7 +70,7 @@ extern "C" __global__ void ra_virtual_d4_pairs(
         for (int k = 0; k < 16; k++) sum[k] = 0;
         for (unsigned int v = 0; v < virtual_count; v++) {
             u64 prod[16];
-            ra_d4_virtual_product(chunks, pair_stride, row, v * 4, prod);
+            ra_d4_virtual_product(factor_ptrs, row, v * 4, prod);
             u64 g[4];
             load4(gamma_powers + v * 4, g);
             for (int e = 0; e < 4; e++) {
