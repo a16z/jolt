@@ -146,10 +146,51 @@ impl<'a> CudaSplitEqState<'a> {
     }
 }
 
+#[cfg(feature = "cuda")]
+use jolt_poly::GruenSplitEqPolynomial;
+
+#[cfg(feature = "cuda")]
+pub struct CudaGruenSplitEq {
+    e_in_levels: Vec<DeviceFrVec>,
+    e_out_levels: Vec<DeviceFrVec>,
+    live_e_in: usize,
+    live_e_out: usize,
+}
+
+#[cfg(feature = "cuda")]
+impl CudaGruenSplitEq {
+    pub fn new(ctx: &CudaKernelContext, host: &GruenSplitEqPolynomial<Fr>) -> Option<Self> {
+        let e_in_refs: Vec<&[Fr]> = host.e_in_levels().iter().map(Vec::as_slice).collect();
+        let e_out_refs: Vec<&[Fr]> = host.e_out_levels().iter().map(Vec::as_slice).collect();
+        let e_in_levels = ctx.upload_many(&e_in_refs).ok()?;
+        let e_out_levels = ctx.upload_many(&e_out_refs).ok()?;
+        Some(Self {
+            live_e_in: host.e_in_num_levels(),
+            live_e_out: host.e_out_num_levels(),
+            e_in_levels,
+            e_out_levels,
+        })
+    }
+
+    pub fn e_in_device(&self) -> &DeviceFrVec {
+        &self.e_in_levels[self.live_e_in - 1]
+    }
+
+    pub fn e_out_device(&self) -> &DeviceFrVec {
+        &self.e_out_levels[self.live_e_out - 1]
+    }
+
+    pub fn sync_to_host(&mut self, host: &GruenSplitEqPolynomial<Fr>) {
+        self.live_e_in = host.e_in_num_levels();
+        self.live_e_out = host.e_out_num_levels();
+    }
+}
+
 #[cfg(all(test, feature = "cuda"))]
 #[expect(clippy::unwrap_used)]
 mod cuda_tests {
     use super::*;
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
     use proptest::prelude::*;
 
     fn fr_strategy() -> impl Strategy<Value = Fr> {
@@ -184,6 +225,40 @@ mod cuda_tests {
             }
 
             prop_assert_eq!(gpu.eval().unwrap(), cpu.eval());
+        }
+
+        #[test]
+        fn cuda_gruen_split_eq_matches_host_levels(
+            num_vars in 1usize..12,
+            point_seed in fr_strategy(),
+            scaling in proptest::option::of(fr_strategy()),
+            challenge_seed in fr_strategy(),
+        ) {
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| point_seed + Fr::from_u64(i as u64))
+                .collect();
+
+            let ctx = CudaKernelContext::new(0).unwrap();
+            let mut host =
+                GruenSplitEqPolynomial::<Fr>::new_with_scaling(&point, BindingOrder::LowToHigh, scaling);
+            let mut gpu = CudaGruenSplitEq::new(&ctx, &host).unwrap();
+
+            for round in 0..num_vars {
+                prop_assert_eq!(
+                    gpu.e_in_device().to_host().unwrap(),
+                    host.e_in_current().to_vec(),
+                    "round {}", round
+                );
+                prop_assert_eq!(
+                    gpu.e_out_device().to_host().unwrap(),
+                    host.e_out_current().to_vec(),
+                    "round {}", round
+                );
+
+                let challenge = challenge_seed + Fr::from_u64(round as u64);
+                host.bind(challenge);
+                gpu.sync_to_host(&host);
+            }
         }
     }
 }
