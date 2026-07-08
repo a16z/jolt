@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783470299781,
+  "lastUpdate": 1783490088968,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -120586,6 +120586,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 869604,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c36a2eacab14c2e42462b8aba91edf5c09814ef1",
+          "message": "refactor(jolt-claims): dedup opening-id constructors, collapse aliases (#1665)\n\nPhase 1 of the jolt-claims geometry cleanup: every JoltOpeningId now has\nexactly one constructor.\n\n- Delete 18 same-name duplicate constructor definitions (bytecode.rs,\n  instruction.rs, claim_reductions/{increments,hamming_weight}.rs); users\n  import the surviving definition in the relation's area module\n- Collapse 5 renamed duplicates onto their canonical pub twins:\n  imm_instruction_input->imm, unexpanded_pc_instruction_input->unexpanded_pc,\n  pc_spartan_shift->pc_shift, unexpanded_pc_spartan_shift->unexpanded_pc_shift,\n  ram_inc_read_write->ram_inc\n- Collapse 5 pure delegation wrappers (read_raf_*_opening,\n  ra_virtualization_committed_*_opening) by making the inner canonical\n  constructors pub; prover-legacy and verifier-test callers updated\n- Collapse the JoltSumcheckDomain re-export alias (use SumcheckDomain) and\n  jolt-claims' committed_lanes() wrapper (use COMMITTED_BYTECODE_LANE_CAPACITY)\n- Inline final_opening_ids into its only consumer (verifier tampering test);\n  the order-pinning test stays in jolt-claims via final_opening_polynomial_order\n- Demote internal-only helpers out of the pub API: read_raf_row_values,\n  read_raf_register_eq_evals (+ its struct), final_opening_relation,\n  padded_program_image_len_words\n\nNo behavioral change: every surviving constructor builds the identical\n(polynomial, relation) opening id as the deleted duplicate it replaces.\nVerified: clippy in host / host,zk / allocative variants / no-default-features\n/ prover-fixtures[,zk]; nextest for the modular crates (418) + field-inline\n(247); muldiv e2e in host and host,zk modes.\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-07-07T21:48:31-07:00",
+          "tree_id": "26149128307c26af6b671d51b6775bab149ef0ce",
+          "url": "https://github.com/a16z/jolt/commit/c36a2eacab14c2e42462b8aba91edf5c09814ef1"
+        },
+        "date": 1783490086798,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9519,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 872072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3178,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 491160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 493232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 491624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7292,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 497444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5832,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 496984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.833,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 496576,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9538,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 199684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4517,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 870740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5614,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 493064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4666,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 495176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.6823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 501460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7835,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 493108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 31.0265,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1055240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.637,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 634208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 106.2434,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2136808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5031,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 497580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5337,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.9118,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 870944,
             "unit": "KB",
             "extra": ""
           }
