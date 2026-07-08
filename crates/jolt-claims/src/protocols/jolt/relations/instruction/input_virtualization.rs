@@ -4,9 +4,11 @@ use jolt_riscv::InstructionFlags;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::instruction::{
-    imm, left_instruction_input_product, left_operand_is_pc, left_operand_is_rs1,
-    right_instruction_input_product, right_operand_is_imm, right_operand_is_rs2, rs1_value,
-    rs2_value, unexpanded_pc, INPUT_VIRTUALIZATION_DEGREE,
+    imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
+    rs1_value, rs2_value, unexpanded_pc, INPUT_VIRTUALIZATION_DEGREE,
+};
+use crate::protocols::jolt::geometry::spartan::{
+    left_instruction_input_product, right_instruction_input_product,
 };
 use crate::protocols::jolt::{
     InstructionInputChallenge, InstructionInputPublic, JoltExpr, JoltRelationId, TraceDimensions,

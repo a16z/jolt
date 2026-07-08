@@ -10,7 +10,7 @@ use crate::protocols::jolt::geometry::dimensions::{
 };
 use crate::protocols::jolt::geometry::spartan::{outer_uniskip_opening, SpartanOuterDimensions};
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
 use crate::{opening, InputClaims, OutputClaims, SumcheckDomain, SymbolicSumcheck};
 
@@ -76,7 +76,7 @@ impl SymbolicSumcheck for OuterUniskip {
     }
 
     fn domain(&self) -> SumcheckDomain {
-        JoltSumcheckDomain::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE)
+        SumcheckDomain::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE)
     }
 
     fn rounds(&self) -> usize {

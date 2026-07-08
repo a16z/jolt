@@ -252,27 +252,25 @@ fn stage5_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage5OutputClaims<F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
-        .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
+        .map(|table| claims.require(instruction::lookup_table_flag(table)))
         .collect::<Result<Vec<_>, _>>()?;
     let mut instruction_ra = Vec::new();
     for index in 0.. {
-        let Some(opening_claim) = claims.get(instruction::read_raf_instruction_ra_opening(index))
-        else {
+        let Some(opening_claim) = claims.get(instruction::instruction_ra(index)) else {
             break;
         };
         instruction_ra.push(opening_claim);
     }
     if instruction_ra.is_empty() {
         return Err(VerifierError::MissingOpeningClaim {
-            id: instruction::read_raf_instruction_ra_opening(0),
+            id: instruction::instruction_ra(0),
         });
     }
     Ok(Stage5OutputClaims {
         instruction_read_raf: InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra,
-            instruction_raf_flag: claims
-                .require(instruction::read_raf_instruction_raf_flag_opening())?,
+            instruction_raf_flag: claims.require(instruction::instruction_raf_flag())?,
         },
         ram_ra_claim_reduction: RamRaClaimReductionOutputClaims {
             ram_ra: claims.require(ram::ram_ra_claim_reduction())?,
@@ -375,7 +373,7 @@ fn stage6b_claims_from_openings<F: Field>(
 
     let mut ram_ra = Vec::new();
     for index in 0.. {
-        let id = ram::ra_virtualization_committed_ram_ra_opening(index);
+        let id = ram::committed_ram_ra(index);
         let Some(opening_claim) = claims.get(id) else {
             break;
         };
@@ -384,7 +382,7 @@ fn stage6b_claims_from_openings<F: Field>(
 
     let mut committed_instruction_ra = Vec::new();
     for index in 0.. {
-        let id = instruction::ra_virtualization_committed_instruction_ra_opening(index);
+        let id = instruction::committed_instruction_ra(index);
         let Some(opening_claim) = claims.get(id) else {
             break;
         };
@@ -392,7 +390,7 @@ fn stage6b_claims_from_openings<F: Field>(
     }
     if committed_instruction_ra.is_empty() {
         return Err(VerifierError::MissingOpeningClaim {
-            id: instruction::ra_virtualization_committed_instruction_ra_opening(0),
+            id: instruction::committed_instruction_ra(0),
         });
     }
 

@@ -16,10 +16,6 @@ pub const OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize = 27;
 pub const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = 3;
 pub const PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize = 6;
 
-// The sumcheck domain is a protocol-agnostic crate-root type; this alias keeps
-// the `Jolt*` spelling that the rest of the codebase uses.
-pub use crate::SumcheckDomain as JoltSumcheckDomain;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TracePolynomialOrder {
     #[default]

@@ -5,7 +5,7 @@
 //! relations — against real multilinear evaluations.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
-    committed_lane_vars, committed_lanes, BYTECODE_LANE_LAYOUT,
+    committed_lane_vars, BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY,
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
@@ -283,7 +283,7 @@ fn bytecode_lane_decode_matches_committed_chunk() {
     let instruction_flag = |row: usize, flag: usize| (row + flag).is_multiple_of(4);
 
     // The committed chunk polynomial: value[(lane << log_rows) | row].
-    let mut chunk_data = vec![fr(0); committed_lanes() << log_rows];
+    let mut chunk_data = vec![fr(0); COMMITTED_BYTECODE_LANE_CAPACITY << log_rows];
     let mut lane = |lane: usize, row: usize, value: Fr| {
         chunk_data[(lane << log_rows) | row] = value;
     };

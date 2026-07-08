@@ -14,8 +14,7 @@ pub use geometry::{
     claim_reductions::program_image::ProgramImageClaimReductionLayout,
     dimensions::{
         CommitmentMatrixShape, JoltFormulaDimensions, JoltOneHotConfig, JoltOneHotDimensions,
-        JoltReadWriteConfig, JoltSumcheckDomain, ReadWriteDimensions, TraceDimensions,
-        TracePolynomialOrder,
+        JoltReadWriteConfig, ReadWriteDimensions, TraceDimensions, TracePolynomialOrder,
     },
     error::{JoltFormulaDimensionsError, JoltFormulaPointError},
 };
