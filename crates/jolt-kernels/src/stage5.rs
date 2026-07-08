@@ -1550,6 +1550,38 @@ fn build_cuda_registers_val_state<F: Field>(
     )
 }
 
+#[cfg(feature = "cuda")]
+fn build_cuda_ram_ra_state<F: Field>(
+    r_cycle_raf: &[F],
+    r_cycle_rw: &[F],
+    r_cycle_val: &[F],
+    gamma: F,
+    gamma2: F,
+    ram_ra: &[F],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let raf_fr = crate::cuda::as_fr_slice(r_cycle_raf)?;
+    let rw_fr = crate::cuda::as_fr_slice(r_cycle_rw)?;
+    let val_fr = crate::cuda::as_fr_slice(r_cycle_val)?;
+    let gamma_fr = crate::cuda::into_fr(gamma)?;
+    let gamma2_fr = crate::cuda::into_fr(gamma2)?;
+    let mut eq_combined = ctx.eq_evals(raf_fr, None).ok()?;
+    let eq_rw = ctx.eq_evals(rw_fr, Some(gamma_fr)).ok()?;
+    let eq_val = ctx.eq_evals(val_fr, Some(gamma2_fr)).ok()?;
+    ctx.add(&mut eq_combined, &eq_rw).ok()?;
+    ctx.add(&mut eq_combined, &eq_val).ok()?;
+    let ram_ra_dev = ctx.upload(crate::cuda::as_fr_slice(ram_ra)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![eq_combined, ram_ra_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 2],
+        vec![0, 1],
+        2,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum InstructionReadRafOutputKind {
     LookupTableFlag(usize),
@@ -3758,6 +3790,38 @@ fn ram_ra_claim_reduction_state<F: Field>(
     let gamma2 = store
         .try_scalar("stage5.ram_ra_claim_reduction.gamma2")
         .unwrap_or_else(|| gamma * gamma);
+
+    let terms = vec![DenseTerm {
+        coefficient: F::one(),
+        factors: vec![0, 1],
+    }];
+    let outputs = vec![FactorOutput {
+        name: "stage5.ram_ra_claim_reduction.eval.RamRa",
+        oracle: "RamRa",
+        factor: 1,
+    }];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = build_cuda_ram_ra_state(
+            r_cycle_raf,
+            r_cycle_rw,
+            r_cycle_val,
+            gamma,
+            gamma2,
+            &ram_ra,
+            active_scale,
+        ) {
+            return Ok(DenseStage5State::from_host_and_cuda(
+                vec![Vec::new(), ram_ra],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
     let mut eq_combined = EqPolynomial::<F>::evals(r_cycle_raf, None);
     let eq_rw = EqPolynomial::<F>::evals(r_cycle_rw, None);
     let eq_val = EqPolynomial::<F>::evals(r_cycle_val, None);
@@ -3772,15 +3836,8 @@ fn ram_ra_claim_reduction_state<F: Field>(
 
     Ok(DenseStage5State::new_with_backend(
         vec![eq_combined, ram_ra],
-        vec![DenseTerm {
-            coefficient: F::one(),
-            factors: vec![0, 1],
-        }],
-        vec![FactorOutput {
-            name: "stage5.ram_ra_claim_reduction.eval.RamRa",
-            oracle: "RamRa",
-            factor: 1,
-        }],
+        terms,
+        outputs,
         active_scale,
         backend,
     ))
