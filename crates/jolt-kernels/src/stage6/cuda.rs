@@ -278,7 +278,7 @@ impl CudaBytecodeReadRafState {
 pub(crate) struct CudaRaVirtualD4State {
     chunks: Vec<DeviceFrVec>,
     scratch: DeviceFrVec,
-    gamma_powers: Vec<Fr>,
+    gamma_powers: DeviceFrVec,
 }
 
 impl CudaRaVirtualD4State {
@@ -292,10 +292,7 @@ impl CudaRaVirtualD4State {
             .map(|chunk| crate::cuda::as_fr_slice(chunk))
             .collect::<Option<Vec<&[Fr]>>>()?;
         let device_chunks = ctx.upload_many(&refs).ok()?;
-        let gamma_powers = gamma_powers
-            .iter()
-            .map(|g| crate::cuda::into_fr(*g))
-            .collect::<Option<Vec<Fr>>>()?;
+        let gamma_powers = ctx.upload(crate::cuda::as_fr_slice(gamma_powers)?).ok()?;
         Some(Self {
             chunks: device_chunks,
             scratch: ctx.upload(&[]).ok()?,
@@ -303,7 +300,10 @@ impl CudaRaVirtualD4State {
         })
     }
 
-    pub(crate) fn from_device_chunks(chunks: Vec<DeviceFrVec>, gamma_powers: Vec<Fr>) -> Option<Self> {
+    pub(crate) fn from_device_chunks(
+        chunks: Vec<DeviceFrVec>,
+        gamma_powers: DeviceFrVec,
+    ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         Some(Self {
             chunks,
@@ -349,7 +349,7 @@ pub(crate) enum CudaRaVirtualD4Sparse {
         num_chunks: usize,
         chunk_domain: usize,
         source_rows: usize,
-        gamma_powers: Vec<Fr>,
+        gamma_powers: DeviceFrVec,
     },
     Dense(CudaRaVirtualD4State),
 }
@@ -386,10 +386,7 @@ impl CudaRaVirtualD4Sparse {
                 values.push(entry.map_or(-1, i16::from));
             }
         }
-        let gamma_powers = gamma_powers
-            .iter()
-            .map(|g| crate::cuda::into_fr(*g))
-            .collect::<Option<Vec<Fr>>>()?;
+        let gamma_powers = ctx.upload(crate::cuda::as_fr_slice(gamma_powers)?).ok()?;
 
         Some(Self::Sparse {
             round: 1,
@@ -465,7 +462,8 @@ impl CudaRaVirtualD4Sparse {
                         *source_rows,
                         out_len,
                     )?;
-                    let dense = CudaRaVirtualD4State::from_device_chunks(chunks, gamma_powers.clone())
+                    let gamma_powers = gamma_powers.try_clone()?;
+                    let dense = CudaRaVirtualD4State::from_device_chunks(chunks, gamma_powers)
                         .ok_or(CudaError::Pool)?;
                     *self = Self::Dense(dense);
                     Ok(())
@@ -520,11 +518,11 @@ impl CudaHammingBooleanityState {
 pub(crate) struct CudaCoreBooleanityState {
     h: Vec<DeviceFrVec>,
     scratch: DeviceFrVec,
-    rho: Vec<Fr>,
+    rho: DeviceFrVec,
 }
 
 impl CudaCoreBooleanityState {
-    pub(crate) fn from_device_h(h: Vec<DeviceFrVec>, rho: Vec<Fr>) -> Option<Self> {
+    pub(crate) fn from_device_h(h: Vec<DeviceFrVec>, rho: DeviceFrVec) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         Some(Self {
             h,
@@ -568,7 +566,7 @@ pub(crate) enum CudaCoreBooleanitySparse {
         num_polys: usize,
         chunk_domain: usize,
         poly_stride: usize,
-        rho: Vec<Fr>,
+        rho: DeviceFrVec,
     },
     Dense(CudaCoreBooleanityState),
 }
@@ -603,10 +601,7 @@ impl CudaCoreBooleanitySparse {
             present_mask.push(row.present_mask());
             values.extend_from_slice(row.values());
         }
-        let rho = rho
-            .iter()
-            .map(|r| crate::cuda::into_fr(*r))
-            .collect::<Option<Vec<Fr>>>()?;
+        let rho = ctx.upload(crate::cuda::as_fr_slice(rho)?).ok()?;
 
         Some(Self::Sparse {
             round: 1,
@@ -687,7 +682,8 @@ impl CudaCoreBooleanitySparse {
                         *poly_stride,
                         out_len,
                     )?;
-                    let dense = CudaCoreBooleanityState::from_device_h(h, rho.clone())
+                    let rho = rho.try_clone()?;
+                    let dense = CudaCoreBooleanityState::from_device_h(h, rho)
                         .ok_or(CudaError::Pool)?;
                     *self = Self::Dense(dense);
                     Ok(())

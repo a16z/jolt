@@ -528,7 +528,7 @@ pub struct CoreBooleanitySparseInputs<'a> {
     pub present_mask: &'a CudaSlice<u64>,
     pub values: &'a CudaSlice<u8>,
     pub source_rows: usize,
-    pub rho: &'a [Fr],
+    pub rho: &'a DeviceFrVec,
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
     pub num_polys: usize,
@@ -553,7 +553,7 @@ pub struct HammingBooleanityInputs<'a> {
 
 pub struct RaVirtualD4Inputs<'a> {
     pub chunks: &'a [&'a DeviceFrVec],
-    pub gamma_powers: &'a [Fr],
+    pub gamma_powers: &'a DeviceFrVec,
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
 }
@@ -564,7 +564,7 @@ pub struct RaVirtualD4SparseInputs<'a> {
     pub num_chunks: usize,
     pub chunk_domain: usize,
     pub source_rows: usize,
-    pub gamma_powers: &'a [Fr],
+    pub gamma_powers: &'a DeviceFrVec,
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
     pub round: u32,
@@ -595,7 +595,7 @@ pub struct InstructionRafCycleSparseInputs<'a> {
 
 pub struct CoreBooleanityCycleInputs<'a> {
     pub h_polys: &'a [&'a DeviceFrVec],
-    pub rho: &'a [Fr],
+    pub rho: &'a DeviceFrVec,
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
 }
@@ -1142,7 +1142,6 @@ impl CudaKernelContext {
         let in_bits = inputs.e_in.len().trailing_zeros();
 
         let factor_ptrs = self.factor_ptr_array(inputs.chunks)?;
-        let gammas_dev = self.upload(inputs.gamma_powers)?;
 
         const WIDTH: usize = 4;
         let tuple = WIDTH * LIMBS;
@@ -1166,7 +1165,7 @@ impl CudaKernelContext {
         let _ = launch
             .arg(&mut buf)
             .arg(&factor_ptrs)
-            .arg(&gammas_dev.buf)
+            .arg(&inputs.gamma_powers.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
             .arg(&pair_stride_arg)
@@ -1232,7 +1231,6 @@ impl CudaKernelContext {
             return Ok([Fr::zero(); 4]);
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
-        let gammas_dev = self.upload(inputs.gamma_powers)?;
 
         const WIDTH: usize = 4;
         let tuple = WIDTH * LIMBS;
@@ -1260,7 +1258,7 @@ impl CudaKernelContext {
             .arg(&mut buf)
             .arg(inputs.tables)
             .arg(inputs.values)
-            .arg(&gammas_dev.buf)
+            .arg(&inputs.gamma_powers.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
             .arg(&num_chunks_arg)
@@ -1523,7 +1521,6 @@ impl CudaKernelContext {
         let in_bits = inputs.e_in.len().trailing_zeros();
 
         let factor_ptrs = self.factor_ptr_array(inputs.h_polys)?;
-        let rho_dev = self.upload(inputs.rho)?;
 
         const WIDTH: usize = 2;
         let tuple = WIDTH * LIMBS;
@@ -1547,7 +1544,7 @@ impl CudaKernelContext {
         let _ = launch
             .arg(&mut buf)
             .arg(&factor_ptrs)
-            .arg(&rho_dev.buf)
+            .arg(&inputs.rho.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
             .arg(&pair_stride_arg)
@@ -1616,7 +1613,6 @@ impl CudaKernelContext {
         }
         let in_bits = inputs.e_in.len().trailing_zeros();
 
-        let rho_dev = self.upload(inputs.rho)?;
 
         const WIDTH: usize = 2;
         let tuple = WIDTH * LIMBS;
@@ -1644,7 +1640,7 @@ impl CudaKernelContext {
             .arg(inputs.tables)
             .arg(inputs.present_mask)
             .arg(inputs.values)
-            .arg(&rho_dev.buf)
+            .arg(&inputs.rho.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
             .arg(&num_polys_arg)
@@ -4536,13 +4532,14 @@ mod tests {
             let values_dev = c.upload_u8_slice(&values).unwrap();
             let e_in_dev = c.upload(e_in).unwrap();
             let e_out_dev = c.upload(e_out).unwrap();
+            let rho_dev = c.upload(&rho).unwrap();
             let got = c
                 .core_booleanity_sparse_round_poly(CoreBooleanitySparseInputs {
                     tables: &tables_dev,
                     present_mask: &mask_dev,
                     values: &values_dev,
                     source_rows,
-                    rho: &rho,
+                    rho: &rho_dev,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                     num_polys,
@@ -4827,10 +4824,11 @@ mod tests {
             let h_refs: Vec<&DeviceFrVec> = h_devs.iter().collect();
             let e_in_dev = c.upload(e_in).unwrap();
             let e_out_dev = c.upload(e_out).unwrap();
+            let rho_dev = c.upload(&rho).unwrap();
             let got = c
                 .core_booleanity_cycle_round_poly(CoreBooleanityCycleInputs {
                     h_polys: &h_refs,
-                    rho: &rho,
+                    rho: &rho_dev,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                 })
@@ -5347,10 +5345,11 @@ mod tests {
             let chunk_refs: Vec<&DeviceFrVec> = chunk_devs.iter().collect();
             let e_in_dev = c.upload(e_in).unwrap();
             let e_out_dev = c.upload(e_out).unwrap();
+            let gamma_dev = c.upload(&gamma_powers).unwrap();
             let got = c
                 .ra_virtual_d4_round_poly(RaVirtualD4Inputs {
                     chunks: &chunk_refs,
-                    gamma_powers: &gamma_powers,
+                    gamma_powers: &gamma_dev,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                 })
@@ -5468,6 +5467,7 @@ mod tests {
             let values_dev = c.upload_i16_slice(&values).unwrap();
             let e_in_dev = c.upload(e_in).unwrap();
             let e_out_dev = c.upload(e_out).unwrap();
+            let gamma_dev = c.upload(&gamma_powers).unwrap();
             let got = c
                 .ra_virtual_d4_sparse_round_poly(RaVirtualD4SparseInputs {
                     tables: &tables_dev,
@@ -5475,7 +5475,7 @@ mod tests {
                     num_chunks,
                     chunk_domain,
                     source_rows,
-                    gamma_powers: &gamma_powers,
+                    gamma_powers: &gamma_dev,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                     round,
