@@ -1,89 +1,49 @@
 //! The stage 2 `RamReadWriteChecking` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 2 batch proof) and the verifier (after checking it). It
-//! owns the RAM read-write opening-point derivation and the `EqCycle` public-value
-//! computation, so the input/output claim algebra lives here once instead of being
-//! hand-coded on each side (and stays in lockstep with the BlindFold constraint,
-//! which evaluates the same `ram::read_write_checking` formula).
+//! Owns the RAM read-write opening-point derivation and the `EqCycle` public-value
+//! computation, in lockstep with the BlindFold constraint's
+//! `ram::read_write_checking` formula.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::ReadWriteDimensions, ram},
-    JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamReadWriteChallenge,
-    RamReadWritePublic,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::ram::{
+    RamReadWriteChallenges, RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamReadWritePublic,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
-/// the single read-write opening point. Generic over the cell (`F` on the wire /
-/// serialized proof form, `OpeningClaim<F>` on the clear path).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RamReadWriteChecking)]
-pub struct RamReadWriteOutputClaims<C> {
-    #[opening(RamVal)]
-    pub val: C,
-    #[opening(RamRa)]
-    pub ra: C,
-    #[opening(committed = RamInc)]
-    pub inc: C,
-}
-
-/// Consumed RAM read/write value openings from stage 1's outer sumcheck, reduced
-/// by the read-write checking sumcheck. The relation reads only these values (its
-/// output points come from its own sumcheck point and `product_tau_low`), so the
-/// input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RamReadWriteInputClaims<C> {
-    #[opening(RamReadValue, from = SpartanOuter)]
-    pub ram_read_value: C,
-    #[opening(RamWriteValue, from = SpartanOuter)]
-    pub ram_write_value: C,
-}
-
-impl<F: Field> RamReadWriteInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage1: &Stage1ClearOutput<F>) -> Self {
-        let value = |value: F| OpeningClaim {
-            point: Vec::new(),
-            value,
-        };
-        Self {
-            ram_read_value: value(stage1.outer.ram_read_value),
-            ram_write_value: value(stage1.outer.ram_write_value),
-        }
+/// Wire the consumed RAM read/write value opening *values* from stage 1's outer
+/// sumcheck. (Verifier-side constructor for the moved [`RamReadWriteInputClaims`].)
+pub fn ram_read_write_input_values_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+) -> RamReadWriteInputClaims<F> {
+    let outer = &stage1.output_values.outer_remainder;
+    RamReadWriteInputClaims {
+        ram_read_value: outer.ram_read_value,
+        ram_write_value: outer.ram_write_value,
     }
 }
 
 pub struct RamReadWriteChecking<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::ram::ReadWriteChecking,
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
-    gamma: F,
     product_tau_low: Vec<F>,
 }
 
 impl<F: Field> RamReadWriteChecking<F> {
-    pub fn new(
-        dimensions: ReadWriteDimensions,
-        ram_log_k: usize,
-        gamma: F,
-        product_tau_low: Vec<F>,
-    ) -> Self {
+    pub fn new(dimensions: ReadWriteDimensions, ram_log_k: usize, product_tau_low: Vec<F>) -> Self {
         Self {
-            claims: ram::read_write_checking(dimensions),
+            symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
-            gamma,
             product_tau_low,
         }
     }
@@ -96,18 +56,17 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamReadWriteChecking<F> {
-    type Inputs<C> = RamReadWriteInputClaims<C>;
-    type Outputs<C> = RamReadWriteOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
+    type Symbolic = relations::ram::ReadWriteChecking;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RamReadWriteInputClaims<C>,
+        _input_points: &RamReadWriteInputClaims<Vec<F>>,
     ) -> Result<RamReadWriteOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .dimensions
@@ -121,29 +80,49 @@ impl<F: Field> SumcheckInstance<F> for RamReadWriteChecking<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RamReadWrite(RamReadWriteChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
-        id: &JoltPublicId,
-        _inputs: &RamReadWriteInputClaims<C>,
-        outputs: &RamReadWriteOutputClaims<OpeningClaim<F>>,
+        id: &JoltDerivedId,
+        _input_points: &RamReadWriteInputClaims<Vec<F>>,
+        output_points: &RamReadWriteOutputClaims<Vec<F>>,
+        _challenges: &RamReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::RamReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::RamReadWrite(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
             // cycle sub-point is the suffix past the address bits.
             RamReadWritePublic::EqCycle => {
-                let r_cycle = &outputs.val.point()[self.ram_log_k..];
+                let r_cycle = &output_points.val()[self.ram_log_k..];
                 try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+    use jolt_transcript::Transcript;
+
+    // Representative of the 14 single-`challenge_scalar` relations that inherit the
+    // default `draw_challenges`: the inline `ram_read_write_gamma = challenge_scalar()`
+    // is one squeeze, and the default's one-`challenge_scalar`-per-field draw stores
+    // exactly that scalar.
+    #[test]
+    fn default_draw_challenges_matches_inline_ram_read_write_gamma() {
+        let relation =
+            RamReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(4, 3, 2, 1), 3, Vec::new());
+
+        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar());
+        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
+        assert_eq!(challenges.gamma, inline_gamma);
     }
 }

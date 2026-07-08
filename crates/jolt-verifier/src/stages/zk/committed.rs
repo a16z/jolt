@@ -1,58 +1,47 @@
 //! Shared checks for committed sumcheck stage boundaries.
 
-use common::constants::MAX_BLINDFOLD_GENERATORS;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::Field;
+use jolt_sumcheck::SumcheckProof;
 
-use crate::VerifierError;
+use crate::{verifier::CheckedInputs, VerifierError};
 
-pub(crate) use crate::stages::zk::inputs::CommittedOutputClaimInputs;
 pub(crate) use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-pub fn zk_vector_commitment_capacity_requirement() -> usize {
-    MAX_BLINDFOLD_GENERATORS
-}
-
 pub(crate) fn verify_output_claim_commitments<F, C>(
-    input: CommittedOutputClaimInputs<'_, F, C>,
+    checked: &CheckedInputs,
+    proof: &SumcheckProof<F, C>,
+    proof_label: &'static str,
+    output_claim_count: usize,
+    stage: JoltRelationId,
 ) -> Result<CommittedOutputClaimOutput<C>, VerifierError>
 where
     F: Field,
     C: Clone,
 {
-    let capacity = input
-        .checked
+    // Invariant: Some(capacity) implies capacity >= MAX_BLINDFOLD_GENERATORS,
+    // enforced by validate_zk_vector_commitment_setup before any stage runs (also
+    // guards the div_ceil below against zero).
+    let capacity = checked
         .vc_capacity
         .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-    let required = zk_vector_commitment_capacity_requirement();
-    if capacity < required {
-        return Err(VerifierError::InvalidVectorCommitmentCapacity {
-            required,
-            got: capacity,
-        });
-    }
-    let expected = input.output_claim_count.div_ceil(capacity);
-    let committed = input
-        .proof
+    let expected = output_claim_count.div_ceil(capacity);
+    let committed = proof
         .as_committed()
-        .ok_or(VerifierError::ExpectedCommittedProof {
-            field: input.proof_label,
-        })?;
+        .ok_or(VerifierError::ExpectedCommittedProof { field: proof_label })?;
     let got = committed.output_claims.commitments.len();
     if got != expected {
         return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: input.stage,
+            stage,
             reason: format!(
-                "{} output-claim commitment count mismatch: expected {expected} for {} hidden claims at VC capacity {capacity}, got {got}",
-                input.proof_label,
-                input.output_claim_count,
+                "{proof_label} output-claim commitment count mismatch: expected {expected} for {output_claim_count} hidden claims at VC capacity {capacity}, got {got}",
             ),
         });
     }
 
     Ok(CommittedOutputClaimOutput {
         shape: super::outputs::CommittedOutputClaimShape {
-            output_claim_count: input.output_claim_count,
-            row_count: got,
+            output_claim_count,
             row_len: capacity,
         },
         commitments: committed.output_claims.clone(),

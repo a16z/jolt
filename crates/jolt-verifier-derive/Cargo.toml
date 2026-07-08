@@ -3,7 +3,7 @@ name = "jolt-verifier-derive"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Derive macros for jolt-verifier opening-claim plumbing"
+description = "Derive macros for jolt-verifier per-stage sumcheck-batch aggregates"
 repository = "https://github.com/a16z/jolt"
 
 [lib]

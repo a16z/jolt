@@ -25,6 +25,8 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
   "crates/jolt-claims",
+  "crates/jolt-claims-derive",
+  "crates/jolt-akita",
   "crates/jolt-blindfold",
   "crates/jolt-crypto",
   "crates/jolt-program",
@@ -258,21 +260,27 @@ ark-secp256r1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
-sha3 = "=0.11.0-rc.9"
+sha3 = "=0.11.0"
 blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { version = "0.6.1", default-features = false, features = [
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false, features = [
   "sha3",
 ] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.3.0", features = [
+dory = { package = "dory-pcs", version = "0.4.0", features = [
   "backends",
   "cache",
   "disk-persistence",
   "zk",
 ] }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
+akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -388,11 +396,14 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
+jolt-akita = { path = "./crates/jolt-akita" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
+jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }

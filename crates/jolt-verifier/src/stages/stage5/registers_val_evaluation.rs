@@ -1,66 +1,55 @@
 //! The stage 5 `RegistersValEvaluation` sumcheck instance.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
-        registers,
-    },
-    JoltPublicId, JoltRelationClaims, JoltRelationId, RegistersValEvaluationPublic,
+use core::marker::PhantomData;
+
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::registers::{
+    RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
+    JoltDerivedId, JoltRelationId, RegistersValEvaluationPublic,
+};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::LtPolynomial;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
-use crate::stages::stage4::Stage4ClearOutput;
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::VerifierError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RegistersValEvaluation)]
-pub struct RegistersValEvaluationOutputClaims<C> {
-    #[opening(committed = RdInc)]
-    pub rd_inc: C,
-    #[opening(RdWa)]
-    pub rd_wa: C,
+/// Wire the consumed `RegistersVal` opening *value* from the upstream register
+/// read-write checking (stage 4). Takes the ZK-agnostic output-claims aggregate.
+pub fn registers_val_evaluation_input_values_from_upstream<F: Field>(
+    stage4: &Stage4OutputClaims<F>,
+) -> RegistersValEvaluationInputClaims<F> {
+    RegistersValEvaluationInputClaims {
+        registers_val: stage4.registers_read_write.registers_val,
+    }
 }
 
-/// Consumed register value-evaluation opening, wired from the upstream register
-/// read-write checking.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RegistersValEvaluationInputClaims<C> {
-    #[opening(RegistersVal, from = RegistersReadWriteChecking)]
-    pub registers_val: C,
-}
-
-impl<F: Field> RegistersValEvaluationInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed `RegistersVal` opening from the upstream register
-    /// read-write checking (stage 4).
-    pub fn from_upstream(stage4: &Stage4ClearOutput<F>) -> Self {
-        Self {
-            registers_val: stage4
-                .output_claims
-                .registers_read_write
-                .registers_val
-                .clone(),
-        }
+/// Wire the consumed `RegistersVal` opening *point* from the upstream register
+/// read-write checking (stage 4).
+pub fn registers_val_evaluation_input_points_from_upstream<F: Field>(
+    stage4: &Stage4OutputPoints<F>,
+) -> RegistersValEvaluationInputClaims<Vec<F>> {
+    RegistersValEvaluationInputClaims {
+        registers_val: stage4.registers_read_write_point().to_vec(),
     }
 }
 
 pub struct RegistersValEvaluation<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::registers::ValEvaluation,
     trace_dimensions: TraceDimensions,
+    _field: PhantomData<F>,
 }
 
 impl<F: Field> RegistersValEvaluation<F> {
     pub fn new(trace_dimensions: TraceDimensions) -> Self {
         Self {
-            claims: registers::val_evaluation(trace_dimensions),
+            symbolic: relations::registers::ValEvaluation::new(trace_dimensions),
             trace_dimensions,
+            _field: PhantomData,
         }
     }
 }
@@ -72,21 +61,20 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RegistersValEvaluation<F> {
-    type Inputs<C> = RegistersValEvaluationInputClaims<C>;
-    type Outputs<C> = RegistersValEvaluationOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
+    type Symbolic = relations::registers::ValEvaluation;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        inputs: &RegistersValEvaluationInputClaims<C>,
+        input_points: &RegistersValEvaluationInputClaims<Vec<F>>,
     ) -> Result<RegistersValEvaluationOutputClaims<Vec<F>>, VerifierError> {
         let expected_len = REGISTER_ADDRESS_BITS + self.trace_dimensions.log_t();
-        let register_point = inputs.registers_val.point();
+        let register_point = input_points.registers_val();
         if register_point.len() != expected_len {
             return Err(public_input_failed(format!(
                 "register read-write opening point has {} variables, expected {expected_len}",
@@ -106,19 +94,20 @@ impl<F: Field> SumcheckInstance<F> for RegistersValEvaluation<F> {
         })
     }
 
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
-        id: &JoltPublicId,
-        inputs: &RegistersValEvaluationInputClaims<C>,
-        outputs: &RegistersValEvaluationOutputClaims<OpeningClaim<F>>,
+        id: &JoltDerivedId,
+        input_points: &RegistersValEvaluationInputClaims<Vec<F>>,
+        output_points: &RegistersValEvaluationOutputClaims<Vec<F>>,
+        _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         match id {
-            JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
-                let registers_cycle = &outputs.rd_inc.point()[REGISTER_ADDRESS_BITS..];
-                let fixed_cycle = &inputs.registers_val.point()[REGISTER_ADDRESS_BITS..];
+            JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
+                let registers_cycle = &output_points.rd_inc()[REGISTER_ADDRESS_BITS..];
+                let fixed_cycle = &input_points.registers_val()[REGISTER_ADDRESS_BITS..];
                 Ok(LtPolynomial::evaluate(registers_cycle, fixed_cycle))
             }
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
         }
     }
 }

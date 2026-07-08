@@ -7,6 +7,7 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
     transcripts::Transcript,
+    utils::math::Math,
 };
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
@@ -49,7 +50,19 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
     fn evaluate(&self, point: &[ArkFr]) -> ArkFr {
         // Dory uses little-endian variable order; reverse to match Jolt's big-endian order.
         // Use Fr directly (not Challenge type) to avoid type mismatch issues.
-        let native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt).collect();
+        let mut native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt).collect();
+        // In AddressMajor layout the (big-endian) Dory opening point is
+        // [cycle vars || address vars], but OneHotPolynomial::evaluate expects
+        // [address vars || cycle vars]. dory calls this to derive the ZK evaluation
+        // commitment, so the result must match the committed matrix relation.
+        // (The RLC arm of PolynomialEvaluation::evaluate consumes the Dory matrix
+        // order directly and needs no reorder.)
+        if matches!(self, MultilinearPolynomial::OneHot(_))
+            && DoryGlobals::get_layout() == DoryLayout::AddressMajor
+        {
+            let log_T = DoryGlobals::get_T().log_2();
+            native_point.rotate_left(log_T);
+        }
         let result = PolynomialEvaluation::evaluate(self, native_point.as_slice());
         jolt_to_ark(&result)
     }

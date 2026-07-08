@@ -12,7 +12,7 @@ use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::ClearSumcheckProof;
 use jolt_sumcheck::round_proof::RoundMessage;
-use jolt_sumcheck::{BatchedSumcheckVerifier, BooleanHypercube, SumcheckVerifier};
+use jolt_sumcheck::{BooleanHypercube, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
 type F = Fr;
@@ -457,97 +457,4 @@ fn constant_polynomial_all_same_evals() {
             .unwrap()
             .value;
     assert_eq!(final_eval, F::from_u64(7));
-}
-
-#[test]
-fn batched_one_dishonest_claim_rejected() {
-    // Batch two claims: one honest, one with a wrong sum.
-    // The combined proof must fail because the combined sum won't match.
-    let evals_a: Vec<F> = (1..=4).map(F::from_u64).collect();
-    let evals_b: Vec<F> = (5..=8).map(F::from_u64).collect();
-    let sum_a = compute_sum(&evals_a);
-    let sum_b = compute_sum(&evals_b);
-
-    // Build combined proof honestly
-    let mut pt = new_transcript();
-    sum_a.append_to_transcript(&mut pt);
-    sum_b.append_to_transcript(&mut pt);
-    let alpha: F = pt.challenge();
-
-    let combined: Vec<F> = evals_a
-        .iter()
-        .zip(&evals_b)
-        .map(|(&a, &b)| a + alpha * b)
-        .collect();
-    let proof = honest_prove(&combined, 2, &mut pt);
-
-    // Claim B lies about its sum
-    let claims = vec![
-        SumcheckClaim {
-            num_vars: 2,
-            degree: 1,
-            claimed_sum: sum_a,
-        },
-        SumcheckClaim {
-            num_vars: 2,
-            degree: 1,
-            claimed_sum: sum_b + F::from_u64(1), // lie
-        },
-    ];
-
-    let mut vt = new_transcript();
-    let result = BatchedSumcheckVerifier::verify(
-        &claims,
-        &proof.round_polynomials,
-        BooleanHypercube,
-        &mut vt,
-    );
-    assert!(result.is_err(), "dishonest claim in batch must be rejected");
-}
-
-#[test]
-fn batched_swapped_claim_order_rejected() {
-    // If claims are presented in a different order than what the prover used,
-    // the batching coefficients alpha^j are applied to the wrong claims,
-    // producing a different combined sum.
-    let evals_a: Vec<F> = (1..=4).map(F::from_u64).collect();
-    let evals_b: Vec<F> = (5..=8).map(F::from_u64).collect();
-    let sum_a = compute_sum(&evals_a);
-    let sum_b = compute_sum(&evals_b);
-
-    // Prove with order [a, b]
-    let mut pt = new_transcript();
-    sum_a.append_to_transcript(&mut pt);
-    sum_b.append_to_transcript(&mut pt);
-    let alpha: F = pt.challenge();
-
-    let combined: Vec<F> = evals_a
-        .iter()
-        .zip(&evals_b)
-        .map(|(&a, &b)| a + alpha * b)
-        .collect();
-    let proof = honest_prove(&combined, 2, &mut pt);
-
-    // Verify with order [b, a] — swapped
-    let claims_swapped = vec![
-        SumcheckClaim {
-            num_vars: 2,
-            degree: 1,
-            claimed_sum: sum_b,
-        },
-        SumcheckClaim {
-            num_vars: 2,
-            degree: 1,
-            claimed_sum: sum_a,
-        },
-    ];
-
-    let mut vt = new_transcript();
-    let result = BatchedSumcheckVerifier::verify(
-        &claims_swapped,
-        &proof.round_polynomials,
-        BooleanHypercube,
-        &mut vt,
-    );
-    assert!(result.is_err(), "swapped claim order must be rejected");
 }

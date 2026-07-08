@@ -1,106 +1,64 @@
 //! The stage 2 `InstructionClaimReduction` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 2 batch proof) and the verifier (after checking it). It
-//! owns the reduced-claim opening-point derivation and the `EqSpartan` public-value
-//! computation, so the input/output claim algebra lives here once (and stays in
-//! lockstep with the BlindFold constraint, which evaluates the same
-//! `claim_reductions::instruction::claim_reduction` formula).
+//! Owns the reduced-claim opening-point derivation and the `EqSpartan` public-value
+//! computation, in lockstep with the BlindFold constraint's
+//! `claim_reductions::instruction::claim_reduction` formula.
 //!
-//! WARNING — cross-relation aliases: three of the five reduced openings
-//! (`lookup_output`, `left_instruction_input`, `right_instruction_input`) are not
-//! re-committed when the reduction shares the product-remainder opening point; they
-//! alias the corresponding `SpartanProductVirtualization` product-remainder
-//! openings. They are therefore [`Option`] on the wire (absent ⇒ aliased), and the
-//! opening-claims helper fills them from the product-remainder openings (or zero
-//! when the points disagree) before this relation's output `Expr` is evaluated.
+//! Three of the five reduced openings (`lookup_output`, `left_instruction_input`,
+//! `right_instruction_input`) alias the corresponding
+//! `SpartanProductVirtualization` product-remainder openings — the reduction and
+//! the product remainder bind the same batch-point suffix (equal rounds, default
+//! offsets) and derive the same reversed opening point, so each pair is the same
+//! polynomial at the same point. The aliases are declared once, in
+//! [`aliased_output_openings`](crate::stages::relations::ConcreteSumcheck::aliased_output_openings)
+//! below; the generated drivers absorb each aliased opening via its
+//! product-remainder source and enforce the wire copies equal it.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{
-        claim_reductions::instruction as instruction_claim_reduction, dimensions::TraceDimensions,
-    },
-    InstructionClaimReductionChallenge, InstructionClaimReductionPublic, JoltChallengeId,
-    JoltPublicId, JoltRelationClaims, JoltRelationId,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::{
+    InstructionClaimReductionChallenges, InstructionClaimReductionInputClaims,
+    InstructionClaimReductionOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::dimensions::TraceDimensions, geometry::instruction, InstructionClaimReductionPublic,
+    JoltDerivedId, JoltOpeningId, JoltRelationId,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Produced reduced instruction-lookup openings, all sharing the single reduced
-/// opening point. The three aliased openings are [`Option`] (absent on the wire ⇒
-/// they alias the product-remainder openings; the opening-claims helper fills
-/// them). Generic over the cell. Field order is the canonical Fiat-Shamir order
-/// and must match [`instruction_claim_reduction::claim_reduction_output_openings`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(InstructionClaimReduction)]
-pub struct InstructionClaimReductionOutputClaims<C> {
-    #[opening(LookupOutput)]
-    pub lookup_output: Option<C>,
-    #[opening(LeftLookupOperand)]
-    pub left_lookup_operand: C,
-    #[opening(RightLookupOperand)]
-    pub right_lookup_operand: C,
-    #[opening(LeftInstructionInput)]
-    pub left_instruction_input: Option<C>,
-    #[opening(RightInstructionInput)]
-    pub right_instruction_input: Option<C>,
-}
-
-/// Consumed instruction-lookup openings from stage 1's outer sumcheck, reduced by
-/// this sumcheck. The relation reads only these values (its output point comes from
-/// its own sumcheck point), so the input points are left empty. Generic over the
-/// cell. Field order matches
-/// [`instruction_claim_reduction::claim_reduction_input_openings`].
-#[derive(Clone, Debug, InputClaims)]
-pub struct InstructionClaimReductionInputClaims<C> {
-    #[opening(LookupOutput, from = SpartanOuter)]
-    pub lookup_output: C,
-    #[opening(LeftLookupOperand, from = SpartanOuter)]
-    pub left_lookup_operand: C,
-    #[opening(RightLookupOperand, from = SpartanOuter)]
-    pub right_lookup_operand: C,
-    #[opening(LeftInstructionInput, from = SpartanOuter)]
-    pub left_instruction_input: C,
-    #[opening(RightInstructionInput, from = SpartanOuter)]
-    pub right_instruction_input: C,
-}
-
-impl<F: Field> InstructionClaimReductionInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream(stage1: &Stage1ClearOutput<F>) -> Self {
-        let value = |value: F| OpeningClaim {
-            point: Vec::new(),
-            value,
-        };
-        Self {
-            lookup_output: value(stage1.outer.lookup_output),
-            left_lookup_operand: value(stage1.outer.left_lookup_operand),
-            right_lookup_operand: value(stage1.outer.right_lookup_operand),
-            left_instruction_input: value(stage1.outer.left_instruction_input),
-            right_instruction_input: value(stage1.outer.right_instruction_input),
-        }
+/// Wire the consumed instruction-lookup opening *values* from stage 1's outer
+/// sumcheck. (Verifier-side constructor for the moved
+/// [`InstructionClaimReductionInputClaims`] — it reads the verifier-only
+/// [`Stage1ClearOutput`], so it cannot live in `jolt-claims`.)
+pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+) -> InstructionClaimReductionInputClaims<F> {
+    let outer = &stage1.output_values.outer_remainder;
+    InstructionClaimReductionInputClaims {
+        lookup_output: outer.lookup_output,
+        left_lookup_operand: outer.left_lookup_operand,
+        right_lookup_operand: outer.right_lookup_operand,
+        left_instruction_input: outer.left_instruction_input,
+        right_instruction_input: outer.right_instruction_input,
     }
 }
 
 pub struct InstructionClaimReduction<F: Field> {
-    claims: JoltRelationClaims<F>,
-    gamma: F,
+    symbolic: relations::claim_reductions::instruction::ClaimReduction,
     tau_low: Vec<F>,
 }
 
 impl<F: Field> InstructionClaimReduction<F> {
-    pub fn new(trace_dimensions: TraceDimensions, gamma: F, tau_low: Vec<F>) -> Self {
+    pub fn new(trace_dimensions: TraceDimensions, tau_low: Vec<F>) -> Self {
         Self {
-            claims: instruction_claim_reduction::claim_reduction(trace_dimensions),
-            gamma,
+            symbolic: relations::claim_reductions::instruction::ClaimReduction::new(
+                trace_dimensions,
+            ),
             tau_low,
         }
     }
@@ -113,52 +71,49 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for InstructionClaimReduction<F> {
-    type Inputs<C> = InstructionClaimReductionInputClaims<C>;
-    type Outputs<C> = InstructionClaimReductionOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
+    type Symbolic = relations::claim_reductions::instruction::ClaimReduction;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
+        let [lookup_output] = instruction::read_raf_consistency_openings();
+        let [left_input, right_input] = instruction::input_virtualization_consistency_openings();
+        vec![lookup_output, left_input, right_input]
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionClaimReductionInputClaims<C>,
+        _input_points: &InstructionClaimReductionInputClaims<Vec<F>>,
     ) -> Result<InstructionClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(InstructionClaimReductionOutputClaims {
-            lookup_output: Some(opening_point.clone()),
+            lookup_output: opening_point.clone(),
             left_lookup_operand: opening_point.clone(),
             right_lookup_operand: opening_point.clone(),
-            left_instruction_input: Some(opening_point.clone()),
-            right_instruction_input: Some(opening_point),
+            left_instruction_input: opening_point.clone(),
+            right_instruction_input: opening_point,
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::InstructionClaimReduction(
-                InstructionClaimReductionChallenge::Gamma,
-            ) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
-        id: &JoltPublicId,
-        _inputs: &InstructionClaimReductionInputClaims<C>,
-        outputs: &InstructionClaimReductionOutputClaims<OpeningClaim<F>>,
+        id: &JoltDerivedId,
+        _input_points: &InstructionClaimReductionInputClaims<Vec<F>>,
+        output_points: &InstructionClaimReductionOutputClaims<Vec<F>>,
+        _challenges: &InstructionClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::InstructionClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::InstructionClaimReduction(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // The reduced openings share one opening point; bind it against the low
             // product remainder challenges (`tau_low`).
             InstructionClaimReductionPublic::EqSpartan => {
-                try_eq_mle(outputs.left_lookup_operand.point(), &self.tau_low)
+                try_eq_mle(output_points.left_lookup_operand(), &self.tau_low)
                     .map_err(public_input_failed)
             }
         }

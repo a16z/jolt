@@ -1,132 +1,81 @@
 //! The stage 3 `InstructionInputVirtualization` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 3 batch proof) and the verifier (after checking it). It
-//! owns the instruction-input opening-point derivation and the `EqProduct`
-//! public-value computation (against the product-remainder opening point), so the
-//! input/output claim algebra lives here once.
+//! Owns the instruction-input opening-point derivation and the `EqProduct`
+//! public-value computation (against the product-remainder opening point).
 //!
 //! The reduced-vs-product input consistency guard — that stage 2's
-//! `instruction_claim_reduction` left/right openings (when present) agree with the
-//! product-remainder openings at the same point — lives in
-//! [`Stage2BatchOutputClaims::validate`](crate::stages::stage2::Stage2BatchOutputClaims::validate),
-//! which the stage-2 verifier runs before any consumer wires these inputs.
+//! `instruction_claim_reduction` left/right openings agree with the
+//! product-remainder openings at the same point — is enforced by stage 2's
+//! generated `validate_aliases` (driven by `InstructionClaimReduction`'s
+//! declared aliases), which runs before any consumer wires these inputs.
+//!
+//! This relation's own `unexpanded_pc` output aliases the Spartan shift's: both
+//! stage-3 members bind the same batch-point suffix (equal rounds, default
+//! offsets) and derive the same reversed opening point. Declared in
+//! `aliased_output_openings` below; the generated drivers absorb it via the
+//! shift source and enforce the wire copy equals it.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::TraceDimensions, instruction},
-    InstructionInputChallenge, InstructionInputPublic, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::instruction::{
+    InstructionInputChallenges, InstructionInputInputClaims, InstructionInputOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::bytecode, geometry::dimensions::TraceDimensions, InstructionInputPublic,
+    JoltDerivedId, JoltOpeningId, JoltRelationId,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_riscv::InstructionFlags;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
-use crate::stages::stage2::Stage2ClearOutput;
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage2::Stage2BatchOutputClaims;
 use crate::VerifierError;
 
-/// Produced instruction-input virtualization openings (the left/right operand
-/// selector flags and their operand values), all sharing the single
-/// instruction-input opening point. Generic over the cell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(InstructionInputVirtualization)]
-pub struct InstructionInputOutputClaims<C> {
-    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value))]
-    pub left_operand_is_rs1: C,
-    #[opening(Rs1Value)]
-    pub rs1_value: C,
-    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsPC))]
-    pub left_operand_is_pc: C,
-    #[opening(UnexpandedPC)]
-    pub unexpanded_pc: C,
-    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRs2Value))]
-    pub right_operand_is_rs2: C,
-    #[opening(Rs2Value)]
-    pub rs2_value: C,
-    #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm))]
-    pub right_operand_is_imm: C,
-    #[opening(Imm)]
-    pub imm: C,
-}
-
-/// Consumed instruction-input openings: the left/right virtualized instruction
-/// inputs reduced by stage 2's product remainder. The relation reads only these
-/// values, so the input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct InstructionInputInputClaims<C> {
-    #[opening(RightInstructionInput, from = SpartanProductVirtualization)]
-    pub right_instruction_input: C,
-    #[opening(LeftInstructionInput, from = SpartanProductVirtualization)]
-    pub left_instruction_input: C,
-}
-
-impl<F: Field> InstructionInputInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed openings from stage 2's product-remainder left/right
-    /// instruction inputs. Only the values feed the input claim (the output points
-    /// come from this relation's own sumcheck point), so the input points are left
-    /// empty.
-    pub fn from_upstream(stage2: &Stage2ClearOutput<F>) -> Self {
-        let value = |value: F| OpeningClaim {
-            point: Vec::new(),
-            value,
-        };
-        Self {
-            right_instruction_input: value(
-                stage2
-                    .output_claims
-                    .product_remainder
-                    .right_instruction_input
-                    .value,
-            ),
-            left_instruction_input: value(
-                stage2
-                    .output_claims
-                    .product_remainder
-                    .left_instruction_input
-                    .value,
-            ),
-        }
+/// Wire the consumed opening *values* from stage 2's product-remainder left/right
+/// instruction inputs. Takes the ZK-agnostic stage-2 output-claims aggregate.
+pub fn instruction_input_input_values_from_upstream<F: Field>(
+    stage2: &Stage2BatchOutputClaims<F>,
+) -> InstructionInputInputClaims<F> {
+    let product_remainder = &stage2.product_remainder;
+    InstructionInputInputClaims {
+        right_instruction_input: product_remainder.right_instruction_input,
+        left_instruction_input: product_remainder.left_instruction_input,
     }
 }
 
 pub struct InstructionInput<F: Field> {
-    claims: JoltRelationClaims<F>,
-    gamma: F,
+    symbolic: relations::instruction::InputVirtualization,
     product_remainder_opening_point: Vec<F>,
 }
 
 impl<F: Field> InstructionInput<F> {
-    pub fn new(
-        trace_dimensions: TraceDimensions,
-        gamma: F,
-        product_remainder_opening_point: Vec<F>,
-    ) -> Self {
+    pub fn new(trace_dimensions: TraceDimensions, product_remainder_opening_point: Vec<F>) -> Self {
         Self {
-            claims: instruction::input_virtualization(trace_dimensions),
-            gamma,
+            symbolic: relations::instruction::InputVirtualization::new(trace_dimensions),
             product_remainder_opening_point,
         }
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for InstructionInput<F> {
-    type Inputs<C> = InstructionInputInputClaims<C>;
-    type Outputs<C> = InstructionInputOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
+    type Symbolic = relations::instruction::InputVirtualization;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
+        // The geometry pair is (shift, instruction-input); the shift opening is
+        // the canonical source, so the aliased/source order swaps here.
+        let [(shift_unexpanded_pc, instruction_unexpanded_pc)] =
+            bytecode::read_raf_consistency_openings();
+        vec![(instruction_unexpanded_pc, shift_unexpanded_pc)]
+    }
+
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionInputInputClaims<C>,
+        _input_points: &InstructionInputInputClaims<Vec<F>>,
     ) -> Result<InstructionInputOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(InstructionInputOutputClaims {
@@ -141,26 +90,20 @@ impl<F: Field> SumcheckInstance<F> for InstructionInput<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => Ok(self.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
-        id: &JoltPublicId,
-        _inputs: &InstructionInputInputClaims<C>,
-        outputs: &InstructionInputOutputClaims<OpeningClaim<F>>,
+        id: &JoltDerivedId,
+        _input_points: &InstructionInputInputClaims<Vec<F>>,
+        output_points: &InstructionInputOutputClaims<Vec<F>>,
+        _challenges: &InstructionInputChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::InstructionInput(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::InstructionInput(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             // Every instruction-input output shares the one opening point.
             InstructionInputPublic::EqProduct => try_eq_mle(
-                outputs.unexpanded_pc.point(),
+                output_points.unexpanded_pc(),
                 &self.product_remainder_opening_point,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {

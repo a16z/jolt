@@ -1,7 +1,7 @@
 //! Verifier error types.
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
+    JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 
 use crate::config::JoltProtocolConfig;
@@ -19,9 +19,6 @@ pub enum VerifierError {
 
     #[error("proof field {field} must be committed for ZK verification")]
     ExpectedCommittedProof { field: &'static str },
-
-    #[error("clear proof is missing opening claims")]
-    MissingOpeningClaims,
 
     #[error("clear proof unexpectedly includes a BlindFold proof")]
     UnexpectedBlindFoldProof,
@@ -68,14 +65,14 @@ pub enum VerifierError {
     #[error("invalid committed program preprocessing: {reason}")]
     InvalidCommittedProgram { reason: String },
 
-    #[error("missing stage claim opening input {id:?}")]
-    MissingStageClaimOpening { id: JoltOpeningId },
-
     #[error("missing stage claim challenge input {id:?}")]
     MissingStageClaimChallenge { id: JoltChallengeId },
 
+    #[error(transparent)]
+    ChallengeDraw(#[from] jolt_claims::ChallengeDrawError),
+
     #[error("missing stage claim public input {id:?}")]
-    MissingStageClaimPublic { id: JoltPublicId },
+    MissingStageClaimDerived { id: JoltDerivedId },
 
     #[error("stage {stage:?} opening inputs {left:?} and {right:?} must have the same evaluation")]
     StageClaimOpeningMismatch {
@@ -83,18 +80,6 @@ pub enum VerifierError {
         left: JoltOpeningId,
         right: JoltOpeningId,
     },
-
-    #[error("stage {stage:?} claim expressions must evaluate to the same value")]
-    StageClaimExpressionMismatch { stage: JoltRelationId },
-
-    #[error("stage {stage:?} sumcheck degree {degree} is invalid")]
-    InvalidStageSumcheckDegree {
-        stage: JoltRelationId,
-        degree: usize,
-    },
-
-    #[error("stage {stage:?} compressed sumcheck proof requires a Boolean domain")]
-    CompressedStageClaimRequiresBooleanDomain { stage: JoltRelationId },
 
     #[error("stage {stage:?} sumcheck verification failed: {reason}")]
     StageClaimSumcheckFailed {
@@ -108,8 +93,8 @@ pub enum VerifierError {
         reason: String,
     },
 
-    #[error("stage {stage:?} sumcheck output does not match evaluated output claim")]
-    StageClaimOutputMismatch { stage: JoltRelationId },
+    #[error("stage {stage} sumcheck output does not match evaluated output claim")]
+    StageClaimOutputMismatch { stage: usize },
 
     #[error("invalid final opening commitment count {got}; expected {expected}")]
     InvalidCommitmentCount { expected: usize, got: usize },

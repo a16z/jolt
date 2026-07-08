@@ -85,7 +85,7 @@ const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
 use crate::constraint::{ConstraintMatrixEvalError, SparseRow};
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::{
+    geometry::spartan::{
         SpartanOuterClaimError, SpartanOuterDimensions, SpartanOuterLinearForms,
         SpartanOuterRemainderPlan,
     },

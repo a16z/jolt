@@ -94,9 +94,9 @@ pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
         let scalar: F = (*point).into();
         point_scalars.push(scalar);
     }
-    transcript.append_scalars(b"dory_opening_point", &point_scalars);
+    transcript.append_scalars(b"opening_point", &point_scalars);
 
-    transcript.append_scalar(b"dory_opening_eval", opening);
+    transcript.append_scalar(b"opening_eval", opening);
 }
 
 #[cfg(feature = "zk")]
@@ -110,9 +110,9 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, ProofTranscript
         let scalar: F = (*point).into();
         point_scalars.push(scalar);
     }
-    transcript.append_scalars(b"dory_opening_point", &point_scalars);
+    transcript.append_scalars(b"zk_opening_point", &point_scalars);
 
-    transcript.append_commitment(b"dory_eval_commitment", y_com);
+    transcript.append_commitment(b"zk_eval_commitment", y_com);
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {

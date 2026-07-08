@@ -4,8 +4,7 @@
 //! verifier challenges.
 
 use arbitrary::{Arbitrary, Unstructured};
-use ark_bn254::Fr as ArkFr;
-use jolt_field::Fr as JFr;
+use jolt_field::{FixedBytes, Fr as JFr};
 use spongefish::instantiations::{Blake2b512, Keccak};
 
 use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};
@@ -70,17 +69,17 @@ where
     H: spongefish::DuplexSpongeInterface<U = u8>,
 {
     let mut prover = prover_transcript(SESSION, INSTANCE_DIGEST, build_sponge());
-    let mut prover_challenges: Vec<JFr> = Vec::new();
+    let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
 
     for op in &input.ops {
         match op {
             Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => prover.public_message(&ArkFr::from(*f)),
+            Op::PublicScalar(f) => prover.public_message(&scalar_bytes(*f)),
             Op::ProverBytes(b) => prover.prover_message(&BytesMsg(b.clone())),
-            Op::ProverScalar(f) => prover.prover_message(&ArkFr::from(*f)),
+            Op::ProverScalar(f) => prover.prover_message(&scalar_bytes(*f)),
             Op::Challenge => {
-                let c: ArkFr = prover.verifier_message();
-                prover_challenges.push(JFr::from(c));
+                let c: [u8; 32] = prover.verifier_message();
+                prover_challenges.push(c);
             }
         }
     }
@@ -92,7 +91,7 @@ where
     for (op_idx, op) in input.ops.iter().enumerate() {
         match op {
             Op::PublicBytes(b) => verifier.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => verifier.public_message(&ArkFr::from(*f)),
+            Op::PublicScalar(f) => verifier.public_message(&scalar_bytes(*f)),
             Op::ProverBytes(expected) => {
                 let got: BytesMsg = verifier
                     .prover_message()
@@ -102,16 +101,16 @@ where
                 }
             }
             Op::ProverScalar(expected) => {
-                let got: ArkFr = verifier
+                let got: [u8; 32] = verifier
                     .prover_message()
-                    .map_err(|e| violation("prover_message<Fr>", op_idx, e))?;
-                if JFr::from(got) != *expected {
+                    .map_err(|e| violation("prover_message<[u8; 32]>", op_idx, e))?;
+                if got != scalar_bytes(*expected) {
                     return Err(mismatch("ProverScalar round-trip", op_idx));
                 }
             }
             Op::Challenge => {
-                let verifier_c: ArkFr = verifier.verifier_message();
-                if JFr::from(verifier_c) != prover_challenges[challenge_idx] {
+                let verifier_c: [u8; 32] = verifier.verifier_message();
+                if verifier_c != prover_challenges[challenge_idx] {
                     return Err(mismatch("Challenge", op_idx));
                 }
                 challenge_idx += 1;
@@ -123,6 +122,10 @@ where
         .check_eof()
         .map_err(|e| violation("check_eof", input.ops.len(), e))?;
     Ok(())
+}
+
+fn scalar_bytes(value: JFr) -> [u8; 32] {
+    value.to_bytes_array()
 }
 
 fn violation(what: &str, op_idx: usize, err: spongefish::VerificationError) -> CheckError {

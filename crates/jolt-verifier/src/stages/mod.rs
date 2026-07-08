@@ -1,9 +1,9 @@
 //! Typed verifier stage entry points.
 
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::{advice, bytecode, program_image},
-    formulas::dimensions::JoltFormulaDimensions,
-    formulas::error::JoltFormulaPointError,
+    geometry::claim_reductions::{advice, bytecode, program_image},
+    geometry::dimensions::JoltFormulaDimensions,
+    geometry::error::JoltFormulaPointError,
     AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
     PrecommittedClaimReduction, ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
@@ -22,16 +22,19 @@ pub mod stage2;
 pub mod stage3;
 pub mod stage4;
 pub mod stage5;
-pub mod stage6;
+pub mod stage6a;
+pub mod stage6b;
 pub mod stage7;
 pub mod stage8;
+pub(crate) mod uniskip;
 #[doc(hidden)]
 pub mod zk;
 
 /// Build the one-hot [`JoltFormulaDimensions`] from the proof's one-hot config and
 /// the verifier-trusted geometry (trace length, lookup operand width, bytecode
-/// length, RAM size), mapping the layout error to `stage`. Shared by the stages
-/// (5, 6, 7) that derive their RA layouts from it.
+/// length, RAM size), mapping the layout error to `stage`. Built once during
+/// verification and shared by the stages (5-8) that derive their RA layouts from
+/// it, and reused by the BlindFold input derivation.
 pub fn build_formula_dimensions<PCS, VC, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
