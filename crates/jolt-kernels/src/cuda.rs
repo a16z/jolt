@@ -21,6 +21,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/eq_double.cu"),
     include_str!("cuda/lt_double.cu"),
     include_str!("cuda/rd_wa_gather.cu"),
+    include_str!("cuda/add_scalar.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
     include_str!("cuda/dense_outer.cu"),
@@ -86,6 +87,7 @@ pub struct CudaKernelContext {
     eq_double: CudaFunction,
     lt_double: CudaFunction,
     rd_wa_gather: CudaFunction,
+    add_scalar: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
     row_dots: CudaFunction,
@@ -679,6 +681,7 @@ impl CudaKernelContext {
             eq_double: module.load_function("eq_double")?,
             lt_double: module.load_function("lt_double")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
+            add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
             row_dots: module.load_function("row_dots_kernel")?,
@@ -2679,6 +2682,28 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    pub fn add_scalar(&self, a: &mut DeviceFrVec, scalar: Fr) -> Result<(), CudaError> {
+        let n = a.len;
+        if n == 0 {
+            return Ok(());
+        }
+        let scalar_dev = self.stream.clone_htod(&fr_to_limbs(scalar))?;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let n_arg = n as u64;
+        let f = self.add_scalar.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch.arg(&mut a.buf).arg(&scalar_dev).arg(&n_arg);
+        // SAFETY: each thread i reads a[i] and the single scalar, writing a[i] in place;
+        // a holds n * LIMBS u64s. No shared memory. STUB body pending review.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        Ok(())
+    }
+
     pub fn batched_bind(
         &self,
         values: &mut DeviceFrVec,
@@ -3995,6 +4020,22 @@ mod tests {
             let c = ctx();
             let got = c.rd_wa_gather(&address_eq, &addresses).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn add_scalar_matches_cpu(
+            log_n in 0usize..12,
+            seed in fr_strategy(),
+            scalar in fr_strategy(),
+        ) {
+            let n = 1usize << log_n;
+            let base: Vec<Fr> = (0..n).map(|i| seed + Fr::from_u64(i as u64)).collect();
+            let expected: Vec<Fr> = base.iter().map(|&x| x + scalar).collect();
+
+            let c = ctx();
+            let mut dev = c.upload(&base).unwrap();
+            c.add_scalar(&mut dev, scalar).unwrap();
+            prop_assert_eq!(dev.to_host().unwrap(), expected);
         }
 
         #[test]
