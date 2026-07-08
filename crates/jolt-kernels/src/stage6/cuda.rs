@@ -703,7 +703,7 @@ impl CudaCoreBooleanitySparse {
 
 pub(crate) struct CudaCoreBooleanityAddressState {
     g: Vec<DeviceFrVec>,
-    gamma_squares: Vec<Fr>,
+    gamma_squares: DeviceFrVec,
 }
 
 impl CudaCoreBooleanityAddressState {
@@ -712,14 +712,12 @@ impl CudaCoreBooleanityAddressState {
         if g.is_empty() || g.len() != gamma_squares.len() {
             return None;
         }
-        let device_g = g
+        let refs = g
             .iter()
-            .map(|poly| ctx.upload(crate::cuda::as_fr_slice(poly)?).ok())
-            .collect::<Option<Vec<DeviceFrVec>>>()?;
-        let gamma_squares = gamma_squares
-            .iter()
-            .map(|g| crate::cuda::into_fr(*g))
-            .collect::<Option<Vec<Fr>>>()?;
+            .map(|poly| crate::cuda::as_fr_slice(poly))
+            .collect::<Option<Vec<&[Fr]>>>()?;
+        let device_g = ctx.upload_many(&refs).ok()?;
+        let gamma_squares = ctx.upload(crate::cuda::as_fr_slice(gamma_squares)?).ok()?;
         Some(Self {
             g: device_g,
             gamma_squares,

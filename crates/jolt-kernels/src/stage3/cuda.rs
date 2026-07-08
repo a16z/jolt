@@ -3,9 +3,19 @@ use jolt_field::Fr;
 use crate::cuda::{CudaError, DeviceFrVec, GruenRoundPolyInputs};
 use crate::split_eq::CudaSplitEqState;
 
+#[derive(Clone, Copy)]
 pub(crate) enum CudaGruenKind {
     InstructionInput { gamma: Fr },
     Registers { gamma: Fr, gamma2: Fr },
+}
+
+fn term_coeffs_for(kind: CudaGruenKind) -> Vec<Fr> {
+    match kind {
+        CudaGruenKind::InstructionInput { gamma } => {
+            vec![Fr::from(1u64), Fr::from(1u64), gamma, gamma]
+        }
+        CudaGruenKind::Registers { gamma, gamma2 } => vec![Fr::from(1u64), gamma, gamma2],
+    }
 }
 
 pub(crate) struct CudaSumOfProductsState {
@@ -13,6 +23,7 @@ pub(crate) struct CudaSumOfProductsState {
     scratch: Vec<DeviceFrVec>,
     split_eq: CudaSplitEqState<'static>,
     kind: CudaGruenKind,
+    term_coeffs: DeviceFrVec,
 }
 
 impl CudaSumOfProductsState {
@@ -28,11 +39,13 @@ impl CudaSumOfProductsState {
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
         let split_eq = CudaSplitEqState::new_low_to_high(ctx, split_point, None).ok()?;
+        let term_coeffs = ctx.upload(&term_coeffs_for(kind)).ok()?;
         Some(Self {
             factors: device_factors,
             scratch,
             split_eq,
             kind,
+            term_coeffs,
         })
     }
 
@@ -40,30 +53,22 @@ impl CudaSumOfProductsState {
         self.split_eq.current_target()
     }
 
-    fn term_table(&self) -> (Vec<Fr>, Vec<u32>, Vec<u32>, usize) {
+    fn term_layout(&self) -> (Vec<u32>, Vec<u32>, usize) {
         match self.kind {
-            CudaGruenKind::InstructionInput { gamma } => {
-                let coeffs = vec![Fr::from(1u64), Fr::from(1u64), gamma, gamma];
-                let offsets = vec![0u32, 2, 4, 6, 8];
-                let indices = vec![0u32, 1, 2, 3, 4, 5, 6, 7];
-                (coeffs, offsets, indices, 2)
+            CudaGruenKind::InstructionInput { .. } => {
+                (vec![0u32, 2, 4, 6, 8], vec![0u32, 1, 2, 3, 4, 5, 6, 7], 2)
             }
-            CudaGruenKind::Registers { gamma, gamma2 } => {
-                let coeffs = vec![Fr::from(1u64), gamma, gamma2];
-                let offsets = vec![0u32, 1, 2, 3];
-                let indices = vec![0u32, 1, 2];
-                (coeffs, offsets, indices, 1)
-            }
+            CudaGruenKind::Registers { .. } => (vec![0u32, 1, 2, 3], vec![0u32, 1, 2], 1),
         }
     }
 
     pub(crate) fn q_coefficients(&self) -> Result<(Fr, Fr), CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
-        let (term_coeffs, term_factor_offsets, term_factor_indices, degree) = self.term_table();
+        let (term_factor_offsets, term_factor_indices, degree) = self.term_layout();
         let factor_refs: Vec<&DeviceFrVec> = self.factors.iter().collect();
         let q = ctx.gruen_round_poly(GruenRoundPolyInputs {
             factors: &factor_refs,
-            term_coeffs: &term_coeffs,
+            term_coeffs: &self.term_coeffs,
             term_factor_offsets: &term_factor_offsets,
             term_factor_indices: &term_factor_indices,
             e_in: self.split_eq.e_in_device(),

@@ -497,7 +497,7 @@ pub struct RoundPolyTerms<'a> {
 
 pub struct GruenRoundPolyInputs<'a> {
     pub factors: &'a [&'a DeviceFrVec],
-    pub term_coeffs: &'a [Fr],
+    pub term_coeffs: &'a DeviceFrVec,
     pub term_factor_offsets: &'a [u32],
     pub term_factor_indices: &'a [u32],
     pub e_in: &'a DeviceFrVec,
@@ -603,7 +603,7 @@ pub struct CoreBooleanityCycleInputs<'a> {
 pub struct CoreBooleanityAddressInputs<'a> {
     pub g: &'a [&'a DeviceFrVec],
     pub f_values: &'a [Fr],
-    pub gamma_squares: &'a [Fr],
+    pub gamma_squares: &'a DeviceFrVec,
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
     pub m: u32,
@@ -1827,7 +1827,6 @@ impl CudaKernelContext {
 
         let factor_ptrs = self.factor_ptr_array(inputs.g)?;
         let f_dev = self.upload(inputs.f_values)?;
-        let gamma_dev = self.upload(inputs.gamma_squares)?;
 
         const WIDTH: usize = 2;
         let tuple = WIDTH * LIMBS;
@@ -1853,7 +1852,7 @@ impl CudaKernelContext {
             .arg(&mut buf)
             .arg(&factor_ptrs)
             .arg(&f_dev.buf)
-            .arg(&gamma_dev.buf)
+            .arg(&inputs.gamma_squares.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
             .arg(&group_stride_arg)
@@ -3151,7 +3150,6 @@ impl CudaKernelContext {
 
         let factor_ptrs = self.factor_ptr_array(inputs.factors)?;
 
-        let coeffs_dev = self.upload(inputs.term_coeffs)?;
         let offsets_dev = self.stream.clone_htod(inputs.term_factor_offsets)?;
         let indices_dev = self.stream.clone_htod(inputs.term_factor_indices)?;
 
@@ -3178,7 +3176,7 @@ impl CudaKernelContext {
         let _ = launch
             .arg(&mut buf)
             .arg(&factor_ptrs)
-            .arg(&coeffs_dev.buf)
+            .arg(&inputs.term_coeffs.buf)
             .arg(&offsets_dev)
             .arg(&indices_dev)
             .arg(&inputs.e_in.buf)
@@ -3948,10 +3946,11 @@ mod tests {
                 let factor_refs: Vec<&DeviceFrVec> = factor_devs.iter().collect();
                 let e_in = c.upload(split_eq.e_in()).unwrap();
                 let e_out = c.upload(split_eq.e_out()).unwrap();
+                let term_coeffs_dev = c.upload(&term_coeffs).unwrap();
                 let got = c
                     .gruen_round_poly(GruenRoundPolyInputs {
                         factors: &factor_refs,
-                        term_coeffs: &term_coeffs,
+                        term_coeffs: &term_coeffs_dev,
                         term_factor_offsets: &term_factor_offsets,
                         term_factor_indices: &term_factor_indices,
                         e_in: &e_in,
@@ -4008,10 +4007,11 @@ mod tests {
                 let factor_refs: Vec<&DeviceFrVec> = factor_devs.iter().collect();
                 let e_in = c.upload(split_eq.e_in()).unwrap();
                 let e_out = c.upload(split_eq.e_out()).unwrap();
+                let term_coeffs_dev = c.upload(&term_coeffs).unwrap();
                 let got = c
                     .gruen_round_poly(GruenRoundPolyInputs {
                         factors: &factor_refs,
-                        term_coeffs: &term_coeffs,
+                        term_coeffs: &term_coeffs_dev,
                         term_factor_offsets: &term_factor_offsets,
                         term_factor_indices: &term_factor_indices,
                         e_in: &e_in,
@@ -4912,11 +4912,12 @@ mod tests {
             let g_refs: Vec<&DeviceFrVec> = g_devs.iter().collect();
             let e_in_dev = c.upload(b.e_in_current()).unwrap();
             let e_out_dev = c.upload(b.e_out_current()).unwrap();
+            let gamma_dev = c.upload(&gamma_squares).unwrap();
             let got = c
                 .core_booleanity_address_round_poly(CoreBooleanityAddressInputs {
                     g: &g_refs,
                     f_values: &f_values,
-                    gamma_squares: &gamma_squares,
+                    gamma_squares: &gamma_dev,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                     m: m as u32,
