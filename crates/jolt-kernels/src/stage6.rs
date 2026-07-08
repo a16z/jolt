@@ -4373,20 +4373,6 @@ impl<F: Field> IncClaimReductionStage6State<F> {
                 reason: "wrong relation for increment claim-reduction state",
             });
         }
-        let len = self.eq_ram.len();
-        if len == 0 || !len.is_power_of_two() || self.eq_rd.len() != len {
-            return Err(Stage6KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "increment claim-reduction factors have invalid length",
-            });
-        }
-        if self.ram_inc.len() != len || self.rd_inc.len() != len {
-            return Err(Stage6KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "increment claim-reduction factors have inconsistent lengths",
-            });
-        }
-
         #[cfg(feature = "cuda")]
         if let Some(cuda) = &self.cuda {
             if let Ok(fr_evals) = cuda.round_poly_evals() {
@@ -4409,6 +4395,20 @@ impl<F: Field> IncClaimReductionStage6State<F> {
                     return Ok(poly);
                 }
             }
+        }
+
+        let len = self.eq_ram.len();
+        if len == 0 || !len.is_power_of_two() || self.eq_rd.len() != len {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "increment claim-reduction factors have invalid length",
+            });
+        }
+        if self.ram_inc.len() != len || self.rd_inc.len() != len {
+            return Err(Stage6KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "increment claim-reduction factors have inconsistent lengths",
+            });
         }
 
         let half = len / 2;
@@ -6315,6 +6315,33 @@ fn hamming_booleanity_state<F: Field>(
     )
 }
 
+#[cfg(feature = "cuda")]
+#[expect(clippy::too_many_arguments)]
+fn build_cuda_inc_state<F: Field>(
+    ram_inc_stage2: &[F],
+    ram_inc_stage4: &[F],
+    rd_inc_stage4: &[F],
+    rd_inc_stage5: &[F],
+    gamma: F,
+    gamma2: F,
+    ram_inc: &[F],
+    rd_inc: &[F],
+) -> Option<cuda::CudaIncState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let gamma_fr = crate::cuda::into_fr(gamma)?;
+    let mut eq_ram = ctx.eq_evals(crate::cuda::as_fr_slice(ram_inc_stage2)?, None).ok()?;
+    let eq_ram_stage4 = ctx
+        .eq_evals(crate::cuda::as_fr_slice(ram_inc_stage4)?, Some(gamma_fr))
+        .ok()?;
+    ctx.add(&mut eq_ram, &eq_ram_stage4).ok()?;
+    let mut eq_rd = ctx.eq_evals(crate::cuda::as_fr_slice(rd_inc_stage4)?, None).ok()?;
+    let eq_rd_stage5 = ctx
+        .eq_evals(crate::cuda::as_fr_slice(rd_inc_stage5)?, Some(gamma_fr))
+        .ok()?;
+    ctx.add(&mut eq_rd, &eq_rd_stage5).ok()?;
+    cuda::CudaIncState::from_device(eq_ram, ram_inc, eq_rd, rd_inc, gamma2)
+}
+
 fn inc_claim_reduction_state<F: Field>(
     program: &'static Stage6CpuProgramPlan,
     claim: &Stage6SumcheckClaimPlan,
@@ -6367,57 +6394,82 @@ fn inc_claim_reduction_state<F: Field>(
     let gamma = store.scalar("stage6.inc_claim_reduction.gamma")?;
     let gamma2 = gamma.square();
 
-    let (eq_ram_combined, eq_rd_combined) = rayon::join(
-        || {
-            let (eq_ram_stage2, eq_ram_stage4) = rayon::join(
-                || EqPolynomial::<F>::evals(ram_inc_stage2, None),
-                || EqPolynomial::<F>::evals(ram_inc_stage4, None),
-            );
-            eq_ram_stage2
-                .par_iter()
-                .zip(eq_ram_stage4.par_iter())
-                .map(|(&stage2, &stage4)| stage2 + gamma * stage4)
-                .collect::<Vec<_>>()
-        },
-        || {
-            let (eq_rd_stage4, eq_rd_stage5) = rayon::join(
-                || EqPolynomial::<F>::evals(rd_inc_stage4, None),
-                || EqPolynomial::<F>::evals(rd_inc_stage5, None),
-            );
-            eq_rd_stage4
-                .par_iter()
-                .zip(eq_rd_stage5.par_iter())
-                .map(|(&stage4, &stage5)| stage4 + gamma * stage5)
-                .collect::<Vec<_>>()
-        },
-    );
-    require_operand_count(
-        "stage6.inc_claim_reduction.eq_ram",
-        witness.ram_inc.len(),
-        eq_ram_combined.len(),
-    )?;
-    require_operand_count(
-        "stage6.inc_claim_reduction.eq_rd",
-        witness.rd_inc.len(),
-        eq_rd_combined.len(),
-    )?;
-
     let ram_inc = witness.ram_inc.to_vec();
     let rd_inc = witness.rd_inc.to_vec();
+
     #[cfg(feature = "cuda")]
     let cuda = if backend == "cuda" {
-        cuda::CudaIncState::new(&eq_ram_combined, &ram_inc, &eq_rd_combined, &rd_inc, gamma2)
+        build_cuda_inc_state(
+            ram_inc_stage2,
+            ram_inc_stage4,
+            rd_inc_stage4,
+            rd_inc_stage5,
+            gamma,
+            gamma2,
+            &ram_inc,
+            &rd_inc,
+        )
     } else {
         None
     };
     #[cfg(not(feature = "cuda"))]
     let _ = backend;
+
+    let build_host_eq = || -> (Vec<F>, Vec<F>) {
+        rayon::join(
+            || {
+                let (eq_ram_stage2, eq_ram_stage4) = rayon::join(
+                    || EqPolynomial::<F>::evals(ram_inc_stage2, None),
+                    || EqPolynomial::<F>::evals(ram_inc_stage4, None),
+                );
+                eq_ram_stage2
+                    .par_iter()
+                    .zip(eq_ram_stage4.par_iter())
+                    .map(|(&stage2, &stage4)| stage2 + gamma * stage4)
+                    .collect::<Vec<_>>()
+            },
+            || {
+                let (eq_rd_stage4, eq_rd_stage5) = rayon::join(
+                    || EqPolynomial::<F>::evals(rd_inc_stage4, None),
+                    || EqPolynomial::<F>::evals(rd_inc_stage5, None),
+                );
+                eq_rd_stage4
+                    .par_iter()
+                    .zip(eq_rd_stage5.par_iter())
+                    .map(|(&stage4, &stage5)| stage4 + gamma * stage5)
+                    .collect::<Vec<_>>()
+            },
+        )
+    };
+
+    #[cfg(feature = "cuda")]
+    let (eq_ram_host, eq_rd_host) = if cuda.is_some() {
+        (Vec::new(), Vec::new())
+    } else {
+        build_host_eq()
+    };
+    #[cfg(not(feature = "cuda"))]
+    let (eq_ram_host, eq_rd_host) = build_host_eq();
+
+    if !eq_ram_host.is_empty() {
+        require_operand_count(
+            "stage6.inc_claim_reduction.eq_ram",
+            witness.ram_inc.len(),
+            eq_ram_host.len(),
+        )?;
+        require_operand_count(
+            "stage6.inc_claim_reduction.eq_rd",
+            witness.rd_inc.len(),
+            eq_rd_host.len(),
+        )?;
+    }
+
     Ok(IncClaimReductionStage6State {
-        eq_ram: eq_ram_combined,
+        eq_ram: eq_ram_host,
         eq_ram_scratch: Vec::new(),
         ram_inc,
         ram_inc_scratch: Vec::new(),
-        eq_rd: eq_rd_combined,
+        eq_rd: eq_rd_host,
         eq_rd_scratch: Vec::new(),
         rd_inc,
         rd_inc_scratch: Vec::new(),

@@ -763,18 +763,18 @@ pub(crate) struct CudaIncState {
 }
 
 impl CudaIncState {
-    pub(crate) fn new<F: Field>(
-        eq_ram: &[F],
+    pub(crate) fn from_device<F: Field>(
+        eq_ram: DeviceFrVec,
         ram_inc: &[F],
-        eq_rd: &[F],
+        eq_rd: DeviceFrVec,
         rd_inc: &[F],
         gamma2: F,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         Some(Self {
-            eq_ram: ctx.upload(crate::cuda::as_fr_slice(eq_ram)?).ok()?,
+            eq_ram,
             ram_inc: ctx.upload(crate::cuda::as_fr_slice(ram_inc)?).ok()?,
-            eq_rd: ctx.upload(crate::cuda::as_fr_slice(eq_rd)?).ok()?,
+            eq_rd,
             rd_inc: ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
             scratch: ctx.upload(&[]).ok()?,
             gamma2: crate::cuda::into_fr(gamma2)?,

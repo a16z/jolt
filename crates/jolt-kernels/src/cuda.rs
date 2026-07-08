@@ -2698,7 +2698,7 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch.arg(&mut a.buf).arg(&scalar_dev).arg(&n_arg);
         // SAFETY: each thread i reads a[i] and the single scalar, writing a[i] in place;
-        // a holds n * LIMBS u64s. No shared memory. STUB body pending review.
+        // a holds n * LIMBS u64s. No shared memory.
         let _ = unsafe { launch.launch(cfg) }?;
 
         Ok(())

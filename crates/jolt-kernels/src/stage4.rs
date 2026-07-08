@@ -1771,6 +1771,30 @@ fn build_cuda_dense_state<F: Field>(
     )
 }
 
+#[cfg(feature = "cuda")]
+fn build_cuda_ram_val_check_state<F: Field>(
+    cycle_point: &[F],
+    gamma: F,
+    ram_ra_at_address: &[F],
+    ram_inc: &[F],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
+    let mut lt_plus_gamma = ctx.lt_evals(cycle_point_fr).ok()?;
+    ctx.add_scalar(&mut lt_plus_gamma, crate::cuda::into_fr(gamma)?).ok()?;
+    let ram_ra_dev = ctx.upload(crate::cuda::as_fr_slice(ram_ra_at_address)?).ok()?;
+    let ram_inc_dev = ctx.upload(crate::cuda::as_fr_slice(ram_inc)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![lt_plus_gamma, ram_ra_dev, ram_inc_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 3],
+        vec![0, 1, 2],
+        3,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
 impl<F: Field> DenseStage4State<F> {
     fn new(
         factors: Vec<Vec<F>>,
@@ -1808,24 +1832,30 @@ impl<F: Field> DenseStage4State<F> {
         }
     }
 
+    #[cfg(feature = "cuda")]
+    fn from_host_and_cuda(
+        factors: Vec<Vec<F>>,
+        terms: Vec<DenseTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+        cuda: Option<cuda::CudaDenseState>,
+    ) -> Self {
+        let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        Self {
+            factors,
+            factor_scratch,
+            terms,
+            outputs,
+            active_scale,
+            cuda,
+        }
+    }
+
     fn round_poly(
         &self,
         previous_claim: F,
         relation: Stage4Relation,
     ) -> Result<UnivariatePoly<F>, Stage4KernelError> {
-        let first_len = self.factors.first().map_or(0, Vec::len);
-        if first_len == 0 || !first_len.is_power_of_two() {
-            return Err(Stage4KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage4 dense factor has invalid length",
-            });
-        }
-        if self.factors.iter().any(|factor| factor.len() != first_len) {
-            return Err(Stage4KernelError::InvalidProof {
-                driver: relation.symbol(),
-                reason: "stage4 dense factors have inconsistent lengths",
-            });
-        }
         #[cfg(feature = "cuda")]
         if let Some(cuda) = &self.cuda {
             if let Ok(poly) = cuda.round_poly() {
@@ -1839,6 +1869,19 @@ impl<F: Field> DenseStage4State<F> {
                     return Ok(poly);
                 }
             }
+        }
+        let first_len = self.factors.first().map_or(0, Vec::len);
+        if first_len == 0 || !first_len.is_power_of_two() {
+            return Err(Stage4KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage4 dense factor has invalid length",
+            });
+        }
+        if self.factors.iter().any(|factor| factor.len() != first_len) {
+            return Err(Stage4KernelError::InvalidProof {
+                driver: relation.symbol(),
+                reason: "stage4 dense factors have inconsistent lengths",
+            });
         }
         let poly =
             round_poly_from_dense_terms(&self.factors, &self.terms, self.active_scale, relation)?;
@@ -3143,6 +3186,43 @@ fn ram_val_check_state<F: Field>(
     let ram_ra_at_address = ram_ra_at_address(witness, &address_eq, expected_len)?;
 
     let gamma = store.scalar("stage4.ram_val_check.gamma")?;
+
+    let terms = vec![DenseTerm {
+        coefficient: F::one(),
+        factors: vec![0, 1, 2],
+    }];
+    let outputs = vec![
+        FactorOutput {
+            name: "stage4.ram_val_check.eval.RamRa",
+            oracle: "RamRa",
+            factor: 1,
+        },
+        FactorOutput {
+            name: "stage4.ram_val_check.eval.RamInc",
+            oracle: "RamInc",
+            factor: 2,
+        },
+    ];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = build_cuda_ram_val_check_state(
+            cycle_point,
+            gamma,
+            &ram_ra_at_address,
+            witness.ram_inc,
+            active_scale,
+        ) {
+            return Ok(DenseStage4State::from_host_and_cuda(
+                vec![Vec::new(), ram_ra_at_address, witness.ram_inc.to_vec()],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
     let mut lt_plus_gamma = lt_evals_big_endian(cycle_point);
     require_operand_count(
         "stage4.ram_val_check.lt",
@@ -3155,22 +3235,8 @@ fn ram_val_check_state<F: Field>(
 
     Ok(DenseStage4State::new_with_backend(
         vec![lt_plus_gamma, ram_ra_at_address, witness.ram_inc.to_vec()],
-        vec![DenseTerm {
-            coefficient: F::one(),
-            factors: vec![0, 1, 2],
-        }],
-        vec![
-            FactorOutput {
-                name: "stage4.ram_val_check.eval.RamRa",
-                oracle: "RamRa",
-                factor: 1,
-            },
-            FactorOutput {
-                name: "stage4.ram_val_check.eval.RamInc",
-                oracle: "RamInc",
-                factor: 2,
-            },
-        ],
+        terms,
+        outputs,
         active_scale,
         backend,
     ))

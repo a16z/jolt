@@ -43,6 +43,29 @@ impl CudaDenseState {
         })
     }
 
+    pub(crate) fn from_device_factors(
+        factors: Vec<DeviceFrVec>,
+        term_coeffs: Vec<Fr>,
+        term_factor_offsets: Vec<u32>,
+        term_factor_indices: Vec<u32>,
+        degree: usize,
+        active_scale: Fr,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let scratch = (0..factors.len())
+            .map(|_| ctx.upload(&[]).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
+        Some(Self {
+            factors,
+            scratch,
+            term_coeffs,
+            term_factor_offsets,
+            term_factor_indices,
+            degree,
+            active_scale,
+        })
+    }
+
     pub(crate) fn round_poly(&self) -> Result<UnivariatePoly<Fr>, CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
         let factor_refs: Vec<&DeviceFrVec> = self.factors.iter().collect();
