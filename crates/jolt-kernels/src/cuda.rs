@@ -541,7 +541,7 @@ pub struct HammingRoundPolyInputs<'a> {
     pub g: &'a [&'a DeviceFrVec],
     pub eq_virt: &'a [&'a DeviceFrVec],
     pub eq_bool: &'a DeviceFrVec,
-    pub gamma_powers: &'a [Fr],
+    pub gamma_powers: &'a DeviceFrVec,
     pub scale: Fr,
 }
 
@@ -2386,7 +2386,6 @@ impl CudaKernelContext {
 
         let g_packed = self.factor_ptr_array(inputs.g)?;
         let eq_virt_packed = self.factor_ptr_array(inputs.eq_virt)?;
-        let gammas_dev = self.upload(inputs.gamma_powers)?;
         let two_dev = self.stream.clone_htod(&fr_to_limbs(Fr::from_u64(2)))?;
 
         const WIDTH: usize = 2;
@@ -2412,7 +2411,7 @@ impl CudaKernelContext {
             .arg(&g_packed)
             .arg(&eq_virt_packed)
             .arg(&inputs.eq_bool.buf)
-            .arg(&gammas_dev.buf)
+            .arg(&inputs.gamma_powers.buf)
             .arg(&two_dev)
             .arg(&num_ra_arg)
             .arg(&pair_stride_arg)
@@ -4701,6 +4700,7 @@ mod tests {
             let eq_virt_devs: Vec<DeviceFrVec> =
                 eq_virt.iter().map(|v| c.upload(v).unwrap()).collect();
             let eq_bool_dev = c.upload(&eq_bool).unwrap();
+            let gamma_dev = c.upload(&gamma_powers).unwrap();
             let g_refs: Vec<&DeviceFrVec> = g_devs.iter().collect();
             let eq_virt_refs: Vec<&DeviceFrVec> = eq_virt_devs.iter().collect();
 
@@ -4709,7 +4709,7 @@ mod tests {
                     g: &g_refs,
                     eq_virt: &eq_virt_refs,
                     eq_bool: &eq_bool_dev,
-                    gamma_powers: &gamma_powers,
+                    gamma_powers: &gamma_dev,
                     scale,
                 })
                 .unwrap();
