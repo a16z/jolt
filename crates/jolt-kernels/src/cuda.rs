@@ -757,6 +757,74 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn upload_many(&self, factors: &[&[Fr]]) -> Result<Vec<DeviceFrVec>, CudaError> {
+        if factors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let lens: Vec<usize> = factors.iter().map(|f| f.len()).collect();
+        let total = lens.iter().sum::<usize>();
+        if total == 0 {
+            return factors
+                .iter()
+                .map(|_| {
+                    Ok(DeviceFrVec {
+                        stream: self.stream.clone(),
+                        buf: self.stream.alloc_zeros(0)?,
+                        len: 0,
+                        staging: self.staging.clone(),
+                    })
+                })
+                .collect();
+        }
+
+        let n = total * LIMBS;
+        xfer_stats::add_h2d(n * std::mem::size_of::<u64>());
+        let packed = xfer_stats::timed(xfer_stats::Phase::Upload, || {
+            let mut pool = lock_pool(&self.staging);
+            let staging = pool.ensure(self.stream.context(), n)?;
+            let slots = staging.as_mut_slice(n);
+            let mut offset = 0;
+            for factor in factors {
+                for (slot, &v) in slots[offset..offset + factor.len() * LIMBS]
+                    .chunks_exact_mut(LIMBS)
+                    .zip(*factor)
+                {
+                    slot.copy_from_slice(&fr_to_limbs(v));
+                }
+                offset += factor.len() * LIMBS;
+            }
+            let dev = self.stream.clone_htod(staging.as_slice(n))?;
+            self.stream.synchronize()?;
+            Ok::<_, CudaError>(dev)
+        })?;
+
+        let mut out = Vec::with_capacity(factors.len());
+        let mut offset = 0;
+        for &len in &lens {
+            if len == 0 {
+                out.push(DeviceFrVec {
+                    stream: self.stream.clone(),
+                    buf: self.stream.alloc_zeros(0)?,
+                    len: 0,
+                    staging: self.staging.clone(),
+                });
+                continue;
+            }
+            let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
+            self.stream
+                .memcpy_dtod(&packed.slice(offset..offset + len * LIMBS), &mut buf)?;
+            out.push(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len,
+                staging: self.staging.clone(),
+            });
+            offset += len * LIMBS;
+        }
+        self.stream.synchronize()?;
+        Ok(out)
+    }
+
     pub fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
         Ok(self.stream.clone_htod(values)?)
     }
@@ -5829,6 +5897,43 @@ mod tests {
             "cache holds one entry; a different witness evicts the prior one"
         );
         assert_eq!(again.to_host().unwrap(), witness);
+    }
+
+    #[test]
+    fn upload_many_matches_individual_uploads() {
+        let c = ctx();
+        let f0: Vec<Fr> = (0..300u64).map(Fr::from_u64).collect();
+        let f1: Vec<Fr> = (1000..1001u64).map(Fr::from_u64).collect();
+        let f2: Vec<Fr> = (5..517u64).map(|v| Fr::from_u64(v) + Fr::one()).collect();
+        let factors = [f0.as_slice(), f1.as_slice(), f2.as_slice()];
+
+        let batched = c.upload_many(&factors).unwrap();
+        assert_eq!(batched.len(), 3);
+        for (dev, expected) in batched.iter().zip(&factors) {
+            assert_eq!(dev.len(), expected.len());
+            assert_eq!(&dev.to_host().unwrap(), *expected);
+        }
+
+        // Each batched factor must be independently bindable (i.e. an owned buffer, not a view).
+        let mut scratch = c.upload(&[]).unwrap();
+        let mut first = batched.into_iter().next().unwrap();
+        c.bind(&mut first, &mut scratch, Fr::from_u64(7)).unwrap();
+        assert_eq!(first.len(), f0.len() / 2);
+    }
+
+    #[test]
+    fn upload_many_handles_empty_and_zero_len() {
+        let c = ctx();
+        assert!(c.upload_many(&[]).unwrap().is_empty());
+
+        let nonempty: Vec<Fr> = (0..8u64).map(Fr::from_u64).collect();
+        let empty: Vec<Fr> = Vec::new();
+        let factors = [empty.as_slice(), nonempty.as_slice(), empty.as_slice()];
+        let batched = c.upload_many(&factors).unwrap();
+        assert_eq!(batched.len(), 3);
+        assert_eq!(batched[0].len(), 0);
+        assert_eq!(batched[1].to_host().unwrap(), nonempty);
+        assert_eq!(batched[2].len(), 0);
     }
 
     #[test]

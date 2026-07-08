@@ -13,12 +13,11 @@ impl CudaDenseState {
     pub(crate) fn new(factors: &[Vec<Fr>]) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let degree = factors.len();
-        let mut device_factors = Vec::with_capacity(degree);
-        let mut scratch = Vec::with_capacity(degree);
-        for factor in factors {
-            device_factors.push(ctx.upload(factor).ok()?);
-            scratch.push(ctx.upload(&[]).ok()?);
-        }
+        let refs: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
+        let device_factors = ctx.upload_many(&refs).ok()?;
+        let scratch = (0..degree)
+            .map(|_| ctx.upload(&[]).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
         Some(Self {
             factors: device_factors,
             scratch,

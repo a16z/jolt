@@ -38,15 +38,16 @@ impl CudaBytecodeReadRafState {
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let stages = stage_factors.len();
-        let mut factors = Vec::with_capacity(2 * stages + 2);
+        let mut refs: Vec<&[Fr]> = Vec::with_capacity(2 * stages + 2);
         for factor in stage_factors {
-            factors.push(ctx.upload(crate::cuda::as_fr_slice(factor)?).ok()?);
+            refs.push(crate::cuda::as_fr_slice(factor)?);
         }
         for value in stage_values {
-            factors.push(ctx.upload(crate::cuda::as_fr_slice(value)?).ok()?);
+            refs.push(crate::cuda::as_fr_slice(value)?);
         }
-        factors.push(ctx.upload(crate::cuda::as_fr_slice(entry_trace)?).ok()?);
-        factors.push(ctx.upload(crate::cuda::as_fr_slice(entry_expected)?).ok()?);
+        refs.push(crate::cuda::as_fr_slice(entry_trace)?);
+        refs.push(crate::cuda::as_fr_slice(entry_expected)?);
+        let factors = ctx.upload_many(&refs).ok()?;
 
         let mut term_coeffs = Vec::with_capacity(stages + 1);
         let mut term_factor_offsets = vec![0u32];
@@ -80,11 +81,12 @@ impl CudaBytecodeReadRafState {
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let num_chunks = cycle_chunks.len();
-        let mut factors = Vec::with_capacity(num_chunks + 1);
+        let mut refs: Vec<&[Fr]> = Vec::with_capacity(num_chunks + 1);
         for chunk in cycle_chunks {
-            factors.push(ctx.upload(crate::cuda::as_fr_slice(chunk)?).ok()?);
+            refs.push(crate::cuda::as_fr_slice(chunk)?);
         }
-        factors.push(ctx.upload(crate::cuda::as_fr_slice(combined_eq)?).ok()?);
+        refs.push(crate::cuda::as_fr_slice(combined_eq)?);
+        let factors = ctx.upload_many(&refs).ok()?;
         Self::from_device_cycle(factors, num_chunks, degree)
     }
 
@@ -285,10 +287,11 @@ impl CudaRaVirtualD4State {
         if chunks.is_empty() || chunks.len() != gamma_powers.len() * 4 {
             return None;
         }
-        let device_chunks = chunks
+        let refs = chunks
             .iter()
-            .map(|chunk| ctx.upload(crate::cuda::as_fr_slice(chunk)?).ok())
-            .collect::<Option<Vec<DeviceFrVec>>>()?;
+            .map(|chunk| crate::cuda::as_fr_slice(chunk))
+            .collect::<Option<Vec<&[Fr]>>>()?;
+        let device_chunks = ctx.upload_many(&refs).ok()?;
         let gamma_powers = gamma_powers
             .iter()
             .map(|g| crate::cuda::into_fr(*g))

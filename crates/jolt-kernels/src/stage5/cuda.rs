@@ -26,12 +26,11 @@ impl CudaDenseState {
         active_scale: Fr,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        let mut device_factors = Vec::with_capacity(factors.len());
-        let mut scratch = Vec::with_capacity(factors.len());
-        for factor in factors {
-            device_factors.push(ctx.upload(factor).ok()?);
-            scratch.push(ctx.upload(&[]).ok()?);
-        }
+        let refs: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
+        let device_factors = ctx.upload_many(&refs).ok()?;
+        let scratch = (0..factors.len())
+            .map(|_| ctx.upload(&[]).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
         Some(Self {
             factors: device_factors,
             scratch,
@@ -105,12 +104,17 @@ impl CudaInstructionRafCycleState {
         if chunks.len() != 8 {
             return None;
         }
-        let device_chunks = chunks
-            .iter()
-            .map(|chunk| ctx.upload(crate::cuda::as_fr_slice(chunk)?).ok())
-            .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let mut refs: Vec<&[Fr]> = Vec::with_capacity(chunks.len() + 1);
+        refs.push(crate::cuda::as_fr_slice(combined)?);
+        for chunk in chunks {
+            refs.push(crate::cuda::as_fr_slice(chunk)?);
+        }
+        let mut uploaded = ctx.upload_many(&refs).ok()?;
+        let mut drain = uploaded.drain(..);
+        let combined = drain.next()?;
+        let device_chunks: Vec<DeviceFrVec> = drain.collect();
         Some(Self {
-            combined: ctx.upload(crate::cuda::as_fr_slice(combined)?).ok()?,
+            combined,
             chunks: device_chunks,
             scratch: ctx.upload(&[]).ok()?,
         })

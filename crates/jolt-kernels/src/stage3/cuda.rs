@@ -22,12 +22,11 @@ impl CudaSumOfProductsState {
         split_point: &[Fr],
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        let mut device_factors = Vec::with_capacity(factors.len());
-        let mut scratch = Vec::with_capacity(factors.len());
-        for factor in factors {
-            device_factors.push(ctx.upload(factor).ok()?);
-            scratch.push(ctx.upload(&[]).ok()?);
-        }
+        let refs: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
+        let device_factors = ctx.upload_many(&refs).ok()?;
+        let scratch = (0..factors.len())
+            .map(|_| ctx.upload(&[]).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
         let split_eq = CudaSplitEqState::new_low_to_high(ctx, split_point, None).ok()?;
         Some(Self {
             factors: device_factors,

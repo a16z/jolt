@@ -26,12 +26,11 @@ impl CudaDenseState {
         active_scale: Fr,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        let mut device_factors = Vec::with_capacity(factors.len());
-        let mut scratch = Vec::with_capacity(factors.len());
-        for factor in factors {
-            device_factors.push(ctx.upload(factor).ok()?);
-            scratch.push(ctx.upload(&[]).ok()?);
-        }
+        let refs: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
+        let device_factors = ctx.upload_many(&refs).ok()?;
+        let scratch = (0..factors.len())
+            .map(|_| ctx.upload(&[]).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
         Some(Self {
             factors: device_factors,
             scratch,
@@ -101,12 +100,15 @@ struct RoundSchedule {
 
 pub(crate) struct CudaSparseRegistersState {
     entries: SparseRegisterEntries,
+    rd_inc: DeviceFrVec,
+    rd_inc_scratch: DeviceFrVec,
     schedules: Vec<RoundSchedule>,
     final_cols: Vec<u8>,
     round: usize,
 }
 
 impl CudaSparseRegistersState {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new<F: jolt_field::Field>(
         rows: &[usize],
         cols: &[u8],
@@ -115,6 +117,7 @@ impl CudaSparseRegistersState {
         rd_wa: &[F],
         prev_val: &[u64],
         next_val: &[u64],
+        rd_inc: &[F],
         trace_rounds: usize,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
@@ -128,6 +131,8 @@ impl CudaSparseRegistersState {
         let (schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
         Some(Self {
             entries,
+            rd_inc: ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
+            rd_inc_scratch: ctx.upload(&[]).ok()?,
             schedules,
             final_cols,
             round: 0,
@@ -136,14 +141,12 @@ impl CudaSparseRegistersState {
 
     pub(crate) fn round_poly_q<F: jolt_field::Field>(
         &self,
-        rd_inc: &[F],
         e_in: &[F],
         e_out: &[F],
     ) -> Option<[Fr; 2]> {
         let ctx = crate::cuda::shared_ctx()?;
         let schedule = self.schedules.get(self.round)?;
         let in_pairs = if e_in.len() > 1 { (e_in.len() / 2) as u32 } else { 0 };
-        let rd_inc_dev = ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?;
         let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
         let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
         ctx.sparse_register_round_poly(SparseRegisterRoundInputs {
@@ -155,7 +158,7 @@ impl CudaSparseRegistersState {
             even_idx: &schedule.even_idx,
             odd_idx: &schedule.odd_idx,
             pair: &schedule.pair,
-            rd_inc: &rd_inc_dev,
+            rd_inc: &self.rd_inc,
             e_in: &e_in_dev,
             e_out: &e_out_dev,
             in_pairs,
@@ -177,8 +180,13 @@ impl CudaSparseRegistersState {
             challenge,
         })?;
         self.entries = entries;
+        ctx.bind(&mut self.rd_inc, &mut self.rd_inc_scratch, challenge)?;
         self.round += 1;
         Ok(())
+    }
+
+    pub(crate) fn rd_inc_first(&self) -> Result<Fr, CudaError> {
+        self.rd_inc.first()
     }
 
     pub(crate) fn materialize<F: jolt_field::Field>(

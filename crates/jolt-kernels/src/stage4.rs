@@ -1722,6 +1722,7 @@ fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>>
 #[cfg(feature = "cuda")]
 fn build_cuda_sparse_registers<F: Field>(
     entries: &[SparseRegisterEntry<F>],
+    rd_inc: &[F],
     trace_rounds: usize,
 ) -> Option<cuda::CudaSparseRegistersState> {
     let rows: Vec<usize> = entries.iter().map(|entry| entry.row).collect();
@@ -1732,7 +1733,7 @@ fn build_cuda_sparse_registers<F: Field>(
     let prev_val: Vec<u64> = entries.iter().map(|entry| entry.prev_val).collect();
     let next_val: Vec<u64> = entries.iter().map(|entry| entry.next_val).collect();
     cuda::CudaSparseRegistersState::new(
-        &rows, &cols, &val, &read_ra, &rd_wa, &prev_val, &next_val, trace_rounds,
+        &rows, &cols, &val, &read_ra, &rd_wa, &prev_val, &next_val, rd_inc, trace_rounds,
     )
 }
 
@@ -2017,7 +2018,7 @@ impl<F: Field> SparseRegistersState<F> {
         let eq_cycle = SplitEqState::new_low_to_high(trace_point, None);
         #[cfg(feature = "cuda")]
         let cuda = if backend == "cuda" && trace_len > 1 {
-            build_cuda_sparse_registers(&entries, log2_exact(trace_len, "stage4.trace_len")?)
+            build_cuda_sparse_registers(&entries, rd_inc, log2_exact(trace_len, "stage4.trace_len")?)
         } else {
             None
         };
@@ -2067,9 +2068,7 @@ impl<F: Field> SparseRegistersState<F> {
         }
         #[cfg(feature = "cuda")]
         if let Some(cuda) = &self.cuda {
-            if let Some(q) =
-                cuda.round_poly_q(&self.rd_inc, self.eq_cycle.e_in(), self.eq_cycle.e_out())
-            {
+            if let Some(q) = cuda.round_poly_q(self.eq_cycle.e_in(), self.eq_cycle.e_out()) {
                 if let (Some(q_constant), Some(q_quadratic)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
                 {
@@ -2123,7 +2122,6 @@ impl<F: Field> SparseRegistersState<F> {
             if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
                 if cuda.bind(challenge_fr).is_ok() {
                     self.eq_cycle.bind(challenge);
-                    bind_dense_evals_reuse(&mut self.rd_inc, &mut self.rd_inc_scratch, challenge);
                     self.current_trace_len /= 2;
                     if self.current_trace_len == 1 {
                         let _ = self.materialize_dense();
@@ -2223,7 +2221,16 @@ impl<F: Field> SparseRegistersState<F> {
             (registers_val, read_ra, rd_wa)
         };
         let eq_eval = self.eq_cycle.eval();
-        let rd_inc_eval =
+        #[cfg(feature = "cuda")]
+        let cuda_rd_inc = self
+            .cuda
+            .as_ref()
+            .and_then(|cuda| crate::cuda::fr_into::<F>(cuda.rd_inc_first().ok()?));
+        #[cfg(not(feature = "cuda"))]
+        let cuda_rd_inc: Option<F> = None;
+        let rd_inc_eval = if let Some(rd_inc_eval) = cuda_rd_inc {
+            rd_inc_eval
+        } else {
             self.rd_inc
                 .first()
                 .copied()
@@ -2231,7 +2238,8 @@ impl<F: Field> SparseRegistersState<F> {
                     input: "stage4.registers.RdInc",
                     expected: 1,
                     actual: 0,
-                })?;
+                })?
+        };
         self.dense = Some(registers_combined_dense_state(
             vec![eq_eval; self.register_count],
             registers_val,
