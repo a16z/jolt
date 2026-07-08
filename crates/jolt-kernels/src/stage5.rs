@@ -1659,6 +1659,8 @@ struct InstructionReadRafCycleState<F: Field> {
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg(feature = "cuda")]
     cuda: Option<cuda::CudaInstructionRafCycleSparse>,
+    #[cfg(feature = "cuda")]
+    cuda_eq: Option<crate::split_eq::CudaGruenSplitEq>,
 }
 
 enum InstructionReadRafCycleRaFactors<F: Field> {
@@ -2724,13 +2726,23 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         };
         #[cfg(not(feature = "cuda"))]
         let _ = backend;
+        let split_eq = GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh);
+        #[cfg(feature = "cuda")]
+        let cuda_eq = if cuda.is_some() {
+            crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &split_eq))
+        } else {
+            None
+        };
         Ok(Self {
             fixed_factors,
             fixed_factor_scratch,
             ra_factors,
-            split_eq: GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh),
+            split_eq,
             #[cfg(feature = "cuda")]
             cuda,
+            #[cfg(feature = "cuda")]
+            cuda_eq,
         })
     }
 
@@ -2741,9 +2753,9 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         relation: Stage5Relation,
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
         #[cfg(feature = "cuda")]
-        if let Some(cuda) = &self.cuda {
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
             if let Some(raw) =
-                cuda.round_poly_evals(self.split_eq.e_in_current(), self.split_eq.e_out_current())
+                cuda.round_poly_evals(cuda_eq.e_in_device(), cuda_eq.e_out_device())
             {
                 let evals = raw
                     .into_iter()
@@ -2877,6 +2889,10 @@ impl<F: Field> InstructionReadRafCycleState<F> {
 
     fn bind(&mut self, challenge: F) {
         self.split_eq.bind(challenge);
+        #[cfg(feature = "cuda")]
+        if let Some(cuda_eq) = &mut self.cuda_eq {
+            cuda_eq.sync_to_host(&self.split_eq);
+        }
         #[cfg(feature = "cuda")]
         if let Some(cuda) = &mut self.cuda {
             if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {

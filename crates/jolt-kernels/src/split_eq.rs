@@ -159,9 +159,17 @@ pub struct CudaGruenSplitEq {
 
 #[cfg(feature = "cuda")]
 impl CudaGruenSplitEq {
-    pub fn new(ctx: &CudaKernelContext, host: &GruenSplitEqPolynomial<Fr>) -> Option<Self> {
-        let e_in_refs: Vec<&[Fr]> = host.e_in_levels().iter().map(Vec::as_slice).collect();
-        let e_out_refs: Vec<&[Fr]> = host.e_out_levels().iter().map(Vec::as_slice).collect();
+    pub fn new<F: Field>(ctx: &CudaKernelContext, host: &GruenSplitEqPolynomial<F>) -> Option<Self> {
+        let e_in_refs: Vec<&[Fr]> = host
+            .e_in_levels()
+            .iter()
+            .map(|level| crate::cuda::as_fr_slice(level))
+            .collect::<Option<Vec<&[Fr]>>>()?;
+        let e_out_refs: Vec<&[Fr]> = host
+            .e_out_levels()
+            .iter()
+            .map(|level| crate::cuda::as_fr_slice(level))
+            .collect::<Option<Vec<&[Fr]>>>()?;
         let e_in_levels = ctx.upload_many(&e_in_refs).ok()?;
         let e_out_levels = ctx.upload_many(&e_out_refs).ok()?;
         Some(Self {
@@ -180,7 +188,7 @@ impl CudaGruenSplitEq {
         &self.e_out_levels[self.live_e_out - 1]
     }
 
-    pub fn sync_to_host(&mut self, host: &GruenSplitEqPolynomial<Fr>) {
+    pub fn sync_to_host<F: Field>(&mut self, host: &GruenSplitEqPolynomial<F>) {
         self.live_e_in = host.e_in_num_levels();
         self.live_e_out = host.e_out_num_levels();
     }

@@ -3323,6 +3323,10 @@ struct CoreBooleanityStage6State<'a, F: Field> {
     cuda: Option<cuda::CudaCoreBooleanitySparse>,
     #[cfg(feature = "cuda")]
     cuda_address: Option<cuda::CudaCoreBooleanityAddressState>,
+    #[cfg(feature = "cuda")]
+    cuda_eq_b: Option<crate::split_eq::CudaGruenSplitEq>,
+    #[cfg(feature = "cuda")]
+    cuda_eq_d: Option<crate::split_eq::CudaGruenSplitEq>,
 }
 
 impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
@@ -3389,12 +3393,22 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             None
         };
 
+        let b = GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh);
+        let d = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh);
+        #[cfg(feature = "cuda")]
+        let cuda_eq_b = if cuda_address.is_some() {
+            crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &b))
+        } else {
+            None
+        };
+
         Ok(Self {
             log_k_chunk,
             num_polys,
             address_round: 0,
-            b: GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh),
-            d: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
+            b,
+            d,
             f_table,
             eq_r_r: F::zero(),
             eq_r_r_inv: F::zero(),
@@ -3411,6 +3425,10 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             cuda: None,
             #[cfg(feature = "cuda")]
             cuda_address,
+            #[cfg(feature = "cuda")]
+            cuda_eq_b,
+            #[cfg(feature = "cuda")]
+            cuda_eq_d: None,
         })
     }
 
@@ -3451,9 +3469,9 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         let f_values = self.f_table.values();
 
         #[cfg(feature = "cuda")]
-        if let Some(cuda) = &self.cuda_address {
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda_address, &self.cuda_eq_b) {
             if let Some(q) =
-                cuda.round_poly_q(f_values, self.b.e_in_current(), self.b.e_out_current(), m)
+                cuda.round_poly_q(f_values, cuda_eq.e_in_device(), cuda_eq.e_out_device(), m)
             {
                 if let (Some(q0), Some(q1)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
@@ -3504,8 +3522,8 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
 
     fn cycle_round_poly(&self, previous_claim: F) -> Result<UnivariatePoly<F>, Stage6KernelError> {
         #[cfg(feature = "cuda")]
-        if let Some(cuda) = &self.cuda {
-            if let Some(q) = cuda.round_poly_q(self.d.e_in_current(), self.d.e_out_current()) {
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq_d) {
+            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_device(), cuda_eq.e_out_device()) {
                 if let (Some(q0), Some(q1)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
                 {
@@ -3615,6 +3633,10 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     fn bind(&mut self, challenge: F) {
         if self.h.is_none() {
             self.b.bind(challenge);
+            #[cfg(feature = "cuda")]
+            if let Some(cuda_eq) = &mut self.cuda_eq_b {
+                cuda_eq.sync_to_host(&self.b);
+            }
             self.f_table.update(challenge);
             self.address_round += 1;
             if self.address_round == self.log_k_chunk {
@@ -3639,6 +3661,10 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             }
         } else {
             self.d.bind(challenge);
+            #[cfg(feature = "cuda")]
+            if let Some(cuda_eq) = &mut self.cuda_eq_d {
+                cuda_eq.sync_to_host(&self.d);
+            }
             #[cfg(feature = "cuda")]
             if let Some(cuda) = &mut self.cuda {
                 if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
@@ -3674,6 +3700,10 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
                 )
             },
         );
+        if self.cuda.is_some() {
+            self.cuda_eq_d = crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &self.d));
+        }
     }
 
     fn factor_eval(&self, index: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
@@ -4162,6 +4192,8 @@ pub(crate) struct HammingBooleanityStage6State<F: Field> {
     pub(crate) active_scale: F,
     #[cfg(feature = "cuda")]
     cuda: Option<cuda::CudaHammingBooleanityState>,
+    #[cfg(feature = "cuda")]
+    cuda_eq: Option<crate::split_eq::CudaGruenSplitEq>,
 }
 
 impl<F: Field> HammingBooleanityStage6State<F> {
@@ -4192,14 +4224,24 @@ impl<F: Field> HammingBooleanityStage6State<F> {
         };
         #[cfg(not(feature = "cuda"))]
         let _ = backend;
+        let eq = GruenSplitEqPolynomial::new(point, BindingOrder::LowToHigh);
+        #[cfg(feature = "cuda")]
+        let cuda_eq = if cuda.is_some() {
+            crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &eq))
+        } else {
+            None
+        };
         Ok(Self {
-            eq: GruenSplitEqPolynomial::new(point, BindingOrder::LowToHigh),
+            eq,
             hamming_weight,
             hamming_weight_scratch: Vec::new(),
             output,
             active_scale,
             #[cfg(feature = "cuda")]
             cuda,
+            #[cfg(feature = "cuda")]
+            cuda_eq,
         })
     }
 
@@ -4215,10 +4257,8 @@ impl<F: Field> HammingBooleanityStage6State<F> {
             });
         }
         #[cfg(feature = "cuda")]
-        if let Some(cuda) = &self.cuda {
-            if let Some(q) =
-                cuda.round_poly_q(self.eq.e_in_current(), self.eq.e_out_current())
-            {
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
+            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_device(), cuda_eq.e_out_device()) {
                 if let (Some(q_constant), Some(q_top)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
                 {
@@ -4286,6 +4326,9 @@ impl<F: Field> HammingBooleanityStage6State<F> {
             if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
                 if cuda.bind(challenge_fr).is_ok() {
                     self.eq.bind(challenge);
+                    if let Some(cuda_eq) = &mut self.cuda_eq {
+                        cuda_eq.sync_to_host(&self.eq);
+                    }
                     return;
                 }
             }
@@ -5434,6 +5477,8 @@ struct InstructionRaVirtualStage6State<'a, F: Field> {
     backend: &'static str,
     #[cfg(feature = "cuda")]
     cuda: Option<cuda::CudaRaVirtualD4Sparse>,
+    #[cfg(feature = "cuda")]
+    cuda_eq: Option<crate::split_eq::CudaGruenSplitEq>,
 }
 
 impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
@@ -5509,6 +5554,12 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         } else {
             None
         };
+        #[cfg(feature = "cuda")]
+        let cuda_eq = match (&cuda, &split_eq) {
+            (Some(_), Some(host_eq)) => crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, host_eq)),
+            _ => None,
+        };
 
         Ok(Self {
             relation,
@@ -5526,6 +5577,8 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             backend,
             #[cfg(feature = "cuda")]
             cuda,
+            #[cfg(feature = "cuda")]
+            cuda_eq,
         })
     }
 
@@ -5669,9 +5722,9 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         debug_assert_eq!(self.chunks_per_virtual, 4);
 
         #[cfg(feature = "cuda")]
-        if let Some(cuda) = &self.cuda {
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
             if let Some(q) =
-                cuda.round_poly_evals(split_eq.e_in_current(), split_eq.e_out_current())
+                cuda.round_poly_evals(cuda_eq.e_in_device(), cuda_eq.e_out_device())
             {
                 let evals: Option<Vec<F>> = q
                     .iter()
@@ -5834,6 +5887,9 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
                 if cuda.bind(challenge_fr).is_ok() {
                     if let Some(split_eq) = &mut self.split_eq {
                         split_eq.bind(challenge);
+                        if let Some(cuda_eq) = &mut self.cuda_eq {
+                            cuda_eq.sync_to_host(split_eq);
+                        }
                     }
                     return;
                 }

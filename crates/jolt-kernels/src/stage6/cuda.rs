@@ -312,16 +312,18 @@ impl CudaRaVirtualD4State {
         })
     }
 
-    pub(crate) fn round_poly_evals<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 4]> {
+    pub(crate) fn round_poly_evals(
+        &self,
+        e_in: &DeviceFrVec,
+        e_out: &DeviceFrVec,
+    ) -> Option<[Fr; 4]> {
         let ctx = crate::cuda::shared_ctx()?;
-        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
         let chunk_refs: Vec<&DeviceFrVec> = self.chunks.iter().collect();
         ctx.ra_virtual_d4_round_poly(RaVirtualD4Inputs {
             chunks: &chunk_refs,
             gamma_powers: &self.gamma_powers,
-            e_in: &e_in_dev,
-            e_out: &e_out_dev,
+            e_in,
+            e_out,
         })
         .ok()
     }
@@ -400,7 +402,11 @@ impl CudaRaVirtualD4Sparse {
         })
     }
 
-    pub(crate) fn round_poly_evals<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 4]> {
+    pub(crate) fn round_poly_evals(
+        &self,
+        e_in: &DeviceFrVec,
+        e_out: &DeviceFrVec,
+    ) -> Option<[Fr; 4]> {
         match self {
             Self::Sparse {
                 round,
@@ -412,8 +418,6 @@ impl CudaRaVirtualD4Sparse {
                 gamma_powers,
             } => {
                 let ctx = crate::cuda::shared_ctx()?;
-                let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-                let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
                 ctx.ra_virtual_d4_sparse_round_poly(crate::cuda::RaVirtualD4SparseInputs {
                     tables,
                     values,
@@ -421,8 +425,8 @@ impl CudaRaVirtualD4Sparse {
                     chunk_domain: *chunk_domain,
                     source_rows: *source_rows,
                     gamma_powers,
-                    e_in: &e_in_dev,
-                    e_out: &e_out_dev,
+                    e_in,
+                    e_out,
                     round: *round,
                 })
                 .ok()
@@ -493,14 +497,12 @@ impl CudaHammingBooleanityState {
         })
     }
 
-    pub(crate) fn round_poly_q<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 2]> {
+    pub(crate) fn round_poly_q(&self, e_in: &DeviceFrVec, e_out: &DeviceFrVec) -> Option<[Fr; 2]> {
         let ctx = crate::cuda::shared_ctx()?;
-        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
         ctx.hamming_booleanity_round_poly(HammingBooleanityInputs {
             hamming_weight: &self.hamming_weight,
-            e_in: &e_in_dev,
-            e_out: &e_out_dev,
+            e_in,
+            e_out,
         })
         .ok()
     }
@@ -531,16 +533,14 @@ impl CudaCoreBooleanityState {
         })
     }
 
-    pub(crate) fn round_poly_q<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 2]> {
+    pub(crate) fn round_poly_q(&self, e_in: &DeviceFrVec, e_out: &DeviceFrVec) -> Option<[Fr; 2]> {
         let ctx = crate::cuda::shared_ctx()?;
-        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
         let h_refs: Vec<&DeviceFrVec> = self.h.iter().collect();
         ctx.core_booleanity_cycle_round_poly(CoreBooleanityCycleInputs {
             h_polys: &h_refs,
             rho: &self.rho,
-            e_in: &e_in_dev,
-            e_out: &e_out_dev,
+            e_in,
+            e_out,
         })
         .ok()
     }
@@ -621,7 +621,7 @@ impl CudaCoreBooleanitySparse {
         })
     }
 
-    pub(crate) fn round_poly_q<F: Field>(&self, e_in: &[F], e_out: &[F]) -> Option<[Fr; 2]> {
+    pub(crate) fn round_poly_q(&self, e_in: &DeviceFrVec, e_out: &DeviceFrVec) -> Option<[Fr; 2]> {
         match self {
             Self::Sparse {
                 round,
@@ -635,16 +635,14 @@ impl CudaCoreBooleanitySparse {
                 rho,
             } => {
                 let ctx = crate::cuda::shared_ctx()?;
-                let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-                let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
                 ctx.core_booleanity_sparse_round_poly(crate::cuda::CoreBooleanitySparseInputs {
                     tables,
                     present_mask,
                     values,
                     source_rows: *source_rows,
                     rho,
-                    e_in: &e_in_dev,
-                    e_out: &e_out_dev,
+                    e_in,
+                    e_out,
                     num_polys: *num_polys,
                     chunk_domain: *chunk_domain,
                     poly_stride: *poly_stride,
@@ -735,21 +733,19 @@ impl CudaCoreBooleanityAddressState {
     pub(crate) fn round_poly_q<F: Field>(
         &self,
         f_values: &[F],
-        e_in: &[F],
-        e_out: &[F],
+        e_in: &DeviceFrVec,
+        e_out: &DeviceFrVec,
         m: usize,
     ) -> Option<[Fr; 2]> {
         let ctx = crate::cuda::shared_ctx()?;
         let f_dev = crate::cuda::as_fr_slice(f_values)?;
-        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
         let g_refs: Vec<&DeviceFrVec> = self.g.iter().collect();
         ctx.core_booleanity_address_round_poly(CoreBooleanityAddressInputs {
             g: &g_refs,
             f_values: f_dev,
             gamma_squares: &self.gamma_squares,
-            e_in: &e_in_dev,
-            e_out: &e_out_dev,
+            e_in,
+            e_out,
             m: m as u32,
         })
         .ok()

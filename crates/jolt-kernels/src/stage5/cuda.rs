@@ -132,20 +132,18 @@ impl CudaInstructionRafCycleState {
         })
     }
 
-    pub(crate) fn round_poly_evals<F: jolt_field::Field>(
+    pub(crate) fn round_poly_evals(
         &self,
-        e_in: &[F],
-        e_out: &[F],
+        e_in: &DeviceFrVec,
+        e_out: &DeviceFrVec,
     ) -> Option<[Fr; 9]> {
         let ctx = crate::cuda::shared_ctx()?;
-        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
         let chunk_refs: Vec<&DeviceFrVec> = self.chunks.iter().collect();
         ctx.instruction_raf_cycle_round_poly(InstructionRafCycleInputs {
             combined: &self.combined,
             chunks: &chunk_refs,
-            e_in: &e_in_dev,
-            e_out: &e_out_dev,
+            e_in,
+            e_out,
         })
         .ok()
     }
@@ -217,10 +215,10 @@ impl CudaInstructionRafCycleSparse {
         })
     }
 
-    pub(crate) fn round_poly_evals<F: jolt_field::Field>(
+    pub(crate) fn round_poly_evals(
         &self,
-        e_in: &[F],
-        e_out: &[F],
+        e_in: &DeviceFrVec,
+        e_out: &DeviceFrVec,
     ) -> Option<[Fr; 9]> {
         match self {
             Self::Sparse {
@@ -234,8 +232,6 @@ impl CudaInstructionRafCycleSparse {
                 ..
             } => {
                 let ctx = crate::cuda::shared_ctx()?;
-                let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-                let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
                 ctx.instruction_raf_cycle_sparse_round_poly(InstructionRafCycleSparseInputs {
                     tables,
                     values,
@@ -243,8 +239,8 @@ impl CudaInstructionRafCycleSparse {
                     num_chunks: *num_chunks,
                     chunk_domain: *chunk_domain,
                     source_rows: *source_rows,
-                    e_in: &e_in_dev,
-                    e_out: &e_out_dev,
+                    e_in,
+                    e_out,
                     round: *round,
                 })
                 .ok()
