@@ -102,6 +102,7 @@ pub(crate) struct CudaSparseRegistersState {
     entries: SparseRegisterEntries,
     rd_inc: DeviceFrVec,
     rd_inc_scratch: DeviceFrVec,
+    eq_cycle: crate::split_eq::CudaSplitEqState<'static>,
     schedules: Vec<RoundSchedule>,
     final_cols: Vec<u8>,
     round: usize,
@@ -118,6 +119,7 @@ impl CudaSparseRegistersState {
         prev_val: &[u64],
         next_val: &[u64],
         rd_inc: &[F],
+        trace_point: &[F],
         trace_rounds: usize,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
@@ -128,27 +130,30 @@ impl CudaSparseRegistersState {
             prev_val: ctx.upload(&fr_from_u64s(prev_val)).ok()?,
             next_val: ctx.upload(&fr_from_u64s(next_val)).ok()?,
         };
+        let eq_cycle = crate::split_eq::CudaSplitEqState::new_low_to_high(
+            ctx,
+            crate::cuda::as_fr_slice(trace_point)?,
+            None,
+        )
+        .ok()?;
         let (schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
         Some(Self {
             entries,
             rd_inc: ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
             rd_inc_scratch: ctx.upload(&[]).ok()?,
+            eq_cycle,
             schedules,
             final_cols,
             round: 0,
         })
     }
 
-    pub(crate) fn round_poly_q<F: jolt_field::Field>(
-        &self,
-        e_in: &[F],
-        e_out: &[F],
-    ) -> Option<[Fr; 2]> {
+    pub(crate) fn round_poly_q(&self) -> Option<[Fr; 2]> {
         let ctx = crate::cuda::shared_ctx()?;
         let schedule = self.schedules.get(self.round)?;
-        let in_pairs = if e_in.len() > 1 { (e_in.len() / 2) as u32 } else { 0 };
-        let e_in_dev = ctx.upload(crate::cuda::as_fr_slice(e_in)?).ok()?;
-        let e_out_dev = ctx.upload(crate::cuda::as_fr_slice(e_out)?).ok()?;
+        let e_in_dev = self.eq_cycle.e_in_device();
+        let e_out_dev = self.eq_cycle.e_out_device();
+        let in_pairs = if e_in_dev.len() > 1 { (e_in_dev.len() / 2) as u32 } else { 0 };
         ctx.sparse_register_round_poly(SparseRegisterRoundInputs {
             val: &self.entries.val,
             read_ra: &self.entries.read_ra,
@@ -159,8 +164,8 @@ impl CudaSparseRegistersState {
             odd_idx: &schedule.odd_idx,
             pair: &schedule.pair,
             rd_inc: &self.rd_inc,
-            e_in: &e_in_dev,
-            e_out: &e_out_dev,
+            e_in: e_in_dev,
+            e_out: e_out_dev,
             in_pairs,
         })
         .ok()
@@ -181,6 +186,7 @@ impl CudaSparseRegistersState {
         })?;
         self.entries = entries;
         ctx.bind(&mut self.rd_inc, &mut self.rd_inc_scratch, challenge)?;
+        self.eq_cycle.bind(challenge)?;
         self.round += 1;
         Ok(())
     }

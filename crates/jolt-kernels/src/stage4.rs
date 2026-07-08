@@ -1723,6 +1723,7 @@ fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>>
 fn build_cuda_sparse_registers<F: Field>(
     entries: &[SparseRegisterEntry<F>],
     rd_inc: &[F],
+    trace_point: &[F],
     trace_rounds: usize,
 ) -> Option<cuda::CudaSparseRegistersState> {
     let rows: Vec<usize> = entries.iter().map(|entry| entry.row).collect();
@@ -1733,7 +1734,8 @@ fn build_cuda_sparse_registers<F: Field>(
     let prev_val: Vec<u64> = entries.iter().map(|entry| entry.prev_val).collect();
     let next_val: Vec<u64> = entries.iter().map(|entry| entry.next_val).collect();
     cuda::CudaSparseRegistersState::new(
-        &rows, &cols, &val, &read_ra, &rd_wa, &prev_val, &next_val, rd_inc, trace_rounds,
+        &rows, &cols, &val, &read_ra, &rd_wa, &prev_val, &next_val, rd_inc, trace_point,
+        trace_rounds,
     )
 }
 
@@ -2018,7 +2020,12 @@ impl<F: Field> SparseRegistersState<F> {
         let eq_cycle = SplitEqState::new_low_to_high(trace_point, None);
         #[cfg(feature = "cuda")]
         let cuda = if backend == "cuda" && trace_len > 1 {
-            build_cuda_sparse_registers(&entries, rd_inc, log2_exact(trace_len, "stage4.trace_len")?)
+            build_cuda_sparse_registers(
+                &entries,
+                rd_inc,
+                trace_point,
+                log2_exact(trace_len, "stage4.trace_len")?,
+            )
         } else {
             None
         };
@@ -2068,7 +2075,7 @@ impl<F: Field> SparseRegistersState<F> {
         }
         #[cfg(feature = "cuda")]
         if let Some(cuda) = &self.cuda {
-            if let Some(q) = cuda.round_poly_q(self.eq_cycle.e_in(), self.eq_cycle.e_out()) {
+            if let Some(q) = cuda.round_poly_q() {
                 if let (Some(q_constant), Some(q_quadratic)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
                 {
