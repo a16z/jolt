@@ -14,7 +14,7 @@ where
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let uniskip_rounds = 1;
     let uniskip_degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
-    let uniskip_domain = JoltSumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
+    let uniskip_domain = SumcheckDomain::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
     builder = add_stage(
         builder,
         "stage1.outer_uniskip",
@@ -48,7 +48,7 @@ where
     }
 
     let remainder_rounds = 1 + log_t;
-    let remainder_domain = JoltSumcheckDomain::BooleanHypercube;
+    let remainder_domain = SumcheckDomain::BooleanHypercube;
     let [remainder_batching_coefficient] = input
         .stage1
         .remainder_consistency

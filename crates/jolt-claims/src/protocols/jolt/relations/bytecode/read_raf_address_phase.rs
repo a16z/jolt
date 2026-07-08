@@ -5,10 +5,11 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::{
-    bytecode_read_raf_address_phase_opening, pc_spartan_outer, pc_spartan_shift, stage1_claim,
-    stage2_claim, stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
+    bytecode_read_raf_address_phase_opening, pc_spartan_outer, stage1_claim, stage2_claim,
+    stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
     BYTECODE_STAGE_GAMMA_COUNTS,
 };
+use crate::protocols::jolt::geometry::spartan::pc_shift;
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId,
@@ -200,7 +201,7 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
             + gamma.clone().pow(3) * stage4_claim()
             + gamma.clone().pow(4) * stage5_claim::<F>()
             + gamma.clone().pow(5) * opening(pc_spartan_outer())
-            + gamma.pow(6) * opening(pc_spartan_shift())
+            + gamma.pow(6) * opening(pc_shift())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {

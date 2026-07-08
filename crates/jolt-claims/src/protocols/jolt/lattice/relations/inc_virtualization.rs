@@ -122,9 +122,8 @@ pub fn fused_inc_store_opening() -> JoltOpeningId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::geometry::claim_reductions::increments::{
-        ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation,
-    };
+    use crate::protocols::jolt::geometry::ram::{ram_inc, ram_inc_val_check};
+    use crate::protocols::jolt::geometry::registers::{rd_inc_read_write, rd_inc_val_evaluation};
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -147,7 +146,7 @@ mod tests {
 
         let input = relation.input_expression::<Fr>().evaluate(
             |id| match *id {
-                id if id == ram_inc_read_write() => ram_rw,
+                id if id == ram_inc() => ram_rw,
                 id if id == ram_inc_val_check() => ram_val,
                 id if id == rd_inc_read_write() => rd_rw,
                 id if id == rd_inc_val_evaluation() => rd_val,

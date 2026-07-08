@@ -899,11 +899,11 @@ fn stage5_formula_output_openings(
     openings.extend(LookupTableKind::<RISCV_XLEN>::iter().map(|table| {
         (
             "stage5.claims.instruction_read_raf.lookup_table_flags",
-            instruction::read_raf_lookup_table_flag_opening(table),
+            instruction::lookup_table_flag(table),
         )
     }));
     for index in 0.. {
-        let id = instruction::read_raf_instruction_ra_opening(index);
+        let id = instruction::instruction_ra(index);
         if opening_claim(&base.proof, id).is_none() {
             break;
         }
@@ -911,7 +911,7 @@ fn stage5_formula_output_openings(
     }
     openings.push((
         "stage5.claims.instruction_read_raf.instruction_raf_flag",
-        instruction::read_raf_instruction_raf_flag_opening(),
+        instruction::instruction_raf_flag(),
     ));
     openings.extend(
         [ram::ram_ra_claim_reduction()]

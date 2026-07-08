@@ -56,6 +56,7 @@
 //! a committed output-claim row or in the final hiding evaluation commitment.
 use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use jolt_claims::protocols::jolt::relations;
+use jolt_claims::SumcheckDomain;
 use jolt_claims::{
     derived, opening,
     protocols::jolt::{
@@ -88,7 +89,7 @@ use jolt_claims::{
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
         JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId,
-        JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial, PrecommittedReductionLayout,
+        JoltRelationId, JoltVirtualPolynomial, PrecommittedReductionLayout,
         ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
         RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
         RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
@@ -207,7 +208,7 @@ where
 fn add_batched_stage<F, C>(
     builder: Builder<F, C>,
     name: &'static str,
-    batch_domain: JoltSumcheckDomain,
+    batch_domain: SumcheckDomain,
     claims: &[(usize, VerifierExpr<F>, VerifierExpr<F>)],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
@@ -376,10 +377,10 @@ fn require_expr_sources<F: Field>(
     Ok(())
 }
 
-fn domain_spec(domain: JoltSumcheckDomain) -> SumcheckDomainSpec {
+fn domain_spec(domain: SumcheckDomain) -> SumcheckDomainSpec {
     match domain {
-        JoltSumcheckDomain::BooleanHypercube => SumcheckDomainSpec::BooleanHypercube,
-        JoltSumcheckDomain::CenteredInteger { domain_size } => {
+        SumcheckDomain::BooleanHypercube => SumcheckDomainSpec::BooleanHypercube,
+        SumcheckDomain::CenteredInteger { domain_size } => {
             SumcheckDomainSpec::CenteredInteger { domain_size }
         }
     }

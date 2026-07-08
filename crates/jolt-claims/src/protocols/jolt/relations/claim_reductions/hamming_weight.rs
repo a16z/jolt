@@ -130,9 +130,9 @@ impl SymbolicSumcheck for ClaimReduction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::ram_hamming_weight;
     use crate::protocols::jolt::geometry::dimensions::JoltFormulaDimensionsError;
     use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
+    use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn layout(

@@ -24,7 +24,7 @@ use super::precommitted::{
 
 /// Committed length of the program-image polynomial: the initial RAM
 /// bytecode-word slice padded to a power of two (at least two words).
-pub fn padded_program_image_len_words(program_image_len_words: usize) -> usize {
+fn padded_program_image_len_words(program_image_len_words: usize) -> usize {
     program_image_len_words.next_power_of_two().max(2)
 }
 

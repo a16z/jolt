@@ -343,7 +343,7 @@ fn claim_mut_from_stage5_outputs<F: Field>(
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
-        if id == instruction::read_raf_lookup_table_flag_opening(table) {
+        if id == instruction::lookup_table_flag(table) {
             return claims
                 .instruction_read_raf
                 .lookup_table_flags
@@ -356,7 +356,7 @@ fn claim_mut_from_stage5_outputs<F: Field>(
         .iter_mut()
         .enumerate()
     {
-        if id == instruction::read_raf_instruction_ra_opening(index) {
+        if id == instruction::instruction_ra(index) {
             return Some(opening_claim);
         }
     }
@@ -367,7 +367,7 @@ fn claim_mut_from_stage5_outputs<F: Field>(
         registers::rd_wa_val_evaluation(),
     ];
     match id {
-        id if id == instruction::read_raf_instruction_raf_flag_opening() => {
+        id if id == instruction::instruction_raf_flag() => {
             Some(&mut claims.instruction_read_raf.instruction_raf_flag)
         }
         id if id == ram_ra => Some(&mut claims.ram_ra_claim_reduction.ram_ra),
@@ -427,7 +427,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
         return Some(&mut stage6b.ram_hamming_booleanity.ram_hamming_weight);
     }
     for (index, opening_claim) in stage6b.ram_ra_virtualization.ram_ra.iter_mut().enumerate() {
-        if id == ram::ra_virtualization_committed_ram_ra_opening(index) {
+        if id == ram::committed_ram_ra(index) {
             return Some(opening_claim);
         }
     }
@@ -437,7 +437,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
         .iter_mut()
         .enumerate()
     {
-        if id == instruction::ra_virtualization_committed_instruction_ra_opening(index) {
+        if id == instruction::committed_instruction_ra(index) {
             return Some(opening_claim);
         }
     }

@@ -30,7 +30,7 @@ where
     let product_uniskip_rounds = 1;
     let product_uniskip_degree = SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
     let product_uniskip_domain =
-        JoltSumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE);
+        SumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE);
     let product_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
         input.stage2.product_tau_high,

@@ -11,9 +11,9 @@ use crate::protocols::jolt::geometry::spartan::{
     product_uniskip_opening, product_uniskip_weight, SpartanProductDimensions,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
-use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{opening, InputClaims, OutputClaims, SumcheckDomain, SymbolicSumcheck};
 
 /// Consumed product uni-skip inputs: the three Spartan-outer openings the first
 /// round reduces (`product`, `should_branch`, `should_jump`), each reweighted by a
@@ -66,8 +66,8 @@ impl SymbolicSumcheck for ProductUniskip {
         JoltRelationId::SpartanProductVirtualization
     }
 
-    fn domain(&self) -> JoltSumcheckDomain {
-        JoltSumcheckDomain::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE)
+    fn domain(&self) -> SumcheckDomain {
+        SumcheckDomain::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE)
     }
 
     fn rounds(&self) -> usize {

@@ -4,9 +4,11 @@ use jolt_field::RingCore;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use serde::{Deserialize, Serialize};
 
+use crate::protocols::jolt::geometry::claim_reductions::instruction::{
+    left_lookup_operand_reduced, lookup_output_reduced, right_lookup_operand_reduced,
+};
 use crate::protocols::jolt::geometry::instruction::{
-    eq_table_value, instruction_ra_product, instruction_raf_flag, left_lookup_operand_reduced,
-    lookup_output_reduced, lookup_table_flag, right_lookup_operand_reduced,
+    eq_table_value, instruction_ra_product, instruction_raf_flag, lookup_table_flag,
     InstructionReadRafDimensions, READ_RAF_BASE_DEGREE,
 };
 use crate::protocols::jolt::{

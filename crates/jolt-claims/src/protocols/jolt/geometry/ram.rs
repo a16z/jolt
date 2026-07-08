@@ -160,10 +160,6 @@ impl<F: Field> RamRaClaimReductionPublicValues<F> {
     }
 }
 
-pub fn ra_virtualization_committed_ram_ra_opening(index: usize) -> JoltOpeningId {
-    committed_ram_ra(index)
-}
-
 pub(crate) fn committed_ram_ra_product<F>(dimensions: RamRaVirtualizationDimensions) -> JoltExpr<F>
 where
     F: RingCore,
@@ -246,7 +242,7 @@ pub fn ram_ra_claim_reduction() -> JoltOpeningId {
     )
 }
 
-pub(crate) fn committed_ram_ra(index: usize) -> JoltOpeningId {
+pub fn committed_ram_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamRa(index),
         JoltRelationId::RamRaVirtualization,

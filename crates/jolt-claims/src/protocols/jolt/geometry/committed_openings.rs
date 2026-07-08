@@ -50,23 +50,6 @@ pub fn final_opening_polynomial_order(
     polynomials
 }
 
-pub fn final_opening_ids(
-    layout: JoltRaPolynomialLayout,
-    include_trusted_advice: bool,
-    include_untrusted_advice: bool,
-    committed_program_chunks: Option<usize>,
-) -> Vec<JoltOpeningId> {
-    final_opening_polynomial_order(
-        layout,
-        include_trusted_advice,
-        include_untrusted_advice,
-        committed_program_chunks,
-    )
-    .into_iter()
-    .map(final_opening_id)
-    .collect()
-}
-
 pub fn final_opening_id(polynomial: JoltCommittedPolynomial) -> JoltOpeningId {
     match polynomial {
         JoltCommittedPolynomial::TrustedAdvice => {
@@ -79,7 +62,7 @@ pub fn final_opening_id(polynomial: JoltCommittedPolynomial) -> JoltOpeningId {
     }
 }
 
-pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId {
+fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId {
     match polynomial {
         JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
             JoltRelationId::IncClaimReduction
@@ -267,8 +250,12 @@ mod tests {
 
     #[test]
     fn final_opening_ids_use_sumcheck_sources() {
+        let ids = final_opening_polynomial_order(layout(), true, false, None)
+            .into_iter()
+            .map(final_opening_id)
+            .collect::<Vec<_>>();
         assert_eq!(
-            final_opening_ids(layout(), true, false, None),
+            ids,
             vec![
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RamInc,
