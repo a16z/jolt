@@ -217,6 +217,11 @@ pub mod xfer_stats {
         pub ns_upload: AtomicU64,
         pub ns_kernel: AtomicU64,
         pub ns_d2h: AtomicU64,
+        pub ns_bind: AtomicU64,
+        pub bind_calls: AtomicU64,
+        pub h2d_raw_bytes: AtomicU64,
+        pub h2d_raw_calls: AtomicU64,
+        pub ns_h2d_raw: AtomicU64,
     }
 
     fn counters() -> &'static Counters {
@@ -255,6 +260,16 @@ pub mod xfer_stats {
     }
 
     #[inline]
+    pub(crate) fn add_h2d_raw(bytes: usize, ns: u64) {
+        if enabled() {
+            let c = counters();
+            let _ = c.h2d_raw_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            let _ = c.h2d_raw_calls.fetch_add(1, Ordering::Relaxed);
+            let _ = c.ns_h2d_raw.fetch_add(ns, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
     pub(crate) fn add_d2h(bytes: usize) {
         if enabled() {
             let _ = counters().d2h_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
@@ -265,8 +280,10 @@ pub mod xfer_stats {
     pub(crate) enum Phase {
         Materialize,
         Upload,
+        #[expect(dead_code)]
         Kernel,
         D2h,
+        Bind,
     }
 
     #[inline]
@@ -283,12 +300,16 @@ pub mod xfer_stats {
             Phase::Upload => &c.ns_upload,
             Phase::Kernel => &c.ns_kernel,
             Phase::D2h => &c.ns_d2h,
+            Phase::Bind => {
+                let _ = c.bind_calls.fetch_add(1, Ordering::Relaxed);
+                &c.ns_bind
+            }
         };
         let _ = bucket.fetch_add(ns, Ordering::Relaxed);
         out
     }
 
-    pub fn snapshot() -> [u64; 14] {
+    pub fn snapshot() -> [u64; 19] {
         let c = counters();
         [
             c.pack_d2d_bytes.load(Ordering::Relaxed),
@@ -305,6 +326,11 @@ pub mod xfer_stats {
             c.ns_upload.load(Ordering::Relaxed),
             c.ns_kernel.load(Ordering::Relaxed),
             c.ns_d2h.load(Ordering::Relaxed),
+            c.ns_bind.load(Ordering::Relaxed),
+            c.bind_calls.load(Ordering::Relaxed),
+            c.h2d_raw_bytes.load(Ordering::Relaxed),
+            c.h2d_raw_calls.load(Ordering::Relaxed),
+            c.ns_h2d_raw.load(Ordering::Relaxed),
         ]
     }
 
@@ -325,6 +351,11 @@ pub mod xfer_stats {
             &c.ns_upload,
             &c.ns_kernel,
             &c.ns_d2h,
+            &c.ns_bind,
+            &c.bind_calls,
+            &c.h2d_raw_bytes,
+            &c.h2d_raw_calls,
+            &c.ns_h2d_raw,
         ] {
             a.store(0, Ordering::Relaxed);
         }
@@ -825,20 +856,34 @@ impl CudaKernelContext {
         Ok(out)
     }
 
+    fn clone_htod_tracked<T: cudarc::driver::DeviceRepr>(
+        &self,
+        values: &[T],
+    ) -> Result<CudaSlice<T>, CudaError> {
+        if !xfer_stats::enabled() {
+            return Ok(self.stream.clone_htod(values)?);
+        }
+        let bytes = std::mem::size_of_val(values);
+        let start = std::time::Instant::now();
+        let dev = self.stream.clone_htod(values)?;
+        xfer_stats::add_h2d_raw(bytes, start.elapsed().as_nanos() as u64);
+        Ok(dev)
+    }
+
     pub fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
-        Ok(self.stream.clone_htod(values)?)
+        self.clone_htod_tracked(values)
     }
 
     pub fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
-        Ok(self.stream.clone_htod(values)?)
+        self.clone_htod_tracked(values)
     }
 
     pub fn upload_i16_slice(&self, values: &[i16]) -> Result<CudaSlice<i16>, CudaError> {
-        Ok(self.stream.clone_htod(values)?)
+        self.clone_htod_tracked(values)
     }
 
     pub fn upload_u16_slice(&self, values: &[u16]) -> Result<CudaSlice<u16>, CudaError> {
-        Ok(self.stream.clone_htod(values)?)
+        self.clone_htod_tracked(values)
     }
 
     pub fn download_u64(&self, buf: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
@@ -856,7 +901,7 @@ impl CudaKernelContext {
             ptrs.push(ptr);
             guards.push(guard);
         }
-        let array = self.stream.clone_htod(&ptrs)?;
+        let array = self.clone_htod_tracked(&ptrs)?;
         self.stream.synchronize()?;
         drop(guards);
         Ok(array)
@@ -903,8 +948,8 @@ impl CudaKernelContext {
             let weights = self.upload(weights)?;
             let row_dots_a = self.upload(row_dots_a)?;
             let row_dots_b = self.upload(row_dots_b)?;
-            let first = self.stream.clone_htod(first_group_rows)?;
-            let second = self.stream.clone_htod(second_group_rows)?;
+            let first = self.clone_htod_tracked(first_group_rows)?;
+            let second = self.clone_htod_tracked(second_group_rows)?;
 
             let first_len = first_group_rows.len() as u32;
             let second_len = second_group_rows.len() as u32;
@@ -966,10 +1011,10 @@ impl CudaKernelContext {
             let witness = self.resident_witness(inputs.witness)?;
             let a_coeffs = self.upload(inputs.a_coeffs)?;
             let b_coeffs = self.upload(inputs.b_coeffs)?;
-            let a_offsets = self.stream.clone_htod(inputs.a_offsets)?;
-            let a_vars = self.stream.clone_htod(inputs.a_vars)?;
-            let b_offsets = self.stream.clone_htod(inputs.b_offsets)?;
-            let b_vars = self.stream.clone_htod(inputs.b_vars)?;
+            let a_offsets = self.clone_htod_tracked(inputs.a_offsets)?;
+            let a_vars = self.clone_htod_tracked(inputs.a_vars)?;
+            let b_offsets = self.clone_htod_tracked(inputs.b_offsets)?;
+            let b_vars = self.clone_htod_tracked(inputs.b_vars)?;
 
             let split = inputs.split as u32;
             let total_entries = (inputs.a_offsets.len() - 1) as u32;
@@ -1036,10 +1081,10 @@ impl CudaKernelContext {
         if total > 0 {
             let a_coeffs_dev = self.upload(a_coeffs)?;
             let b_coeffs_dev = self.upload(b_coeffs)?;
-            let a_offsets_dev = self.stream.clone_htod(a_offsets)?;
-            let a_vars_dev = self.stream.clone_htod(a_vars)?;
-            let b_offsets_dev = self.stream.clone_htod(b_offsets)?;
-            let b_vars_dev = self.stream.clone_htod(b_vars)?;
+            let a_offsets_dev = self.clone_htod_tracked(a_offsets)?;
+            let a_vars_dev = self.clone_htod_tracked(a_vars)?;
+            let b_offsets_dev = self.clone_htod_tracked(b_offsets)?;
+            let b_vars_dev = self.clone_htod_tracked(b_vars)?;
 
             let row_count_arg = row_count as u64;
             let num_vars_padded_arg = num_vars_padded as u64;
@@ -1906,9 +1951,9 @@ impl CudaKernelContext {
             return Ok([Fr::zero(); 2]);
         }
 
-        let even_dev = self.stream.clone_htod(inputs.even_idx)?;
-        let odd_dev = self.stream.clone_htod(inputs.odd_idx)?;
-        let pair_dev = self.stream.clone_htod(inputs.pair)?;
+        let even_dev = self.clone_htod_tracked(inputs.even_idx)?;
+        let odd_dev = self.clone_htod_tracked(inputs.odd_idx)?;
+        let pair_dev = self.clone_htod_tracked(inputs.pair)?;
 
         const WIDTH: usize = 2;
         let tuple = WIDTH * LIMBS;
@@ -2000,8 +2045,8 @@ impl CudaKernelContext {
             return Ok(SparseRegisterEntries { val, read_ra, rd_wa, prev_val, next_val });
         }
 
-        let even_dev = self.stream.clone_htod(inputs.even_idx)?;
-        let odd_dev = self.stream.clone_htod(inputs.odd_idx)?;
+        let even_dev = self.clone_htod_tracked(inputs.even_idx)?;
+        let odd_dev = self.clone_htod_tracked(inputs.odd_idx)?;
         let challenge_dev = self.upload(&[inputs.challenge])?;
 
         let block = BLOCK;
@@ -2469,7 +2514,7 @@ impl CudaKernelContext {
             .iter()
             .map(|group| self.upload(group))
             .collect::<Result<_, _>>()?;
-        let indices_dev = self.stream.clone_htod(indices)?;
+        let indices_dev = self.clone_htod_tracked(indices)?;
         let mut out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
 
         let num_chunks_arg = num_chunks as u64;
@@ -2543,8 +2588,8 @@ impl CudaKernelContext {
         let mut out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
 
         let tables_dev = self.upload(tables)?;
-        let mask_dev = self.stream.clone_htod(present_mask)?;
-        let values_dev = self.stream.clone_htod(values)?;
+        let mask_dev = self.clone_htod_tracked(present_mask)?;
+        let values_dev = self.clone_htod_tracked(values)?;
 
         let num_polys_arg = num_polys as u64;
         let chunk_domain_arg = chunk_domain as u64;
@@ -2608,8 +2653,8 @@ impl CudaKernelContext {
 
         let first_coeffs = self.upload(inputs.first_coeffs)?;
         let second_coeffs = self.upload(inputs.second_coeffs)?;
-        let first_rows = self.stream.clone_htod(inputs.first_group_rows)?;
-        let second_rows = self.stream.clone_htod(inputs.second_group_rows)?;
+        let first_rows = self.clone_htod_tracked(inputs.first_group_rows)?;
+        let second_rows = self.clone_htod_tracked(inputs.second_group_rows)?;
 
         let tuple = degree * LIMBS;
         let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
@@ -2803,7 +2848,7 @@ impl CudaKernelContext {
         };
         let half_arg = half as u64;
         let f = self.bind.clone();
-        xfer_stats::timed(xfer_stats::Phase::Kernel, || {
+        xfer_stats::timed(xfer_stats::Phase::Bind, || {
             let mut launch = self.stream.launch_builder(&f);
             let _ = launch
                 .arg(&mut scratch.buf)
@@ -2845,7 +2890,7 @@ impl CudaKernelContext {
         };
         let half_arg = half as u64;
         let f = self.bind.clone();
-        xfer_stats::timed(xfer_stats::Phase::Kernel, || {
+        xfer_stats::timed(xfer_stats::Phase::Bind, || {
             let mut launch = self.stream.launch_builder(&f);
             let _ = launch
                 .arg(&mut scratch.buf)
@@ -2951,8 +2996,8 @@ impl CudaKernelContext {
 
         let factor_ptrs = self.factor_ptr_array(terms.factors)?;
 
-        let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
-        let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
+        let offsets_dev = self.clone_htod_tracked(terms.term_factor_offsets)?;
+        let indices_dev = self.clone_htod_tracked(terms.term_factor_indices)?;
 
         let tuple = width * LIMBS;
         let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
@@ -3055,8 +3100,8 @@ impl CudaKernelContext {
         let factor_ptrs = self.factor_ptr_array(terms.factors)?;
 
         let points_dev = self.upload(points)?;
-        let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
-        let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
+        let offsets_dev = self.clone_htod_tracked(terms.term_factor_offsets)?;
+        let indices_dev = self.clone_htod_tracked(terms.term_factor_indices)?;
 
         let tuple = num_evals * LIMBS;
         // Cap the block so the per-thread tuple accumulators fit in 48 KB shared memory;
@@ -3147,8 +3192,8 @@ impl CudaKernelContext {
 
         let factor_ptrs = self.factor_ptr_array(inputs.factors)?;
 
-        let offsets_dev = self.stream.clone_htod(inputs.term_factor_offsets)?;
-        let indices_dev = self.stream.clone_htod(inputs.term_factor_indices)?;
+        let offsets_dev = self.clone_htod_tracked(inputs.term_factor_offsets)?;
+        let indices_dev = self.clone_htod_tracked(inputs.term_factor_indices)?;
 
         const WIDTH: usize = 2;
         let tuple = WIDTH * LIMBS;
@@ -3251,8 +3296,8 @@ impl CudaKernelContext {
             .map(|e| Fr::from_u64(if e == 0 { 0 } else { (e + 1) as u64 }))
             .collect();
         let points_dev = self.upload(&points)?;
-        let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
-        let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
+        let offsets_dev = self.clone_htod_tracked(terms.term_factor_offsets)?;
+        let indices_dev = self.clone_htod_tracked(terms.term_factor_indices)?;
 
         let tuple = degree * LIMBS;
         let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
