@@ -227,7 +227,7 @@ fn is_unsupported(kind: SourceInstructionKind) -> bool {
 }
 
 // Helper function that tells me if a given RISC-V (or custom instruction)
-// is (1) Expandable or not (2) If it is expandable,then do we currently support auto-extaction?
+// is (1) Expandable or not (2) If it is expandable,then do we currently support auto-extraction?
 // (we should for most instructions, but some system instruction lean defs are still open)
 // (3) If all checks pass, then we label the instruction as expandable.
 // Note that the list of expandable but unsupported instructions is hand coded
@@ -253,7 +253,7 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), ExpansionError> {
     // Exception Type modelling to match current Sail spec.
     // Atomics or stores fail with different exception terms compared to ordinary load
     // instructions.
-    // We need to tell the translator what the exceotion type is.
+    // We need to tell the translator what the exception type is.
     let write_or_atomic = n.starts_with("AMO")
         || n.starts_with("LR")
         || matches!(n, "SB" | "SH" | "SW" | "SD" | "SCD" | "SCW");
@@ -340,7 +340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Example invocation is cargo run -q -p jolt-lean-gen -- LW
-    // so here arg would LW, and as its a valid instructon as per
+    // so here arg would LW, and as its a valid instruction as per
     // the enumerations of SourceInstruction
     let kind = kind_from_name(&arg).ok_or_else(|| format!("unknown instruction: {arg}"))?;
 
