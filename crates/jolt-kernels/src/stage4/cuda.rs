@@ -9,7 +9,7 @@ use crate::cuda::{
 pub(crate) struct CudaDenseState {
     factors: Vec<DeviceFrVec>,
     scratch: Vec<DeviceFrVec>,
-    term_coeffs: Vec<Fr>,
+    term_coeffs: DeviceFrVec,
     term_factor_offsets: Vec<u32>,
     term_factor_indices: Vec<u32>,
     degree: usize,
@@ -31,6 +31,7 @@ impl CudaDenseState {
         let scratch = (0..factors.len())
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let term_coeffs = ctx.upload(&term_coeffs).ok()?;
         Some(Self {
             factors: device_factors,
             scratch,
@@ -54,6 +55,7 @@ impl CudaDenseState {
         let scratch = (0..factors.len())
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let term_coeffs = ctx.upload(&term_coeffs).ok()?;
         Some(Self {
             factors,
             scratch,

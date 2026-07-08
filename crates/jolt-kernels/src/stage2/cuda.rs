@@ -6,6 +6,7 @@ use crate::cuda::{CudaError, DeviceFrVec, RoundPolyTerms};
 pub(crate) struct CudaDenseState {
     factors: Vec<DeviceFrVec>,
     scratch: Vec<DeviceFrVec>,
+    term_coeffs: DeviceFrVec,
     degree: usize,
 }
 
@@ -18,9 +19,11 @@ impl CudaDenseState {
         let scratch = (0..degree)
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let term_coeffs = ctx.upload(&[Fr::from(1u64)]).ok()?;
         Some(Self {
             factors: device_factors,
             scratch,
+            term_coeffs,
             degree,
         })
     }
@@ -28,12 +31,11 @@ impl CudaDenseState {
     pub(crate) fn round_poly(&self) -> Result<UnivariatePoly<Fr>, CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
         let factor_refs: Vec<&DeviceFrVec> = self.factors.iter().collect();
-        let single_term_coeffs = [Fr::from(1u64)];
         let single_term_offsets = [0u32, self.degree as u32];
         let single_term_indices: Vec<u32> = (0..self.degree as u32).collect();
         let coeffs = ctx.dense_product_round_poly(RoundPolyTerms {
             factors: &factor_refs,
-            term_coeffs: &single_term_coeffs,
+            term_coeffs: &self.term_coeffs,
             term_factor_offsets: &single_term_offsets,
             term_factor_indices: &single_term_indices,
             degree: self.degree,

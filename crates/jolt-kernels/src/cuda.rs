@@ -489,7 +489,7 @@ pub struct FusedOuterInputs<'a> {
 
 pub struct RoundPolyTerms<'a> {
     pub factors: &'a [&'a DeviceFrVec],
-    pub term_coeffs: &'a [Fr],
+    pub term_coeffs: &'a DeviceFrVec,
     pub term_factor_offsets: &'a [u32],
     pub term_factor_indices: &'a [u32],
     pub degree: usize,
@@ -2951,7 +2951,6 @@ impl CudaKernelContext {
 
         let factor_ptrs = self.factor_ptr_array(terms.factors)?;
 
-        let coeffs_dev = self.upload(terms.term_coeffs)?;
         let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
         let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
 
@@ -2978,7 +2977,7 @@ impl CudaKernelContext {
         let _ = launch
             .arg(&mut buf)
             .arg(&factor_ptrs)
-            .arg(&coeffs_dev.buf)
+            .arg(&terms.term_coeffs.buf)
             .arg(&offsets_dev)
             .arg(&indices_dev)
             .arg(&pair_stride_arg)
@@ -3056,7 +3055,6 @@ impl CudaKernelContext {
         let factor_ptrs = self.factor_ptr_array(terms.factors)?;
 
         let points_dev = self.upload(points)?;
-        let coeffs_dev = self.upload(terms.term_coeffs)?;
         let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
         let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
 
@@ -3085,7 +3083,7 @@ impl CudaKernelContext {
             .arg(&mut buf)
             .arg(&factor_ptrs)
             .arg(&points_dev.buf)
-            .arg(&coeffs_dev.buf)
+            .arg(&terms.term_coeffs.buf)
             .arg(&offsets_dev)
             .arg(&indices_dev)
             .arg(&pair_stride_arg)
@@ -3253,7 +3251,6 @@ impl CudaKernelContext {
             .map(|e| Fr::from_u64(if e == 0 { 0 } else { (e + 1) as u64 }))
             .collect();
         let points_dev = self.upload(&points)?;
-        let coeffs_dev = self.upload(terms.term_coeffs)?;
         let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
         let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
 
@@ -3281,7 +3278,7 @@ impl CudaKernelContext {
             .arg(&mut buf)
             .arg(&factor_ptrs)
             .arg(&points_dev.buf)
-            .arg(&coeffs_dev.buf)
+            .arg(&terms.term_coeffs.buf)
             .arg(&offsets_dev)
             .arg(&indices_dev)
             .arg(&e_in.buf)
@@ -3859,7 +3856,7 @@ mod tests {
             let got = c
                 .sum_of_products_round_poly(RoundPolyTerms {
                     factors: &factor_refs,
-                    term_coeffs: &term_coeffs,
+                    term_coeffs: &c.upload(&term_coeffs).unwrap(),
                     term_factor_offsets: &term_factor_offsets,
                     term_factor_indices: &term_factor_indices,
                     degree,
@@ -3895,7 +3892,7 @@ mod tests {
             let got = c
                 .dense_product_round_poly(RoundPolyTerms {
                     factors: &factor_refs,
-                    term_coeffs: &term_coeffs,
+                    term_coeffs: &c.upload(&term_coeffs).unwrap(),
                     term_factor_offsets: &term_factor_offsets,
                     term_factor_indices: &term_factor_indices,
                     degree,
@@ -4174,7 +4171,7 @@ mod tests {
                 .eq_weighted_round_poly(
                     RoundPolyTerms {
                         factors: &factor_refs,
-                        term_coeffs: &term_coeffs,
+                        term_coeffs: &c.upload(&term_coeffs).unwrap(),
                         term_factor_offsets: &term_factor_offsets,
                         term_factor_indices: &term_factor_indices,
                         degree,
@@ -4690,6 +4687,7 @@ mod tests {
                 outputs: Vec::new(),
                 active_scale: scale,
                 backend: "cpu",
+                cuda: None,
             };
             let expected = state
                 .round_poly(previous_claim, Stage7Relation::HammingWeightClaimReduction)

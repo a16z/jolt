@@ -9,7 +9,7 @@ pub(crate) enum CudaBytecodeReadRafState {
     SumOfProducts {
         factors: Vec<DeviceFrVec>,
         scratch: DeviceFrVec,
-        term_coeffs: Vec<Fr>,
+        term_coeffs: DeviceFrVec,
         term_factor_offsets: Vec<u32>,
         term_factor_indices: Vec<u32>,
         points: Vec<Fr>,
@@ -63,6 +63,7 @@ impl CudaBytecodeReadRafState {
         term_factor_indices.push((2 * stages + 1) as u32);
         term_factor_offsets.push(term_factor_indices.len() as u32);
 
+        let term_coeffs = ctx.upload(&term_coeffs).ok()?;
         Some(Self::SumOfProducts {
             factors,
             scratch: ctx.upload(&[]).ok()?,
@@ -99,7 +100,7 @@ impl CudaBytecodeReadRafState {
         Some(Self::SumOfProducts {
             factors,
             scratch: ctx.upload(&[]).ok()?,
-            term_coeffs: vec![Fr::from(1u64)],
+            term_coeffs: ctx.upload(&[Fr::from(1u64)]).ok()?,
             term_factor_offsets: vec![0, (num_chunks + 1) as u32],
             term_factor_indices,
             points,
@@ -752,6 +753,7 @@ pub(crate) struct CudaIncState {
     eq_rd: DeviceFrVec,
     rd_inc: DeviceFrVec,
     scratch: DeviceFrVec,
+    term_coeffs: DeviceFrVec,
     gamma2: Fr,
 }
 
@@ -764,25 +766,26 @@ impl CudaIncState {
         gamma2: F,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
+        let gamma2 = crate::cuda::into_fr(gamma2)?;
         Some(Self {
             eq_ram,
             ram_inc: ctx.upload(crate::cuda::as_fr_slice(ram_inc)?).ok()?,
             eq_rd,
             rd_inc: ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
             scratch: ctx.upload(&[]).ok()?,
-            gamma2: crate::cuda::into_fr(gamma2)?,
+            term_coeffs: ctx.upload(&[Fr::from(1u64), gamma2]).ok()?,
+            gamma2,
         })
     }
 
     pub(crate) fn round_poly_evals(&self) -> Result<[Fr; 2], CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
         let factors = [&self.eq_ram, &self.ram_inc, &self.eq_rd, &self.rd_inc];
-        let term_coeffs = [Fr::from(1u64), self.gamma2];
         let term_factor_offsets = [0u32, 2, 4];
         let term_factor_indices = [0u32, 1, 2, 3];
         let evals = ctx.sum_of_products_round_poly(RoundPolyTerms {
             factors: &factors,
-            term_coeffs: &term_coeffs,
+            term_coeffs: &self.term_coeffs,
             term_factor_offsets: &term_factor_offsets,
             term_factor_indices: &term_factor_indices,
             degree: 2,
