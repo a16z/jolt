@@ -11,10 +11,15 @@
 //! provable at harness scale with zero kernel code. It is a test oracle, never
 //! a performance path — optimized kernels are equivalence-tested against it.
 
+mod config;
 mod error;
 mod naive;
+mod preprocessing;
+pub mod stages;
 mod sumcheck;
 
+pub use config::{remap_address, ProverConfig};
 pub use error::ProverError;
 pub use naive::NaiveSumcheckProver;
+pub use preprocessing::JoltProverPreprocessing;
 pub use sumcheck::ProveSumcheck;

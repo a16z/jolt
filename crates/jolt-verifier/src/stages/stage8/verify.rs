@@ -289,7 +289,7 @@ where
                     let (commitment_list, claim_list): (&[PCS::Output], Option<&[F]>) =
                         match polynomial {
                             JoltCommittedPolynomial::InstructionRa(_) => (
-                                &proof.commitments.ra.instruction,
+                                &proof.commitments.instruction_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7
                                         .hamming_weight_claim_reduction
@@ -298,13 +298,13 @@ where
                                 }),
                             ),
                             JoltCommittedPolynomial::BytecodeRa(_) => (
-                                &proof.commitments.ra.bytecode,
+                                &proof.commitments.bytecode_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7.hamming_weight_claim_reduction.bytecode_ra.as_slice()
                                 }),
                             ),
                             JoltCommittedPolynomial::RamRa(_) => (
-                                &proof.commitments.ra.ram,
+                                &proof.commitments.ram_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7.hamming_weight_claim_reduction.ram_ra.as_slice()
                                 }),
@@ -383,15 +383,15 @@ fn require_commitment_layout<C>(
 ) -> Result<(), VerifierError> {
     let expected = 2 + layout.total();
     let got = 2
-        + commitments.ra.instruction.len()
-        + commitments.ra.bytecode.len()
-        + commitments.ra.ram.len();
+        + commitments.instruction_ra.len()
+        + commitments.bytecode_ra.len()
+        + commitments.ram_ra.len();
     if got != expected {
         return Err(VerifierError::InvalidCommitmentCount { expected, got });
     }
-    if commitments.ra.instruction.len() != layout.instruction()
-        || commitments.ra.bytecode.len() != layout.bytecode()
-        || commitments.ra.ram.len() != layout.ram()
+    if commitments.instruction_ra.len() != layout.instruction()
+        || commitments.bytecode_ra.len() != layout.bytecode()
+        || commitments.ram_ra.len() != layout.ram()
     {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason: format!(
@@ -399,9 +399,9 @@ fn require_commitment_layout<C>(
                 layout.instruction(),
                 layout.bytecode(),
                 layout.ram(),
-                commitments.ra.instruction.len(),
-                commitments.ra.bytecode.len(),
-                commitments.ra.ram.len()
+                commitments.instruction_ra.len(),
+                commitments.bytecode_ra.len(),
+                commitments.ram_ra.len()
             ),
         });
     }

@@ -1,0 +1,19 @@
+[package]
+name = "jolt-kernels"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Compute kernels for the modular Jolt prover"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "prover"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-claims.workspace = true
+jolt-field.workspace = true
+jolt-openings.workspace = true
+jolt-witness.workspace = true
+thiserror.workspace = true

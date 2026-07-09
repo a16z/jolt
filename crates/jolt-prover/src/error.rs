@@ -42,6 +42,16 @@ pub enum ProverError<F: FieldCore> {
         got: usize,
     },
 
+    /// A capability the modular prover does not implement yet.
+    #[error("unsupported: {reason}")]
+    Unsupported { reason: &'static str },
+
+    #[error(transparent)]
+    Kernel(#[from] jolt_kernels::KernelError),
+
+    #[error(transparent)]
+    Witness(#[from] jolt_witness::WitnessError),
+
     /// Final values were requested before every round was bound.
     #[error("final table values requested with {remaining} unbound rounds")]
     NotFullyBound { remaining: usize },

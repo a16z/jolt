@@ -14,16 +14,27 @@ workspace = true
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
+prover-fixtures = ["jolt-prover-legacy/host"]
 
 [dependencies]
+common.workspace = true
 jolt-claims.workspace = true
+jolt-crypto.workspace = true
 jolt-field.workspace = true
+jolt-kernels.workspace = true
+jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
+jolt-program.workspace = true
 jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
 jolt-verifier.workspace = true
+jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
 jolt-claims = { workspace = true, features = ["test-utils"] }
-jolt-transcript.workspace = true
+jolt-dory.workspace = true
+jolt-prover-legacy = { workspace = true, features = ["minimal"] }
+postcard = { workspace = true, features = ["use-std"] }
+tracer.workspace = true

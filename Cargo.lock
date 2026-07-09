@@ -3438,6 +3438,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-kernels"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-witness",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
@@ -3545,14 +3556,24 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
+ "common",
  "jolt-claims",
+ "jolt-crypto",
+ "jolt-dory",
  "jolt-field",
+ "jolt-kernels",
+ "jolt-openings",
  "jolt-poly",
+ "jolt-program",
+ "jolt-prover-legacy",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
+ "jolt-witness",
+ "postcard",
  "rayon",
  "thiserror 2.0.18",
+ "tracer",
 ]
 
 [[package]]

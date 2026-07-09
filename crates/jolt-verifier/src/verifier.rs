@@ -573,13 +573,13 @@ pub fn absorb_transcript_commitments<C, T>(
     };
     absorb_commitment(&commitments.rd_inc);
     absorb_commitment(&commitments.ram_inc);
-    for commitment in &commitments.ra.instruction {
+    for commitment in &commitments.instruction_ra {
         absorb_commitment(commitment);
     }
-    for commitment in &commitments.ra.ram {
+    for commitment in &commitments.ram_ra {
         absorb_commitment(commitment);
     }
-    for commitment in &commitments.ra.bytecode {
+    for commitment in &commitments.bytecode_ra {
         absorb_commitment(commitment);
     }
     if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
@@ -969,11 +969,9 @@ mod tests {
         crate::proof::JoltCommitments::new(
             TestCommitment,
             TestCommitment,
-            crate::proof::JoltRaCommitments::new(
-                Vec::<TestCommitment>::new(),
-                Vec::<TestCommitment>::new(),
-                Vec::<TestCommitment>::new(),
-            ),
+            Vec::<TestCommitment>::new(),
+            Vec::<TestCommitment>::new(),
+            Vec::<TestCommitment>::new(),
         )
     }
 
