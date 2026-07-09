@@ -11,15 +11,40 @@ extern "C" __global__ void read_suffix_scatter(
     unsigned long m,
     unsigned long num_workers
 ) {
-    (void)worker_banks;
-    (void)weight;
-    (void)lookup_index_lo;
-    (void)lookup_index_hi;
-    (void)cycle_list;
-    (void)suffix_variants;
-    (void)suffix_count;
-    (void)suffix_len;
-    (void)poly_len;
-    (void)m;
-    (void)num_workers;
+    unsigned long worker = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (worker >= num_workers) return;
+
+    unsigned long slots = suffix_count * poly_len;
+    unsigned long bank_stride = slots * 4UL;
+    u64 *bank = worker_banks + worker * bank_stride;
+
+    u128 suffix_mask = (suffix_len >= 128)
+        ? (u128)-1
+        : (((u128)1 << suffix_len) - 1);
+    unsigned long index_mask = poly_len - 1UL;
+
+    for (unsigned long j = worker; j < m; j += num_workers) {
+        unsigned long c = (unsigned long)cycle_list[j];
+        u128 lookup_index = ((u128)lookup_index_hi[c] << 64) | (u128)lookup_index_lo[c];
+        unsigned long index = ((unsigned long)(lookup_index >> suffix_len)) & index_mask;
+        u128 suffix_bits = lookup_index & suffix_mask;
+
+        u64 w[4];
+        load4(weight + c * 4, w);
+
+        for (unsigned long s = 0; s < suffix_count; s++) {
+            u64 mle = suffix_mle_eval(suffix_bits, (unsigned int)suffix_len, suffix_variants[s]);
+            if (mle == 0) continue;
+            u64 *slot = bank + (s * poly_len + index) * 4UL;
+            if (mle == 1) {
+                raf_add_inplace(slot, w);
+            } else {
+                u64 raw[4] = {mle, 0, 0, 0};
+                u64 mont[4], contrib[4];
+                raf_to_mont(raw, mont);
+                fr_mul(w, mont, contrib);
+                raf_add_inplace(slot, contrib);
+            }
+        }
+    }
 }

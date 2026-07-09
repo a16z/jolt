@@ -97,7 +97,6 @@ pub struct CudaKernelContext {
     raf_weight_phase_update: CudaFunction,
     #[cfg(test)]
     suffix_mle_probe: CudaFunction,
-    #[expect(dead_code, reason = "used once the read_suffix_scatter body + wiring land")]
     read_suffix_scatter: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
@@ -3595,8 +3594,100 @@ impl CudaKernelContext {
         &self,
         inputs: ReadSuffixScatterInputs<'_>,
     ) -> Result<Vec<DeviceFrVec>, CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        let poly_len = inputs.poly_len;
+        let suffix_count = inputs.suffix_variants.len();
+        let m = inputs.cycle_list.len();
+        let trace_len = inputs.weight.len;
+        if inputs.lookup_index_lo.len() != trace_len
+            || inputs.lookup_index_hi.len() != trace_len
+            || poly_len == 0
+            || !poly_len.is_power_of_two()
+            || suffix_count == 0
+        {
+            return Err(CudaError::Unsupported);
+        }
+        let slots = suffix_count * poly_len;
+
+        if m == 0 {
+            let banks = (0..suffix_count)
+                .map(|_| self.upload(&vec![Fr::from(0u64); poly_len]))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(banks);
+        }
+
+        let num_workers = m.min(4096);
+        let lo_dev = self.clone_htod_tracked(inputs.lookup_index_lo)?;
+        let hi_dev = self.clone_htod_tracked(inputs.lookup_index_hi)?;
+        let cycle_dev = self.clone_htod_tracked(inputs.cycle_list)?;
+        let variant_dev = self.clone_htod_tracked(inputs.suffix_variants)?;
+        let mut worker_banks: CudaSlice<u64> =
+            self.stream.alloc_zeros(num_workers * slots * LIMBS)?;
+        let mut final_banks: CudaSlice<u64> = self.stream.alloc_zeros(slots * LIMBS)?;
+
+        let scatter_cfg = LaunchConfig {
+            grid_dim: ((num_workers as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let suffix_count_arg = suffix_count as u64;
+        let suffix_len_arg = inputs.suffix_len as u64;
+        let poly_len_arg = poly_len as u64;
+        let m_arg = m as u64;
+        let num_workers_arg = num_workers as u64;
+        let scatter = self.read_suffix_scatter.clone();
+        let mut launch = self.stream.launch_builder(&scatter);
+        let _ = launch
+            .arg(&mut worker_banks)
+            .arg(&inputs.weight.buf)
+            .arg(&lo_dev)
+            .arg(&hi_dev)
+            .arg(&cycle_dev)
+            .arg(&variant_dev)
+            .arg(&suffix_count_arg)
+            .arg(&suffix_len_arg)
+            .arg(&poly_len_arg)
+            .arg(&m_arg)
+            .arg(&num_workers_arg);
+        // SAFETY: worker `w` writes only its exclusive `worker_banks[w]` slice of
+        // slots*LIMBS u64s; reads weight[cycle_list[j]] (cycle_list values index the
+        // trace_len-length weight), the index arrays (trace_len elems), and cycle_list
+        // / suffix_variants (m / suffix_count elems) it is passed.
+        let _ = unsafe { launch.launch(scatter_cfg) }?;
+
+        let reduce_cfg = LaunchConfig {
+            grid_dim: ((slots as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let slots_arg = slots as u64;
+        let reduce = self.raf_q_scatter_reduce.clone();
+        let mut launch = self.stream.launch_builder(&reduce);
+        let _ = launch
+            .arg(&mut final_banks)
+            .arg(&worker_banks)
+            .arg(&slots_arg)
+            .arg(&num_workers_arg);
+        // SAFETY: thread `slot` sums worker_banks[*][slot] across num_workers and
+        // writes final_banks[slot]; slots threads, each buffer holds >= slots*LIMBS
+        // (final) / num_workers*slots*LIMBS (worker) u64s.
+        let _ = unsafe { launch.launch(reduce_cfg) }?;
+        self.stream.synchronize()?;
+
+        let mut banks = Vec::with_capacity(suffix_count);
+        for i in 0..suffix_count {
+            let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(poly_len * LIMBS)?;
+            let start = i * poly_len * LIMBS;
+            self.stream
+                .memcpy_dtod(&final_banks.slice(start..start + poly_len * LIMBS), &mut buf)?;
+            banks.push(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len: poly_len,
+                staging: self.staging.clone(),
+            });
+        }
+        self.stream.synchronize()?;
+        Ok(banks)
     }
 
     pub fn raf_weight_phase_update(
