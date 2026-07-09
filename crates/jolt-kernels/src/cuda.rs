@@ -89,8 +89,8 @@ pub struct CudaKernelContext {
     bind: CudaFunction,
     eq_double: CudaFunction,
     lt_double: CudaFunction,
-    #[expect(dead_code, reason = "used once the raf_q_scatter kernel body lands")]
     raf_q_scatter: CudaFunction,
+    raf_q_scatter_reduce: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -726,6 +726,7 @@ impl CudaKernelContext {
             eq_double: module.load_function("eq_double")?,
             lt_double: module.load_function("lt_double")?,
             raf_q_scatter: module.load_function("raf_q_scatter")?,
+            raf_q_scatter_reduce: module.load_function("raf_q_scatter_reduce")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -3479,8 +3480,93 @@ impl CudaKernelContext {
         &self,
         inputs: RafQScatterInputs<'_>,
     ) -> Result<Vec<DeviceFrVec>, CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        let poly_len = inputs.poly_len;
+        let trace_len = inputs.weight.len;
+        if inputs.lookup_index_lo.len() != trace_len
+            || inputs.lookup_index_hi.len() != trace_len
+            || inputs.is_interleaved.len() != trace_len
+            || poly_len == 0
+            || !poly_len.is_power_of_two()
+        {
+            return Err(CudaError::Unsupported);
+        }
+        let slots = 5 * poly_len;
+
+        if trace_len == 0 {
+            let banks = (0..5)
+                .map(|_| self.upload(&vec![Fr::from(0u64); poly_len]))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(banks);
+        }
+
+        let num_workers = trace_len.min(4096);
+        let lo_dev = self.clone_htod_tracked(inputs.lookup_index_lo)?;
+        let hi_dev = self.clone_htod_tracked(inputs.lookup_index_hi)?;
+        let flags_dev = self.clone_htod_tracked(inputs.is_interleaved)?;
+        let mut worker_banks: CudaSlice<u64> =
+            self.stream.alloc_zeros(num_workers * slots * LIMBS)?;
+        let mut final_banks: CudaSlice<u64> = self.stream.alloc_zeros(slots * LIMBS)?;
+
+        let scatter_cfg = LaunchConfig {
+            grid_dim: ((num_workers as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let suffix_len_arg = inputs.suffix_len as u64;
+        let poly_len_arg = poly_len as u64;
+        let trace_len_arg = trace_len as u64;
+        let num_workers_arg = num_workers as u64;
+        let scatter = self.raf_q_scatter.clone();
+        let mut launch = self.stream.launch_builder(&scatter);
+        let _ = launch
+            .arg(&mut worker_banks)
+            .arg(&inputs.weight.buf)
+            .arg(&lo_dev)
+            .arg(&hi_dev)
+            .arg(&flags_dev)
+            .arg(&suffix_len_arg)
+            .arg(&poly_len_arg)
+            .arg(&trace_len_arg)
+            .arg(&num_workers_arg);
+        // SAFETY: worker `w` writes only its exclusive `worker_banks[w]` slice of
+        // slots*LIMBS u64s; reads weight[c] (trace_len elems) and the index/flag
+        // arrays (trace_len elems each) it is passed.
+        let _ = unsafe { launch.launch(scatter_cfg) }?;
+
+        let reduce_cfg = LaunchConfig {
+            grid_dim: ((slots as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let slots_arg = slots as u64;
+        let reduce = self.raf_q_scatter_reduce.clone();
+        let mut launch = self.stream.launch_builder(&reduce);
+        let _ = launch
+            .arg(&mut final_banks)
+            .arg(&worker_banks)
+            .arg(&slots_arg)
+            .arg(&num_workers_arg);
+        // SAFETY: thread `slot` sums worker_banks[*][slot] across num_workers and
+        // writes final_banks[slot]; slots threads, each buffer holds >= slots*LIMBS
+        // (final) / num_workers*slots*LIMBS (worker) u64s.
+        let _ = unsafe { launch.launch(reduce_cfg) }?;
+        self.stream.synchronize()?;
+
+        let mut banks = Vec::with_capacity(5);
+        for i in 0..5 {
+            let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(poly_len * LIMBS)?;
+            let start = i * poly_len * LIMBS;
+            self.stream
+                .memcpy_dtod(&final_banks.slice(start..start + poly_len * LIMBS), &mut buf)?;
+            banks.push(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len: poly_len,
+                staging: self.staging.clone(),
+            });
+        }
+        self.stream.synchronize()?;
+        Ok(banks)
     }
 
     pub fn rd_wa_gather(
