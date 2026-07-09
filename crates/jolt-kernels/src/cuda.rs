@@ -43,6 +43,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/ra_virtual_d4.cu"),
     include_str!("cuda/ra_virtual_d4_sparse.cu"),
     include_str!("cuda/bytecode_cycle_sparse.cu"),
+    include_str!("cuda/raf_q_scatter.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -51,6 +52,7 @@ pub enum CudaError {
     Compile(cudarc::nvrtc::CompileError),
     Driver(cudarc::driver::DriverError),
     Pool,
+    Unsupported,
 }
 
 impl std::fmt::Display for CudaError {
@@ -59,6 +61,7 @@ impl std::fmt::Display for CudaError {
             CudaError::Compile(e) => write!(f, "nvrtc compile error: {e:?}"),
             CudaError::Driver(e) => write!(f, "cuda driver error: {e:?}"),
             CudaError::Pool => write!(f, "pinned staging pool invariant violated"),
+            CudaError::Unsupported => write!(f, "cuda kernel does not support these inputs"),
         }
     }
 }
@@ -86,6 +89,8 @@ pub struct CudaKernelContext {
     bind: CudaFunction,
     eq_double: CudaFunction,
     lt_double: CudaFunction,
+    #[expect(dead_code, reason = "used once the raf_q_scatter kernel body lands")]
+    raf_q_scatter: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -526,6 +531,15 @@ pub struct RoundPolyTerms<'a> {
     pub degree: usize,
 }
 
+pub struct RafQScatterInputs<'a> {
+    pub weight: &'a DeviceFrVec,
+    pub lookup_index_lo: &'a [u64],
+    pub lookup_index_hi: &'a [u64],
+    pub is_interleaved: &'a [u8],
+    pub suffix_len: usize,
+    pub poly_len: usize,
+}
+
 pub struct GruenRoundPolyInputs<'a> {
     pub factors: &'a [&'a DeviceFrVec],
     pub term_coeffs: &'a DeviceFrVec,
@@ -711,6 +725,7 @@ impl CudaKernelContext {
             bind: module.load_function("bind_kernel")?,
             eq_double: module.load_function("eq_double")?,
             lt_double: module.load_function("lt_double")?,
+            raf_q_scatter: module.load_function("raf_q_scatter")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -3460,6 +3475,14 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn raf_q_scatter(
+        &self,
+        inputs: RafQScatterInputs<'_>,
+    ) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
+    }
+
     pub fn rd_wa_gather(
         &self,
         address_eq: &[Fr],
@@ -4078,6 +4101,85 @@ mod tests {
             let expected = jolt_poly::EqPolynomial::<Fr>::evals(&r, scaling);
             let c = ctx();
             let got = c.eq_evals(&r, scaling).unwrap().to_host().unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn raf_q_scatter_matches_cpu(
+            log_trace in 1usize..12,
+            suffix_len in 1usize..40,
+            seed in fr_strategy(),
+        ) {
+            use jolt_lookup_tables::uninterleave_bits;
+
+            let trace_len = 1usize << log_trace;
+            let poly_len = 1usize << 8;
+            let suffix_mask: u128 = if suffix_len >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << suffix_len) - 1
+            };
+            let index_mask: u128 = if (suffix_len + 8) < 128 {
+                (1u128 << (suffix_len + 8)) - 1
+            } else {
+                u128::MAX
+            };
+
+            let weight: Vec<Fr> = (0..trace_len)
+                .map(|c| seed + Fr::from_u64((c + 1) as u64))
+                .collect();
+            let lookup_index: Vec<u128> = (0..trace_len)
+                .map(|c| ((c as u128).wrapping_mul(0x9e37_79b1) ^ (c as u128) << 17) & index_mask)
+                .collect();
+            let is_interleaved: Vec<bool> = (0..trace_len).map(|c| c % 3 == 0).collect();
+
+            let mut expected = vec![Fr::zero(); 5 * poly_len];
+            let shift_half_off = 0;
+            let left_off = poly_len;
+            let right_off = 2 * poly_len;
+            let shift_full_off = 3 * poly_len;
+            let identity_off = 4 * poly_len;
+            for c in 0..trace_len {
+                let index = ((lookup_index[c] >> suffix_len) as usize) & (poly_len - 1);
+                let suffix_bits = lookup_index[c] & suffix_mask;
+                let w = weight[c];
+                if is_interleaved[c] {
+                    expected[shift_half_off + index] += w;
+                    let (left_suffix, right_suffix) = uninterleave_bits(suffix_bits);
+                    if left_suffix != 0 {
+                        expected[left_off + index] += w * Fr::from_u64(left_suffix);
+                    }
+                    if right_suffix != 0 {
+                        expected[right_off + index] += w * Fr::from_u64(right_suffix);
+                    }
+                } else {
+                    expected[shift_full_off + index] += w;
+                    if suffix_bits != 0 {
+                        expected[identity_off + index] += w * Fr::from_u128(suffix_bits);
+                    }
+                }
+            }
+
+            let c = ctx();
+            let weight_dev = c.upload(&weight).unwrap();
+            let lo: Vec<u64> = lookup_index.iter().map(|&v| v as u64).collect();
+            let hi: Vec<u64> = lookup_index.iter().map(|&v| (v >> 64) as u64).collect();
+            let flags: Vec<u8> = is_interleaved.iter().map(|&b| u8::from(b)).collect();
+            let banks = c
+                .raf_q_scatter(RafQScatterInputs {
+                    weight: &weight_dev,
+                    lookup_index_lo: &lo,
+                    lookup_index_hi: &hi,
+                    is_interleaved: &flags,
+                    suffix_len,
+                    poly_len,
+                })
+                .unwrap();
+            prop_assert_eq!(banks.len(), 5);
+            let mut got = Vec::with_capacity(5 * poly_len);
+            for bank in &banks {
+                got.extend(bank.to_host().unwrap());
+            }
             prop_assert_eq!(got, expected);
         }
 
