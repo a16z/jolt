@@ -1221,3 +1221,153 @@ mod sumcheck_batch_derive_tests {
         fn draw_challenges(&self) {}
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod begin_batch_tests {
+    use super::draw_recording::{record, DrawEvent};
+    use super::ConcreteSumcheck as _;
+    use crate::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
+    use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
+    use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
+    use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
+    use jolt_field::{Field, Fr, FromPrimitiveInt, MulPow2};
+    use jolt_sumcheck::{append_sumcheck_claim, BatchMember, ClearSumcheckRecorder};
+    use jolt_transcript::Transcript;
+
+    #[derive(super::SumcheckBatch)]
+    struct HeadFixtureSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: Option<RegistersValEvaluation<F>>,
+    }
+
+    fn fixture(registers: bool) -> HeadFixtureSumchecks<Fr> {
+        HeadFixtureSumchecks {
+            instruction_read_raf: InstructionReadRaf::new(
+                InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap(),
+            ),
+            registers_val_evaluation: registers
+                .then(|| RegistersValEvaluation::new(TraceDimensions::new(4))),
+        }
+    }
+
+    fn instruction_inputs() -> InstructionReadRafInputClaims<Fr> {
+        let fr = Fr::from_u64;
+        InstructionReadRafInputClaims {
+            lookup_output: fr(2),
+            left_lookup_operand: fr(3),
+            right_lookup_operand: fr(5),
+        }
+    }
+
+    /// `begin_batch` with a clear recorder must reproduce the exact head
+    /// Fiat-Shamir sequence `verify_clear` performed before the factoring —
+    /// per-member `input_claim` absorbed under `b"sumcheck_claim"` in
+    /// declaration order, then one coefficient squeeze per member — and pack
+    /// the prelude's engine and named views consistently.
+    #[test]
+    fn begin_batch_matches_head_replica_and_packs_prelude() {
+        let sumchecks = fixture(true);
+        let inputs = HeadFixtureInputClaims::<Fr> {
+            instruction_read_raf: instruction_inputs(),
+            registers_val_evaluation: Some(RegistersValEvaluationInputClaims {
+                registers_val: Fr::from_u64(7),
+            }),
+        };
+        let (_, challenges) = record(|t| sumchecks.draw_challenges(t));
+        let challenges = challenges.unwrap();
+
+        let (events, head) = record(|t| {
+            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+            sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
+        });
+        let (batch, coefficients) = head.unwrap();
+
+        // The replica head: input_claim is transcript-pure, so only the absorbs
+        // and coefficient squeezes are observable events.
+        let instruction_sum = sumchecks
+            .instruction_read_raf
+            .input_claim(
+                &inputs.instruction_read_raf,
+                &challenges.instruction_read_raf,
+            )
+            .unwrap();
+        let registers_sum = sumchecks
+            .registers_val_evaluation
+            .as_ref()
+            .unwrap()
+            .input_claim(
+                inputs.registers_val_evaluation.as_ref().unwrap(),
+                challenges.registers_val_evaluation.as_ref().unwrap(),
+            )
+            .unwrap();
+        let (replica_events, (instruction_coeff, registers_coeff)) = record(|t| {
+            append_sumcheck_claim(t, &instruction_sum);
+            append_sumcheck_claim(t, &registers_sum);
+            (t.challenge_scalar(), t.challenge_scalar())
+        });
+        assert_eq!(events, replica_events);
+
+        let instruction_rounds = sumchecks.instruction_read_raf.rounds();
+        let registers_rounds = sumchecks
+            .registers_val_evaluation
+            .as_ref()
+            .unwrap()
+            .rounds();
+        let max_num_vars = instruction_rounds.max(registers_rounds);
+        assert_eq!(
+            batch.members,
+            vec![
+                BatchMember {
+                    input_claim: instruction_sum,
+                    coefficient: instruction_coeff,
+                    rounds: instruction_rounds,
+                },
+                BatchMember {
+                    input_claim: registers_sum,
+                    coefficient: registers_coeff,
+                    rounds: registers_rounds,
+                },
+            ],
+        );
+        assert_eq!(batch.max_num_vars, max_num_vars);
+        assert_eq!(
+            batch.claimed_sum,
+            instruction_coeff * instruction_sum.mul_pow_2(max_num_vars - instruction_rounds)
+                + registers_coeff * registers_sum.mul_pow_2(max_num_vars - registers_rounds),
+        );
+        assert_eq!(coefficients.instruction_read_raf, instruction_coeff);
+        assert_eq!(coefficients.registers_val_evaluation, Some(registers_coeff));
+    }
+
+    /// An absent `Option` member contributes no absorb, no coefficient squeeze,
+    /// and no batch entry.
+    #[test]
+    fn begin_batch_skips_absent_option_member() {
+        let sumchecks = fixture(false);
+        let inputs = HeadFixtureInputClaims::<Fr> {
+            instruction_read_raf: instruction_inputs(),
+            registers_val_evaluation: None,
+        };
+        let (_, challenges) = record(|t| sumchecks.draw_challenges(t));
+        let challenges = challenges.unwrap();
+
+        let (events, head) = record(|t| {
+            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+            sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
+        });
+        let (batch, coefficients) = head.unwrap();
+
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DrawEvent::Squeeze(_)))
+                .count(),
+            1,
+        );
+        assert_eq!(batch.members.len(), 1);
+        assert_eq!(batch.max_num_vars, sumchecks.instruction_read_raf.rounds());
+        assert_eq!(coefficients.registers_val_evaluation, None);
+    }
+}

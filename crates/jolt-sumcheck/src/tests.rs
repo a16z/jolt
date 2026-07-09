@@ -1058,3 +1058,58 @@ fn sumcheck_claim_new_rejects_degree_zero() {
 fn sumcheck_statement_new_rejects_degree_zero() {
     let _ = SumcheckStatement::new(3, 0);
 }
+
+/// Drive an honest degree-1 sumcheck through the clear recorder and check the
+/// assembled proof against `verify_compressed_boolean` on a twin transcript:
+/// the recorder's writes (claim absorb, compressed round polys, opening-claim
+/// absorb) must be byte-identical to what the verifier reads back, and the
+/// verifier's reduction must land on the prover's bound value.
+#[test]
+fn clear_recorder_roundtrip_matches_compressed_verifier() {
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+
+    let num_vars = 3;
+    let evals: Vec<F> = (0..1u64 << num_vars)
+        .map(|i| F::from_u64(3 * i + 7))
+        .collect();
+    let claimed_sum = compute_sum(&evals);
+
+    // Prover side: recorder-driven round loop (HighToLow binding, degree 1).
+    let mut prover_transcript = Blake2bTranscript::new(b"recorder-test");
+    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    recorder.absorb_input_claims(&[claimed_sum], &mut prover_transcript);
+
+    let mut buf = evals;
+    for _round in 0..num_vars {
+        let half = buf.len() / 2;
+        let eval_0: F = buf[..half].iter().copied().sum();
+        let eval_1: F = buf[half..].iter().copied().sum();
+        let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
+
+        let r = recorder
+            .absorb_round(&round_poly, &mut prover_transcript)
+            .unwrap();
+
+        for i in 0..half {
+            buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
+        }
+        buf.truncate(half);
+    }
+    let final_eval = buf[0];
+    let recorded = recorder
+        .finish(&[final_eval], &mut prover_transcript)
+        .unwrap();
+
+    // Verifier side: same transcript schedule via the public verify path.
+    let mut verifier_transcript = Blake2bTranscript::new(b"recorder-test");
+    append_sumcheck_claim(&mut verifier_transcript, &claimed_sum);
+    let reduction = recorded
+        .proof
+        .verify_compressed_boolean(num_vars, 1, claimed_sum, &mut verifier_transcript)
+        .unwrap();
+    verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &reduction.value);
+
+    assert_eq!(reduction.value, final_eval);
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}

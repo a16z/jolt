@@ -1,6 +1,5 @@
-//! Sumcheck protocol: claims, proofs, and verification.
-//!
-//! Verifier-side types and logic for the sumcheck protocol.
+//! Sumcheck protocol: claims, proofs, verification, and the prove-side
+//! recording seam.
 //!
 //! # Protocol overview
 //!
@@ -16,8 +15,10 @@
 //! | Module | Purpose |
 //! |--------|---------|
 //! | [`claim`] | [`SumcheckClaim`] (input statement) and [`EvaluationClaim`] (reduction output) |
+//! | [`batch`] | [`BatchPrelude`] — the batched head shared by verify and prove drivers |
 //! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
+//! | [`recorder`] | [`SumcheckRecorder`] — the clear/ZK proof-recording seam |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
 //! | [`round_proof`] | [`RoundMessage`] and [`ClearRound`] traits |
@@ -63,6 +64,7 @@
 //! ```
 //!
 
+pub mod batch;
 pub mod claim;
 pub mod committed;
 pub mod domain;
@@ -70,6 +72,7 @@ pub mod error;
 pub mod proof;
 #[cfg(feature = "r1cs")]
 pub mod r1cs;
+pub mod recorder;
 pub mod round_proof;
 pub mod scalar;
 pub mod verifier;
@@ -83,6 +86,8 @@ pub const SUMCHECK_ROUND_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_poly";
 pub const UNISKIP_ROUND_TRANSCRIPT_LABEL: &[u8] = b"uniskip_poly";
 /// Transcript label used when a sumcheck claim scalar is absorbed before batching.
 pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
+/// Transcript label used when a produced opening claim is absorbed in the clear.
+pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
 
 /// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
 pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
@@ -93,6 +98,7 @@ where
     transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
 }
 
+pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 pub use committed::{
     BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
@@ -108,6 +114,7 @@ pub use r1cs::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
+pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;
