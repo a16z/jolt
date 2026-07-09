@@ -11,6 +11,8 @@ mod split_eq;
 
 #[doc(hidden)]
 pub use dense::{bind_dense_evals_reuse, bind_dense_evals_reuse_serial};
+#[doc(hidden)]
+pub use stage2::round_poly_from_factor_slices;
 #[cfg(feature = "cuda")]
 #[doc(hidden)]
 pub use dense::bind_dense_evals_reuse_cuda;

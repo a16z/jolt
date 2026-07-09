@@ -78,7 +78,14 @@ fn main() {
         .unwrap_or(20);
     let fixture = core_sha2_chain_commitment_fixture(log_t);
 
-    tracing_subscriber::registry().with(StageTimer).init();
+    if std::env::var_os("JOLT_KERNEL_TIMING_LOG").is_some() {
+        tracing_subscriber::registry()
+            .with(StageTimer)
+            .with(tracing_subscriber::fmt::layer().with_target(false))
+            .init();
+    } else {
+        tracing_subscriber::registry().with(StageTimer).init();
+    }
 
     let _ = run_bolt_prover(&fixture, all_cpu_programs(&fixture));
     let _ = run_bolt_prover(&fixture, all_cuda_programs(&fixture));

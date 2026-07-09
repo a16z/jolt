@@ -54,3 +54,8 @@ required-features = ["cuda"]
 name = "dense_outer"
 harness = false
 required-features = ["cuda"]
+
+[[bench]]
+name = "dense_sumcheck"
+harness = false
+required-features = ["cuda"]

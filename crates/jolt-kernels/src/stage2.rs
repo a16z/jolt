@@ -4044,7 +4044,8 @@ fn round_poly_from_factors<F: Field>(factors: &[Vec<F>], degree: usize) -> Univa
     round_poly_from_factor_slices(&factor_slices, degree)
 }
 
-pub(crate) fn round_poly_from_factor_slices<F: Field>(
+#[doc(hidden)]
+pub fn round_poly_from_factor_slices<F: Field>(
     factors: &[&[F]],
     degree: usize,
 ) -> UnivariatePoly<F> {
