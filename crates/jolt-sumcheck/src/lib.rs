@@ -18,6 +18,7 @@
 //! | [`batch`] | [`BatchPrelude`] — the batched head shared by verify and prove drivers |
 //! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
+//! | [`prover`] | [`ProveRounds`], [`prove_batch`], and the uni-skip provers — the prove-side engine |
 //! | [`recorder`] | [`SumcheckRecorder`] — the clear/ZK proof-recording seam |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
@@ -70,6 +71,7 @@ pub mod committed;
 pub mod domain;
 pub mod error;
 pub mod proof;
+pub mod prover;
 #[cfg(feature = "r1cs")]
 pub mod r1cs;
 pub mod recorder;
@@ -102,19 +104,25 @@ pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 pub use committed::{
     BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
-    CommittedRoundWitness, CommittedSumcheckConsistency, CommittedSumcheckProof,
-    VerifiedCommittedRound,
+    CommittedRoundWitness, CommittedSumcheckBuilder, CommittedSumcheckConsistency,
+    CommittedSumcheckProof, CommittedSumcheckWitness, VerifiedCommittedRound,
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
+pub use prover::{
+    prove_batch, prove_uniskip_clear, prove_uniskip_committed, ProveRounds, ProvedBatch,
+    ProvedUniskip, ProvedUniskipCommitted,
+};
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints,
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
-pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
+pub use recorder::{
+    ClearSumcheckRecorder, CommittedSumcheckRecorder, RecordedSumcheck, SumcheckRecorder,
+};
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;

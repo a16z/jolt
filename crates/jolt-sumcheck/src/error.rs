@@ -75,6 +75,41 @@ pub enum SumcheckError<F: FieldCore> {
     #[error("round polynomial must contain at least one coefficient")]
     EmptyRoundCoefficients,
 
+    /// A vector-commitment setup cannot commit to any values.
+    #[error("vector-commitment setup has zero capacity")]
+    ZeroCommitmentCapacity,
+
+    /// A round polynomial has more coefficients than the vector-commitment
+    /// setup can commit to.
+    #[error("round polynomial has {coefficients} coefficients, but vector-commitment capacity is {capacity}")]
+    RoundExceedsCommitmentCapacity {
+        /// Number of coefficients in the offending round polynomial.
+        coefficients: usize,
+        /// The vector-commitment setup's capacity.
+        capacity: usize,
+    },
+
+    /// A batched prove was given a member slice whose length disagrees with
+    /// the batch prelude.
+    #[error("batch prelude describes {expected} members, got {got}")]
+    BatchMemberCountMismatch {
+        /// Member count in the batch prelude.
+        expected: usize,
+        /// Member count in the supplied slice.
+        got: usize,
+    },
+
+    /// A batch member's round count disagrees with the batch prelude.
+    #[error("batch member {member}: prelude says {expected} rounds, member reports {got}")]
+    BatchMemberRoundsMismatch {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// Round count recorded in the batch prelude.
+        expected: usize,
+        /// Round count the member reports.
+        got: usize,
+    },
+
     /// The caller selected a verifier path that is incompatible with the proof
     /// wire encoding.
     #[error("wrong sumcheck proof encoding: expected {expected}, got {got}")]

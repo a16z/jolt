@@ -17,10 +17,12 @@
 
 use std::marker::PhantomData;
 
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::Transcript;
 
+use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, CompressedSumcheckProof, SumcheckProof};
 use crate::round_proof::{CompressedLabeledRoundPoly, RoundMessage};
@@ -67,11 +69,13 @@ pub trait SumcheckRecorder<F: Field> {
         T: Transcript<Challenge = F>;
 }
 
-/// A recorded sumcheck: the wire proof. Committed recorders additionally
-/// retain their blinding/witness material internally for BlindFold.
+/// A recorded sumcheck: the wire proof, plus (for a committed recorder) the
+/// retained witness — round coefficients, output-claim rows, and their
+/// blindings — that BlindFold later opens. `None` for a clear recorder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordedSumcheck<F: Field, C> {
     pub proof: SumcheckProof<F, C>,
+    pub committed_witness: Option<CommittedSumcheckWitness<F>>,
 }
 
 /// The clear recorder: appends claims and compressed round polynomials to the
@@ -139,6 +143,73 @@ impl<F: Field, C> SumcheckRecorder<F> for ClearSumcheckRecorder<F, C> {
             proof: SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof {
                 round_polynomials: self.round_polynomials,
             })),
+            committed_witness: None,
+        })
+    }
+}
+
+/// The committed (ZK) recorder: Pedersen-commits each round polynomial and the
+/// output-claim rows, absorbing only the commitments — the transcript never
+/// sees a claim or coefficient scalar. Input-claim absorbs are no-ops: the
+/// claims' commitments were already absorbed by the stage that produced them.
+/// The retained witness (coefficients, rows, blindings) is returned by
+/// [`finish`](SumcheckRecorder::finish) for BlindFold.
+pub struct CommittedSumcheckRecorder<'a, F, VC>
+where
+    F: Field,
+    VC: VectorCommitment<Field = F>,
+{
+    builder: CommittedSumcheckBuilder<'a, F, VC>,
+}
+
+impl<'a, F, VC> CommittedSumcheckRecorder<'a, F, VC>
+where
+    F: Field,
+    VC: VectorCommitment<Field = F>,
+{
+    pub fn new(setup: &'a VC::Setup) -> Result<Self, SumcheckError<F>> {
+        Ok(Self {
+            builder: CommittedSumcheckBuilder::new(setup)?,
+        })
+    }
+}
+
+impl<F, VC> SumcheckRecorder<F> for CommittedSumcheckRecorder<'_, F, VC>
+where
+    F: Field,
+    VC: VectorCommitment<Field = F>,
+{
+    type Commitment = VC::Output;
+
+    fn absorb_input_claims<T>(&mut self, _input_claims: &[F], _transcript: &mut T)
+    where
+        T: Transcript<Challenge = F>,
+    {
+    }
+
+    fn absorb_round<T>(
+        &mut self,
+        round_poly: &UnivariatePoly<F>,
+        transcript: &mut T,
+    ) -> Result<F, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+    {
+        self.builder.commit_round(round_poly, transcript)
+    }
+
+    fn finish<T>(
+        self,
+        output_claim_values: &[F],
+        transcript: &mut T,
+    ) -> Result<RecordedSumcheck<F, Self::Commitment>, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+    {
+        let (proof, witness) = self.builder.finish(output_claim_values, transcript)?;
+        Ok(RecordedSumcheck {
+            proof,
+            committed_witness: Some(witness),
         })
     }
 }
