@@ -92,7 +92,6 @@ pub struct CudaKernelContext {
     lt_double: CudaFunction,
     raf_q_scatter: CudaFunction,
     raf_q_scatter_reduce: CudaFunction,
-    #[expect(dead_code, reason = "used once the raf_weight_phase_update body lands")]
     raf_weight_phase_update: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
@@ -3582,8 +3581,44 @@ impl CudaKernelContext {
         shift: usize,
         mask: usize,
     ) -> Result<(), CudaError> {
-        let _ = (&weight, eq_table, lookup_index_lo, lookup_index_hi, shift, mask);
-        Err(CudaError::Unsupported)
+        let trace_len = weight.len;
+        if lookup_index_lo.len() != trace_len
+            || lookup_index_hi.len() != trace_len
+            || eq_table.len() != mask + 1
+            || !(mask + 1).is_power_of_two()
+        {
+            return Err(CudaError::Unsupported);
+        }
+        if trace_len == 0 {
+            return Ok(());
+        }
+
+        let eq_dev = self.upload(eq_table)?;
+        let lo_dev = self.clone_htod_tracked(lookup_index_lo)?;
+        let hi_dev = self.clone_htod_tracked(lookup_index_hi)?;
+        let shift_arg = shift as u64;
+        let mask_arg = mask as u64;
+        let trace_len_arg = trace_len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((trace_len as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.raf_weight_phase_update.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut weight.buf)
+            .arg(&eq_dev.buf)
+            .arg(&lo_dev)
+            .arg(&hi_dev)
+            .arg(&shift_arg)
+            .arg(&mask_arg)
+            .arg(&trace_len_arg);
+        // SAFETY: thread c reads weight[c], lookup_index_{lo,hi}[c] (trace_len elems)
+        // and eq_table[slot] (slot < mask+1 = eq_table.len()), writing weight[c].
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(())
     }
 
     pub fn rd_wa_gather(
