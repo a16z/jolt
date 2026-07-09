@@ -3,8 +3,132 @@ use jolt_poly::UnivariatePoly;
 
 use crate::cuda::{
     CudaError, DeviceFrVec, InstructionRafCycleInputs, InstructionRafCycleSparseInputs,
-    RoundPolyTerms,
+    RafQScatterInputs, ReadSuffixScatterInputs, RoundPolyTerms,
 };
+
+pub(crate) struct CudaAddressPhaseState {
+    weight: DeviceFrVec,
+    lookup_index_lo: crate::cuda::CudaSlice<u64>,
+    lookup_index_hi: crate::cuda::CudaSlice<u64>,
+    is_interleaved: crate::cuda::CudaSlice<u8>,
+    trace_len: usize,
+    table_cycle_lists: Vec<crate::cuda::CudaSlice<u32>>,
+    table_cycle_lens: Vec<usize>,
+    table_suffix_codes: Vec<crate::cuda::CudaSlice<u32>>,
+    poly_len: usize,
+}
+
+impl CudaAddressPhaseState {
+    pub(crate) fn new<F: jolt_field::Field>(
+        u_evals: &[F],
+        lookup_indices: &[u128],
+        lookup_table_indices: &[Option<usize>],
+        is_interleaved_operands: &[bool],
+        table_suffix_codes: Vec<Vec<u32>>,
+        poly_len: usize,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let weight = ctx.upload(crate::cuda::as_fr_slice(u_evals)?).ok()?;
+        let lo: Vec<u64> = lookup_indices.iter().map(|&v| v as u64).collect();
+        let hi: Vec<u64> = lookup_indices.iter().map(|&v| (v >> 64) as u64).collect();
+        let flags: Vec<u8> = is_interleaved_operands.iter().map(|&b| u8::from(b)).collect();
+        let lookup_index_lo = ctx.upload_u64_slice(&lo).ok()?;
+        let lookup_index_hi = ctx.upload_u64_slice(&hi).ok()?;
+        let is_interleaved = ctx.upload_u8_slice(&flags).ok()?;
+
+        let mut cycle_lists: Vec<Vec<u32>> = vec![Vec::new(); table_suffix_codes.len()];
+        for (cycle, table_index) in lookup_table_indices.iter().enumerate() {
+            if let Some(table_index) = table_index {
+                cycle_lists[*table_index].push(cycle as u32);
+            }
+        }
+        let table_cycle_lens = cycle_lists.iter().map(Vec::len).collect();
+        let table_cycle_lists = cycle_lists
+            .iter()
+            .map(|list| ctx.upload_u32_slice(list))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        let table_suffix_codes = table_suffix_codes
+            .iter()
+            .map(|codes| ctx.upload_u32_slice(codes))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+
+        Some(Self {
+            weight,
+            lookup_index_lo,
+            lookup_index_hi,
+            is_interleaved,
+            trace_len: lookup_indices.len(),
+            table_cycle_lists,
+            table_cycle_lens,
+            table_suffix_codes,
+            poly_len,
+        })
+    }
+
+    pub(crate) fn advance_phase(
+        &mut self,
+        eq_table: &[Fr],
+        shift: usize,
+        mask: usize,
+    ) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        ctx.raf_weight_phase_update(
+            &mut self.weight,
+            eq_table,
+            &self.lookup_index_lo,
+            &self.lookup_index_hi,
+            shift,
+            mask,
+        )
+    }
+
+    pub(crate) fn raf_banks(&self, suffix_len: usize) -> Result<[Vec<Fr>; 5], CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        let banks = ctx.raf_q_scatter(RafQScatterInputs {
+            weight: &self.weight,
+            lookup_index_lo: &self.lookup_index_lo,
+            lookup_index_hi: &self.lookup_index_hi,
+            is_interleaved: &self.is_interleaved,
+            trace_len: self.trace_len,
+            suffix_len,
+            poly_len: self.poly_len,
+        })?;
+        let mut out: Vec<Vec<Fr>> = Vec::with_capacity(5);
+        for bank in &banks {
+            out.push(bank.to_host()?);
+        }
+        out.try_into().map_err(|_| CudaError::Pool)
+    }
+
+    pub(crate) fn read_suffix_banks(
+        &self,
+        table_index: usize,
+        suffix_len: usize,
+    ) -> Result<Vec<Vec<Fr>>, CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        let banks = ctx.read_suffix_scatter(ReadSuffixScatterInputs {
+            weight: &self.weight,
+            lookup_index_lo: &self.lookup_index_lo,
+            lookup_index_hi: &self.lookup_index_hi,
+            cycle_list: &self.table_cycle_lists[table_index],
+            suffix_variants: &self.table_suffix_codes[table_index],
+            m: self.table_cycle_lens[table_index],
+            suffix_len,
+            poly_len: self.poly_len,
+        })?;
+        let mut out = Vec::with_capacity(banks.len());
+        for bank in &banks {
+            out.push(bank.to_host()?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn table_is_empty(&self, table_index: usize) -> bool {
+        self.table_cycle_lens[table_index] == 0
+    }
+}
 
 pub(crate) struct CudaDenseState {
     factors: Vec<DeviceFrVec>,

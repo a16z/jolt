@@ -1623,6 +1623,8 @@ struct InstructionReadRafStage5State<F: Field> {
     outputs: Vec<InstructionReadRafOutputPlan>,
     #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
     backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda_address: Option<cuda::CudaAddressPhaseState>,
 }
 
 struct InstructionReadRafLookupGroup<F: Field> {
@@ -2004,47 +2006,12 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         self.address_phase = Some(self.build_address_phase(phase));
     }
 
-    fn build_address_phase(&self, phase: usize) -> InstructionReadRafAddressPhase<F> {
-        let chunk_bits = Self::ADDRESS_CHUNK_BITS;
-        let poly_len = 1usize << chunk_bits;
-        let suffix_len = Self::LOG_K - (phase + 1) * chunk_bits;
-        let left_operand_prefix =
-            operand_prefix_poly(self.left_operand_checkpoint, chunk_bits, true);
-        let right_operand_prefix =
-            operand_prefix_poly(self.right_operand_checkpoint, chunk_bits, false);
-        let identity_prefix = identity_prefix_poly(self.identity_checkpoint, chunk_bits);
-        let read_prefix_polys = {
-            let _span = trace_stage5_inner_spans().then(|| {
-                tracing::info_span!("Stage5::instruction_read_raf.build.read_prefix").entered()
-            });
-            ALL_PREFIXES
-                .par_iter()
-                .map(|prefix| {
-                    (0..poly_len)
-                        .map(|bits| {
-                            prefix
-                                .evaluate(
-                                    &self.read_prefix_checkpoints,
-                                    LookupBits::new(bits as u128, chunk_bits),
-                                    suffix_len,
-                                )
-                                .into_inner()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let shift_half_value = 1u128 << (suffix_len / 2);
-        let shift_full_value = 1u128 << suffix_len;
-        let shift_half = F::from_u128(shift_half_value);
-        let shift_full = F::from_u128(shift_full_value);
-        let suffix_mask = if suffix_len == 128 {
-            u128::MAX
-        } else {
-            (1u128 << suffix_len) - 1
-        };
-
+    fn build_raf_q_cpu(
+        &self,
+        poly_len: usize,
+        suffix_len: usize,
+        suffix_mask: u128,
+    ) -> [Vec<F>; 5] {
         let q_total_len = 5 * poly_len;
         let q_chunk_size = self
             .lookup_groups
@@ -2100,31 +2067,78 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                     },
                 )
         };
-        let mut raf_shift_half_q = q_rows[..poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let raf_left_q = q_rows[poly_len..2 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let raf_right_q = q_rows[2 * poly_len..3 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let mut raf_shift_full_q = q_rows[3 * poly_len..4 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let raf_identity_q = q_rows[4 * poly_len..5 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
+        let reduce_range = |range: std::ops::Range<usize>| {
+            q_rows[range]
+                .par_iter()
+                .copied()
+                .map(FieldScalarAccumulator::reduce)
+                .collect::<Vec<_>>()
+        };
+        [
+            reduce_range(0..poly_len),
+            reduce_range(poly_len..2 * poly_len),
+            reduce_range(2 * poly_len..3 * poly_len),
+            reduce_range(3 * poly_len..4 * poly_len),
+            reduce_range(4 * poly_len..5 * poly_len),
+        ]
+    }
+
+    fn build_address_phase(&self, phase: usize) -> InstructionReadRafAddressPhase<F> {
+        let chunk_bits = Self::ADDRESS_CHUNK_BITS;
+        let poly_len = 1usize << chunk_bits;
+        let suffix_len = Self::LOG_K - (phase + 1) * chunk_bits;
+        let left_operand_prefix =
+            operand_prefix_poly(self.left_operand_checkpoint, chunk_bits, true);
+        let right_operand_prefix =
+            operand_prefix_poly(self.right_operand_checkpoint, chunk_bits, false);
+        let identity_prefix = identity_prefix_poly(self.identity_checkpoint, chunk_bits);
+        let read_prefix_polys = {
+            let _span = trace_stage5_inner_spans().then(|| {
+                tracing::info_span!("Stage5::instruction_read_raf.build.read_prefix").entered()
+            });
+            ALL_PREFIXES
+                .par_iter()
+                .map(|prefix| {
+                    (0..poly_len)
+                        .map(|bits| {
+                            prefix
+                                .evaluate(
+                                    &self.read_prefix_checkpoints,
+                                    LookupBits::new(bits as u128, chunk_bits),
+                                    suffix_len,
+                                )
+                                .into_inner()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let shift_half_value = 1u128 << (suffix_len / 2);
+        let shift_full_value = 1u128 << suffix_len;
+        let shift_half = F::from_u128(shift_half_value);
+        let shift_full = F::from_u128(shift_full_value);
+        let suffix_mask = if suffix_len == 128 {
+            u128::MAX
+        } else {
+            (1u128 << suffix_len) - 1
+        };
+
+        #[cfg(feature = "cuda")]
+        let cuda_raf: Option<[Vec<F>; 5]> = self.cuda_address.as_ref().and_then(|state| {
+            let banks = state.raf_banks(suffix_len).ok()?;
+            let converted: Option<Vec<Vec<F>>> = banks
+                .into_iter()
+                .map(|bank| bank.into_iter().map(crate::cuda::fr_into::<F>).collect())
+                .collect();
+            converted.and_then(|v| <[Vec<F>; 5]>::try_from(v).ok())
+        });
+        #[cfg(not(feature = "cuda"))]
+        let cuda_raf: Option<[Vec<F>; 5]> = None;
+
+        let [mut raf_shift_half_q, raf_left_q, raf_right_q, mut raf_shift_full_q, raf_identity_q] =
+            cuda_raf.unwrap_or_else(|| self.build_raf_q_cpu(poly_len, suffix_len, suffix_mask));
+
         if shift_half_value != 1 {
             for value in &mut raf_shift_half_q {
                 *value *= shift_half;
@@ -2137,7 +2151,35 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         }
 
         let tables = LookupTableKind::<64>::all();
-        let read_suffix_polys = {
+
+        #[cfg(feature = "cuda")]
+        let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> =
+            self.cuda_address.as_ref().and_then(|state| {
+                tables
+                    .iter()
+                    .enumerate()
+                    .filter(|(table_index, _)| !state.table_is_empty(*table_index))
+                    .map(|(table_index, table)| {
+                        let banks = state.read_suffix_banks(table_index, suffix_len).ok()?;
+                        let suffix_polys: Option<Vec<Vec<F>>> = banks
+                            .into_iter()
+                            .map(|bank| {
+                                bank.into_iter().map(crate::cuda::fr_into::<F>).collect()
+                            })
+                            .collect();
+                        Some(InstructionReadRafReadTablePhase {
+                            table: *table,
+                            suffix_polys: suffix_polys?,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()
+            });
+        #[cfg(not(feature = "cuda"))]
+        let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> = None;
+
+        let read_suffix_polys = if let Some(polys) = cuda_read_suffix {
+            polys
+        } else {
             const MAX_SUFFIXES: usize = 4;
             let _span = trace_stage5_inner_spans().then(|| {
                 tracing::info_span!("Stage5::instruction_read_raf.build.read_suffix").entered()
@@ -2277,6 +2319,19 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let eq_table = (0..(1usize << chunk_bits))
             .map(|bits| eq_eval_at_bits(point, bits as u128, chunk_bits))
             .collect::<Vec<_>>();
+
+        #[cfg(feature = "cuda")]
+        if let Some(state) = self.cuda_address.as_mut() {
+            if let Some(eq_table_fr) = crate::cuda::as_fr_slice(&eq_table) {
+                if state
+                    .advance_phase(eq_table_fr, shift, mask as usize)
+                    .is_ok()
+                {
+                    return;
+                }
+            }
+        }
+
         self.lookup_groups.par_iter_mut().for_each(|group| {
             let chunk_value = (group.lookup_index >> shift) & mask;
             group.phase_u_eval_sum *= eq_table[chunk_value as usize];
@@ -3573,6 +3628,34 @@ fn instruction_read_raf_state<F: Field>(
         }
     }
 
+    #[cfg(feature = "cuda")]
+    let cuda_address = if backend == "cuda" {
+        const ADDRESS_CHUNK_BITS: usize = 8;
+        let poly_len = 1usize << ADDRESS_CHUNK_BITS;
+        let table_suffix_codes: Option<Vec<Vec<u32>>> = LookupTableKind::<XLEN>::all()
+            .iter()
+            .map(|table| {
+                table
+                    .suffixes()
+                    .iter()
+                    .map(|suffix| crate::cuda::suffix_variant_code(*suffix))
+                    .collect::<Option<Vec<u32>>>()
+            })
+            .collect();
+        table_suffix_codes.and_then(|codes| {
+            cuda::CudaAddressPhaseState::new(
+                &u_evals,
+                witness.lookup_indices,
+                witness.lookup_table_indices,
+                witness.is_interleaved_operands,
+                codes,
+                poly_len,
+            )
+        })
+    } else {
+        None
+    };
+
     Ok(InstructionReadRafStage5State {
         trace_len: witness.trace_len,
         r_reduction: r_reduction.to_vec(),
@@ -3601,6 +3684,8 @@ fn instruction_read_raf_state<F: Field>(
         cycle_state: None,
         outputs,
         backend,
+        #[cfg(feature = "cuda")]
+        cuda_address,
     })
 }
 

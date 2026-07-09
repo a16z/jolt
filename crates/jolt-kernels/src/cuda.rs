@@ -540,19 +540,21 @@ pub struct RoundPolyTerms<'a> {
 
 pub struct RafQScatterInputs<'a> {
     pub weight: &'a DeviceFrVec,
-    pub lookup_index_lo: &'a [u64],
-    pub lookup_index_hi: &'a [u64],
-    pub is_interleaved: &'a [u8],
+    pub lookup_index_lo: &'a CudaSlice<u64>,
+    pub lookup_index_hi: &'a CudaSlice<u64>,
+    pub is_interleaved: &'a CudaSlice<u8>,
+    pub trace_len: usize,
     pub suffix_len: usize,
     pub poly_len: usize,
 }
 
 pub struct ReadSuffixScatterInputs<'a> {
     pub weight: &'a DeviceFrVec,
-    pub lookup_index_lo: &'a [u64],
-    pub lookup_index_hi: &'a [u64],
-    pub cycle_list: &'a [u32],
-    pub suffix_variants: &'a [u32],
+    pub lookup_index_lo: &'a CudaSlice<u64>,
+    pub lookup_index_hi: &'a CudaSlice<u64>,
+    pub cycle_list: &'a CudaSlice<u32>,
+    pub suffix_variants: &'a CudaSlice<u32>,
+    pub m: usize,
     pub suffix_len: usize,
     pub poly_len: usize,
 }
@@ -908,6 +910,10 @@ impl CudaKernelContext {
     }
 
     pub fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+        self.clone_htod_tracked(values)
+    }
+
+    pub fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
         self.clone_htod_tracked(values)
     }
 
@@ -3502,10 +3508,8 @@ impl CudaKernelContext {
         inputs: RafQScatterInputs<'_>,
     ) -> Result<Vec<DeviceFrVec>, CudaError> {
         let poly_len = inputs.poly_len;
-        let trace_len = inputs.weight.len;
-        if inputs.lookup_index_lo.len() != trace_len
-            || inputs.lookup_index_hi.len() != trace_len
-            || inputs.is_interleaved.len() != trace_len
+        let trace_len = inputs.trace_len;
+        if inputs.weight.len != trace_len
             || poly_len == 0
             || !poly_len.is_power_of_two()
         {
@@ -3521,9 +3525,6 @@ impl CudaKernelContext {
         }
 
         let num_workers = trace_len.min(4096);
-        let lo_dev = self.clone_htod_tracked(inputs.lookup_index_lo)?;
-        let hi_dev = self.clone_htod_tracked(inputs.lookup_index_hi)?;
-        let flags_dev = self.clone_htod_tracked(inputs.is_interleaved)?;
         let mut worker_banks: CudaSlice<u64> =
             self.stream.alloc_zeros(num_workers * slots * LIMBS)?;
         let mut final_banks: CudaSlice<u64> = self.stream.alloc_zeros(slots * LIMBS)?;
@@ -3542,16 +3543,16 @@ impl CudaKernelContext {
         let _ = launch
             .arg(&mut worker_banks)
             .arg(&inputs.weight.buf)
-            .arg(&lo_dev)
-            .arg(&hi_dev)
-            .arg(&flags_dev)
+            .arg(inputs.lookup_index_lo)
+            .arg(inputs.lookup_index_hi)
+            .arg(inputs.is_interleaved)
             .arg(&suffix_len_arg)
             .arg(&poly_len_arg)
             .arg(&trace_len_arg)
             .arg(&num_workers_arg);
         // SAFETY: worker `w` writes only its exclusive `worker_banks[w]` slice of
-        // slots*LIMBS u64s; reads weight[c] (trace_len elems) and the index/flag
-        // arrays (trace_len elems each) it is passed.
+        // slots*LIMBS u64s; reads weight[c] (trace_len elems) and the resident
+        // index/flag arrays (trace_len elems each) it is passed.
         let _ = unsafe { launch.launch(scatter_cfg) }?;
 
         let reduce_cfg = LaunchConfig {
@@ -3596,14 +3597,8 @@ impl CudaKernelContext {
     ) -> Result<Vec<DeviceFrVec>, CudaError> {
         let poly_len = inputs.poly_len;
         let suffix_count = inputs.suffix_variants.len();
-        let m = inputs.cycle_list.len();
-        let trace_len = inputs.weight.len;
-        if inputs.lookup_index_lo.len() != trace_len
-            || inputs.lookup_index_hi.len() != trace_len
-            || poly_len == 0
-            || !poly_len.is_power_of_two()
-            || suffix_count == 0
-        {
+        let m = inputs.m;
+        if poly_len == 0 || !poly_len.is_power_of_two() || suffix_count == 0 {
             return Err(CudaError::Unsupported);
         }
         let slots = suffix_count * poly_len;
@@ -3616,10 +3611,6 @@ impl CudaKernelContext {
         }
 
         let num_workers = m.min(4096);
-        let lo_dev = self.clone_htod_tracked(inputs.lookup_index_lo)?;
-        let hi_dev = self.clone_htod_tracked(inputs.lookup_index_hi)?;
-        let cycle_dev = self.clone_htod_tracked(inputs.cycle_list)?;
-        let variant_dev = self.clone_htod_tracked(inputs.suffix_variants)?;
         let mut worker_banks: CudaSlice<u64> =
             self.stream.alloc_zeros(num_workers * slots * LIMBS)?;
         let mut final_banks: CudaSlice<u64> = self.stream.alloc_zeros(slots * LIMBS)?;
@@ -3639,10 +3630,10 @@ impl CudaKernelContext {
         let _ = launch
             .arg(&mut worker_banks)
             .arg(&inputs.weight.buf)
-            .arg(&lo_dev)
-            .arg(&hi_dev)
-            .arg(&cycle_dev)
-            .arg(&variant_dev)
+            .arg(inputs.lookup_index_lo)
+            .arg(inputs.lookup_index_hi)
+            .arg(inputs.cycle_list)
+            .arg(inputs.suffix_variants)
             .arg(&suffix_count_arg)
             .arg(&suffix_len_arg)
             .arg(&poly_len_arg)
@@ -3650,8 +3641,8 @@ impl CudaKernelContext {
             .arg(&num_workers_arg);
         // SAFETY: worker `w` writes only its exclusive `worker_banks[w]` slice of
         // slots*LIMBS u64s; reads weight[cycle_list[j]] (cycle_list values index the
-        // trace_len-length weight), the index arrays (trace_len elems), and cycle_list
-        // / suffix_variants (m / suffix_count elems) it is passed.
+        // resident weight), the resident index arrays, and cycle_list / suffix_variants
+        // (m / suffix_count elems) it is passed.
         let _ = unsafe { launch.launch(scatter_cfg) }?;
 
         let reduce_cfg = LaunchConfig {
@@ -3694,17 +3685,13 @@ impl CudaKernelContext {
         &self,
         weight: &mut DeviceFrVec,
         eq_table: &[Fr],
-        lookup_index_lo: &[u64],
-        lookup_index_hi: &[u64],
+        lookup_index_lo: &CudaSlice<u64>,
+        lookup_index_hi: &CudaSlice<u64>,
         shift: usize,
         mask: usize,
     ) -> Result<(), CudaError> {
         let trace_len = weight.len;
-        if lookup_index_lo.len() != trace_len
-            || lookup_index_hi.len() != trace_len
-            || eq_table.len() != mask + 1
-            || !(mask + 1).is_power_of_two()
-        {
+        if eq_table.len() != mask + 1 || !(mask + 1).is_power_of_two() {
             return Err(CudaError::Unsupported);
         }
         if trace_len == 0 {
@@ -3712,8 +3699,6 @@ impl CudaKernelContext {
         }
 
         let eq_dev = self.upload(eq_table)?;
-        let lo_dev = self.clone_htod_tracked(lookup_index_lo)?;
-        let hi_dev = self.clone_htod_tracked(lookup_index_hi)?;
         let shift_arg = shift as u64;
         let mask_arg = mask as u64;
         let trace_len_arg = trace_len as u64;
@@ -3727,8 +3712,8 @@ impl CudaKernelContext {
         let _ = launch
             .arg(&mut weight.buf)
             .arg(&eq_dev.buf)
-            .arg(&lo_dev)
-            .arg(&hi_dev)
+            .arg(lookup_index_lo)
+            .arg(lookup_index_hi)
             .arg(&shift_arg)
             .arg(&mask_arg)
             .arg(&trace_len_arg);
@@ -3899,54 +3884,60 @@ impl CudaKernelContext {
     }
 }
 
-#[cfg(test)]
-fn suffix_mle_variants() -> Vec<jolt_lookup_tables::tables::Suffixes> {
-    use jolt_lookup_tables::tables::Suffixes::*;
+pub(crate) fn suffix_mle_variants() -> Vec<jolt_lookup_tables::tables::Suffixes> {
+    use jolt_lookup_tables::tables::Suffixes as S;
     vec![
-        One,
-        And,
-        AndNot,
-        Or,
-        Xor,
-        RightOperand,
-        RightOperandW,
-        ChangeDivisor,
-        ChangeDivisorW,
-        UpperWord,
-        LowerWord,
-        LowerHalfWord,
-        LessThan,
-        GreaterThan,
-        Eq,
-        LeftOperandIsZero,
-        RightOperandIsZero,
-        Lsb,
-        DivByZero,
-        Pow2,
-        Pow2W,
-        Rev8W,
-        RightShiftPadding,
-        RightShift,
-        RightShiftHelper,
-        SignExtension,
-        LeftShift,
-        TwoLsb,
-        SignExtensionUpperHalf,
-        SignExtensionRightOperand,
-        RightShiftW,
-        RightShiftWHelper,
-        LeftShiftWHelper,
-        LeftShiftW,
-        OverflowBitsZero,
-        XorRot16,
-        XorRot24,
-        XorRot32,
-        XorRot63,
-        XorRotW7,
-        XorRotW8,
-        XorRotW12,
-        XorRotW16,
+        S::One,
+        S::And,
+        S::AndNot,
+        S::Or,
+        S::Xor,
+        S::RightOperand,
+        S::RightOperandW,
+        S::ChangeDivisor,
+        S::ChangeDivisorW,
+        S::UpperWord,
+        S::LowerWord,
+        S::LowerHalfWord,
+        S::LessThan,
+        S::GreaterThan,
+        S::Eq,
+        S::LeftOperandIsZero,
+        S::RightOperandIsZero,
+        S::Lsb,
+        S::DivByZero,
+        S::Pow2,
+        S::Pow2W,
+        S::Rev8W,
+        S::RightShiftPadding,
+        S::RightShift,
+        S::RightShiftHelper,
+        S::SignExtension,
+        S::LeftShift,
+        S::TwoLsb,
+        S::SignExtensionUpperHalf,
+        S::SignExtensionRightOperand,
+        S::RightShiftW,
+        S::RightShiftWHelper,
+        S::LeftShiftWHelper,
+        S::LeftShiftW,
+        S::OverflowBitsZero,
+        S::XorRot16,
+        S::XorRot24,
+        S::XorRot32,
+        S::XorRot63,
+        S::XorRotW7,
+        S::XorRotW8,
+        S::XorRotW12,
+        S::XorRotW16,
     ]
+}
+
+pub(crate) fn suffix_variant_code(suffix: jolt_lookup_tables::tables::Suffixes) -> Option<u32> {
+    suffix_mle_variants()
+        .iter()
+        .position(|&v| v == suffix)
+        .map(|i| i as u32)
 }
 
 #[cfg(test)]
@@ -4509,13 +4500,18 @@ mod tests {
             let weight_dev = c.upload(&weight).unwrap();
             let lo: Vec<u64> = lookup_index.iter().map(|&v| v as u64).collect();
             let hi: Vec<u64> = lookup_index.iter().map(|&v| (v >> 64) as u64).collect();
+            let lo_dev = c.upload_u64_slice(&lo).unwrap();
+            let hi_dev = c.upload_u64_slice(&hi).unwrap();
+            let cycle_dev = c.upload_u32_slice(&cycle_list).unwrap();
+            let variant_dev = c.upload_u32_slice(&variant_codes).unwrap();
             let banks = c
                 .read_suffix_scatter(ReadSuffixScatterInputs {
                     weight: &weight_dev,
-                    lookup_index_lo: &lo,
-                    lookup_index_hi: &hi,
-                    cycle_list: &cycle_list,
-                    suffix_variants: &variant_codes,
+                    lookup_index_lo: &lo_dev,
+                    lookup_index_hi: &hi_dev,
+                    cycle_list: &cycle_dev,
+                    suffix_variants: &variant_dev,
+                    m: cycle_list.len(),
                     suffix_len,
                     poly_len,
                 })
@@ -4589,12 +4585,16 @@ mod tests {
             let lo: Vec<u64> = lookup_index.iter().map(|&v| v as u64).collect();
             let hi: Vec<u64> = lookup_index.iter().map(|&v| (v >> 64) as u64).collect();
             let flags: Vec<u8> = is_interleaved.iter().map(|&b| u8::from(b)).collect();
+            let lo_dev = c.upload_u64_slice(&lo).unwrap();
+            let hi_dev = c.upload_u64_slice(&hi).unwrap();
+            let flags_dev = c.upload_u8_slice(&flags).unwrap();
             let banks = c
                 .raf_q_scatter(RafQScatterInputs {
                     weight: &weight_dev,
-                    lookup_index_lo: &lo,
-                    lookup_index_hi: &hi,
-                    is_interleaved: &flags,
+                    lookup_index_lo: &lo_dev,
+                    lookup_index_hi: &hi_dev,
+                    is_interleaved: &flags_dev,
+                    trace_len,
                     suffix_len,
                     poly_len,
                 })
@@ -4674,7 +4674,9 @@ mod tests {
             let mut weight_dev = c.upload(&weight).unwrap();
             let lo: Vec<u64> = lookup_index.iter().map(|&v| v as u64).collect();
             let hi: Vec<u64> = lookup_index.iter().map(|&v| (v >> 64) as u64).collect();
-            c.raf_weight_phase_update(&mut weight_dev, &eq_table, &lo, &hi, shift, mask)
+            let lo_dev = c.upload_u64_slice(&lo).unwrap();
+            let hi_dev = c.upload_u64_slice(&hi).unwrap();
+            c.raf_weight_phase_update(&mut weight_dev, &eq_table, &lo_dev, &hi_dev, shift, mask)
                 .unwrap();
             let got = weight_dev.to_host().unwrap();
             prop_assert_eq!(got, expected);
