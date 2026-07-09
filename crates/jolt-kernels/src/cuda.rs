@@ -46,6 +46,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/raf_q_scatter.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
+    include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -96,6 +97,8 @@ pub struct CudaKernelContext {
     raf_weight_phase_update: CudaFunction,
     #[cfg(test)]
     suffix_mle_probe: CudaFunction,
+    #[expect(dead_code, reason = "used once the read_suffix_scatter body + wiring land")]
+    read_suffix_scatter: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -545,6 +548,16 @@ pub struct RafQScatterInputs<'a> {
     pub poly_len: usize,
 }
 
+pub struct ReadSuffixScatterInputs<'a> {
+    pub weight: &'a DeviceFrVec,
+    pub lookup_index_lo: &'a [u64],
+    pub lookup_index_hi: &'a [u64],
+    pub cycle_list: &'a [u32],
+    pub suffix_variants: &'a [u32],
+    pub suffix_len: usize,
+    pub poly_len: usize,
+}
+
 pub struct GruenRoundPolyInputs<'a> {
     pub factors: &'a [&'a DeviceFrVec],
     pub term_coeffs: &'a DeviceFrVec,
@@ -735,6 +748,7 @@ impl CudaKernelContext {
             raf_weight_phase_update: module.load_function("raf_weight_phase_update")?,
             #[cfg(test)]
             suffix_mle_probe: module.load_function("suffix_mle_probe")?,
+            read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -3577,6 +3591,14 @@ impl CudaKernelContext {
         Ok(banks)
     }
 
+    pub fn read_suffix_scatter(
+        &self,
+        inputs: ReadSuffixScatterInputs<'_>,
+    ) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
+    }
+
     pub fn raf_weight_phase_update(
         &self,
         weight: &mut DeviceFrVec,
@@ -4336,6 +4358,82 @@ mod tests {
             let expected = jolt_poly::EqPolynomial::<Fr>::evals(&r, scaling);
             let c = ctx();
             let got = c.eq_evals(&r, scaling).unwrap().to_host().unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn read_suffix_scatter_matches_cpu(
+            log_cycles in 1usize..11,
+            suffix_len in 1usize..40,
+            seed in fr_strategy(),
+        ) {
+            use jolt_lookup_tables::LookupBits;
+            use std::panic::{catch_unwind, AssertUnwindSafe};
+
+            let variant_codes: Vec<u32> = vec![0, 4, 12, 25, 22];
+            let variants = super::suffix_mle_variants();
+            let suffix_count = variant_codes.len();
+            let poly_len = 1usize << 8;
+            let m = 1usize << log_cycles;
+            let suffix_mask: u128 = if suffix_len >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << suffix_len) - 1
+            };
+            let index_mask: u128 = if (suffix_len + 8) < 128 {
+                (1u128 << (suffix_len + 8)) - 1
+            } else {
+                u128::MAX
+            };
+
+            let weight: Vec<Fr> = (0..m).map(|c| seed + Fr::from_u64((c + 1) as u64)).collect();
+            let lookup_index: Vec<u128> = (0..m)
+                .map(|c| ((c as u128).wrapping_mul(0x9e37_79b1) ^ (c as u128) << 19) & index_mask)
+                .collect();
+            let cycle_list: Vec<u32> = (0..m as u32).collect();
+
+            let prev_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(|_| {}));
+            let mut expected = vec![Fr::zero(); suffix_count * poly_len];
+            let mut defined = true;
+            'outer: for c in 0..m {
+                let index = ((lookup_index[c] >> suffix_len) as usize) & (poly_len - 1);
+                let suffix_bits = LookupBits::new(lookup_index[c] & suffix_mask, suffix_len);
+                for (s, &code) in variant_codes.iter().enumerate() {
+                    let Ok(mle) =
+                        catch_unwind(AssertUnwindSafe(|| variants[code as usize].suffix_mle(suffix_bits)))
+                    else {
+                        defined = false;
+                        break 'outer;
+                    };
+                    if mle != 0 {
+                        expected[s * poly_len + index] += weight[c] * Fr::from_u64(mle);
+                    }
+                }
+            }
+            std::panic::set_hook(prev_hook);
+            prop_assume!(defined);
+
+            let c = ctx();
+            let weight_dev = c.upload(&weight).unwrap();
+            let lo: Vec<u64> = lookup_index.iter().map(|&v| v as u64).collect();
+            let hi: Vec<u64> = lookup_index.iter().map(|&v| (v >> 64) as u64).collect();
+            let banks = c
+                .read_suffix_scatter(ReadSuffixScatterInputs {
+                    weight: &weight_dev,
+                    lookup_index_lo: &lo,
+                    lookup_index_hi: &hi,
+                    cycle_list: &cycle_list,
+                    suffix_variants: &variant_codes,
+                    suffix_len,
+                    poly_len,
+                })
+                .unwrap();
+            prop_assert_eq!(banks.len(), suffix_count);
+            let mut got = Vec::with_capacity(suffix_count * poly_len);
+            for bank in &banks {
+                got.extend(bank.to_host().unwrap());
+            }
             prop_assert_eq!(got, expected);
         }
 
