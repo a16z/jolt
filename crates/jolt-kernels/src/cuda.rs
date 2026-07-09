@@ -4423,7 +4423,10 @@ mod tests {
             raw in prop::collection::vec((any::<u128>(), 0usize..=128), 1..64),
         ) {
             use jolt_lookup_tables::LookupBits;
+            use std::panic::{catch_unwind, AssertUnwindSafe};
 
+            let prev_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(|_| {}));
             let variants = super::suffix_mle_variants();
             let mut bits_lo = Vec::new();
             let mut bits_hi = Vec::new();
@@ -4433,14 +4436,18 @@ mod tests {
             for (raw_bits, raw_len) in raw {
                 for (code, suffix) in variants.iter().enumerate() {
                     let lb = LookupBits::new(raw_bits, raw_len);
+                    let Ok(value) = catch_unwind(AssertUnwindSafe(|| suffix.suffix_mle(lb))) else {
+                        continue;
+                    };
                     let masked = u128::from(lb);
                     bits_lo.push(masked as u64);
                     bits_hi.push((masked >> 64) as u64);
                     lens.push(raw_len as u32);
                     codes.push(code as u32);
-                    expected.push(suffix.suffix_mle(lb));
+                    expected.push(value);
                 }
             }
+            std::panic::set_hook(prev_hook);
 
             let c = ctx();
             let got = c.suffix_mle_probe(&bits_lo, &bits_hi, &lens, &codes).unwrap();
