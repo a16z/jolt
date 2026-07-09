@@ -45,6 +45,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/bytecode_cycle_sparse.cu"),
     include_str!("cuda/raf_q_scatter.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
+    include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -93,6 +94,8 @@ pub struct CudaKernelContext {
     raf_q_scatter: CudaFunction,
     raf_q_scatter_reduce: CudaFunction,
     raf_weight_phase_update: CudaFunction,
+    #[cfg(test)]
+    suffix_mle_probe: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -730,6 +733,8 @@ impl CudaKernelContext {
             raf_q_scatter: module.load_function("raf_q_scatter")?,
             raf_q_scatter_reduce: module.load_function("raf_q_scatter_reduce")?,
             raf_weight_phase_update: module.load_function("raf_weight_phase_update")?,
+            #[cfg(test)]
+            suffix_mle_probe: module.load_function("suffix_mle_probe")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -3621,6 +3626,48 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub fn suffix_mle_probe(
+        &self,
+        bits_lo: &[u64],
+        bits_hi: &[u64],
+        len: &[u32],
+        variant: &[u32],
+    ) -> Result<Vec<u64>, CudaError> {
+        let n = bits_lo.len();
+        if bits_hi.len() != n || len.len() != n || variant.len() != n {
+            return Err(CudaError::Unsupported);
+        }
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(n)?;
+        let lo_dev = self.clone_htod_tracked(bits_lo)?;
+        let hi_dev = self.clone_htod_tracked(bits_hi)?;
+        let len_dev = self.clone_htod_tracked(len)?;
+        let variant_dev = self.clone_htod_tracked(variant)?;
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.suffix_mle_probe.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out)
+            .arg(&lo_dev)
+            .arg(&hi_dev)
+            .arg(&len_dev)
+            .arg(&variant_dev)
+            .arg(&n_arg);
+        // SAFETY: thread i reads bits_{lo,hi}[i], len[i], variant[i] (n elems each)
+        // and writes out[i]; all buffers hold >= n elements.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        out.try_into().map_err(|_| CudaError::Pool)
+    }
+
     pub fn rd_wa_gather(
         &self,
         address_eq: &[Fr],
@@ -3737,6 +3784,56 @@ impl CudaKernelContext {
     pub fn product_device(&self, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         self.reduce_to_device(false, values)
     }
+}
+
+#[cfg(test)]
+fn suffix_mle_variants() -> Vec<jolt_lookup_tables::tables::Suffixes> {
+    use jolt_lookup_tables::tables::Suffixes::*;
+    vec![
+        One,
+        And,
+        AndNot,
+        Or,
+        Xor,
+        RightOperand,
+        RightOperandW,
+        ChangeDivisor,
+        ChangeDivisorW,
+        UpperWord,
+        LowerWord,
+        LowerHalfWord,
+        LessThan,
+        GreaterThan,
+        Eq,
+        LeftOperandIsZero,
+        RightOperandIsZero,
+        Lsb,
+        DivByZero,
+        Pow2,
+        Pow2W,
+        Rev8W,
+        RightShiftPadding,
+        RightShift,
+        RightShiftHelper,
+        SignExtension,
+        LeftShift,
+        TwoLsb,
+        SignExtensionUpperHalf,
+        SignExtensionRightOperand,
+        RightShiftW,
+        RightShiftWHelper,
+        LeftShiftWHelper,
+        LeftShiftW,
+        OverflowBitsZero,
+        XorRot16,
+        XorRot24,
+        XorRot32,
+        XorRot63,
+        XorRotW7,
+        XorRotW8,
+        XorRotW12,
+        XorRotW16,
+    ]
 }
 
 #[cfg(test)]
@@ -4318,6 +4415,35 @@ mod tests {
             for bank in &banks {
                 got.extend(bank.to_host().unwrap());
             }
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn suffix_mle_probe_matches_cpu(
+            raw in prop::collection::vec((any::<u128>(), 0usize..=128), 1..64),
+        ) {
+            use jolt_lookup_tables::LookupBits;
+
+            let variants = super::suffix_mle_variants();
+            let mut bits_lo = Vec::new();
+            let mut bits_hi = Vec::new();
+            let mut lens = Vec::new();
+            let mut codes = Vec::new();
+            let mut expected = Vec::new();
+            for (raw_bits, raw_len) in raw {
+                for (code, suffix) in variants.iter().enumerate() {
+                    let lb = LookupBits::new(raw_bits, raw_len);
+                    let masked = u128::from(lb);
+                    bits_lo.push(masked as u64);
+                    bits_hi.push((masked >> 64) as u64);
+                    lens.push(raw_len as u32);
+                    codes.push(code as u32);
+                    expected.push(suffix.suffix_mle(lb));
+                }
+            }
+
+            let c = ctx();
+            let got = c.suffix_mle_probe(&bits_lo, &bits_hi, &lens, &codes).unwrap();
             prop_assert_eq!(got, expected);
         }
 
