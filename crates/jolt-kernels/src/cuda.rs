@@ -44,6 +44,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/ra_virtual_d4_sparse.cu"),
     include_str!("cuda/bytecode_cycle_sparse.cu"),
     include_str!("cuda/raf_q_scatter.cu"),
+    include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -91,6 +92,8 @@ pub struct CudaKernelContext {
     lt_double: CudaFunction,
     raf_q_scatter: CudaFunction,
     raf_q_scatter_reduce: CudaFunction,
+    #[expect(dead_code, reason = "used once the raf_weight_phase_update body lands")]
+    raf_weight_phase_update: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -727,6 +730,7 @@ impl CudaKernelContext {
             lt_double: module.load_function("lt_double")?,
             raf_q_scatter: module.load_function("raf_q_scatter")?,
             raf_q_scatter_reduce: module.load_function("raf_q_scatter_reduce")?,
+            raf_weight_phase_update: module.load_function("raf_weight_phase_update")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -3569,6 +3573,19 @@ impl CudaKernelContext {
         Ok(banks)
     }
 
+    pub fn raf_weight_phase_update(
+        &self,
+        weight: &mut DeviceFrVec,
+        eq_table: &[Fr],
+        lookup_index_lo: &[u64],
+        lookup_index_hi: &[u64],
+        shift: usize,
+        mask: usize,
+    ) -> Result<(), CudaError> {
+        let _ = (&weight, eq_table, lookup_index_lo, lookup_index_hi, shift, mask);
+        Err(CudaError::Unsupported)
+    }
+
     pub fn rd_wa_gather(
         &self,
         address_eq: &[Fr],
@@ -4266,6 +4283,43 @@ mod tests {
             for bank in &banks {
                 got.extend(bank.to_host().unwrap());
             }
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn raf_weight_phase_update_matches_cpu(
+            log_trace in 1usize..12,
+            chunk_bits in 1usize..8,
+            shift in 0usize..40,
+            seed in fr_strategy(),
+        ) {
+            let trace_len = 1usize << log_trace;
+            let poly_len = 1usize << chunk_bits;
+            let mask = poly_len - 1;
+
+            let weight: Vec<Fr> = (0..trace_len)
+                .map(|c| seed + Fr::from_u64((c + 1) as u64))
+                .collect();
+            let eq_table: Vec<Fr> = (0..poly_len)
+                .map(|i| seed + Fr::from_u64((i + 100) as u64))
+                .collect();
+            let lookup_index: Vec<u128> = (0..trace_len)
+                .map(|c| (c as u128).wrapping_mul(0x9e37_79b1) ^ ((c as u128) << 20))
+                .collect();
+
+            let mut expected = weight.clone();
+            for (c, w) in expected.iter_mut().enumerate() {
+                let slot = ((lookup_index[c] >> shift) as usize) & mask;
+                *w *= eq_table[slot];
+            }
+
+            let c = ctx();
+            let mut weight_dev = c.upload(&weight).unwrap();
+            let lo: Vec<u64> = lookup_index.iter().map(|&v| v as u64).collect();
+            let hi: Vec<u64> = lookup_index.iter().map(|&v| (v >> 64) as u64).collect();
+            c.raf_weight_phase_update(&mut weight_dev, &eq_table, &lo, &hi, shift, mask)
+                .unwrap();
+            let got = weight_dev.to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
 
