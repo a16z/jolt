@@ -44,6 +44,7 @@ members = [
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
+  "crates/jolt-prover",
   "crates/jolt-prover-legacy",
   "tracer",
   "common",
@@ -406,6 +407,7 @@ jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
+jolt-prover = { path = "./crates/jolt-prover" }
 jolt-witness = { path = "./crates/jolt-witness" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }

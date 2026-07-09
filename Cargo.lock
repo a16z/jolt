@@ -3542,6 +3542,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-prover"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "rayon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-prover-legacy"
 version = "0.1.0"
 dependencies = [

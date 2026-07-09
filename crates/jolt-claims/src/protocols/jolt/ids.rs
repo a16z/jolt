@@ -580,10 +580,6 @@ impl JoltOpeningId {
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
 pub enum JoltDerivedId {
-    TraceLength,
-    PaddedTraceLength,
-    BytecodeLength,
-    MemorySize,
     RamReadWrite(RamReadWritePublic),
     RamValCheck(RamValCheckPublic),
     RamRafEvaluation(RamRafEvaluationPublic),
@@ -608,14 +604,17 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
-    #[from(ignore)]
-    PublicInput(usize),
-    #[from(ignore)]
-    PublicOutput(usize),
     IncVirtualization(IncVirtualizationPublic),
     UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
+    /// Test-only derived id for toy relations that define their own
+    /// `derive_output_term`. Gated on `any(test, feature = "test-utils")`
+    /// rather than `test` alone because `cfg(test)` is per-crate: a downstream
+    /// crate's tests (the naive prover's toy relation foremost) see this crate
+    /// compiled without `cfg(test)` and reach the variant via the feature.
+    #[cfg(any(test, feature = "test-utils"))]
+    Test,
     ProgramImageReconstruction(ProgramImageReconstructionPublic),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
 }

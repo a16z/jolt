@@ -1,0 +1,29 @@
+[package]
+name = "jolt-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Modular prover for the Jolt zkVM"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "prover"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon", "jolt-poly/parallel"]
+
+[dependencies]
+jolt-claims.workspace = true
+jolt-field.workspace = true
+jolt-poly = { workspace = true, default-features = false }
+jolt-sumcheck.workspace = true
+jolt-verifier.workspace = true
+rayon = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+jolt-claims = { workspace = true, features = ["test-utils"] }
+jolt-transcript.workspace = true

@@ -388,6 +388,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     // `resolve_output`, so the canonical order is single-sourced here.
     let mut order_chains = Vec::new();
     let mut resolve_arms = Vec::new();
+    let mut construct_fields = Vec::new();
 
     for plan in &plans {
         let FieldPlan {
@@ -407,6 +408,20 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                     }
                 }
             });
+            // An indexed family consumes indices `0, 1, ..` for as long as the
+            // source answers — the family's length is instance data the source
+            // defines.
+            construct_fields.push(quote! {
+                #ident: {
+                    let mut __values = ::std::vec::Vec::new();
+                    let mut index = 0usize;
+                    while let ::core::option::Option::Some(__value) = resolve(&#id) {
+                        __values.push(__value);
+                        index += 1;
+                    }
+                    __values
+                },
+            });
         } else if *is_option {
             let id = id_expr(kind, relation, None);
             order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
@@ -417,6 +432,8 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                     }
                 }
             });
+            // An `Option` field is present iff the source answers its id.
+            construct_fields.push(quote!(#ident: resolve(&#id),));
         } else {
             let id = id_expr(kind, relation, None);
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
@@ -424,6 +441,20 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                 if *id == #id {
                     return ::core::option::Option::Some(self.#ident);
                 }
+            });
+            // A plain field's id must resolve; a miss is the caller's error.
+            construct_fields.push(quote! {
+                #ident: {
+                    let __id = #id;
+                    match resolve(&__id) {
+                        ::core::option::Option::Some(__value) => __value,
+                        ::core::option::Option::None => {
+                            return ::core::result::Result::Err(
+                                ::jolt_claims::MissingOpeningValue { id: __id },
+                            );
+                        }
+                    }
+                },
             });
         }
     }
@@ -446,6 +477,14 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             ) -> ::core::option::Option<F> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
+            }
+
+            fn from_opening_values(
+                mut resolve: impl ::core::ops::FnMut(&#id_ty) -> ::core::option::Option<F>,
+            ) -> ::core::result::Result<Self, ::jolt_claims::MissingOpeningValue<#id_ty>> {
+                ::core::result::Result::Ok(Self {
+                    #(#construct_fields)*
+                })
             }
         }
 

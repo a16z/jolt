@@ -560,6 +560,7 @@ pub(crate) mod append_recording {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -779,6 +780,57 @@ mod tests {
             None,
         );
         assert_append_matches_values(&absent);
+    }
+
+    #[test]
+    fn from_opening_values_reassembles_by_id() {
+        // Round-trip: a hand-built instance's (canonical_order, opening_values)
+        // pairs feed a map resolver; the assembled struct reproduces both.
+        let claims = InstructionLeaf {
+            lookup_table_flags: vec![fr(1), fr(2)],
+            instruction_ra: vec![fr(3), fr(4), fr(5)],
+            instruction_raf_flag: fr(6),
+        };
+        let source: std::collections::BTreeMap<_, _> = claims
+            .canonical_order()
+            .into_iter()
+            .zip(claims.opening_values())
+            .collect();
+
+        let rebuilt =
+            InstructionLeaf::<Fr>::from_opening_values(|id| source.get(id).copied()).unwrap();
+        assert_eq!(rebuilt.canonical_order(), claims.canonical_order());
+        assert_eq!(rebuilt.opening_values(), claims.opening_values());
+    }
+
+    #[test]
+    fn from_opening_values_tracks_option_presence_and_errors_on_missing_scalar() {
+        let relation = JoltRelationId::RamValCheck;
+        let advice_id = JoltOpeningId::untrusted_advice(relation);
+        let ram_inc_id = committed(JoltCommittedPolynomial::RamInc, relation);
+
+        // Present `Option`: both ids resolve.
+        let present = OptionalOutput::<Fr>::from_opening_values(|id| {
+            (*id == advice_id)
+                .then(|| fr(7))
+                .or_else(|| (*id == ram_inc_id).then(|| fr(8)))
+        })
+        .unwrap();
+        assert_eq!(present.opening_values(), vec![fr(7), fr(8)]);
+
+        // Absent `Option`: only the plain field resolves.
+        let absent =
+            OptionalOutput::<Fr>::from_opening_values(|id| (*id == ram_inc_id).then(|| fr(8)))
+                .unwrap();
+        assert_eq!(absent.opening_values(), vec![fr(8)]);
+        assert_eq!(absent.resolve_output(&advice_id), None);
+
+        // A plain field that fails to resolve is an error naming its id.
+        let missing =
+            OptionalOutput::<Fr>::from_opening_values(|id| (*id == advice_id).then(|| fr(7)));
+        assert!(
+            matches!(missing, Err(jolt_claims::MissingOpeningValue { id }) if id == ram_inc_id)
+        );
     }
 
     #[test]

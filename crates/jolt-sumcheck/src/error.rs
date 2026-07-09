@@ -75,6 +75,16 @@ pub enum SumcheckError<F: FieldCore> {
     #[error("round polynomial must contain at least one coefficient")]
     EmptyRoundCoefficients,
 
+    /// A prove-side round-message evaluation could not resolve one of its
+    /// leaves (an opening/derived table or a challenge scalar). Provers
+    /// validate their sources at construction, so this indicates state
+    /// corruption between construction and the round loop.
+    #[error("missing {kind} evaluation source during prove")]
+    MissingEvaluationSource {
+        /// Which leaf kind failed to resolve: "opening", "challenge", or "derived".
+        kind: &'static str,
+    },
+
     /// A vector-commitment setup cannot commit to any values.
     #[error("vector-commitment setup has zero capacity")]
     ZeroCommitmentCapacity,
