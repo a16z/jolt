@@ -6,13 +6,12 @@
 //! constraint rows: the summand over `(row-node Y, stream s, cycle t)` is
 //! `LK(τ_high, Y) · eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, which vanishes
 //! at the 10 in-domain row nodes for a satisfying witness, so only the 9
-//! extended-node evaluations are computed. The remainder member is composite
-//! (see [`OuterRemainderKernel`]): the stream round is hand-computed — its
-//! `Expr` coefficient leaves are QUADRATIC in the stream variable, so the
-//! naive multilinear-table premise does not hold for that one round — and the
-//! remaining cycle rounds are a plain [`NaiveSumcheckProver`] over the
-//! expanded quadratic form of the 35 R1CS input openings, bound `LowToHigh`
-//! to match the legacy prover's convention.
+//! extended-node evaluations are computed. The remainder member is a plain
+//! [`NaiveSumcheckProver`] over the joint `(cycle ‖ stream)` domain (stream =
+//! index LSB): with the relation's factored form, every derived leaf is one
+//! multilinear — the `TauKernel` eq table and the per-column `Az`/`Bz`
+//! weights, each linear in the stream variable — bound `LowToHigh` to match
+//! the legacy prover's convention.
 //!
 //! Brute-force costs are `O(T · |constraints|)` and table memory
 //! `O(|inputs|² · T)` — a bring-up implementation; a streaming kernel
@@ -30,13 +29,11 @@ use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, pol
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
-use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::SumcheckOutputClaims;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::views::dense_view;
+use crate::views::{dense_view, replicate_stream_lsb, stream_pair_lsb};
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
 /// The stage-1 slot: factory for a prepared Spartan-outer instance.
@@ -58,14 +55,7 @@ pub trait SpartanOuterInstance<F: Field> {
     fn into_remainder(
         self: Box<Self>,
         uniskip_challenge: F,
-    ) -> Result<Box<dyn OuterRemainderInstance<F>>, KernelError<F>>;
-}
-
-/// The remainder batch member, plus typed claim extraction once fully bound.
-pub trait OuterRemainderInstance<F: Field>: ProveRounds<F> {
-    fn output_claims(
-        &mut self,
-    ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, KernelError<F>>;
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = OuterRemainder<F>>>, KernelError<F>>;
 }
 
 impl<F: Field> SpartanOuterProver<F> for ReferenceBackend {
@@ -187,12 +177,17 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
         )))
     }
 
-    /// Consume the shared state into the remainder sumcheck member, once the
-    /// uni-skip round's challenge is drawn.
+    /// Consume the shared state into the remainder batch member, once the
+    /// uni-skip round's challenge is drawn: a plain naive member over the
+    /// joint `(cycle ‖ stream)` domain, `index = (t << 1) | s`. The
+    /// per-stream `Az`/`Bz` linear forms are single-sourced from the same
+    /// jolt-r1cs functions the verifier's coefficient build uses; each is
+    /// linear in the stream variable, so every derived leaf materializes as
+    /// one multilinear table.
     fn into_remainder(
         self: Box<Self>,
         uniskip_challenge: F,
-    ) -> Result<Box<dyn OuterRemainderInstance<F>>, KernelError<F>> {
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
         let this = *self;
         let kernel = centered_lagrange_kernel::<F>(
             OUTER_UNISKIP_DOMAIN_SIZE,
@@ -202,28 +197,12 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
 
         let variable_count = this.input_tables.len();
         let columns: Vec<usize> = (1..=variable_count).collect();
-        let mut az_values: [Vec<F>; 2] = [Vec::new(), Vec::new()];
-        let mut bz_values: [Vec<F>; 2] = [Vec::new(), Vec::new()];
         let mut az_columns: [Vec<F>; 2] = [Vec::new(), Vec::new()];
         let mut bz_columns: [Vec<F>; 2] = [Vec::new(), Vec::new()];
         let mut az_constant = [F::zero(); 2];
         let mut bz_constant = [F::zero(); 2];
         for (index, stream) in [F::zero(), F::one()].into_iter().enumerate() {
             let weights = spartan_outer_row_weights(uniskip_challenge, stream)?;
-            let cycles = 1usize << this.log_t;
-            let row_form = |rows: &[Vec<F>]| {
-                (0..cycles)
-                    .map(|t| {
-                        weights
-                            .iter()
-                            .enumerate()
-                            .map(|(row, &weight)| weight * rows[row][t])
-                            .sum()
-                    })
-                    .collect::<Vec<F>>()
-            };
-            az_values[index] = row_form(&this.az_rows);
-            bz_values[index] = row_form(&this.bz_rows);
             let weighted = this.matrices.weighted_columns(&weights, &columns)?;
             az_columns[index] = weighted.a;
             bz_columns[index] = weighted.b;
@@ -234,206 +213,63 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
             bz_constant[index] = constants.b;
         }
 
-        let tau_low = &this.tau[..=this.log_t];
-        Ok(Box::new(OuterRemainderKernel {
-            log_t: this.log_t,
-            kernel,
-            eq_cycle: EqPolynomial::new(tau_low[..this.log_t].to_vec()).evaluations(),
-            tau_stream: tau_low[this.log_t],
-            tau: this.tau,
-            az_values,
-            bz_values,
-            az_columns,
-            bz_columns,
-            az_constant,
-            bz_constant,
-            input_tables: this.input_tables,
-            inner: None,
-        }))
-    }
-}
-
-/// The remainder member: a hand-computed stream round followed by a naive
-/// member over the cycle rounds.
-///
-/// The remainder summand is
-/// `LK(τ_high, r₀) · eq(τ_low, (t,s)) · Az(s,t) · Bz(s,t)` with
-/// `Az(s,t) = (1−s)·Az₀(t) + s·Az₁(t)` — degree 3 in the stream variable
-/// `s`, so the expanded `Expr`'s coefficient leaves are quadratic in `s` and
-/// have no faithful multilinear table. Round 0 therefore evaluates the
-/// factored form directly at 4 sample points; once `c₀` binds `s`, every
-/// remaining leaf IS multilinear over the cycle domain and the tail is a
-/// [`NaiveSumcheckProver`] whose relation carries a shrunk cycle geometry
-/// (so its round count equals the remaining rounds).
-pub struct OuterRemainderKernel<F: Field> {
-    log_t: usize,
-    kernel: F,
-    tau: Vec<F>,
-    /// eq(τ_low[..log_t], ·) over the cycle domain.
-    eq_cycle: Vec<F>,
-    /// τ_low's last entry — the stream variable's eq weight.
-    tau_stream: F,
-    /// Per-stream row-form value tables `Az_s(t)`, `Bz_s(t)`.
-    az_values: [Vec<F>; 2],
-    bz_values: [Vec<F>; 2],
-    /// Per-stream linear forms over the openings (for the bound tail).
-    az_columns: [Vec<F>; 2],
-    bz_columns: [Vec<F>; 2],
-    az_constant: [F; 2],
-    bz_constant: [F; 2],
-    input_tables: Vec<Vec<F>>,
-    inner: Option<NaiveSumcheckProver<F, OuterRemainder<F>>>,
-}
-
-impl<F: Field> OuterRemainderKernel<F> {
-    /// The residual naive member once the stream challenge is bound: openings
-    /// are the plain cycle tables; each coefficient leaf is the SCALAR
-    /// `kernel · eq₁(τ_stream, c₀) · az(c₀) · bz(c₀)` times the shared
-    /// eq-cycle table — multilinear per leaf, exactly the expanded `Expr`.
-    fn build_inner(&mut self, stream_challenge: F) -> Result<(), KernelError<F>> {
-        let interpolate = |pair: &[F; 2]| pair[0] + stream_challenge * (pair[1] - pair[0]);
-        let column = |columns: &[Vec<F>; 2], index: usize| {
-            interpolate(&[columns[0][index], columns[1][index]])
-        };
-        let scale = self.kernel
-            * (self.tau_stream * stream_challenge
-                + (F::one() - self.tau_stream) * (F::one() - stream_challenge));
-        let az_constant = interpolate(&self.az_constant);
-        let bz_constant = interpolate(&self.bz_constant);
-
-        let dimensions = SpartanOuterDimensions::rv64(self.log_t);
-        let coefficient_table = |value: F| {
-            Polynomial::new(
-                self.eq_cycle
-                    .iter()
-                    .map(|&eq| eq * value)
-                    .collect::<Vec<F>>(),
-            )
-        };
-        let variable_count = self.input_tables.len();
+        let cycles = 1usize << this.log_t;
         let mut derived_tables = BTreeMap::new();
-        for left in 0..variable_count {
-            let az_left = column(&self.az_columns, left);
-            for right in 0..variable_count {
-                let _ = derived_tables.insert(
-                    JoltDerivedId::from(SpartanOuterPublic::QuadraticCoefficient { left, right }),
-                    coefficient_table(scale * az_left * column(&self.bz_columns, right)),
-                );
-            }
-        }
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(SpartanOuterPublic::TauKernel),
+            Polynomial::new(
+                this.eq_table
+                    .iter()
+                    .map(|&eq| eq * kernel)
+                    .collect::<Vec<F>>(),
+            ),
+        );
         for index in 0..variable_count {
             let _ = derived_tables.insert(
-                JoltDerivedId::from(SpartanOuterPublic::LinearCoefficient(index)),
-                coefficient_table(
-                    scale
-                        * (column(&self.az_columns, index) * bz_constant
-                            + az_constant * column(&self.bz_columns, index)),
-                ),
+                JoltDerivedId::from(SpartanOuterPublic::AzWeight(index)),
+                Polynomial::new(stream_pair_lsb(
+                    [az_columns[0][index], az_columns[1][index]],
+                    cycles,
+                )),
+            );
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(SpartanOuterPublic::BzWeight(index)),
+                Polynomial::new(stream_pair_lsb(
+                    [bz_columns[0][index], bz_columns[1][index]],
+                    cycles,
+                )),
             );
         }
         let _ = derived_tables.insert(
-            JoltDerivedId::from(SpartanOuterPublic::ConstantCoefficient),
-            coefficient_table(scale * az_constant * bz_constant),
+            JoltDerivedId::from(SpartanOuterPublic::AzConstant),
+            Polynomial::new(stream_pair_lsb(az_constant, cycles)),
+        );
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(SpartanOuterPublic::BzConstant),
+            Polynomial::new(stream_pair_lsb(bz_constant, cycles)),
         );
 
+        let dimensions = SpartanOuterDimensions::rv64(this.log_t);
         let opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>> = dimensions
             .variables()
             .iter()
-            .zip(&self.input_tables)
-            .map(|(&variable, table)| (outer_opening(variable), Polynomial::new(table.clone())))
+            .zip(&this.input_tables)
+            .map(|(&variable, table)| {
+                (
+                    outer_opening(variable),
+                    Polynomial::new(replicate_stream_lsb(table)),
+                )
+            })
             .collect();
 
-        // The inner relation's only jobs are round count, degree, and the
-        // output expression — a shrunk cycle geometry makes its round count
-        // equal the remaining rounds; its tau is never evaluated.
-        let inner_dimensions = SpartanOuterDimensions::rv64(self.log_t - 1);
-        let inner_tau = self.tau[..=self.log_t].to_vec();
-        let inner = NaiveSumcheckProver::new(
-            OuterRemainder::new(inner_dimensions, inner_tau, stream_challenge),
+        let relation = OuterRemainder::new(dimensions, this.tau, uniskip_challenge);
+        Ok(Box::new(NaiveSumcheckProver::new(
+            relation,
             &NoChallenges::default(),
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,
-        )?;
-        self.inner = Some(inner);
-        Ok(())
-    }
-}
-
-impl<F: Field> OuterRemainderInstance<F> for OuterRemainderKernel<F> {
-    /// The member's typed produced-opening values, once fully bound.
-    fn output_claims(
-        &mut self,
-    ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, KernelError<F>> {
-        self.inner
-            .as_mut()
-            .ok_or(KernelError::NotFullyBound {
-                remaining: self.log_t + 1,
-            })?
-            .output_claims()
-    }
-}
-
-impl<F: Field> ProveRounds<F> for OuterRemainderKernel<F> {
-    fn num_rounds(&self) -> usize {
-        1 + self.log_t
-    }
-
-    fn compute_message(
-        &mut self,
-        round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        if round > 0 {
-            return self
-                .inner
-                .as_mut()
-                .ok_or(SumcheckError::MissingEvaluationSource {
-                    kind: "outer-remainder inner naive member",
-                })?
-                .compute_message(round - 1, previous_claim);
-        }
-
-        // The stream round, from the factored form: degree 3 in `s`
-        // (eq linear × Az linear × Bz linear), sampled at s = 0..=3.
-        let cycles = 1usize << self.log_t;
-        let mut evals = Vec::with_capacity(4);
-        for sample in 0..4u64 {
-            let s = F::from_u64(sample);
-            let eq_stream = self.tau_stream * s + (F::one() - self.tau_stream) * (F::one() - s);
-            let mut sum = F::zero();
-            for t in 0..cycles {
-                let az = self.az_values[0][t] + s * (self.az_values[1][t] - self.az_values[0][t]);
-                let bz = self.bz_values[0][t] + s * (self.bz_values[1][t] - self.bz_values[0][t]);
-                sum += self.eq_cycle[t] * az * bz;
-            }
-            evals.push(self.kernel * eq_stream * sum);
-        }
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
-    }
-
-    fn ingest_challenge(&mut self, challenge: F, round: usize) -> Result<(), SumcheckError<F>> {
-        if round == 0 {
-            return self.build_inner(challenge).map_err(|_| {
-                SumcheckError::MissingEvaluationSource {
-                    kind: "outer-remainder inner naive member",
-                }
-            });
-        }
-        self.inner
-            .as_mut()
-            .ok_or(SumcheckError::MissingEvaluationSource {
-                kind: "outer-remainder inner naive member",
-            })?
-            .ingest_challenge(challenge, round - 1)
+        )?))
     }
 }
 

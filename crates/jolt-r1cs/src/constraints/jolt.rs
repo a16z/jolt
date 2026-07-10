@@ -175,9 +175,11 @@ pub fn spartan_outer_opening_columns() -> Vec<usize> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JoltSpartanOuterPublic {
-    QuadraticCoefficient { left: usize, right: usize },
-    LinearCoefficient(usize),
-    ConstantCoefficient,
+    TauKernel,
+    AzWeight(usize),
+    BzWeight(usize),
+    AzConstant,
+    BzConstant,
 }
 
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
@@ -266,27 +268,16 @@ impl<F: Field> JoltSpartanOuterRemainder<F> {
 
     pub fn public_coefficients(&self) -> Vec<(JoltSpartanOuterPublic, F)> {
         let count = self.az_coefficients.len();
-        let mut coefficients = Vec::with_capacity(count * count + count + 1);
-        for left in 0..count {
-            for right in 0..count {
-                coefficients.push((
-                    JoltSpartanOuterPublic::QuadraticCoefficient { left, right },
-                    self.tau_kernel * self.az_coefficients[left] * self.bz_coefficients[right],
-                ));
-            }
+        let mut coefficients = Vec::with_capacity(2 * count + 3);
+        coefficients.push((JoltSpartanOuterPublic::TauKernel, self.tau_kernel));
+        for (index, &weight) in self.az_coefficients.iter().enumerate() {
+            coefficients.push((JoltSpartanOuterPublic::AzWeight(index), weight));
         }
-        for index in 0..count {
-            let coefficient = self.az_coefficients[index] * self.bz_constant
-                + self.az_constant * self.bz_coefficients[index];
-            coefficients.push((
-                JoltSpartanOuterPublic::LinearCoefficient(index),
-                self.tau_kernel * coefficient,
-            ));
+        for (index, &weight) in self.bz_coefficients.iter().enumerate() {
+            coefficients.push((JoltSpartanOuterPublic::BzWeight(index), weight));
         }
-        coefficients.push((
-            JoltSpartanOuterPublic::ConstantCoefficient,
-            self.tau_kernel * self.az_constant * self.bz_constant,
-        ));
+        coefficients.push((JoltSpartanOuterPublic::AzConstant, self.az_constant));
+        coefficients.push((JoltSpartanOuterPublic::BzConstant, self.bz_constant));
         coefficients
     }
 }
@@ -508,28 +499,23 @@ mod tests {
             composed_public.into_iter().zip(rv64_public)
         {
             let ids_match = match (composed_id, rv64_id) {
+                (JoltSpartanOuterPublic::TauKernel, SpartanOuterPublic::TauKernel) => true,
                 (
-                    JoltSpartanOuterPublic::QuadraticCoefficient { left, right },
-                    SpartanOuterPublic::QuadraticCoefficient {
-                        left: rv64_left,
-                        right: rv64_right,
-                    },
-                ) => {
-                    assert_eq!(left, rv64_left);
-                    assert_eq!(right, rv64_right);
-                    true
-                }
-                (
-                    JoltSpartanOuterPublic::LinearCoefficient(index),
-                    SpartanOuterPublic::LinearCoefficient(rv64_index),
+                    JoltSpartanOuterPublic::AzWeight(index),
+                    SpartanOuterPublic::AzWeight(rv64_index),
                 ) => {
                     assert_eq!(index, rv64_index);
                     true
                 }
                 (
-                    JoltSpartanOuterPublic::ConstantCoefficient,
-                    SpartanOuterPublic::ConstantCoefficient,
-                ) => true,
+                    JoltSpartanOuterPublic::BzWeight(index),
+                    SpartanOuterPublic::BzWeight(rv64_index),
+                ) => {
+                    assert_eq!(index, rv64_index);
+                    true
+                }
+                (JoltSpartanOuterPublic::AzConstant, SpartanOuterPublic::AzConstant) => true,
+                (JoltSpartanOuterPublic::BzConstant, SpartanOuterPublic::BzConstant) => true,
                 _ => false,
             };
             assert!(ids_match, "public coefficient kind mismatch");

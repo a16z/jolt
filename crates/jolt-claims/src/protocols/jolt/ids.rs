@@ -215,9 +215,17 @@ pub enum SpartanProductVirtualizationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SpartanOuterPublic {
-    QuadraticCoefficient { left: usize, right: usize },
-    LinearCoefficient(usize),
-    ConstantCoefficient,
+    /// `LK(τ_high, r₀) · eq(τ_low, ·)` — the uni-skip kernel times the cycle eq.
+    TauKernel,
+    /// The `Az` linear-form weight of R1CS input column `i` (linear in the
+    /// stream variable).
+    AzWeight(usize),
+    /// The `Bz` linear-form weight of R1CS input column `i`.
+    BzWeight(usize),
+    /// The `Az` linear form's public-column contribution.
+    AzConstant,
+    /// The `Bz` linear form's public-column contribution.
+    BzConstant,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

@@ -14,11 +14,11 @@
 //! making any relation whose leaves are multilinear provable at harness
 //! scale with zero relation-specific code; optimized kernels are
 //! equivalence-tested against it. Derived ids correspond one-to-one with
-//! multilinears by design; the single enumerated escape so far is the
-//! Spartan outer remainder's post-uni-skip stream round ([`spartan_outer`],
-//! whose expanded coefficient leaves are quadratic in the stream variable —
-//! a uni-skip structure, not a fixable factoring). See
-//! `specs/clean-slate-prover.md`, "The backend seam".
+//! multilinears by design, so every batch member is naive-provable; the only
+//! hand-written reference compute is the uni-skip first-round polynomials
+//! (single univariate rounds over a centered integer domain — outside the
+//! sumcheck round model entirely). See `specs/clean-slate-prover.md`,
+//! "The backend seam".
 //!
 //! The commitment kernel streams PCS commitments of the committed witness
 //! polynomials over the proof's shared embedding grid.

@@ -45,3 +45,25 @@ pub(crate) fn tile<F: Field>(base: &[F], copies: usize) -> Vec<F> {
     }
     out
 }
+
+/// Replicate a cycle-indexed table across the stream bit at the index LSB
+/// (`out[(t << 1) | s] = base[t]`).
+pub(crate) fn replicate_stream_lsb<F: Field>(base: &[F]) -> Vec<F> {
+    let mut out = Vec::with_capacity(base.len() * 2);
+    for &value in base {
+        out.push(value);
+        out.push(value);
+    }
+    out
+}
+
+/// A per-stream constant table over the `(cycle ‖ stream)` domain with the
+/// stream bit at the index LSB (`out[(t << 1) | s] = values[s]`).
+pub(crate) fn stream_pair_lsb<F: Field>(values: [F; 2], cycles: usize) -> Vec<F> {
+    let mut out = Vec::with_capacity(cycles * 2);
+    for _ in 0..cycles {
+        out.push(values[0]);
+        out.push(values[1]);
+    }
+    out
+}

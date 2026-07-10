@@ -98,16 +98,14 @@ impl std::error::Error for SpartanOuterClaimError {}
 pub struct SpartanOuterDimensions {
     log_t: usize,
     variables: Vec<JoltVirtualPolynomial>,
-    include_linear_terms: bool,
-    include_constant_term: bool,
+    include_affine_terms: bool,
 }
 
 impl SpartanOuterDimensions {
     pub fn new(
         log_t: usize,
         variables: Vec<JoltVirtualPolynomial>,
-        include_linear_terms: bool,
-        include_constant_term: bool,
+        include_affine_terms: bool,
     ) -> Option<Self> {
         if variables.is_empty() {
             return None;
@@ -115,8 +113,7 @@ impl SpartanOuterDimensions {
         Some(Self {
             log_t,
             variables,
-            include_linear_terms,
-            include_constant_term,
+            include_affine_terms,
         })
     }
 
@@ -128,12 +125,11 @@ impl SpartanOuterDimensions {
         self.log_t
     }
 
-    pub fn include_linear_terms(&self) -> bool {
-        self.include_linear_terms
-    }
-
-    pub fn include_constant_term(&self) -> bool {
-        self.include_constant_term
+    /// Whether the `Az`/`Bz` linear forms carry their public-column constants
+    /// (the affine parts — the source of the expanded form's linear and
+    /// constant terms).
+    pub fn include_affine_terms(&self) -> bool {
+        self.include_affine_terms
     }
 
     pub const fn remainder_rounds(&self) -> usize {
@@ -144,8 +140,7 @@ impl SpartanOuterDimensions {
         Self {
             log_t,
             variables: SPARTAN_OUTER_R1CS_INPUTS.to_vec(),
-            include_linear_terms: true,
-            include_constant_term: true,
+            include_affine_terms: true,
         }
     }
 }
@@ -161,16 +156,14 @@ pub struct SpartanOuterLinearForms<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpartanOuterRemainderPlan {
     variables: Vec<JoltVirtualPolynomial>,
-    include_linear_terms: bool,
-    include_constant_term: bool,
+    include_affine_terms: bool,
 }
 
 impl SpartanOuterRemainderPlan {
     pub fn from_dimensions(dimensions: &SpartanOuterDimensions) -> Self {
         Self {
             variables: dimensions.variables().to_vec(),
-            include_linear_terms: dimensions.include_linear_terms(),
-            include_constant_term: dimensions.include_constant_term(),
+            include_affine_terms: dimensions.include_affine_terms(),
         }
     }
 
@@ -240,34 +233,17 @@ impl SpartanOuterRemainderPlan {
         check_linear_form_len(expected, linear_forms.az_coefficients.len())?;
         check_linear_form_len(expected, linear_forms.bz_coefficients.len())?;
 
-        let mut claims = Vec::with_capacity(expected * expected + 2 * expected + 1);
-        for left in 0..expected {
-            for right in 0..expected {
-                claims.push((
-                    SpartanOuterPublic::QuadraticCoefficient { left, right },
-                    tau_kernel
-                        * linear_forms.az_coefficients[left]
-                        * linear_forms.bz_coefficients[right],
-                ));
-            }
+        let mut claims = Vec::with_capacity(2 * expected + 3);
+        claims.push((SpartanOuterPublic::TauKernel, tau_kernel));
+        for (index, &weight) in linear_forms.az_coefficients.iter().enumerate() {
+            claims.push((SpartanOuterPublic::AzWeight(index), weight));
         }
-
-        if self.include_linear_terms {
-            for index in 0..expected {
-                let claim = linear_forms.az_coefficients[index] * linear_forms.bz_constant
-                    + linear_forms.az_constant * linear_forms.bz_coefficients[index];
-                claims.push((
-                    SpartanOuterPublic::LinearCoefficient(index),
-                    tau_kernel * claim,
-                ));
-            }
+        for (index, &weight) in linear_forms.bz_coefficients.iter().enumerate() {
+            claims.push((SpartanOuterPublic::BzWeight(index), weight));
         }
-
-        if self.include_constant_term {
-            claims.push((
-                SpartanOuterPublic::ConstantCoefficient,
-                tau_kernel * linear_forms.az_constant * linear_forms.bz_constant,
-            ));
+        if self.include_affine_terms {
+            claims.push((SpartanOuterPublic::AzConstant, linear_forms.az_constant));
+            claims.push((SpartanOuterPublic::BzConstant, linear_forms.bz_constant));
         }
 
         Ok(claims)
@@ -478,7 +454,6 @@ mod tests {
                 JoltVirtualPolynomial::LookupOutput,
             ],
             true,
-            true,
         ) {
             Some(dimensions) => dimensions,
             None => panic!("test Spartan outer dimensions should be valid"),
@@ -487,10 +462,7 @@ mod tests {
 
     #[test]
     fn outer_dimensions_rejects_empty_variables() {
-        assert_eq!(
-            SpartanOuterDimensions::new(8, Vec::new(), false, false),
-            None
-        );
+        assert_eq!(SpartanOuterDimensions::new(8, Vec::new(), false), None);
     }
 
     #[test]
@@ -499,8 +471,7 @@ mod tests {
 
         assert_eq!(dimensions.log_t(), 8);
         assert_eq!(dimensions.variables(), &SPARTAN_OUTER_R1CS_INPUTS);
-        assert!(dimensions.include_linear_terms());
-        assert!(dimensions.include_constant_term());
+        assert!(dimensions.include_affine_terms());
     }
 
     #[test]
@@ -511,8 +482,7 @@ mod tests {
         assert_eq!(plan.r1cs_input_indices(), Ok(vec![4, 19]));
 
         let unsupported =
-            SpartanOuterDimensions::new(8, vec![JoltVirtualPolynomial::NextIsNoop], true, true)
-                .unwrap();
+            SpartanOuterDimensions::new(8, vec![JoltVirtualPolynomial::NextIsNoop], true).unwrap();
         assert!(matches!(
             SpartanOuterRemainderPlan::from_dimensions(&unsupported).r1cs_input_indices(),
             Err(SpartanOuterClaimError::UnsupportedR1csInput {
@@ -562,25 +532,13 @@ mod tests {
         assert_eq!(
             claims,
             vec![
-                (
-                    SpartanOuterPublic::QuadraticCoefficient { left: 0, right: 0 },
-                    Fr::from_u64(170),
-                ),
-                (
-                    SpartanOuterPublic::QuadraticCoefficient { left: 0, right: 1 },
-                    Fr::from_u64(238),
-                ),
-                (
-                    SpartanOuterPublic::QuadraticCoefficient { left: 1, right: 0 },
-                    Fr::from_u64(255),
-                ),
-                (
-                    SpartanOuterPublic::QuadraticCoefficient { left: 1, right: 1 },
-                    Fr::from_u64(357),
-                ),
-                (SpartanOuterPublic::LinearCoefficient(0), Fr::from_u64(1377),),
-                (SpartanOuterPublic::LinearCoefficient(1), Fr::from_u64(1972),),
-                (SpartanOuterPublic::ConstantCoefficient, Fr::from_u64(2431),),
+                (SpartanOuterPublic::TauKernel, Fr::from_u64(17)),
+                (SpartanOuterPublic::AzWeight(0), Fr::from_u64(2)),
+                (SpartanOuterPublic::AzWeight(1), Fr::from_u64(3)),
+                (SpartanOuterPublic::BzWeight(0), Fr::from_u64(5)),
+                (SpartanOuterPublic::BzWeight(1), Fr::from_u64(7)),
+                (SpartanOuterPublic::AzConstant, Fr::from_u64(11)),
+                (SpartanOuterPublic::BzConstant, Fr::from_u64(13)),
             ]
         );
     }
