@@ -1,0 +1,77 @@
+//! The instruction claim-reduction (stage 2) kernel: a naive member over the
+//! cycle domain.
+//!
+//! The summand `eq(τ_low, j) · (o₁ + γ·o₂ + γ²·o₃ + γ³·o₄ + γ⁴·o₅)(j)` over
+//! the five instruction-lookup operand tables, bound `LowToHigh`. Three of its
+//! openings alias the product remainder's (same polynomial, same point) — the
+//! generated drivers suppress the duplicate absorbs; the naive members agree
+//! on the claims because they bind the same tables with the same challenge
+//! slice.
+
+use std::collections::BTreeMap;
+
+use jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::{
+    left_instruction_input_reduced, left_lookup_operand_reduced, lookup_output_reduced,
+    right_instruction_input_reduced, right_lookup_operand_reduced,
+};
+use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionChallenges;
+use jolt_claims::protocols::jolt::{
+    InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
+};
+use jolt_field::Field;
+use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
+use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
+use jolt_witness::WitnessProvider;
+
+use crate::views::{dense_view, eq_table};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+
+/// The stage-2 instruction claim-reduction slot.
+pub trait InstructionClaimReductionProver<F: Field> {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        trace_dimensions: TraceDimensions,
+        tau_low: &[F],
+        challenges: &InstructionClaimReductionChallenges<F>,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>;
+}
+
+impl<F: Field> InstructionClaimReductionProver<F> for ReferenceBackend {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        trace_dimensions: TraceDimensions,
+        tau_low: &[F],
+        challenges: &InstructionClaimReductionChallenges<F>,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
+    {
+        let ids = [
+            lookup_output_reduced(),
+            left_lookup_operand_reduced(),
+            right_lookup_operand_reduced(),
+            left_instruction_input_reduced(),
+            right_instruction_input_reduced(),
+        ];
+        let opening_tables = ids
+            .into_iter()
+            .map(|id| Ok((id, Polynomial::new(dense_view(witness, id)?))))
+            .collect::<Result<BTreeMap<_, _>, KernelError<F>>>()?;
+        let derived_tables = BTreeMap::from([(
+            JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan),
+            Polynomial::new(eq_table(tau_low)),
+        )]);
+
+        let relation = InstructionClaimReduction::new(trace_dimensions, tau_low.to_vec());
+        Ok(Box::new(NaiveSumcheckProver::new(
+            relation,
+            challenges,
+            opening_tables,
+            derived_tables,
+            BindingOrder::LowToHigh,
+        )?))
+    }
+}

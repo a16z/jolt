@@ -33,11 +33,10 @@ use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckOutputClaims;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-use jolt_witness::protocols::jolt_vm::{jolt_opening_oracle_ref, JoltVmNamespace};
-use jolt_witness::{
-    MaterializationPolicy, PolynomialEncoding, RetentionHint, ViewRequirement, WitnessProvider,
-};
+use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
+use jolt_witness::WitnessProvider;
 
+use crate::views::dense_view;
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
 /// The stage-1 slot: factory for a prepared Spartan-outer instance.
@@ -447,22 +446,7 @@ fn materialize_input_tables<F: Field>(
     dimensions
         .variables()
         .iter()
-        .map(|&variable| {
-            let oracle = jolt_opening_oracle_ref(outer_opening(variable))?;
-            let view = witness.oracle_view(ViewRequirement {
-                oracle,
-                encoding: PolynomialEncoding::Dense,
-                materialization: MaterializationPolicy::BackendChoice,
-                retention: RetentionHint::Ephemeral,
-            })?;
-            let values = view
-                .as_slice()
-                .ok_or(KernelError::Unsupported {
-                    reason: "Spartan-outer input oracle view was not materialized",
-                })?
-                .to_vec();
-            Ok(values)
-        })
+        .map(|&variable| dense_view(witness, outer_opening(variable)))
         .collect()
 }
 

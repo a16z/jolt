@@ -271,9 +271,12 @@ Prover/verifier consistency (the load-bearing properties):
       generated `verify_clear`/`verify_zk` produce identical transcript event logs (reusing the
       `draw_recording`/`append_recording` doubles) — landed before any real stage depends on the
       engine.
-- [ ] Every sumcheck relation in stages 1–7 is provable by the naive reference prover at harness
-      scale, and every shipped form/fused kernel has a passing `kernel_naive_equivalence` test +
-      fuzz target; the set of fused escape hatches is enumerated in the kernel crate's docs.
+- [ ] Every sumcheck relation in stages 1–7 is provable at harness scale by the reference
+      backend — the naive `Expr` interpreter where every leaf is multilinear, plus hand-rolled
+      reference members where that premise fails (post-uni-skip stream coefficients, derived
+      leaves that are products of multilinears), enumerated in the kernel crate's docs — and
+      every shipped form/fused kernel has a passing `kernel_naive_equivalence` test + fuzz
+      target; the set of fused escape hatches is enumerated in the kernel crate's docs.
 - [ ] `jolt-prover` invokes kernels exclusively through `JoltBackend` slots — no concrete kernel
       type is named in any stage recipe; `JoltBackend::reference()` serves every slot; the
       optimized CPU backend expresses every stage-1–7 relation as a form descriptor over the
@@ -450,7 +453,10 @@ Three layers, each answering a different question:
   compilation is shared code derived from the `Expr`); only fused fast paths are bespoke.
 - **The naive tier makes slots ~free.** `JoltBackend::reference()` implements every slot through
   the one generic `NaiveSumcheckProver` plus per-relation leaf resolvers — the always-present
-  fallback and the equivalence anchor.
+  fallback and the equivalence anchor. Slots whose leaves are not multilinear (post-uni-skip
+  stream coefficients; derived leaves that are products of multilinears, e.g. the RAM output
+  check's `EqIoMask`) get small hand-rolled reference members instead, enumerated in the crate
+  docs.
 
 ```rust
 // jolt-kernels — illustrative. PCS carries only CommitmentScheme: streaming

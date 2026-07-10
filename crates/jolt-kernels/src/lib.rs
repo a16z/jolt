@@ -9,12 +9,16 @@
 //! Sumcheck kernels implement `jolt_sumcheck::ProveRounds` and are added per
 //! relation as stages demand them, each in a per-relation module defining
 //! the slot's object-safe factory/instance traits next to the reference
-//! implementation ([`spartan_outer`] is the first). The
-//! [`NaiveSumcheckProver`] is the reference tier: it interprets a relation's
-//! output `Expr` with polynomial-valued leaves, making any relation provable
-//! at harness scale with zero relation-specific code; optimized kernels are
-//! equivalence-tested against it. See `specs/clean-slate-prover.md`,
-//! "The backend seam".
+//! implementation. The [`NaiveSumcheckProver`] is the reference tier: it
+//! interprets a relation's output `Expr` with polynomial-valued leaves,
+//! making any relation whose leaves are multilinear provable at harness
+//! scale with zero relation-specific code; optimized kernels are
+//! equivalence-tested against it. Hand-rolled reference members exist where
+//! that premise fails — the enumerated escapes so far: the Spartan outer
+//! remainder's post-uni-skip stream round ([`spartan_outer`], quadratic
+//! coefficient leaves) and the RAM output check ([`ram_output_check`],
+//! derived leaves that are products of multilinears). See
+//! `specs/clean-slate-prover.md`, "The backend seam".
 //!
 //! The commitment kernel streams PCS commitments of the committed witness
 //! polynomials over the proof's shared embedding grid.
@@ -22,9 +26,15 @@
 mod backend;
 mod commitment;
 mod error;
+pub mod instruction_claim_reduction;
 mod naive;
+pub mod ram_output_check;
+pub mod ram_raf_evaluation;
+pub mod ram_read_write;
 pub mod spartan_outer;
+pub mod spartan_product;
 mod sumcheck;
+mod views;
 
 pub use backend::{JoltBackend, ProofSession, ReferenceBackend};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};

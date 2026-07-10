@@ -20,6 +20,7 @@ jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
+jolt-program.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
 jolt-verifier.workspace = true

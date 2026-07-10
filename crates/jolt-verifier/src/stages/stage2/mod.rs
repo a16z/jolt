@@ -10,7 +10,7 @@ pub mod ram_read_write_checking;
 mod verify;
 
 pub use outputs::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output, Stage2ZkOutput};
-pub use verify::verify;
+pub use verify::{stage2_batch_input_values_from_upstream, verify};
 
 use jolt_claims::protocols::jolt::{geometry::dimensions::ReadWriteDimensions, JoltRelationId};
 

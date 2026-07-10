@@ -6,11 +6,13 @@
 //! (`verify_until_stage1`, then stage verifies as stages land), whose
 //! Fiat-Shamir transcript is byte-identical to the prover's by soundness of
 //! the accepted proof. The harness ratchets one stage at a time; today it
-//! pins stage 0 (config derivation, preamble, witness commitments).
+//! pins stages 0 through 2 (config derivation, preamble, witness
+//! commitments, both uni-skips, both sumcheck batches, all claims, and every
+//! stage-boundary transcript state).
 
 #[cfg(feature = "prover-fixtures")]
 #[expect(clippy::expect_used, clippy::panic)]
-mod stage0 {
+mod muldiv {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
@@ -19,6 +21,7 @@ mod stage0 {
     };
     use jolt_prover::stages::stage0::prove_stage0;
     use jolt_prover::stages::stage1::prove_stage1;
+    use jolt_prover::stages::stage2::prove_stage2;
     use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -38,10 +41,10 @@ mod stage0 {
     const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
 
     /// Prove muldiv with both provers from the same guest and inputs; assert
-    /// the new prover's stage-0 transcript state and commitment bytes equal
-    /// legacy's.
+    /// byte equality of every proof component and stage-boundary transcript
+    /// state the ratchet covers.
     #[test]
-    fn stage0_matches_legacy_on_muldiv() {
+    fn prover_matches_legacy_on_muldiv() {
         let mut program = host::Program::new("muldiv-guest");
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
 
@@ -215,7 +218,7 @@ mod stage0 {
             assert_eq!(stage1.claims, legacy_claims.stage1);
 
             let mut legacy_transcript = legacy_pre_stage1.transcript.clone();
-            let _legacy_stage1 = jolt_verifier::stages::stage1::verify(
+            let legacy_stage1 = jolt_verifier::stages::stage1::verify(
                 &legacy_pre_stage1.checked,
                 &legacy_proof,
                 &mut legacy_transcript,
@@ -225,6 +228,42 @@ mod stage0 {
                 new_transcript.state(),
                 legacy_transcript.state(),
                 "stage-1 transcript state diverged from legacy",
+            );
+
+            // The stage-2 ratchet: prove, then replay legacy's proof through
+            // the verifier's stage 2 for the boundary state.
+            let stage2 = prove_stage2::<Fr, DoryScheme, Bn254G1, Blake2bTranscript>(
+                backend,
+                &mut session,
+                &config,
+                &public_io,
+                &stage1.clear_output,
+                &witness,
+                &mut new_transcript,
+            )
+            .expect("stage 2 proves");
+
+            assert_eq!(
+                stage2.uniskip_proof, legacy_proof.stages.stage2_uni_skip_first_round_proof,
+                "stage-2 uni-skip proof bytes diverged from legacy",
+            );
+            assert_eq!(
+                stage2.sumcheck_proof, legacy_proof.stages.stage2_sumcheck_proof,
+                "stage-2 sumcheck proof bytes diverged from legacy",
+            );
+            assert_eq!(stage2.claims, legacy_claims.stage2);
+
+            let _legacy_stage2 = jolt_verifier::stages::stage2::verify(
+                &legacy_pre_stage1.checked,
+                &legacy_proof,
+                &mut legacy_transcript,
+                &legacy_stage1,
+            )
+            .expect("legacy proof must verify through stage 2");
+            assert_eq!(
+                new_transcript.state(),
+                legacy_transcript.state(),
+                "stage-2 transcript state diverged from legacy",
             );
         };
 
@@ -248,4 +287,4 @@ mod stage0 {
 #[cfg(not(feature = "prover-fixtures"))]
 #[test]
 #[ignore = "enable --features prover-fixtures to run the legacy byte-diff harness"]
-fn stage0_matches_legacy_on_muldiv() {}
+fn prover_matches_legacy_on_muldiv() {}

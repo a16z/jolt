@@ -13,7 +13,12 @@ use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::commitment::CommitWitness;
+use crate::instruction_claim_reduction::InstructionClaimReductionProver;
+use crate::ram_output_check::RamOutputCheckProver;
+use crate::ram_raf_evaluation::RamRafEvaluationProver;
+use crate::ram_read_write::RamReadWriteProver;
 use crate::spartan_outer::SpartanOuterProver;
+use crate::spartan_product::SpartanProductProver;
 
 /// The kernel registry: one independently swappable slot per kernel entry.
 ///
@@ -27,6 +32,11 @@ where
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
     pub spartan_outer: Box<dyn SpartanOuterProver<F>>,
+    pub spartan_product: Box<dyn SpartanProductProver<F>>,
+    pub ram_read_write: Box<dyn RamReadWriteProver<F>>,
+    pub instruction_claim_reduction: Box<dyn InstructionClaimReductionProver<F>>,
+    pub ram_raf_evaluation: Box<dyn RamRafEvaluationProver<F>>,
+    pub ram_output_check: Box<dyn RamOutputCheckProver<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -46,6 +56,11 @@ where
         Self {
             commit: Box::new(ReferenceBackend),
             spartan_outer: Box::new(ReferenceBackend),
+            spartan_product: Box::new(ReferenceBackend),
+            ram_read_write: Box::new(ReferenceBackend),
+            instruction_claim_reduction: Box::new(ReferenceBackend),
+            ram_raf_evaluation: Box::new(ReferenceBackend),
+            ram_output_check: Box::new(ReferenceBackend),
         }
     }
 

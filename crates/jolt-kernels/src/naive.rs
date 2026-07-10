@@ -1,6 +1,9 @@
-//! The naive reference prover: a slow but correct prover for *any* relation,
-//! derived from the observation that a relation's output `Expr` *is* its
-//! sumcheck summand.
+//! The naive reference prover: a slow but correct prover for any relation
+//! whose `Expr` leaves are multilinear over the sumcheck domain, derived from
+//! the observation that a relation's output `Expr` *is* its sumcheck summand.
+//! (Where a derived leaf is NOT multilinear — a product of multilinears, or a
+//! post-uni-skip stream coefficient — the relation gets a hand-rolled
+//! reference member instead; see the crate docs for the list.)
 //!
 //! Its state is one dense table per `Expr` leaf: `Opening` leaves resolve to
 //! polynomials materialized from the witness, `Challenge` leaves to the drawn
