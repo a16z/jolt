@@ -14,11 +14,14 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::commitment::CommitWitness;
 use crate::instruction_claim_reduction::InstructionClaimReductionProver;
+use crate::instruction_input::InstructionInputProver;
 use crate::ram_output_check::RamOutputCheckProver;
 use crate::ram_raf_evaluation::RamRafEvaluationProver;
 use crate::ram_read_write::RamReadWriteProver;
+use crate::registers_claim_reduction::RegistersClaimReductionProver;
 use crate::spartan_outer::SpartanOuterProver;
 use crate::spartan_product::SpartanProductProver;
+use crate::spartan_shift::SpartanShiftProver;
 
 /// The kernel registry: one independently swappable slot per kernel entry.
 ///
@@ -37,6 +40,9 @@ where
     pub instruction_claim_reduction: Box<dyn InstructionClaimReductionProver<F>>,
     pub ram_raf_evaluation: Box<dyn RamRafEvaluationProver<F>>,
     pub ram_output_check: Box<dyn RamOutputCheckProver<F>>,
+    pub spartan_shift: Box<dyn SpartanShiftProver<F>>,
+    pub instruction_input: Box<dyn InstructionInputProver<F>>,
+    pub registers_claim_reduction: Box<dyn RegistersClaimReductionProver<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -61,6 +67,9 @@ where
             instruction_claim_reduction: Box::new(ReferenceBackend),
             ram_raf_evaluation: Box::new(ReferenceBackend),
             ram_output_check: Box::new(ReferenceBackend),
+            spartan_shift: Box::new(ReferenceBackend),
+            instruction_input: Box::new(ReferenceBackend),
+            registers_claim_reduction: Box::new(ReferenceBackend),
         }
     }
 

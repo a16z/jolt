@@ -27,12 +27,15 @@ mod backend;
 mod commitment;
 mod error;
 pub mod instruction_claim_reduction;
+pub mod instruction_input;
 mod naive;
 pub mod ram_output_check;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
+pub mod registers_claim_reduction;
 pub mod spartan_outer;
 pub mod spartan_product;
+pub mod spartan_shift;
 mod sumcheck;
 mod views;
 
