@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::{InputClaims, OutputClaims, Source, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
-use jolt_poly::{Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -53,6 +53,7 @@ where
     challenge_values: BTreeMap<JoltChallengeId, F>,
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
+    binding_order: BindingOrder,
     rounds_bound: usize,
 }
 
@@ -118,8 +119,18 @@ where
             challenge_values,
             opening_tables,
             derived_tables,
+            binding_order: BindingOrder::HighToLow,
             rounds_bound: 0,
         })
+    }
+
+    /// Override the variable-binding order (default: `HighToLow`). Each
+    /// relation has a fixed convention — the produced round polynomials
+    /// depend on it, so byte parity with the legacy prover requires matching
+    /// its choice (e.g. the Spartan outer remainder binds `LowToHigh`).
+    pub fn with_binding_order(mut self, binding_order: BindingOrder) -> Self {
+        self.binding_order = binding_order;
+        self
     }
 
     /// The drawn challenges this prover resolves `Challenge` leaves against.
@@ -191,6 +202,7 @@ where
         let opening_tables = &self.opening_tables;
         let derived_tables = &self.derived_tables;
         let challenge_values = &self.challenge_values;
+        let binding_order = self.binding_order;
 
         // msg(t) = Σ_y Expr(leaf tables partially evaluated at (t, y)),
         // sampled at t = 0..=degree and interpolated.
@@ -202,7 +214,9 @@ where
                     |id| {
                         opening_tables
                             .get(id)
-                            .map(|table| table.sumcheck_round_eval(y, point))
+                            .map(|table| {
+                                table.sumcheck_round_eval_with_order(y, point, binding_order)
+                            })
                             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })
                     },
                     |id| {
@@ -214,7 +228,9 @@ where
                     |id| {
                         derived_tables
                             .get(id)
-                            .map(|table| table.sumcheck_round_eval(y, point))
+                            .map(|table| {
+                                table.sumcheck_round_eval_with_order(y, point, binding_order)
+                            })
                             .ok_or(SumcheckError::MissingEvaluationSource { kind: "derived" })
                     },
                 )
@@ -244,10 +260,10 @@ where
 
     fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
         for table in self.opening_tables.values_mut() {
-            table.bind(challenge);
+            table.bind_with_order(challenge, self.binding_order);
         }
         for table in self.derived_tables.values_mut() {
-            table.bind(challenge);
+            table.bind_with_order(challenge, self.binding_order);
         }
         self.rounds_bound += 1;
         Ok(())

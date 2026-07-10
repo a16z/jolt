@@ -18,6 +18,7 @@ mod stage0 {
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
     use jolt_prover::stages::stage0::prove_stage0;
+    use jolt_prover::stages::stage1::prove_stage1;
     use jolt_prover::{JoltProverPreprocessing, ProverConfig};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -176,6 +177,43 @@ mod stage0 {
             2 + legacy_proof.commitments.instruction_ra.len()
                 + legacy_proof.commitments.ram_ra.len()
                 + legacy_proof.commitments.bytecode_ra.len(),
+        );
+
+        // --- Stage 1 ratchet: prove with the naive tier, replay legacy's
+        // proof through the verifier's stage 1 for the boundary state.
+        let mut new_transcript = stage0.transcript;
+        let stage1 = prove_stage1::<Fr, Bn254G1, Blake2bTranscript, _>(
+            config.trace_length.ilog2() as usize,
+            &witness,
+            &mut new_transcript,
+        )
+        .expect("stage 1 proves");
+
+        let jolt_verifier::proof::JoltProofClaims::Clear(legacy_claims) = &legacy_proof.claims
+        else {
+            panic!("legacy transparent proof must carry clear claims");
+        };
+        assert_eq!(
+            stage1.uniskip_proof, legacy_proof.stages.stage1_uni_skip_first_round_proof,
+            "stage-1 uni-skip proof bytes diverged from legacy",
+        );
+        assert_eq!(
+            stage1.sumcheck_proof, legacy_proof.stages.stage1_sumcheck_proof,
+            "stage-1 sumcheck proof bytes diverged from legacy",
+        );
+        assert_eq!(stage1.claims, legacy_claims.stage1);
+
+        let mut legacy_transcript = legacy_pre_stage1.transcript;
+        let _legacy_stage1 = jolt_verifier::stages::stage1::verify(
+            &legacy_pre_stage1.checked,
+            &legacy_proof,
+            &mut legacy_transcript,
+        )
+        .expect("legacy proof must verify through stage 1");
+        assert_eq!(
+            new_transcript.state(),
+            legacy_transcript.state(),
+            "stage-1 transcript state diverged from legacy",
         );
     }
 

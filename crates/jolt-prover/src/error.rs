@@ -42,6 +42,15 @@ pub enum ProverError<F: FieldCore> {
         got: usize,
     },
 
+    /// A stage's final running claim disagrees with the verifier's
+    /// `expected_final_claim` fold over the produced openings.
+    #[error("{stage}: final claim {got} != expected {expected}")]
+    FinalClaimMismatch {
+        stage: &'static str,
+        expected: F,
+        got: F,
+    },
+
     /// A capability the modular prover does not implement yet.
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
@@ -51,6 +60,12 @@ pub enum ProverError<F: FieldCore> {
 
     #[error(transparent)]
     Witness(#[from] jolt_witness::WitnessError),
+
+    #[error(transparent)]
+    CenteredDomain(#[from] jolt_poly::lagrange::CenteredIntegerDomainError),
+
+    #[error(transparent)]
+    ConstraintMatrix(#[from] jolt_r1cs::constraint::ConstraintMatrixEvalError),
 
     /// Final values were requested before every round was bound.
     #[error("final table values requested with {remaining} unbound rounds")]
