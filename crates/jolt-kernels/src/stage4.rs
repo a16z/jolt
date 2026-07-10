@@ -1726,13 +1726,13 @@ fn build_cuda_sparse_registers<F: Field>(
     trace_point: &[F],
     trace_rounds: usize,
 ) -> Option<cuda::CudaSparseRegistersState> {
-    let rows: Vec<usize> = entries.iter().map(|entry| entry.row).collect();
-    let cols: Vec<u8> = entries.iter().map(|entry| entry.col).collect();
-    let val: Vec<F> = entries.iter().map(|entry| entry.val).collect();
-    let read_ra: Vec<F> = entries.iter().map(|entry| entry.read_ra).collect();
-    let rd_wa: Vec<F> = entries.iter().map(|entry| entry.rd_wa).collect();
-    let prev_val: Vec<u64> = entries.iter().map(|entry| entry.prev_val).collect();
-    let next_val: Vec<u64> = entries.iter().map(|entry| entry.next_val).collect();
+    let rows: Vec<usize> = entries.par_iter().map(|entry| entry.row).collect();
+    let cols: Vec<u8> = entries.par_iter().map(|entry| entry.col).collect();
+    let val: Vec<F> = entries.par_iter().map(|entry| entry.val).collect();
+    let read_ra: Vec<F> = entries.par_iter().map(|entry| entry.read_ra).collect();
+    let rd_wa: Vec<F> = entries.par_iter().map(|entry| entry.rd_wa).collect();
+    let prev_val: Vec<u64> = entries.par_iter().map(|entry| entry.prev_val).collect();
+    let next_val: Vec<u64> = entries.par_iter().map(|entry| entry.next_val).collect();
     cuda::CudaSparseRegistersState::new(
         &rows, &cols, &val, &read_ra, &rd_wa, &prev_val, &next_val, rd_inc, trace_point,
         trace_rounds,
@@ -1749,9 +1749,9 @@ fn build_cuda_dense_state<F: Field>(
     if degree == 0 {
         return None;
     }
-    let fr_factors: Vec<Vec<Fr>> = factors
+    let fr_factors: Vec<&[Fr]> = factors
         .iter()
-        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .map(|factor| crate::cuda::as_fr_slice(factor))
         .collect::<Option<_>>()?;
     let mut term_coeffs = Vec::with_capacity(terms.len());
     let mut term_factor_offsets = vec![0u32];

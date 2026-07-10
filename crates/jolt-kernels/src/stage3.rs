@@ -1830,11 +1830,11 @@ fn cuda_sum_of_products_state<F: Field>(
     terms: &[ProductTerm<F>],
     split_point: &[F],
 ) -> Option<cuda::CudaSumOfProductsState> {
-    let fr_factors: Vec<Vec<Fr>> = factors
+    let fr_factors: Vec<&[Fr]> = factors
         .iter()
-        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .map(|factor| crate::cuda::as_fr_slice(factor))
         .collect::<Option<Vec<_>>>()?;
-    let fr_point = crate::cuda::as_fr_slice(split_point)?.to_vec();
+    let fr_point = crate::cuda::as_fr_slice(split_point)?;
     let cuda_kind = match kind {
         SumOfProductsKind::InstructionInput => cuda::CudaGruenKind::InstructionInput {
             gamma: crate::cuda::into_fr(terms[2].coefficient)?,
@@ -1844,7 +1844,7 @@ fn cuda_sum_of_products_state<F: Field>(
             gamma2: crate::cuda::into_fr(terms[2].coefficient)?,
         },
     };
-    cuda::CudaSumOfProductsState::new(cuda_kind, &fr_factors, &fr_point)
+    cuda::CudaSumOfProductsState::new(cuda_kind, &fr_factors, fr_point)
 }
 
 #[cfg(feature = "cuda")]

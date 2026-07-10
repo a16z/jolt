@@ -29,12 +29,11 @@ pub(crate) struct CudaSumOfProductsState {
 impl CudaSumOfProductsState {
     pub(crate) fn new(
         kind: CudaGruenKind,
-        factors: &[Vec<Fr>],
+        factors: &[&[Fr]],
         split_point: &[Fr],
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        let refs: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
-        let device_factors = ctx.upload_many(&refs).ok()?;
+        let device_factors = ctx.upload_many(factors).ok()?;
         let scratch = (0..factors.len())
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;

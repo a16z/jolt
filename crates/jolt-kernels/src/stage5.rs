@@ -1492,9 +1492,9 @@ fn build_cuda_dense_state<F: Field>(
     if degree == 0 {
         return None;
     }
-    let fr_factors: Vec<Vec<Fr>> = factors
+    let fr_factors: Vec<&[Fr]> = factors
         .iter()
-        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .map(|factor| crate::cuda::as_fr_slice(factor))
         .collect::<Option<_>>()?;
     let mut term_coeffs = Vec::with_capacity(terms.len());
     let mut term_factor_offsets = vec![0u32];

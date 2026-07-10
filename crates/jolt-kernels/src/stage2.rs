@@ -2480,10 +2480,10 @@ impl<F: Field> DenseInstanceState<F> {
 }
 
 #[cfg(feature = "cuda")]
-fn as_fr_factors<F: Field>(factors: &[Vec<F>]) -> Option<Vec<Vec<Fr>>> {
+fn as_fr_factors<F: Field>(factors: &[Vec<F>]) -> Option<Vec<&[Fr]>> {
     factors
         .iter()
-        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .map(|factor| crate::cuda::as_fr_slice(factor))
         .collect()
 }
 

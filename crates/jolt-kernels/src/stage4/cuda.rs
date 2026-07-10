@@ -18,7 +18,7 @@ pub(crate) struct CudaDenseState {
 
 impl CudaDenseState {
     pub(crate) fn new(
-        factors: &[Vec<Fr>],
+        factors: &[&[Fr]],
         term_coeffs: Vec<Fr>,
         term_factor_offsets: Vec<u32>,
         term_factor_indices: Vec<u32>,
@@ -26,8 +26,7 @@ impl CudaDenseState {
         active_scale: Fr,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        let refs: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
-        let device_factors = ctx.upload_many(&refs).ok()?;
+        let device_factors = ctx.upload_many(factors).ok()?;
         let scratch = (0..factors.len())
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;

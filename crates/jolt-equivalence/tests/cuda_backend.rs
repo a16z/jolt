@@ -42,10 +42,16 @@ stage_cuda_backend_test!(stage7_cuda_backend_matches_cpu_backend, programs_with_
 fn cuda_backend_perf_oracle() {
     use jolt_equivalence::cuda_backend_oracle::{all_cpu_programs, all_cuda_programs, run_bolt_prover};
 
-    const LOG_T: usize = 20;
-    const RUNS: usize = 3;
+    let log_t: usize = std::env::var("JOLT_ORACLE_LOG_T")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20);
+    let runs: usize = std::env::var("JOLT_ORACLE_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
 
-    let fixture = core_sha2_chain_commitment_fixture(LOG_T);
+    let fixture = core_sha2_chain_commitment_fixture(log_t);
 
     let (cpu_state, _) = run_bolt_prover(&fixture, all_cpu_programs(&fixture));
     let (cuda_state, _) = run_bolt_prover(&fixture, all_cuda_programs(&fixture));
@@ -54,16 +60,16 @@ fn cuda_backend_perf_oracle() {
         "cuda backend must stay equivalent at perf scale"
     );
 
-    let mut cpu_ms = Vec::with_capacity(RUNS);
-    let mut cuda_ms = Vec::with_capacity(RUNS);
-    for _ in 0..RUNS {
+    let mut cpu_ms = Vec::with_capacity(runs);
+    let mut cuda_ms = Vec::with_capacity(runs);
+    for _ in 0..runs {
         cpu_ms.push(run_bolt_prover(&fixture, all_cpu_programs(&fixture)).1);
         cuda_ms.push(run_bolt_prover(&fixture, all_cuda_programs(&fixture)).1);
     }
 
     let cpu = median_f64(&cpu_ms).expect("cpu median");
     let cuda = median_f64(&cuda_ms).expect("cuda median");
-    println!("end-to-end prove (log_T={LOG_T}, {RUNS} runs, median ms):");
+    println!("end-to-end prove (log_T={log_t}, {runs} runs, median ms):");
     println!("  cpu={cpu:.3}  cuda={cuda:.3}  speedup={:.3}x", cpu / cuda);
 
     if jolt_kernels::cuda::xfer_stats::enabled() {

@@ -11,11 +11,10 @@ pub(crate) struct CudaDenseState {
 }
 
 impl CudaDenseState {
-    pub(crate) fn new(factors: &[Vec<Fr>]) -> Option<Self> {
+    pub(crate) fn new(factors: &[&[Fr]]) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let degree = factors.len();
-        let refs: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
-        let device_factors = ctx.upload_many(&refs).ok()?;
+        let device_factors = ctx.upload_many(factors).ok()?;
         let scratch = (0..degree)
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
