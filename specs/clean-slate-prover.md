@@ -32,8 +32,8 @@ load-bearing orderings even in principle. Second, every relation gets a **naive 
 for free**: since a relation's output `Expr` *is* its sumcheck summand, interpreting that `Expr`
 with polynomial-valued leaves yields a slow but correct prover for any relation, making the
 semantic ground truth a derived artifact of jolt-claims rather than hand-written kernel code.
-Optimized kernels then live behind a small **form vocabulary** and are equivalence-tested against
-the naive tier.
+Optimized kernels then live behind a runtime-swappable **backend registry** — implemented
+internally via a small **form vocabulary** — and are equivalence-tested against the naive tier.
 
 PR #1637 is superseded and mined for parts (recorder design, e2e harness, microbench, kernel
 numerics); `jolt-prover-legacy` remains the byte-level parity oracle throughout bring-up.
@@ -45,7 +45,8 @@ numerics); `jolt-prover-legacy` remains the byte-level parity oracle throughout 
 Build a new backend-agnostic `jolt-prover` that produces `jolt-verifier` proofs by directly
 consuming the `SymbolicSumcheck` / `ConcreteSumcheck` / `SumcheckBatch` abstractions, mirroring
 jolt-verifier's stage structure file-for-file, with a prove-side sumcheck engine in `jolt-sumcheck`
-and heavy compute behind a small form-vocabulary kernel crate.
+and all heavy compute behind a runtime-swappable backend seam in `jolt-kernels` (a slot registry
+over a small form vocabulary).
 
 Key abstractions introduced:
 
@@ -93,17 +94,17 @@ Key abstractions introduced:
       fn ingest_challenge(&mut self, r_j: F, round: usize) -> Result<(), SumcheckError<F>>;
   }
 
-  // jolt-prover — typed; pairs a ConcreteSumcheck relation with kernel state
+  // jolt-kernels — typed; pairs a ConcreteSumcheck relation with kernel state
   trait ProveSumcheck<F: Field>: ProveRounds<F> {
       type Relation: ConcreteSumcheck<F>;
       fn relation(&self) -> &Self::Relation;   // rounds / degree / instance_point_offset
-      fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckError<F>>;
+      fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, Self::Relation>, KernelError<F>>;
   }
   ```
 
   The engine round loop takes `&mut [&mut dyn ProveRounds<F>]`; typed output extraction happens
-  stage-side on the concrete member types, so heterogeneous batches need no type erasure of the
-  claim structs.
+  through per-relation instance traits whose `Relation` is a concrete binding (object-safe — see
+  "The backend seam"), so heterogeneous batches need no type erasure of the claim structs.
 
 - **`prove_batch` driver** (in `jolt-sumcheck`): the single batched-sumcheck prover. It consumes
   the `begin_batch` prelude (sums, coefficients, padded claim, max rounds/degree) plus the member
@@ -142,18 +143,29 @@ Key abstractions introduced:
   exist in #1637's `jolt-backends` (regular batch of products-of-linear-factors, prefix–suffix,
   one-hot/RA pushforward, Spartan outer row form, booleanity, uniskip first round), plus small
   trait families for commitment streaming, opening/RLC materialization, and BlindFold row
-  operations. Relations are expressed as **form descriptors (data)**, not as per-relation API
-  entry points. Fused fast paths are kernel-internal dispatch on the descriptor, never API
-  surface. The three tiers form an interpreter/compiler/optimizer chain: the naive prover
-  *interprets* the `Expr`; a form descriptor is the `Expr` *compiled* to a generic shape; a fused
-  kernel is the *optimized* dispatch — each hop equivalence-tested against the tier above.
+  operations. Within a backend, relations are expressed as **form descriptors (data)**: the
+  registry's per-relation slots (see "The backend seam") are how orchestration *selects*
+  implementations, while forms are how a backend *implements* many slots with few kernels.
+  Fused fast paths are kernel-internal dispatch on the descriptor, never API surface. The three
+  tiers form an interpreter/compiler/optimizer chain: the naive prover *interprets* the `Expr`;
+  a form descriptor is the `Expr` *compiled* to a generic shape; a fused kernel is the
+  *optimized* dispatch — each hop equivalence-tested against the tier above.
 
-- **Per-relation kernel modules** (in `jolt-kernels`, one module per relation mirroring the
-  verifier's per-relation files, e.g. `spartan_outer`): build the compute state from the
-  relation's dimensions and the witness, implement `ProveRounds`, own the
-  `final_evals → SumcheckOutputClaims` mapping. `jolt-prover` stage recipes hold no compute —
-  swapping a kernel implementation (naive-backed → streaming → device) never touches
-  orchestration.
+- **Per-relation kernel interfaces** (in `jolt-kernels`, one module per relation mirroring the
+  verifier's per-relation files, e.g. `spartan_outer`): each module defines the slot's
+  object-safe factory and instance traits — build compute state from the relation's typed
+  dimensions and `&dyn WitnessProvider`; instances implement `ProveRounds` and own the
+  `final_evals → SumcheckOutputClaims` mapping — and hosts the reference implementation.
+  `jolt-prover` stage recipes hold no compute and name no concrete kernel type: implementations
+  are selected by the `JoltBackend` value, so swapping naive-backed → streaming → device never
+  touches orchestration.
+
+- **`JoltBackend` + `ProofSession`** (in `jolt-kernels`): the runtime seam. `JoltBackend<F, PCS>`
+  is a struct of boxed per-kernel-entry slots — the value jolt-prover proves against; swapping,
+  per-slot mixing, side-by-side comparison, and hardware-based selection are value construction,
+  not compilation. `ProofSession` is backend-owned opaque state with proof lifetime
+  (witness-upload residency, cross-member/cross-stage shared tables, device pools). Full design
+  and the seam contract in "The backend seam".
 
 - **Single id space end-to-end**: witness oracle lookup, kernel descriptors, and opening
   bookkeeping are all keyed by the jolt-claims ids (`JoltCommittedPolynomial` /
@@ -180,7 +192,9 @@ Prover/verifier consistency (the load-bearing properties):
 4. **Derived, never chosen, opening points.** The prover obtains opening points exclusively through
    the generated `derive_opening_points`; no prover-side point arithmetic.
 5. **Kernels are transcript-free.** Only the engine (`prove_batch`, recorder, uniskip helper)
-   touches the transcript; kernel crate APIs take and return field elements only.
+   touches the transcript; kernel crate APIs consume witness oracles, jolt-claims ids, and field
+   elements, and return canonical field/group values — never a transcript, never Fiat-Shamir,
+   never RNG state (ZK blinds are sampled host-side and passed in).
 6. **Mode symmetry.** Clear and ZK proving share preparation, descriptors, and the round loop;
    only the recorder differs. The prover carries clear values internally in ZK mode; the proof
    alone hides them.
@@ -188,6 +202,11 @@ Prover/verifier consistency (the load-bearing properties):
    naive `Expr` interpreter on the same relation — the semantic anchor is derived from the same
    `Expr` the verifier folds and BlindFold lowers, so a kernel cannot be "correct" against
    anything other than the protocol's own algebra.
+8. **Backend-invariant proof bytes.** Proof bytes are a function of (guest, inputs,
+   `ProverConfig`) alone: swapping any `JoltBackend` slot implementation or changing backend
+   configuration (pools, chunk sizes, thread/stream counts, devices) never changes them.
+   Field/group operations are exact, so this is achievable by contract — canonical value
+   encodings at the seam — and enforced by running the byte-equality gates across backends.
 
 `jolt-eval` plan:
 
@@ -203,7 +222,8 @@ Prover/verifier consistency (the load-bearing properties):
   - `kernel_naive_equivalence` — for every form and fused escape hatch, round polynomials and
     final evaluations equal the naive `Expr` interpreter's on the same descriptor and randomized
     small traces (Test + Fuzz). Subsumes fused-vs-generic-form equivalence: both tiers anchor to
-    the interpreter.
+    the interpreter. Generalizes per slot to backend-vs-reference equivalence as further
+    backends arrive.
   - `prover_verifier_stage_consistency` — each stage's proof component is accepted by the
     corresponding `jolt-verifier` stage verify, on randomized traces (Test).
 
@@ -220,7 +240,8 @@ Prover/verifier consistency (the load-bearing properties):
   out of `stage8/verify.rs` into pub helpers both sides call. All gated on byte-identical verifier
   fixtures. Nothing else.
 - **No GPU/accelerator backend implementation.** Only the seam that makes one implementable: the
-  form vocabulary with opaque device-side state and O(degree) per-round traffic.
+  `JoltBackend` registry and `ProofSession` with opaque device-side state, value-semantics
+  contracts, and O(degree) per-round traffic.
 - **No Bolt dependency and no generated prover round loop** (unchanged from the superseded
   `jolt-prover-model-crate.md`; `begin_batch` generates the *head*, where declaration order is
   load-bearing — the loop is stage-invariant and stays ordinary Rust).
@@ -241,7 +262,8 @@ Prover/verifier consistency (the load-bearing properties):
       in clear mode and ZK mode.
 - [ ] Clear-mode proofs are **byte-identical** to `jolt-prover-legacy`'s on the e2e corpus
       (`muldiv`, `sha2-chain`, and an advice-exercising guest), verified by the
-      `legacy_proof_byte_equality` invariant.
+      `legacy_proof_byte_equality` invariant — and byte-invariant across backends
+      (`JoltBackend::reference()` vs the optimized CPU backend, invariant 8).
 - [ ] Per-stage prover↔verifier consistency tests exist and pass for stages 1–8 (each stage's
       component accepted by the corresponding verifier stage; transcript states equal at every
       stage boundary).
@@ -252,9 +274,11 @@ Prover/verifier consistency (the load-bearing properties):
 - [ ] Every sumcheck relation in stages 1–7 is provable by the naive reference prover at harness
       scale, and every shipped form/fused kernel has a passing `kernel_naive_equivalence` test +
       fuzz target; the set of fused escape hatches is enumerated in the kernel crate's docs.
-- [ ] Every sumcheck relation in stages 1–7 is expressed as a form descriptor over the kernel
-      vocabulary; the kernel crate's public sumcheck API is the form traits only (no per-relation
-      methods, no optimization-id strings).
+- [ ] `jolt-prover` invokes kernels exclusively through `JoltBackend` slots — no concrete kernel
+      type is named in any stage recipe; `JoltBackend::reference()` serves every slot; the
+      optimized CPU backend expresses every stage-1–7 relation as a form descriptor over the
+      kernel vocabulary, with fused escape hatches kernel-internal and enumerated in crate docs
+      (no optimization-id strings).
 - [ ] ZK mode builds the BlindFold witness from state recorded during proving; the full-verifier
       replay runs only under `debug_assertions` as a cross-check.
 - [ ] The three new `jolt-eval` invariants are added via `/new-invariant` and green.
@@ -273,6 +297,9 @@ Prover/verifier consistency (the load-bearing properties):
   - Stage-granular byte-diff harness against legacy: prove the same trace with both provers,
     assert transcript-state equality at each stage boundary and byte equality of each proof
     component. This is the primary bring-up gate, landed with stage 1 and extended through stage 8.
+    The harness is **backend-parameterized**: running it per backend is what gates invariant 8.
+  - Recording mock backend: a `JoltBackend` whose slots record invocations — stage-recipe tests
+    assert exactly the expected kernel calls, with no compute.
   - Per-stage prover↔verifier consistency tests (randomized traces), stages 1–8 — the coverage the
     #1637 crate only had for stages 0–2. These can run against **naive members before a stage's
     forms exist**, decoupling stage bring-up from kernel work.
@@ -316,16 +343,17 @@ jolt-verifier    protocol structure: ConcreteSumcheck relations, #[derive(Sumche
                  uniskip params, stage-8 batch-assembly helpers
 jolt-sumcheck    sumcheck engine, both sides: existing verify drivers + NEW SumcheckRecorder
                  (clear/committed), ProveRounds, prove_batch, uniskip prover
-jolt-kernels     NEW compute crate: ALL prover compute — ProveSumcheck + naive reference
-                 tier, per-relation kernel modules, form-vocabulary sumcheck kernels
-                 (opaque state, 4-verb lifecycle), commitment streaming, opening/RLC
-                 materialization, BlindFold row ops; CPU implementation; fused fast
-                 paths internal
+jolt-kernels     NEW compute crate: the backend seam (JoltBackend slot registry, ProofSession,
+                 per-relation slot traits) + ALL prover compute — ProveSumcheck + naive
+                 reference backend, form-vocabulary sumcheck kernels (opaque state, 4-verb
+                 lifecycle), commitment streaming, opening/RLC materialization, BlindFold
+                 row ops; CPU implementation; fused fast paths internal
 jolt-witness     one oracle-view interface keyed by jolt-claims ids; typed-row extraction
                  becomes a materialization strategy behind it, not a parallel API
 jolt-prover      NEW orchestration crate: per-stage recipes mirroring jolt-verifier's
-                 stages/, transcript sequencing, kernel invocation, proof assembly,
-                 BlindFold witness recording — no field-element compute
+                 stages/, transcript sequencing, kernel invocation through JoltBackend
+                 slots, proof assembly, BlindFold witness recording — no field-element
+                 compute, no concrete kernel types
 ```
 
 **Dependency direction is load-bearing:** `jolt-verifier` depends on `jolt-sumcheck`, so the
@@ -334,7 +362,8 @@ name `ConcreteSumcheck` or any generated type — they are generic over plain da
 coefficients, member slices) and the recorder. That same direction is what lets the *generated*
 `begin_batch` be recorder-generic: jolt-verifier's generated code can name
 `jolt_sumcheck::SumcheckRecorder`, not vice versa. The typed `ProveSumcheck` (bounded on
-`ConcreteSumcheck`) therefore lives in `jolt-prover`, which sits above both.
+`ConcreteSumcheck`) therefore lives in `jolt-kernels`, which sits above `jolt-verifier`;
+`jolt-prover` sits above all of them and names only traits.
 
 What the prover calls from the generated verifier surface (all transcript-pure or
 value-independent, except `begin_batch`/`draw_challenges` whose transcript effects are the point):
@@ -345,13 +374,15 @@ value-independent, except `begin_batch`/`draw_challenges` whose transcript effec
 `verify_until_stage1`. Only the `verify_clear` tail and `verify_zk` have no prover use;
 `prove_batch` is their mirror, validated against them by the twin-transcript engine tests.
 
-Module layout mirrors the verifier exactly: `jolt-prover/src/stages/stage{1,2,3,4,5,6a,6b,7,8}/`
-with per-relation adapter files matching the verifier's per-relation files, plus `stage0/`
-(witness commitment, which the verifier handles in preprocessing/proof validation). Stage recipes
-have the same shape as `verify.rs` with the proof-read swapped for proof-write:
-`draw_challenges → assemble StageNInputClaims from upstream outputs → materialize kernel states
-(prepare) → begin_batch(recorder) → prove_batch(recorder) → derive_opening_points → assemble
-StageNOutputClaims → expected_final_claim check → append_output_claims → build StageNClearOutput`.
+Module layout mirrors the verifier exactly, twice over: `jolt-prover/src/stages/stage{1..8}/`
+holds the stage recipes, and `jolt-kernels`' per-relation modules match the verifier's
+per-relation files, plus `stage0/` (witness commitment, which the verifier handles in
+preprocessing/proof validation). Stage recipes have the same shape as `verify.rs` with the
+proof-read swapped for proof-write:
+`draw_challenges → assemble StageNInputClaims from upstream outputs → prepare kernel instances
+through the backend's slots → begin_batch(recorder) → prove_batch(recorder) →
+derive_opening_points → assemble StageNOutputClaims → expected_final_claim check →
+append_output_claims → build StageNClearOutput`.
 Cross-stage state is the verifier's own `StageNClearOutput` types in both modes (the prover knows
 all values in ZK; the proof hides them). Stages 1–2 open with the shared uniskip prover; stage 6's
 carried challenges reuse `Stage6aCarriedChallenges`/`Stage6bCarriedChallenges`; stages 4/6b
@@ -361,12 +392,13 @@ opt-outs mark stage-curated behavior.
 **Cross-member and cross-stage kernel state is a first-class concern**, not an afterthought:
 batch members genuinely share compute state (eq tables shared across members — the
 `SharedRaPolynomials` precedent in legacy — and the stage-6a→6b kernel-state carry, where
-address-phase bound state becomes cycle-phase input). Stage preparation owns this sharing: it
-materializes shared resources once and form descriptors *reference* them (borrowed/`Arc`'d),
-rather than each form re-materializing; a form whose lifecycle spans 6a→6b exposes an explicit
-state-carry projection. Getting this wrong silently is impossible (byte-parity + consistency
-gates) but getting it wrong *expensively* is easy — it is the main reason stage 6 is budgeted as
-the hardest slice after stage 1.
+address-phase bound state becomes cycle-phase input). The `ProofSession` owns this sharing (see
+"The backend seam"): shared resources are materialized once, backend-side, and referenced by the
+slot instances; state that spans 6a→6b lives in the session, while a member spanning two
+*batches* (the 6b→7 claim reductions) is a boxed instance the recipe holds across the boundary.
+Getting this wrong silently is impossible (byte-parity + consistency gates) but getting it wrong
+*expensively* is easy — it is the main reason stage 6 is budgeted as the hardest slice after
+stage 1.
 
 **The naive tier in practice.** The naive prover turns the verifier's relation catalog into a
 complete (slow) prover: any relation whose output-`Expr` leaves can be resolved to tables is
@@ -399,6 +431,132 @@ remainder, booleanity round/bind kernels), the generic form descriptions
 the BlindFold row-committer kernels. From `jolt-prover-legacy`: proven polynomial data structures
 already in `jolt-poly` (compact scalars, split-eq, prefix–suffix machinery).
 
+### The backend seam (`jolt-prover` ↔ `jolt-kernels`)
+
+**End state.** Orchestration never names a concrete kernel. `jolt-prover` is written against a
+**backend value** — a struct of independently swappable kernel slots plus an opaque proof-scoped
+session — so *which implementation computes a thing* is decided by constructing a value at
+runtime, while *what is computed and absorbed* stays fixed by the generated drivers. This buys,
+without recompilation: per-kernel swapping (naive → optimized CPU → device), running two provers
+with different kernel sets side by side in one binary, and choosing the kernel configuration at
+startup from the hardware.
+
+Three layers, each answering a different question:
+
+- **The registry is the swap point.** `JoltBackend<F, PCS>` holds one boxed object-safe slot per
+  kernel entry; stage recipes take `&JoltBackend` plus `&mut` session.
+- **The form vocabulary is the second-backend leverage.** An optimized backend implements the ~6
+  generic form kernels and serves most slots through thin shared adapters (relation → descriptor
+  compilation is shared code derived from the `Expr`); only fused fast paths are bespoke.
+- **The naive tier makes slots ~free.** `JoltBackend::reference()` implements every slot through
+  the one generic `NaiveSumcheckProver` plus per-relation leaf resolvers — the always-present
+  fallback and the equivalence anchor.
+
+```rust
+// jolt-kernels — illustrative
+pub struct JoltBackend<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> {
+    pub commit: Box<dyn CommitWitness<F, PCS>>,
+    pub spartan_outer: Box<dyn SpartanOuterProver<F>>,
+    // one slot per kernel entry, added as stages land
+}
+
+// one module per relation: object-safe factory + instance traits
+pub trait SpartanOuterProver<F: Field> {
+    fn prepare(&self, session: &mut ProofSession, log_t: usize, tau: &[F],
+               witness: &dyn WitnessProvider<F, JoltVmNamespace>)
+        -> Result<Box<dyn SpartanOuterInstance<F>>, KernelError<F>>;
+}
+pub trait SpartanOuterInstance<F: Field> {
+    fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>>;
+    fn into_remainder(self: Box<Self>, r0: F)
+        -> Result<Box<dyn OuterRemainderInstance<F>>, KernelError<F>>;
+}
+pub trait OuterRemainderInstance<F: Field>: ProveRounds<F> {
+    fn output_claims(&mut self)
+        -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, KernelError<F>>;
+}
+```
+
+**Slot granularity** is per kernel entry, matching the per-relation kernel modules: entries that
+share prepared state stay one slot (uniskip + remainder above share the materialized input
+tables), and a slot's inputs are the relation's own typed dimensions and challenges plus
+`&dyn WitnessProvider` — jolt-claims ids everywhere, no request structs, no magic strings.
+
+**Partial backends compose at construction.** Device backends arrive kernel-by-kernel, so mixed
+execution is the steady state, not an edge case: a backend is built over a fallback per slot,
+selection is explicit and logged, and capability misses surface at construction/plan time as
+recoverable `KernelError` variants (`Unsupported`, `ResourceExhausted`) — never #1637's mid-proof
+`UnsupportedTask`. Side-by-side comparison is two `JoltBackend` values; hardware-based choice is
+a constructor decision. Cargo features never select among compiled-in backends (they may gate
+*linkage*, e.g. a CUDA toolchain dependency).
+
+**Why this is not #1637's relation-major seam** (alternative 2): the failure there was not
+per-relation width but that the per-relation surface was the *only* abstraction — 96 bespoke
+methods, 19 request structs, magic ids — so a second backend meant reimplementing the protocol
+surface. Here a second backend implements the form vocabulary (or even a single slot, composing
+over a fallback for the rest); the reference backend derives every slot from one interpreter; and
+the slot inputs are the same typed relation data the verifier defines. Shipping incrementally is
+the designed path, not a failure mode.
+
+**`ProofSession`** — backend-owned state with proof lifetime, created by
+`backend.begin_proof(…)`, threaded `&mut` through every slot call, contents opaque to
+orchestration (a boxed backend-private type the backend downcasts internally). It is where
+residency and reuse live: witness uploads cached across stages (upload-once-reuse-many keyed by
+committed-polynomial id — the commit-time stream must not be re-uploaded for read-write-checking
+stages), cross-member shared tables (the `SharedRaPolynomials`/eq-table precedent), the 6a→6b
+`ra_indices` carry (~56·T bytes in legacy), device memory pools and per-stage plans.
+Recompute-vs-share becomes a backend decision with a home (legacy regenerates the Inc witnesses
+from the trace four times and the G pushforward at two different points — reasonable choices
+that a backend may revisit per device). Cross-stage state the *orchestrator* owns is just boxed
+instances: the 6b→7 spanning claim reductions are members whose cycle rounds run in the 6b batch
+and address rounds in the 7 batch — the recipe holds the `Box<dyn …>` across the boundary and
+re-enters it, with the phase transition a method on the instance trait.
+
+**Dyn-feasibility constraints** (compile-probed against the current code):
+
+- `WitnessProvider` is dyn-compatible as-is (no associated types, no generic type-parameter
+  methods; streams already return boxed) — slots take `&dyn WitnessProvider<F, JoltVmNamespace>`
+  directly, no erasure shim.
+- `CommitmentScheme`/`StreamingCommitment` are **not** object-safe (`Clone`/`Eq` supertraits,
+  no-receiver generic methods), and `PCS::{Output, OpeningHint, ProverSetup}` are wire/plumbing
+  types — so `PCS` stays a type parameter of the backend, like `F`. Both are deployment
+  constants, not swap targets.
+- `ProveRounds` is object-safe (already consumed as `&mut dyn`); consuming handoffs use
+  `self: Box<Self>`; per-relation instance traits returning the concrete
+  `SumcheckOutputClaims<F, R>` are object-safe — which is what replaces inherent `output_claims`
+  methods (unreachable behind `Box<dyn ProveRounds>`).
+
+**Seam contract** (trait-doc law, device-readiness by construction):
+
+1. *Value semantics.* Kernel outputs are canonical field/group **values** — fully reduced
+   encodings, affine points. Internal representation (Montgomery form, lazy reduction,
+   projective accumulation, sharding, parallel reduction order) is free: field/group operations
+   are exact, so reordering is safe for values, and canonical boundaries make it safe for bytes.
+   The real hazards are representational — incomplete EC addition formulas reached by different
+   schedules, integer-domain accumulators without stated width obligations — and are contract
+   items, not folklore.
+2. *O(rounds·degree) traffic.* Only round polynomials, claims, and commitments cross the seam;
+   nothing T-sized does. No accessor exposes kernel-internal tables.
+3. *Async-compatible wording.* Contracts promise "returns the values," never "the work has
+   completed"; `ingest_challenge` may enqueue. The per-round Fiat-Shamir challenge is the only
+   protocol-forced synchronization point; everything else (members within a round, commitment
+   MSMs vs sumcheck compute, next-stage prefetch) may overlap.
+4. *Host-owned randomness.* ZK blinds are sampled by jolt-prover and passed in; kernels hold no
+   RNG state. For a fixed seed, ZK proofs are backend-identical.
+5. *Observability.* Every slot call is a tracing span (stage, relation id, sizes); the backend
+   records which implementation served each slot — silent fallback is a bug, not a feature —
+   and timing is device-event-aware rather than host wall-clock around async calls.
+
+**Backend config is not protocol config.** `ProverConfig` (trace length, `ram_K`, one-hot/rw
+shapes) determines proof bytes; backend config (pools, chunk sizes, stream counts, spill
+thresholds, device ids) must be proof-invariant — invariant 8 makes the distinction testable.
+
+**Known engine extension, deferred.** `prove_batch` iterates members host-side — one readback
+per member per round on a device backend. When one lands, the engine grows a *member group*: one
+`ProveRounds` serving N co-located members and returning the pre-folded round polynomial given
+the batch coefficients. Nothing in the seam blocks this; recorded here so per-member iteration
+is not contracted as seam law.
+
 ### Alternatives Considered
 
 1. **Port #1637 onto the new stack** (rebase 10a/10b/10c, mechanical repoint, then refactor in
@@ -411,7 +569,12 @@ already in `jolt-poly` (compact scalars, split-eq, prefix–suffix machinery).
    materialize/evaluate/bind/output quadruples behind per-stage capability traits). Rejected: 96
    methods and 19 request structs make a second backend a rewrite of the protocol surface;
    "backend-agnostic" requires the seam to be a small computational vocabulary. The four-verb
-   opaque-state lifecycle itself is kept — it is the right shape for device-resident state.
+   opaque-state lifecycle itself is kept — it is the right shape for device-resident state. The
+   `JoltBackend` slot registry ("The backend seam") is per-relation *at the selection layer* but
+   escapes this failure mode: slots are independently implementable with fallback composition,
+   reference implementations derive from the one naive interpreter, and optimized backends serve
+   most slots through the form layer — a second backend implements the form vocabulary, not the
+   protocol surface.
 3. **Generic forms only, no fused escape hatches.** Rejected on performance grounds: legacy's
    specialized kernels exist because generic evaluation leaves large constants on the table
    (shared eq tables, one-hot phase switching, small-scalar arithmetic). Fusion stays — but as
@@ -446,12 +609,28 @@ already in `jolt-poly` (compact scalars, split-eq, prefix–suffix machinery).
    (a form that cannot be checked against the interpreter is suspect).
 10. **Generated prover (Bolt track).** Out of scope, unchanged from `jolt-prover-model-crate.md`;
     this crate exists precisely to unblock modular proving without waiting on it.
+11. **Generic `B: Backend` type parameter instead of dyn slots.** Rejected: monomorphized
+    backends make per-slot mixing combinatorial and side-by-side comparison a recompilation;
+    kernel invocations are macro-scale (whole sumchecks, whole commitment passes), so dyn
+    dispatch costs nothing. `F` and `PCS` stay as type parameters only because they are
+    deployment constants and `CommitmentScheme` is structurally non-object-safe (verified), with
+    `PCS::Output`/`OpeningHint` embedded in the wire types.
+12. **A single descriptor-executor entry point as the whole seam** (`run(form_descriptor)` as
+    the only backend method). Rejected: typed claim extraction, bespoke lifecycles (uniskip →
+    remainder handoff, 6a→6b carry, 6b→7 phase transitions), and witness-access strategy do not
+    fit a pure-data call. The descriptor layer lives *below* the registry, as the optimized
+    backend's implementation strategy — the registry stays the swap point.
+13. **Cargo-feature backend selection.** Rejected: features are anti-runtime (no side-by-side,
+    no hardware probing) and unify across the build graph. Features may gate linkage (a CUDA
+    toolchain dependency), never choice among compiled-in backends. Contrast the `zk` seam,
+    where the recorder *type* deciding is the point — there the two modes must not coexist
+    within one proof; here coexistence is the requirement.
 
 ## Documentation
 
 - New Jolt book page under the architecture section: the modular prover — crate layering diagram,
-  the form vocabulary and the interpreter/compiled/fused tiering, the
-  prover-as-consumer-of-the-verifier model, and the parity-oracle relationship to
+  the backend registry/session seam, the form vocabulary and the interpreter/compiled/fused
+  tiering, the prover-as-consumer-of-the-verifier model, and the parity-oracle relationship to
   `jolt-prover-legacy`.
 - Update the batched-sumcheck page for `begin_batch` (the generated head shared by both sides).
 - Update any book references to the prover stack that name `jolt-backends`.
@@ -481,8 +660,13 @@ stage-granular legacy byte-diff harness plus clippy/nextest:
 2. **Stage 1** (Spartan outer uniskip + remainder; exercises the uniskip prover and the Spartan
    row form; the one-member batch is the smallest `prove_batch` use). The streaming remainder is
    the single hardest kernel in the plan — first for gate reasons, budgeted accordingly.
-3. **Stages 2 → 7** in order, one PR-able slice each; each slice adds the stage's per-relation
-   adapters, any new form (prefix–suffix at stage 5, pushforward/booleanity at stage 6, the
+3. **Backend-seam retrofit** (immediately after stage 1, while the surface is two kernel
+   entries): slot/instance traits + `JoltBackend` + skeletal `ProofSession`;
+   `JoltBackend::reference()` wraps the existing naive-backed kernels; stage 0/1 recipes
+   re-pointed at the registry; the byte-diff harness takes the backend as a parameter (bytes
+   must not move). Stages 2+ then land *on* the seam instead of adding migration debt.
+4. **Stages 2 → 7** in order, one PR-able slice each; each slice adds the stage's per-relation
+   slots, any new form (prefix–suffix at stage 5, pushforward/booleanity at stage 6, the
    6a→6b state-carry), and its consistency tests. A slice may land **naive-first** (recipes +
    gates green with naive members at harness scale), with forms replacing naive per relation,
    each replacement gated by `kernel_naive_equivalence`; the e2e milestones require forms
@@ -492,11 +676,11 @@ stage-granular legacy byte-diff harness plus clippy/nextest:
    relations → eq-weighted product forms; instruction read-RAF → prefix–suffix; RA
    virtualizations → one-hot pushforward; booleanity relations → booleanity form; advice phases →
    dense eq-product.
-4. **Stage 8** (joint opening) — via the stage-8 helpers factored in step 0, plus prover-only
+5. **Stage 8** (joint opening) — via the stage-8 helpers factored in step 0, plus prover-only
    hint combination and PCS opening over the streaming RLC source.
-5. **ZK e2e:** committed recorder throughout, BlindFold witness from recorded state, replay as
+6. **ZK e2e:** committed recorder throughout, BlindFold witness from recorded state, replay as
    debug cross-check; `muldiv` ZK green.
-6. **Wrap-up:** `jolt-eval` invariants/objectives registered, microbench revived, book page,
+7. **Wrap-up:** `jolt-eval` invariants/objectives registered, microbench revived, book page,
    supersession notes, close #1637.
 
 Feature flags on the new crates follow the existing convention: `zk` mirrors
