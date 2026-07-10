@@ -3443,6 +3443,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-claims",
  "jolt-field",
+ "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
  "jolt-program",
@@ -3569,6 +3570,7 @@ dependencies = [
  "jolt-dory",
  "jolt-field",
  "jolt-kernels",
+ "jolt-lookup-tables",
  "jolt-openings",
  "jolt-program",
  "jolt-prover-legacy",

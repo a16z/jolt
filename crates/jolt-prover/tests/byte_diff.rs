@@ -6,8 +6,8 @@
 //! (`verify_until_stage1`, then stage verifies as stages land), whose
 //! Fiat-Shamir transcript is byte-identical to the prover's by soundness of
 //! the accepted proof. The harness ratchets one stage at a time; today it
-//! pins stages 0 through 4 (config derivation, preamble, witness
-//! commitments, both uni-skips, all four sumcheck batches, all claims, and
+//! pins stages 0 through 5 (config derivation, preamble, witness
+//! commitments, both uni-skips, all five sumcheck batches, all claims, and
 //! every stage-boundary transcript state).
 
 #[cfg(feature = "prover-fixtures")]
@@ -24,6 +24,7 @@ mod muldiv {
     use jolt_prover::stages::stage2::prove_stage2;
     use jolt_prover::stages::stage3::prove_stage3;
     use jolt_prover::stages::stage4::prove_stage4;
+    use jolt_prover::stages::stage5::prove_stage5;
     use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -323,7 +324,7 @@ mod muldiv {
             );
             assert_eq!(stage4.claims, legacy_claims.stage4);
 
-            let _legacy_stage4 = jolt_verifier::stages::stage4::verify(
+            let legacy_stage4 = jolt_verifier::stages::stage4::verify(
                 &legacy_pre_stage1.checked,
                 &prover_preprocessing.verifier,
                 &legacy_proof,
@@ -336,6 +337,51 @@ mod muldiv {
                 new_transcript.state(),
                 legacy_transcript.state(),
                 "stage-4 transcript state diverged from legacy",
+            );
+
+            // The stage-5 ratchet: prove, then replay legacy's proof through
+            // the verifier's stage 5 for the boundary state.
+            let stage5 =
+                prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript, _>(
+                    backend,
+                    &mut session,
+                    &legacy_pre_stage1.checked,
+                    &config,
+                    &prover_preprocessing,
+                    &stage2.clear_output,
+                    &stage4.clear_output,
+                    &witness,
+                    &mut new_transcript,
+                )
+                .expect("stage 5 proves");
+
+            assert_eq!(
+                stage5.sumcheck_proof, legacy_proof.stages.stage5_sumcheck_proof,
+                "stage-5 sumcheck proof bytes diverged from legacy",
+            );
+            assert_eq!(stage5.claims, legacy_claims.stage5);
+
+            let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
+                &legacy_proof,
+                &prover_preprocessing.verifier,
+                &legacy_pre_stage1.checked,
+                config.trace_length.ilog2() as usize,
+                jolt_claims::protocols::jolt::JoltRelationId::InstructionReadRaf,
+            )
+            .expect("legacy formula dimensions");
+            let _legacy_stage5 = jolt_verifier::stages::stage5::verify(
+                &legacy_pre_stage1.checked,
+                &legacy_proof,
+                &formula_dimensions,
+                &mut legacy_transcript,
+                &legacy_stage2,
+                &legacy_stage4,
+            )
+            .expect("legacy proof must verify through stage 5");
+            assert_eq!(
+                new_transcript.state(),
+                legacy_transcript.state(),
+                "stage-5 transcript state diverged from legacy",
             );
         };
 

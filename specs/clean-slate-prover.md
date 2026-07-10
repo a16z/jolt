@@ -170,7 +170,8 @@ Key abstractions introduced:
 - **Single id space end-to-end**: witness oracle lookup, kernel descriptors, and opening
   bookkeeping are all keyed by the jolt-claims ids (`JoltCommittedPolynomial` /
   `JoltVirtualPolynomial` / `JoltOpeningId`). No parallel naming layer, no per-stage row-type
-  vocabulary, no optimization-id strings. One small derive addition supports this: an id-keyed
+  vocabulary (one carve-out: the instruction read-RAF rows — see "The backend seam", slot
+  granularity), no optimization-id strings. One small derive addition supports this: an id-keyed
   constructor on `#[derive(OutputClaims)]` (`from_opening_values`, `canonical_order`-aligned) so
   generic code — the naive prover foremost — can assemble typed claim structs without naming
   fields.
@@ -353,7 +354,9 @@ jolt-kernels     NEW compute crate: the backend seam (JoltBackend slot registry,
                  lifecycle), commitment streaming, opening/RLC materialization, BlindFold
                  row ops; CPU implementation; fused fast paths internal
 jolt-witness     one oracle-view interface keyed by jolt-claims ids; typed-row extraction
-                 becomes a materialization strategy behind it, not a parallel API
+                 becomes a materialization strategy behind it, not a parallel API (one
+                 exception: the instruction read-RAF rows accessor — bit-level relation
+                 data no oracle view carries; see "The backend seam")
 jolt-prover      NEW orchestration crate: per-stage recipes mirroring jolt-verifier's
                  stages/, transcript sequencing, kernel invocation through JoltBackend
                  slots, proof assembly, BlindFold witness recording — no field-element
@@ -491,6 +494,17 @@ share prepared state stay one slot (uniskip + remainder above share the material
 tables), and a slot's inputs are the relation's own typed dimensions and challenges plus
 `&dyn WitnessProvider` — jolt-claims ids everywhere, no request structs, no magic strings.
 
+*The one witness-channel exception:* the instruction read-RAF slot takes its witness as typed
+per-cycle rows (`Stage5InstructionReadRafRow`: packed 128-bit lookup index, table selection,
+operand-interleave flag) instead of `&dyn WitnessProvider`. That relation's witness is not a
+multilinear oracle — the kernel consumes the index *bits* (chunking, uninterleaving, suffix
+MLEs), which no field-element polynomial view carries losslessly — so the recipe fetches the
+rows through jolt-witness's typed-rows accessor (`JoltVmStage5InstructionReadRafRows`, the reason
+`prove_stage5`'s witness parameter is generic rather than the plain trait object) and passes
+them to `prepare` as typed relation data. The rows are proportional to `T`; the seam's
+O(rounds·degree)-traffic property (invariant 2 below) is about kernel *outputs* and
+kernel-internal state, which remain unexposed.
+
 **Partial backends compose at construction.** Device backends arrive kernel-by-kernel, so mixed
 execution is the steady state, not an edge case: a backend is built over a fallback per slot,
 selection is explicit and logged, and capability misses surface at construction/plan time as
@@ -545,7 +559,8 @@ re-enters it, with the phase transition a method on the instance trait.
    schedules, integer-domain accumulators without stated width obligations — and are contract
    items, not folklore.
 2. *O(rounds·degree) traffic.* Only round polynomials, claims, and commitments cross the seam;
-   nothing T-sized does. No accessor exposes kernel-internal tables.
+   nothing T-sized does in the output direction. No accessor exposes kernel-internal tables.
+   (Prepare-time *inputs* may be T-sized typed relation data — the read-RAF rows.)
 3. *Async-compatible wording.* Contracts promise "returns the values," never "the work has
    completed"; `ingest_challenge` may enqueue. The per-round Fiat-Shamir challenge is the only
    protocol-forced synchronization point; everything else (members within a round, commitment

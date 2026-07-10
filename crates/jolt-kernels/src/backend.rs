@@ -15,12 +15,15 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use crate::commitment::CommitWitness;
 use crate::instruction_claim_reduction::InstructionClaimReductionProver;
 use crate::instruction_input::InstructionInputProver;
+use crate::instruction_read_raf::InstructionReadRafProver;
 use crate::ram_output_check::RamOutputCheckProver;
+use crate::ram_ra_claim_reduction::RamRaClaimReductionProver;
 use crate::ram_raf_evaluation::RamRafEvaluationProver;
 use crate::ram_read_write::RamReadWriteProver;
 use crate::ram_val_check::RamValCheckProver;
 use crate::registers_claim_reduction::RegistersClaimReductionProver;
 use crate::registers_read_write::RegistersReadWriteProver;
+use crate::registers_val_evaluation::RegistersValEvaluationProver;
 use crate::spartan_outer::SpartanOuterProver;
 use crate::spartan_product::SpartanProductProver;
 use crate::spartan_shift::SpartanShiftProver;
@@ -47,6 +50,9 @@ where
     pub registers_claim_reduction: Box<dyn RegistersClaimReductionProver<F>>,
     pub registers_read_write: Box<dyn RegistersReadWriteProver<F>>,
     pub ram_val_check: Box<dyn RamValCheckProver<F>>,
+    pub instruction_read_raf: Box<dyn InstructionReadRafProver<F>>,
+    pub ram_ra_claim_reduction: Box<dyn RamRaClaimReductionProver<F>>,
+    pub registers_val_evaluation: Box<dyn RegistersValEvaluationProver<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -76,6 +82,9 @@ where
             registers_claim_reduction: Box::new(ReferenceBackend),
             registers_read_write: Box::new(ReferenceBackend),
             ram_val_check: Box::new(ReferenceBackend),
+            instruction_read_raf: Box::new(ReferenceBackend),
+            ram_ra_claim_reduction: Box::new(ReferenceBackend),
+            registers_val_evaluation: Box::new(ReferenceBackend),
         }
     }
 
