@@ -2125,13 +2125,16 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         };
 
         #[cfg(feature = "cuda")]
-        let cuda_raf: Option<[Vec<F>; 5]> = self.cuda_address.as_ref().and_then(|state| {
-            let banks = state.raf_banks(suffix_len).ok()?;
+        let cuda_raf: Option<[Vec<F>; 5]> = self.cuda_address.as_ref().map(|state| {
+            let banks = state.raf_banks(suffix_len).unwrap_or_else(|_| std::process::abort());
             let converted: Option<Vec<Vec<F>>> = banks
                 .into_iter()
                 .map(|bank| bank.into_iter().map(crate::cuda::fr_into::<F>).collect())
                 .collect();
-            converted.and_then(|v| <[Vec<F>; 5]>::try_from(v).ok())
+            match converted.and_then(|v| <[Vec<F>; 5]>::try_from(v).ok()) {
+                Some(arrays) => arrays,
+                None => std::process::abort(),
+            }
         });
         #[cfg(not(feature = "cuda"))]
         let cuda_raf: Option<[Vec<F>; 5]> = None;
@@ -2154,25 +2157,30 @@ impl<F: Field> InstructionReadRafStage5State<F> {
 
         #[cfg(feature = "cuda")]
         let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> =
-            self.cuda_address.as_ref().and_then(|state| {
+            self.cuda_address.as_ref().map(|state| {
                 tables
                     .iter()
                     .enumerate()
                     .filter(|(table_index, _)| !state.table_is_empty(*table_index))
                     .map(|(table_index, table)| {
-                        let banks = state.read_suffix_banks(table_index, suffix_len).ok()?;
+                        let banks = state
+                            .read_suffix_banks(table_index, suffix_len)
+                            .unwrap_or_else(|_| std::process::abort());
                         let suffix_polys: Option<Vec<Vec<F>>> = banks
                             .into_iter()
                             .map(|bank| {
                                 bank.into_iter().map(crate::cuda::fr_into::<F>).collect()
                             })
                             .collect();
-                        Some(InstructionReadRafReadTablePhase {
-                            table: *table,
-                            suffix_polys: suffix_polys?,
-                        })
+                        match suffix_polys {
+                            Some(polys) => InstructionReadRafReadTablePhase {
+                                table: *table,
+                                suffix_polys: polys,
+                            },
+                            None => std::process::abort(),
+                        }
                     })
-                    .collect::<Option<Vec<_>>>()
+                    .collect::<Vec<_>>()
             });
         #[cfg(not(feature = "cuda"))]
         let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> = None;
@@ -2322,14 +2330,12 @@ impl<F: Field> InstructionReadRafStage5State<F> {
 
         #[cfg(feature = "cuda")]
         if let Some(state) = self.cuda_address.as_mut() {
-            if let Some(eq_table_fr) = crate::cuda::as_fr_slice(&eq_table) {
-                if state
-                    .advance_phase(eq_table_fr, shift, mask as usize)
-                    .is_ok()
-                {
-                    return;
-                }
-            }
+            let eq_table_fr =
+                crate::cuda::as_fr_slice(&eq_table).unwrap_or_else(|| std::process::abort());
+            state
+                .advance_phase(eq_table_fr, shift, mask as usize)
+                .unwrap_or_else(|_| std::process::abort());
+            return;
         }
 
         self.lookup_groups.par_iter_mut().for_each(|group| {
@@ -2347,17 +2353,35 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             self.address_challenges.len(),
         )?;
         let tables = LookupTableKind::<64>::all();
+        let table_count = tables.len();
         let ra_chunks = Self::LOG_K / self.ra_virtual_log_k_chunk;
         let mut fixed_factors = Vec::with_capacity(2);
         fixed_factors.push(self.u_evals.clone());
+
+        #[cfg(feature = "cuda")]
+        let use_per_cycle = self.cuda_address.is_some();
+        #[cfg(not(feature = "cuda"))]
+        let use_per_cycle = false;
+
+        let table_present: Vec<bool> = if use_per_cycle {
+            let mut present = vec![false; table_count];
+            for table_index in self.lookup_table_indices.iter().flatten() {
+                present[*table_index] = true;
+            }
+            present
+        } else {
+            (0..table_count)
+                .map(|table_index| !self.lookup_groups_by_table[table_index].is_empty())
+                .collect()
+        };
         let table_values_at_address = tables
             .par_iter()
             .enumerate()
             .map(|(table_index, table)| {
-                if self.lookup_groups_by_table[table_index].is_empty() {
-                    F::zero()
-                } else {
+                if table_present[table_index] {
                     table.evaluate_mle::<F, F>(&self.address_challenges)
+                } else {
+                    F::zero()
                 }
             })
             .collect::<Vec<_>>();
@@ -2466,24 +2490,48 @@ impl<F: Field> InstructionReadRafStage5State<F> {
 
         let mut lookup_table_flags = vec![F::zero(); table_count];
         let mut instruction_raf_flag = F::zero();
-        let mut group_weights = vec![F::zero(); self.lookup_groups.len()];
-        for (&group_index, &weight) in self.lookup_group_indices_by_cycle.iter().zip(&cycle_eq) {
-            group_weights[group_index] += weight;
-        }
 
-        for (group, &weight) in self.lookup_groups.iter().zip(&group_weights) {
-            if let Some(table_index) = group.lookup_table_index {
-                let Some(flag) = lookup_table_flags.get_mut(table_index) else {
-                    return Err(Stage5KernelError::InvalidInputLength {
-                        input: "stage5.instruction_read_raf.lookup_table_indices",
-                        expected: table_count,
-                        actual: table_index + 1,
-                    });
-                };
-                *flag += weight;
+        #[cfg(feature = "cuda")]
+        let use_per_cycle = self.cuda_address.is_some();
+        #[cfg(not(feature = "cuda"))]
+        let use_per_cycle = false;
+
+        if use_per_cycle {
+            for (cycle, &weight) in cycle_eq.iter().enumerate().take(self.trace_len) {
+                if let Some(table_index) = self.lookup_table_indices[cycle] {
+                    let Some(flag) = lookup_table_flags.get_mut(table_index) else {
+                        return Err(Stage5KernelError::InvalidInputLength {
+                            input: "stage5.instruction_read_raf.lookup_table_indices",
+                            expected: table_count,
+                            actual: table_index + 1,
+                        });
+                    };
+                    *flag += weight;
+                }
+                if !self.is_interleaved_operands[cycle] {
+                    instruction_raf_flag += weight;
+                }
             }
-            if !group.is_interleaved_operands {
-                instruction_raf_flag += weight;
+        } else {
+            let mut group_weights = vec![F::zero(); self.lookup_groups.len()];
+            for (&group_index, &weight) in self.lookup_group_indices_by_cycle.iter().zip(&cycle_eq) {
+                group_weights[group_index] += weight;
+            }
+
+            for (group, &weight) in self.lookup_groups.iter().zip(&group_weights) {
+                if let Some(table_index) = group.lookup_table_index {
+                    let Some(flag) = lookup_table_flags.get_mut(table_index) else {
+                        return Err(Stage5KernelError::InvalidInputLength {
+                            input: "stage5.instruction_read_raf.lookup_table_indices",
+                            expected: table_count,
+                            actual: table_index + 1,
+                        });
+                    };
+                    *flag += weight;
+                }
+                if !group.is_interleaved_operands {
+                    instruction_raf_flag += weight;
+                }
             }
         }
 
@@ -3619,15 +3667,6 @@ fn instruction_read_raf_state<F: Field>(
     let ra_chunks = LOG_K / witness.ra_virtual_log_k_chunk;
     let outputs = instruction_read_raf_output_plans(program, claim, table_count, ra_chunks)?;
 
-    let (lookup_groups, lookup_group_indices_by_cycle) =
-        instruction_read_raf_lookup_groups(witness, &u_evals)?;
-    let mut lookup_groups_by_table = vec![Vec::new(); table_count];
-    for (group_index, group) in lookup_groups.iter().enumerate() {
-        if let Some(table_index) = group.lookup_table_index {
-            lookup_groups_by_table[table_index].push(group_index);
-        }
-    }
-
     #[cfg(feature = "cuda")]
     let cuda_address = if backend == "cuda" {
         const ADDRESS_CHUNK_BITS: usize = 8;
@@ -3655,6 +3694,23 @@ fn instruction_read_raf_state<F: Field>(
     } else {
         None
     };
+
+    #[cfg(feature = "cuda")]
+    let build_groups = cuda_address.is_none();
+    #[cfg(not(feature = "cuda"))]
+    let build_groups = true;
+
+    let (lookup_groups, lookup_group_indices_by_cycle) = if build_groups {
+        instruction_read_raf_lookup_groups(witness, &u_evals)?
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let mut lookup_groups_by_table = vec![Vec::new(); table_count];
+    for (group_index, group) in lookup_groups.iter().enumerate() {
+        if let Some(table_index) = group.lookup_table_index {
+            lookup_groups_by_table[table_index].push(group_index);
+        }
+    }
 
     Ok(InstructionReadRafStage5State {
         trace_len: witness.trace_len,
