@@ -16,7 +16,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::{OracleRef, PolynomialChunk, PolynomialEncoding, WitnessProvider};
 
-use crate::KernelError;
+use crate::{KernelError, ProofSession, ReferenceBackend};
 
 /// The shared embedding grid every witness polynomial is committed in:
 /// `2^⌈total_vars/2⌉` columns, where `total_vars` is the maximum over the
@@ -42,11 +42,49 @@ pub struct WitnessCommitment<PCS: CommitmentScheme> {
     pub hint: PCS::OpeningHint,
 }
 
+/// The witness-commitment slot: commit every polynomial in `ids` out of the
+/// witness oracle over the shared embedding grid. Results are returned in
+/// `ids` order; execution order, batching, and streaming strategy are the
+/// implementation's business (the trait deliberately does not require
+/// [`StreamingCommitment`] — that is the reference implementation's
+/// strategy). Transcript-free: the caller absorbs the returned commitments.
+pub trait CommitWitness<F, PCS>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn commit_witness(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>;
+}
+
+impl<F, PCS> CommitWitness<F, PCS> for ReferenceBackend
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+{
+    fn commit_witness(
+        &self,
+        _session: &mut ProofSession,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
+        commit_witness::<F, PCS>(witness, ids, grid, setup)
+    }
+}
+
 /// Commit each witness polynomial in `ids` (in order) by streaming it out of
-/// the witness oracle and into the PCS over `grid`. Transcript-free: the
-/// caller absorbs the returned commitments.
-pub fn commit_witness<F, PCS, W>(
-    witness: &W,
+/// the witness oracle and into the PCS over `grid` — the reference
+/// implementation behind [`CommitWitness`].
+pub fn commit_witness<F, PCS>(
+    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -54,11 +92,10 @@ pub fn commit_witness<F, PCS, W>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F> + StreamingCommitment,
-    W: WitnessProvider<F, JoltVmNamespace>,
 {
     ids.iter()
         .map(|&id| {
-            let (commitment, hint) = commit_one::<F, PCS, W>(witness, id, grid, setup)?;
+            let (commitment, hint) = commit_one::<F, PCS>(witness, id, grid, setup)?;
             Ok(WitnessCommitment {
                 id,
                 commitment,
@@ -68,8 +105,8 @@ where
         .collect()
 }
 
-fn commit_one<F, PCS, W>(
-    witness: &W,
+fn commit_one<F, PCS>(
+    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     id: JoltCommittedPolynomial,
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -77,7 +114,6 @@ fn commit_one<F, PCS, W>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F> + StreamingCommitment,
-    W: WitnessProvider<F, JoltVmNamespace>,
 {
     let descriptor = witness.describe_oracle(OracleRef::<JoltVmNamespace>::Committed(id))?;
     let row_width = grid.num_columns();

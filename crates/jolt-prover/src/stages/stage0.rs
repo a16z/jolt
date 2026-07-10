@@ -12,8 +12,8 @@ use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_kernels::{commit_witness, CommitmentGrid, WitnessCommitment};
-use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
+use jolt_openings::CommitmentScheme;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltCommitments;
 use jolt_verifier::{
@@ -21,7 +21,7 @@ use jolt_verifier::{
     CheckedInputs, ProofTranscriptConfig,
 };
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::{CommittedWitnessProvider, WitnessProvider};
+use jolt_witness::CommittedWitnessProvider;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -41,19 +41,20 @@ where
 
 /// Validate inputs, seed the transcript, commit the witness, and absorb the
 /// commitments. Advice and committed-program modes are not yet supported.
-pub fn prove_stage0<F, PCS, VC, T, W>(
+pub fn prove_stage0<F, PCS, VC, T>(
+    backend: &JoltBackend<F, PCS>,
+    session: &mut ProofSession,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    witness: &W,
+    witness: &dyn CommittedWitnessProvider<F, JoltVmNamespace>,
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F>,
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
-    W: WitnessProvider<F, JoltVmNamespace> + CommittedWitnessProvider<F, JoltVmNamespace>,
 {
     if !public_io.trusted_advice.is_empty() || !public_io.untrusted_advice.is_empty() {
         return Err(ProverError::Unsupported {
@@ -105,7 +106,10 @@ where
         total_vars: config.commitment_total_vars(&public_io.memory_layout, false, false),
         log_t: config.trace_length.ilog2() as usize,
     };
-    let committed = commit_witness::<F, PCS, W>(witness, &ids, grid, &preprocessing.pcs_setup)?;
+    let committed =
+        backend
+            .commit
+            .commit_witness(session, witness, &ids, grid, &preprocessing.pcs_setup)?;
 
     let (commitments, hints) = assemble_commitments::<PCS>(committed)?;
     absorb_transcript_commitments(&commitments, None, None, &mut transcript);

@@ -4,15 +4,16 @@
 //! Pure orchestration: the challenge draws, batch head, point derivation,
 //! final-claim fold, and absorb order are `jolt-verifier`'s generated
 //! drivers; all compute (input-table materialization, the brute-forced
-//! uni-skip polynomial, the remainder rounds) is
-//! [`jolt_kernels::spartan_outer`].
+//! uni-skip polynomial, the remainder rounds) is behind the backend's
+//! `spartan_outer` slot.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_field::Field;
-use jolt_kernels::spartan_outer::SpartanOuterKernel;
+use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, ClearSumcheckRecorder, ProveRounds, SumcheckProof,
     SumcheckRecorder,
@@ -40,21 +41,25 @@ pub struct Stage1ProverOutput<F: Field, C> {
 }
 
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
-pub fn prove_stage1<F, C, T, W>(
+pub fn prove_stage1<F, PCS, C, T>(
+    backend: &JoltBackend<F, PCS>,
+    session: &mut ProofSession,
     log_t: usize,
-    witness: &W,
+    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, C>, ProverError<F>>
 where
     F: Field,
+    PCS: CommitmentScheme<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: WitnessProvider<F, JoltVmNamespace>,
 {
     let tau = transcript.challenge_vector(log_t + 2);
-    let kernel = SpartanOuterKernel::prepare(log_t, &tau, witness)?;
+    let instance = backend
+        .spartan_outer
+        .prepare(session, log_t, &tau, witness)?;
 
-    let uniskip_poly = kernel.uniskip_first_round_poly()?;
+    let uniskip_poly = instance.uniskip_first_round_poly()?;
     let proved_uniskip = prove_uniskip_clear::<F, C, T>(
         uniskip_poly,
         F::zero(),
@@ -84,8 +89,8 @@ where
     let (batch, coefficients) =
         sumchecks.begin_batch(&inputs, &challenges, &mut recorder, transcript)?;
 
-    let mut member = kernel.into_remainder(uniskip_challenge)?;
-    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
+    let mut member = instance.into_remainder(uniskip_challenge)?;
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut *member];
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;

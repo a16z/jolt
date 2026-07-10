@@ -38,7 +38,48 @@ use jolt_witness::{
     MaterializationPolicy, PolynomialEncoding, RetentionHint, ViewRequirement, WitnessProvider,
 };
 
-use crate::{KernelError, NaiveSumcheckProver, ProveSumcheck};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+
+/// The stage-1 slot: factory for a prepared Spartan-outer instance.
+pub trait SpartanOuterProver<F: Field> {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        log_t: usize,
+        tau: &[F],
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn SpartanOuterInstance<F>>, KernelError<F>>;
+}
+
+/// A prepared Spartan-outer instance: the uni-skip first-round polynomial,
+/// then — once the uni-skip challenge is drawn — the remainder batch member.
+pub trait SpartanOuterInstance<F: Field> {
+    fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>>;
+
+    fn into_remainder(
+        self: Box<Self>,
+        uniskip_challenge: F,
+    ) -> Result<Box<dyn OuterRemainderInstance<F>>, KernelError<F>>;
+}
+
+/// The remainder batch member, plus typed claim extraction once fully bound.
+pub trait OuterRemainderInstance<F: Field>: ProveRounds<F> {
+    fn output_claims(
+        &mut self,
+    ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, KernelError<F>>;
+}
+
+impl<F: Field> SpartanOuterProver<F> for ReferenceBackend {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        log_t: usize,
+        tau: &[F],
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn SpartanOuterInstance<F>>, KernelError<F>> {
+        Ok(Box::new(SpartanOuterKernel::prepare(log_t, tau, witness)?))
+    }
+}
 
 /// The shared stage-1 compute state: the 35 R1CS input tables, the
 /// per-constraint Az/Bz row-value tables, and `eq(τ_low, ·)` — everything the
@@ -63,10 +104,11 @@ pub struct SpartanOuterKernel<F: Field> {
 impl<F: Field> SpartanOuterKernel<F> {
     /// Materialize the stage's compute state from the witness. `tau` is the
     /// stage's full challenge vector (`log_t + 2` entries).
-    pub fn prepare<W>(log_t: usize, tau: &[F], witness: &W) -> Result<Self, KernelError<F>>
-    where
-        W: WitnessProvider<F, JoltVmNamespace>,
-    {
+    pub fn prepare(
+        log_t: usize,
+        tau: &[F],
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Self, KernelError<F>> {
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let input_tables = materialize_input_tables(witness, &dimensions)?;
         let matrices = spartan_outer_constraints::<F>();
@@ -83,7 +125,9 @@ impl<F: Field> SpartanOuterKernel<F> {
             eq_table,
         })
     }
+}
 
+impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
     /// Brute-force the uni-skip first-round polynomial. The summand's
     /// row-node polynomial
     /// `t1(Y) = Σ_(s,t) eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)` vanishes on
@@ -91,7 +135,7 @@ impl<F: Field> SpartanOuterKernel<F> {
     /// `guard · (left − right) = 0`), so `t1` is interpolated over the
     /// 19-point centered domain from the 9 extended-node evaluations; the
     /// transmitted polynomial is `LK(τ_high, ·) × t1`.
-    pub fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>> {
+    fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let tau_high = self.tau[self.log_t + 1];
         let extended_size = 2 * OUTER_UNISKIP_DOMAIN_SIZE - 1;
         let domain_start = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
@@ -146,17 +190,18 @@ impl<F: Field> SpartanOuterKernel<F> {
 
     /// Consume the shared state into the remainder sumcheck member, once the
     /// uni-skip round's challenge is drawn.
-    pub fn into_remainder(
-        self,
+    fn into_remainder(
+        self: Box<Self>,
         uniskip_challenge: F,
-    ) -> Result<OuterRemainderKernel<F>, KernelError<F>> {
+    ) -> Result<Box<dyn OuterRemainderInstance<F>>, KernelError<F>> {
+        let this = *self;
         let kernel = centered_lagrange_kernel::<F>(
             OUTER_UNISKIP_DOMAIN_SIZE,
-            self.tau[self.log_t + 1],
+            this.tau[this.log_t + 1],
             uniskip_challenge,
         )?;
 
-        let variable_count = self.input_tables.len();
+        let variable_count = this.input_tables.len();
         let columns: Vec<usize> = (1..=variable_count).collect();
         let mut az_values: [Vec<F>; 2] = [Vec::new(), Vec::new()];
         let mut bz_values: [Vec<F>; 2] = [Vec::new(), Vec::new()];
@@ -166,7 +211,7 @@ impl<F: Field> SpartanOuterKernel<F> {
         let mut bz_constant = [F::zero(); 2];
         for (index, stream) in [F::zero(), F::one()].into_iter().enumerate() {
             let weights = spartan_outer_row_weights(uniskip_challenge, stream)?;
-            let cycles = 1usize << self.log_t;
+            let cycles = 1usize << this.log_t;
             let row_form = |rows: &[Vec<F>]| {
                 (0..cycles)
                     .map(|t| {
@@ -178,34 +223,34 @@ impl<F: Field> SpartanOuterKernel<F> {
                     })
                     .collect::<Vec<F>>()
             };
-            az_values[index] = row_form(&self.az_rows);
-            bz_values[index] = row_form(&self.bz_rows);
-            let weighted = self.matrices.weighted_columns(&weights, &columns)?;
+            az_values[index] = row_form(&this.az_rows);
+            bz_values[index] = row_form(&this.bz_rows);
+            let weighted = this.matrices.weighted_columns(&weights, &columns)?;
             az_columns[index] = weighted.a;
             bz_columns[index] = weighted.b;
-            let constants = self
+            let constants = this
                 .matrices
                 .public_column_contributions(&weights, 0, F::one())?;
             az_constant[index] = constants.a;
             bz_constant[index] = constants.b;
         }
 
-        let tau_low = &self.tau[..=self.log_t];
-        Ok(OuterRemainderKernel {
-            log_t: self.log_t,
+        let tau_low = &this.tau[..=this.log_t];
+        Ok(Box::new(OuterRemainderKernel {
+            log_t: this.log_t,
             kernel,
-            eq_cycle: EqPolynomial::new(tau_low[..self.log_t].to_vec()).evaluations(),
-            tau_stream: tau_low[self.log_t],
-            tau: self.tau,
+            eq_cycle: EqPolynomial::new(tau_low[..this.log_t].to_vec()).evaluations(),
+            tau_stream: tau_low[this.log_t],
+            tau: this.tau,
             az_values,
             bz_values,
             az_columns,
             bz_columns,
             az_constant,
             bz_constant,
-            input_tables: self.input_tables,
+            input_tables: this.input_tables,
             inner: None,
-        })
+        }))
     }
 }
 
@@ -314,9 +359,11 @@ impl<F: Field> OuterRemainderKernel<F> {
         self.inner = Some(inner);
         Ok(())
     }
+}
 
+impl<F: Field> OuterRemainderInstance<F> for OuterRemainderKernel<F> {
     /// The member's typed produced-opening values, once fully bound.
-    pub fn output_claims(
+    fn output_claims(
         &mut self,
     ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, KernelError<F>> {
         self.inner
@@ -393,14 +440,10 @@ impl<F: Field> ProveRounds<F> for OuterRemainderKernel<F> {
 
 /// Materialize the 35 R1CS input polynomials (cycle-indexed, big-endian) in
 /// the relation's variable order.
-fn materialize_input_tables<F, W>(
-    witness: &W,
+fn materialize_input_tables<F: Field>(
+    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     dimensions: &SpartanOuterDimensions,
-) -> Result<Vec<Vec<F>>, KernelError<F>>
-where
-    F: Field,
-    W: WitnessProvider<F, JoltVmNamespace>,
-{
+) -> Result<Vec<Vec<F>>, KernelError<F>> {
     dimensions
         .variables()
         .iter()

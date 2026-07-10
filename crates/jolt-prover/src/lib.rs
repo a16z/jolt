@@ -15,4 +15,5 @@ pub mod stages;
 
 pub use config::{remap_address, ProverConfig};
 pub use error::ProverError;
+pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::JoltProverPreprocessing;

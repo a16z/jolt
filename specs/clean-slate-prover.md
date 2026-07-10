@@ -453,8 +453,9 @@ Three layers, each answering a different question:
   fallback and the equivalence anchor.
 
 ```rust
-// jolt-kernels — illustrative
-pub struct JoltBackend<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> {
+// jolt-kernels — illustrative. PCS carries only CommitmentScheme: streaming
+// is the reference implementation's strategy, not a seam requirement.
+pub struct JoltBackend<F: Field, PCS: CommitmentScheme<Field = F>> {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
     pub spartan_outer: Box<dyn SpartanOuterProver<F>>,
     // one slot per kernel entry, added as stages land
