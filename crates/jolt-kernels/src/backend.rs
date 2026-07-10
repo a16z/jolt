@@ -18,7 +18,9 @@ use crate::instruction_input::InstructionInputProver;
 use crate::ram_output_check::RamOutputCheckProver;
 use crate::ram_raf_evaluation::RamRafEvaluationProver;
 use crate::ram_read_write::RamReadWriteProver;
+use crate::ram_val_check::RamValCheckProver;
 use crate::registers_claim_reduction::RegistersClaimReductionProver;
+use crate::registers_read_write::RegistersReadWriteProver;
 use crate::spartan_outer::SpartanOuterProver;
 use crate::spartan_product::SpartanProductProver;
 use crate::spartan_shift::SpartanShiftProver;
@@ -43,6 +45,8 @@ where
     pub spartan_shift: Box<dyn SpartanShiftProver<F>>,
     pub instruction_input: Box<dyn InstructionInputProver<F>>,
     pub registers_claim_reduction: Box<dyn RegistersClaimReductionProver<F>>,
+    pub registers_read_write: Box<dyn RegistersReadWriteProver<F>>,
+    pub ram_val_check: Box<dyn RamValCheckProver<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -70,6 +74,8 @@ where
             spartan_shift: Box::new(ReferenceBackend),
             instruction_input: Box::new(ReferenceBackend),
             registers_claim_reduction: Box::new(ReferenceBackend),
+            registers_read_write: Box::new(ReferenceBackend),
+            ram_val_check: Box::new(ReferenceBackend),
         }
     }
 
