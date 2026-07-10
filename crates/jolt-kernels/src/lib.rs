@@ -27,7 +27,7 @@ pub mod spartan_outer;
 mod sumcheck;
 
 pub use backend::{JoltBackend, ProofSession, ReferenceBackend};
-pub use commitment::{commit_witness, CommitWitness, CommitmentGrid, WitnessCommitment};
+pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 pub use naive::NaiveSumcheckProver;
 pub use sumcheck::ProveSumcheck;

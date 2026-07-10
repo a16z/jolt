@@ -76,33 +76,17 @@ where
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
-        commit_witness::<F, PCS>(witness, ids, grid, setup)
-    }
-}
-
-/// Commit each witness polynomial in `ids` (in order) by streaming it out of
-/// the witness oracle and into the PCS over `grid` — the reference
-/// implementation behind [`CommitWitness`].
-pub fn commit_witness<F, PCS>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ids: &[JoltCommittedPolynomial],
-    grid: CommitmentGrid,
-    setup: &PCS::ProverSetup,
-) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
-{
-    ids.iter()
-        .map(|&id| {
-            let (commitment, hint) = commit_one::<F, PCS>(witness, id, grid, setup)?;
-            Ok(WitnessCommitment {
-                id,
-                commitment,
-                hint,
+        ids.iter()
+            .map(|&id| {
+                let (commitment, hint) = commit_one::<F, PCS>(witness, id, grid, setup)?;
+                Ok(WitnessCommitment {
+                    id,
+                    commitment,
+                    hint,
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 fn commit_one<F, PCS>(
