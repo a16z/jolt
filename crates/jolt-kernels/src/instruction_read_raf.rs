@@ -301,11 +301,11 @@ impl<F: Field> InstructionReadRafKernel<F> {
         // RAF suffix accumulators: one fused scan. The shift suffixes are
         // constant per phase (`2^{suffix_len/2}`, `2^{suffix_len}`), so raw
         // eq mass is accumulated and scaled afterwards.
-        let mut q_shift_half_raw = vec![F::zero(); CHUNK_SIZE];
-        let mut q_left = vec![F::zero(); CHUNK_SIZE];
-        let mut q_right = vec![F::zero(); CHUNK_SIZE];
-        let mut q_shift_full_raw = vec![F::zero(); CHUNK_SIZE];
-        let mut q_identity = vec![F::zero(); CHUNK_SIZE];
+        let mut q_shift_half_raw = [F::zero(); CHUNK_SIZE];
+        let mut q_left = [F::zero(); CHUNK_SIZE];
+        let mut q_right = [F::zero(); CHUNK_SIZE];
+        let mut q_shift_full_raw = [F::zero(); CHUNK_SIZE];
+        let mut q_identity = [F::zero(); CHUNK_SIZE];
         for (row, &u) in self.rows.iter().zip(&self.u_evals) {
             let chunk = self.chunk(row.lookup_index, phase);
             let suffix_bits = row.lookup_index & suffix_mask;
@@ -327,14 +327,8 @@ impl<F: Field> InstructionReadRafKernel<F> {
                 }
             }
         }
-        let q_shift_half: Vec<F> = q_shift_half_raw
-            .into_iter()
-            .map(|value| value.mul_pow_2(suffix_len / 2))
-            .collect();
-        let q_shift_full: Vec<F> = q_shift_full_raw
-            .into_iter()
-            .map(|value| value.mul_pow_2(suffix_len))
-            .collect();
+        let q_shift_half = q_shift_half_raw.map(|value| value.mul_pow_2(suffix_len / 2));
+        let q_shift_full = q_shift_full_raw.map(|value| value.mul_pow_2(suffix_len));
 
         // RAF prefix chunk polynomials, from the registry checkpoints: the
         // identity prefix extends its bound value by the chunk's integer
@@ -354,14 +348,14 @@ impl<F: Field> InstructionReadRafKernel<F> {
             })
             .unzip();
         self.raf_left.prefix = Polynomial::new(left_prefix);
-        self.raf_left.q_shift = Polynomial::new(q_shift_half.clone());
-        self.raf_left.q_value = Polynomial::new(q_left);
+        self.raf_left.q_shift = Polynomial::new(q_shift_half.to_vec());
+        self.raf_left.q_value = Polynomial::new(q_left.to_vec());
         self.raf_right.prefix = Polynomial::new(right_prefix);
-        self.raf_right.q_shift = Polynomial::new(q_shift_half);
-        self.raf_right.q_value = Polynomial::new(q_right);
+        self.raf_right.q_shift = Polynomial::new(q_shift_half.to_vec());
+        self.raf_right.q_value = Polynomial::new(q_right.to_vec());
         self.raf_identity.prefix = Polynomial::new(identity_prefix);
-        self.raf_identity.q_shift = Polynomial::new(q_shift_full);
-        self.raf_identity.q_value = Polynomial::new(q_identity);
+        self.raf_identity.q_shift = Polynomial::new(q_shift_full.to_vec());
+        self.raf_identity.q_value = Polynomial::new(q_identity.to_vec());
 
         // Read-checking suffix accumulators, per present table.
         self.suffix_tables = LookupTableKind::<RISCV_XLEN>::iter()
