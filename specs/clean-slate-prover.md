@@ -114,7 +114,7 @@ Key abstractions introduced:
   `jolt-verifier/src/stages/uniskip.rs`, including the `b"opening_claim"` absorb position before
   the remainder coefficient draw.
 
-- **Naive reference prover** (in `jolt-prover`): a generic `ProveSumcheck` implementation that
+- **Naive reference prover** (in `jolt-kernels`): a generic `ProveSumcheck` implementation that
   works for *any* relation, derived from the observation that a relation's output `Expr` is its
   sumcheck summand. Its state is a table per `Expr` leaf: `Opening` leaves resolve to dense
   polynomials materialized from the witness, `Challenge` leaves to scalars, and `Derived` leaves
@@ -148,9 +148,12 @@ Key abstractions introduced:
   *interprets* the `Expr`; a form descriptor is the `Expr` *compiled* to a generic shape; a fused
   kernel is the *optimized* dispatch — each hop equivalence-tested against the tier above.
 
-- **Per-relation prover adapters** (in `jolt-prover`, one file per relation mirroring the
-  verifier's per-relation files): build the form descriptor from the relation's dimensions, own
-  the `final_evals → SumcheckOutputClaims` field mapping, implement `ProveSumcheck`.
+- **Per-relation kernel modules** (in `jolt-kernels`, one module per relation mirroring the
+  verifier's per-relation files, e.g. `spartan_outer`): build the compute state from the
+  relation's dimensions and the witness, implement `ProveRounds`, own the
+  `final_evals → SumcheckOutputClaims` mapping. `jolt-prover` stage recipes hold no compute —
+  swapping a kernel implementation (naive-backed → streaming → device) never touches
+  orchestration.
 
 - **Single id space end-to-end**: witness oracle lookup, kernel descriptors, and opening
   bookkeeping are all keyed by the jolt-claims ids (`JoltCommittedPolynomial` /
@@ -313,14 +316,16 @@ jolt-verifier    protocol structure: ConcreteSumcheck relations, #[derive(Sumche
                  uniskip params, stage-8 batch-assembly helpers
 jolt-sumcheck    sumcheck engine, both sides: existing verify drivers + NEW SumcheckRecorder
                  (clear/committed), ProveRounds, prove_batch, uniskip prover
-jolt-kernels     NEW compute crate: form-vocabulary sumcheck kernels (opaque state, 4-verb
-                 lifecycle), commitment streaming, opening/RLC materialization, BlindFold
-                 row ops; CPU implementation; fused fast paths internal
+jolt-kernels     NEW compute crate: ALL prover compute — ProveSumcheck + naive reference
+                 tier, per-relation kernel modules, form-vocabulary sumcheck kernels
+                 (opaque state, 4-verb lifecycle), commitment streaming, opening/RLC
+                 materialization, BlindFold row ops; CPU implementation; fused fast
+                 paths internal
 jolt-witness     one oracle-view interface keyed by jolt-claims ids; typed-row extraction
                  becomes a materialization strategy behind it, not a parallel API
-jolt-prover      NEW orchestration crate: ProveSumcheck + naive reference prover,
-                 per-relation adapters, per-stage recipes mirroring jolt-verifier's
-                 stages/, transcript sequencing, proof assembly, BlindFold witness recording
+jolt-prover      NEW orchestration crate: per-stage recipes mirroring jolt-verifier's
+                 stages/, transcript sequencing, kernel invocation, proof assembly,
+                 BlindFold witness recording — no field-element compute
 ```
 
 **Dependency direction is load-bearing:** `jolt-verifier` depends on `jolt-sumcheck`, so the

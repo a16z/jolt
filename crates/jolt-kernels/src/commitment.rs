@@ -50,7 +50,7 @@ pub fn commit_witness<F, PCS, W>(
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
-) -> Result<Vec<WitnessCommitment<PCS>>, KernelError>
+) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
     F: Field,
     PCS: CommitmentScheme<Field = F> + StreamingCommitment,
@@ -73,7 +73,7 @@ fn commit_one<F, PCS, W>(
     id: JoltCommittedPolynomial,
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
-) -> Result<(PCS::Output, PCS::OpeningHint), KernelError>
+) -> Result<(PCS::Output, PCS::OpeningHint), KernelError<F>>
 where
     F: Field,
     PCS: CommitmentScheme<Field = F> + StreamingCommitment,
@@ -139,7 +139,7 @@ fn feed_dense_chunk<F, PCS>(
     row_width: usize,
     id: JoltCommittedPolynomial,
     setup: &PCS::ProverSetup,
-) -> Result<(), KernelError>
+) -> Result<(), KernelError<F>>
 where
     F: Field,
     PCS: CommitmentScheme<Field = F> + StreamingCommitment,

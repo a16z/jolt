@@ -9,7 +9,8 @@
 //! tables, materialized over the domain by the caller). Each round message is
 //! `Expr::try_evaluate` run pointwise over the remaining hypercube — cost
 //! `O((degree+1) · 2^rounds · |Expr|)` per round, a **test oracle at harness
-//! scale, never a performance path**.
+//! scale, never a performance path**. It is the reference implementation
+//! optimized kernels are equivalence-tested against.
 //!
 //! Two self-checks pin it: the engine's running-claim check
 //! (`s(0) + s(1) == previous_claim`, re-checked per member here), and
@@ -32,7 +33,7 @@ use jolt_verifier::stages::relations::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{ProveSumcheck, ProverError};
+use crate::{KernelError, ProveSumcheck};
 
 /// See the module docs. Construct with every leaf table the relation's output
 /// expression references; [`new`](Self::new) validates coverage and sizes so
@@ -69,18 +70,24 @@ where
     /// resolvable — each `Opening`/`Derived` factor has a table of exactly
     /// `2^rounds` evaluations, each `Challenge` factor a drawn scalar — and
     /// assemble the prover.
+    ///
+    /// `binding_order` is part of each relation's fixed convention — the
+    /// produced round polynomials depend on it, so byte parity with the
+    /// legacy prover requires matching its choice (e.g. the Spartan outer
+    /// remainder binds `LowToHigh`).
     pub fn new(
         relation: R,
         challenges: ConcreteSumcheckChallenges<F, R>,
         opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
         derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
-    ) -> Result<Self, ProverError<F>> {
+        binding_order: BindingOrder,
+    ) -> Result<Self, KernelError<F>> {
         let expected_len = 1usize << relation.rounds();
         let check_len = |table: &Polynomial<F>, id: &dyn core::fmt::Debug| {
             if table.len() == expected_len {
                 Ok(())
             } else {
-                Err(ProverError::TableSizeMismatch {
+                Err(KernelError::TableSizeMismatch {
                     table: format!("{id:?}"),
                     expected: expected_len,
                     got: table.len(),
@@ -94,19 +101,19 @@ where
                     Source::Opening(id) => {
                         let table = opening_tables
                             .get(id)
-                            .ok_or(ProverError::MissingOpeningTable { id: *id })?;
+                            .ok_or(KernelError::MissingOpeningTable { id: *id })?;
                         check_len(table, id)?;
                     }
                     Source::Derived(id) => {
                         let table = derived_tables
                             .get(id)
-                            .ok_or(ProverError::MissingDerivedTable { id: *id })?;
+                            .ok_or(KernelError::MissingDerivedTable { id: *id })?;
                         check_len(table, id)?;
                     }
                     Source::Challenge(id) => {
                         let value = challenges
                             .resolve_challenge(id)
-                            .ok_or(ProverError::MissingChallenge { id: *id })?;
+                            .ok_or(KernelError::MissingChallenge { id: *id })?;
                         let _ = challenge_values.insert(*id, value);
                     }
                 }
@@ -119,18 +126,9 @@ where
             challenge_values,
             opening_tables,
             derived_tables,
-            binding_order: BindingOrder::HighToLow,
+            binding_order,
             rounds_bound: 0,
         })
-    }
-
-    /// Override the variable-binding order (default: `HighToLow`). Each
-    /// relation has a fixed convention — the produced round polynomials
-    /// depend on it, so byte parity with the legacy prover requires matching
-    /// its choice (e.g. the Spartan outer remainder binds `LowToHigh`).
-    pub fn with_binding_order(mut self, binding_order: BindingOrder) -> Self {
-        self.binding_order = binding_order;
-        self
     }
 
     /// The drawn challenges this prover resolves `Challenge` leaves against.
@@ -142,10 +140,10 @@ where
         self.relation.rounds() - self.rounds_bound
     }
 
-    fn require_fully_bound(&self) -> Result<(), ProverError<F>> {
+    fn require_fully_bound(&self) -> Result<(), KernelError<F>> {
         match self.remaining_rounds() {
             0 => Ok(()),
-            remaining => Err(ProverError::NotFullyBound { remaining }),
+            remaining => Err(KernelError::NotFullyBound { remaining }),
         }
     }
 
@@ -157,7 +155,7 @@ where
         &self,
         input_points: &SumcheckInputPoints<F, R>,
         output_points: &SumcheckOutputPoints<F, R>,
-    ) -> Result<(), ProverError<F>> {
+    ) -> Result<(), KernelError<F>> {
         self.require_fully_bound()?;
         for (id, table) in &self.derived_tables {
             let expected = self.relation.derive_output_term(
@@ -168,7 +166,7 @@ where
             )?;
             let got = table.evals()[0];
             if got != expected {
-                return Err(ProverError::DerivedTableDrift {
+                return Err(KernelError::DerivedTableDrift {
                     id: *id,
                     expected,
                     got,
@@ -284,13 +282,13 @@ where
         &self.relation
     }
 
-    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, ProverError<F>> {
+    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, KernelError<F>> {
         self.require_fully_bound()?;
         let opening_tables = &self.opening_tables;
         SumcheckOutputClaims::<F, R>::from_opening_values(|id| {
             opening_tables.get(id).map(|table| table.evals()[0])
         })
-        .map_err(ProverError::from)
+        .map_err(KernelError::from)
     }
 }
 
@@ -312,7 +310,7 @@ mod tests {
         challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
     };
     use jolt_field::{Field, Fr, FromPrimitiveInt, RingCore};
-    use jolt_poly::{EqPolynomial, Polynomial};
+    use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
         ProveRounds, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
@@ -322,7 +320,7 @@ mod tests {
     use jolt_verifier::VerifierError;
 
     use super::NaiveSumcheckProver;
-    use crate::{ProveSumcheck, ProverError};
+    use crate::{KernelError, ProveSumcheck};
 
     const TOY_RELATION: JoltRelationId = JoltRelationId::RegistersValEvaluation;
 
@@ -527,8 +525,14 @@ mod tests {
             relation.degree(),
         );
 
-        let mut naive =
-            NaiveSumcheckProver::new(relation, challenges, opening_tables, derived_tables).unwrap();
+        let mut naive = NaiveSumcheckProver::new(
+            relation,
+            challenges,
+            opening_tables,
+            derived_tables,
+            BindingOrder::HighToLow,
+        )
+        .unwrap();
         let mut members: Vec<&mut dyn ProveRounds<Fr>> = vec![&mut naive];
         let proved = prove_batch(
             &prelude,
@@ -642,8 +646,14 @@ mod tests {
             relation.degree(),
         );
         let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
-        let mut naive =
-            NaiveSumcheckProver::new(relation, challenges, opening_tables, derived_tables).unwrap();
+        let mut naive = NaiveSumcheckProver::new(
+            relation,
+            challenges,
+            opening_tables,
+            derived_tables,
+            BindingOrder::HighToLow,
+        )
+        .unwrap();
         let mut members: Vec<&mut dyn ProveRounds<Fr>> = vec![&mut naive];
         let proved = prove_batch(&prelude, &mut members, &mut recorder, &mut transcript).unwrap();
 
@@ -656,7 +666,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             naive.validate_derived_tables(&input_points, &output_points),
-            Err(ProverError::DerivedTableDrift {
+            Err(KernelError::DerivedTableDrift {
                 id: JoltDerivedId::Test,
                 ..
             }),
@@ -681,8 +691,9 @@ mod tests {
                 challenges().unwrap(),
                 incomplete,
                 derived_tables(&reference_point()),
+                BindingOrder::HighToLow,
             ),
-            Err(ProverError::MissingOpeningTable { id }) if id == c_id,
+            Err(KernelError::MissingOpeningTable { id }) if id == c_id,
         ));
 
         // A mis-sized table is rejected.
@@ -698,8 +709,9 @@ mod tests {
                 challenges().unwrap(),
                 mis_sized,
                 derived_tables(&reference_point()),
+                BindingOrder::HighToLow,
             ),
-            Err(ProverError::TableSizeMismatch { .. }),
+            Err(KernelError::TableSizeMismatch { .. }),
         ));
     }
 }

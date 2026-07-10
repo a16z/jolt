@@ -11,9 +11,22 @@ categories = ["cryptography"]
 [lints]
 workspace = true
 
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon", "jolt-poly/parallel"]
+
 [dependencies]
 jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-openings.workspace = true
+jolt-poly = { workspace = true, default-features = false }
+jolt-r1cs.workspace = true
+jolt-sumcheck.workspace = true
+jolt-verifier.workspace = true
 jolt-witness.workspace = true
+rayon = { workspace = true, optional = true }
 thiserror.workspace = true
+
+[dev-dependencies]
+jolt-claims = { workspace = true, features = ["test-utils"] }
+jolt-transcript.workspace = true

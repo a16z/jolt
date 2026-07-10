@@ -9,7 +9,7 @@
 //! pins stage 0 (config derivation, preamble, witness commitments).
 
 #[cfg(feature = "prover-fixtures")]
-#[expect(clippy::expect_used)]
+#[expect(clippy::expect_used, clippy::panic)]
 mod stage0 {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;

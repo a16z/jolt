@@ -6,7 +6,7 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 
-use crate::ProverError;
+use crate::KernelError;
 
 /// The typed prove-side counterpart of a batch member: pairs the object-safe
 /// [`ProveRounds`] round interface (what the engine's round loop consumes)
@@ -31,5 +31,5 @@ where
     /// Extract the member's typed produced-opening values from its fully
     /// bound state. Call after the engine's round loop has ingested every
     /// challenge.
-    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, Self::Relation>, ProverError<F>>;
+    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, Self::Relation>, KernelError<F>>;
 }
