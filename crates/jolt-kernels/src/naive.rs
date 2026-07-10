@@ -47,10 +47,10 @@ where
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     relation: R,
-    challenges: ConcreteSumcheckChallenges<F, R>,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
-    /// construction, so the round loop reads plain `Sync` data (the
-    /// `Challenges` struct itself carries no `Sync` bound).
+    /// construction, so the round loop reads plain `Sync` data (the typed
+    /// `Challenges` struct carries no `Sync` bound and stays with the
+    /// caller that drew it).
     challenge_values: BTreeMap<JoltChallengeId, F>,
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
@@ -77,7 +77,7 @@ where
     /// remainder binds `LowToHigh`).
     pub fn new(
         relation: R,
-        challenges: ConcreteSumcheckChallenges<F, R>,
+        challenges: &ConcreteSumcheckChallenges<F, R>,
         opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
         derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
         binding_order: BindingOrder,
@@ -122,18 +122,12 @@ where
 
         Ok(Self {
             relation,
-            challenges,
             challenge_values,
             opening_tables,
             derived_tables,
             binding_order,
             rounds_bound: 0,
         })
-    }
-
-    /// The drawn challenges this prover resolves `Challenge` leaves against.
-    pub fn challenges(&self) -> &ConcreteSumcheckChallenges<F, R> {
-        &self.challenges
     }
 
     fn remaining_rounds(&self) -> usize {
@@ -155,15 +149,13 @@ where
         &self,
         input_points: &SumcheckInputPoints<F, R>,
         output_points: &SumcheckOutputPoints<F, R>,
+        challenges: &ConcreteSumcheckChallenges<F, R>,
     ) -> Result<(), KernelError<F>> {
         self.require_fully_bound()?;
         for (id, table) in &self.derived_tables {
-            let expected = self.relation.derive_output_term(
-                id,
-                input_points,
-                output_points,
-                &self.challenges,
-            )?;
+            let expected =
+                self.relation
+                    .derive_output_term(id, input_points, output_points, challenges)?;
             let got = table.evals()[0];
             if got != expected {
                 return Err(KernelError::DerivedTableDrift {
@@ -527,7 +519,7 @@ mod tests {
 
         let mut naive = NaiveSumcheckProver::new(
             relation,
-            challenges,
+            &challenges,
             opening_tables,
             derived_tables,
             BindingOrder::HighToLow,
@@ -552,7 +544,7 @@ mod tests {
             .unwrap();
         let output_claims = naive.output_claims().unwrap();
         naive
-            .validate_derived_tables(&input_points, &output_points)
+            .validate_derived_tables(&input_points, &output_points, &challenges)
             .unwrap();
 
         // The assembled claims cover exactly the expression's openings (the
@@ -570,12 +562,7 @@ mod tests {
 
         let expected = naive
             .relation()
-            .expected_output(
-                &input_points,
-                &output_claims,
-                &output_points,
-                naive.challenges(),
-            )
+            .expected_output(&input_points, &output_claims, &output_points, &challenges)
             .unwrap();
         assert_eq!(coefficient * expected, proved.final_claim);
         assert_eq!(proved.member_claims, vec![expected]);
@@ -648,7 +635,7 @@ mod tests {
         let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
         let mut naive = NaiveSumcheckProver::new(
             relation,
-            challenges,
+            &challenges,
             opening_tables,
             derived_tables,
             BindingOrder::HighToLow,
@@ -665,7 +652,7 @@ mod tests {
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
         assert!(matches!(
-            naive.validate_derived_tables(&input_points, &output_points),
+            naive.validate_derived_tables(&input_points, &output_points, &challenges),
             Err(KernelError::DerivedTableDrift {
                 id: JoltDerivedId::Test,
                 ..
@@ -688,7 +675,7 @@ mod tests {
         assert!(matches!(
             NaiveSumcheckProver::new(
                 relation,
-                challenges().unwrap(),
+                &challenges().unwrap(),
                 incomplete,
                 derived_tables(&reference_point()),
                 BindingOrder::HighToLow,
@@ -706,7 +693,7 @@ mod tests {
         assert!(matches!(
             NaiveSumcheckProver::new(
                 relation,
-                challenges().unwrap(),
+                &challenges().unwrap(),
                 mis_sized,
                 derived_tables(&reference_point()),
                 BindingOrder::HighToLow,

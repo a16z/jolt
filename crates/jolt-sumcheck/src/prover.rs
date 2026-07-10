@@ -18,7 +18,7 @@
 
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_poly::UnivariatePoly;
 use jolt_transcript::Transcript;
 
 use crate::batch::BatchPrelude;
@@ -159,7 +159,7 @@ where
                 continue;
             }
             let poly = member.compute_message(round - activation, member_claims[index])?;
-            let poly_degree = UnivariatePolynomial::degree(&poly);
+            let poly_degree = poly.degree();
             if poly_degree > prelude.max_degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
                     got: poly_degree,
@@ -236,10 +236,9 @@ fn check_uniskip_round<F: Field>(
     degree: usize,
     domain_size: usize,
 ) -> Result<(), SumcheckError<F>> {
-    let round_degree = UnivariatePolynomial::degree(round_poly);
-    if round_degree > degree {
+    if round_poly.degree() > degree {
         return Err(SumcheckError::DegreeBoundExceeded {
-            got: round_degree,
+            got: round_poly.degree(),
             max: degree,
         });
     }

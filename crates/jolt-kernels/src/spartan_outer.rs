@@ -306,7 +306,7 @@ impl<F: Field> OuterRemainderKernel<F> {
         let inner_tau = self.tau[..=self.log_t].to_vec();
         let inner = NaiveSumcheckProver::new(
             OuterRemainder::new(inner_dimensions, inner_tau, stream_challenge),
-            NoChallenges::default(),
+            &NoChallenges::default(),
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,
