@@ -13,11 +13,11 @@
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness
 //! scale with zero relation-specific code; optimized kernels are
-//! equivalence-tested against it. Hand-rolled reference members exist where
-//! that premise fails — the enumerated escapes so far: the Spartan outer
-//! remainder's post-uni-skip stream round ([`spartan_outer`], quadratic
-//! coefficient leaves) and the RAM output check ([`ram_output_check`],
-//! derived leaves that are products of multilinears). See
+//! equivalence-tested against it. Derived ids correspond one-to-one with
+//! multilinears by design; the single enumerated escape so far is the
+//! Spartan outer remainder's post-uni-skip stream round ([`spartan_outer`],
+//! whose expanded coefficient leaves are quadratic in the stream variable —
+//! a uni-skip structure, not a fixable factoring). See
 //! `specs/clean-slate-prover.md`, "The backend seam".
 //!
 //! The commitment kernel streams PCS commitments of the committed witness

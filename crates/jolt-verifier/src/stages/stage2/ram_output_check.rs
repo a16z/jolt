@@ -54,16 +54,16 @@ impl<F: Field> RamOutputCheck<F> {
     }
 }
 
-/// `(EqIoMask, NegEqIoMaskValIo)` at the produced output address point:
-/// `eq_io_mask = eq(output_address_challenges, addr) * range_mask(io, addr)`,
-/// and the negated `eq_io_mask * val_io` term that subtracts the committed
-/// public-IO contribution. Shared by the stage-2 clear path and the BlindFold
-/// statement builder so the algebra lives in one place.
+/// `(EqAddress, IoMask, ValIo)` at the produced output address point — one
+/// value per derived multilinear: `eq(output_address_challenges, addr)`, the
+/// `[io_start, io_end)` range mask, and the committed public-IO value. Shared
+/// by the stage-2 clear path and the BlindFold statement builder so the
+/// algebra lives in one place.
 pub(crate) fn ram_output_check_publics<F: Field>(
     public_memory: &PublicIoMemory,
     output_address_challenges: &[F],
     ram_output_address: &[F],
-) -> Result<(F, F), VerifierError> {
+) -> Result<(F, F, F), VerifierError> {
     let output_eq =
         try_eq_mle(output_address_challenges, ram_output_address).map_err(public_input_failed)?;
     let output_mask = range_mask_mle_msb(
@@ -94,8 +94,7 @@ pub(crate) fn ram_output_check_publics<F: Field>(
                 .map(|segment| (segment.start_index, segment.words.as_slice())),
             r_lo,
         );
-    let eq_io_mask = output_eq * output_mask;
-    Ok((eq_io_mask, -eq_io_mask * val_io))
+    Ok((output_eq, output_mask, val_io))
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {
@@ -140,14 +139,15 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         let JoltDerivedId::RamOutputCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let (eq_io_mask, neg_eq_io_mask_val_io) = ram_output_check_publics(
+        let (eq_address, io_mask, val_io) = ram_output_check_publics(
             &self.public_memory,
             &self.output_address_challenges,
             output_points.val_final(),
         )?;
         match public_id {
-            RamOutputCheckPublic::EqIoMask => Ok(eq_io_mask),
-            RamOutputCheckPublic::NegEqIoMaskValIo => Ok(neg_eq_io_mask_val_io),
+            RamOutputCheckPublic::EqAddress => Ok(eq_address),
+            RamOutputCheckPublic::IoMask => Ok(io_mask),
+            RamOutputCheckPublic::ValIo => Ok(val_io),
         }
     }
 }

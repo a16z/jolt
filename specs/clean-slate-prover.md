@@ -272,11 +272,13 @@ Prover/verifier consistency (the load-bearing properties):
       `draw_recording`/`append_recording` doubles) — landed before any real stage depends on the
       engine.
 - [ ] Every sumcheck relation in stages 1–7 is provable at harness scale by the reference
-      backend — the naive `Expr` interpreter where every leaf is multilinear, plus hand-rolled
-      reference members where that premise fails (post-uni-skip stream coefficients, derived
-      leaves that are products of multilinears), enumerated in the kernel crate's docs — and
-      every shipped form/fused kernel has a passing `kernel_naive_equivalence` test + fuzz
-      target; the set of fused escape hatches is enumerated in the kernel crate's docs.
+      backend: derived ids correspond one-to-one with multilinears (a relation whose derived
+      term is a product of multilinears is SPLIT into constituent derived ids, not hand-rolled),
+      so the naive `Expr` interpreter covers every standard round; the only hand-rolled
+      reference rounds are post-uni-skip stream rounds (quadratic coefficient leaves),
+      enumerated in the kernel crate's docs. Every shipped form/fused kernel has a passing
+      `kernel_naive_equivalence` test + fuzz target; the set of fused escape hatches is
+      enumerated in the kernel crate's docs.
 - [ ] `jolt-prover` invokes kernels exclusively through `JoltBackend` slots — no concrete kernel
       type is named in any stage recipe; `JoltBackend::reference()` serves every slot; the
       optimized CPU backend expresses every stage-1–7 relation as a form descriptor over the
@@ -453,10 +455,10 @@ Three layers, each answering a different question:
   compilation is shared code derived from the `Expr`); only fused fast paths are bespoke.
 - **The naive tier makes slots ~free.** `JoltBackend::reference()` implements every slot through
   the one generic `NaiveSumcheckProver` plus per-relation leaf resolvers — the always-present
-  fallback and the equivalence anchor. Slots whose leaves are not multilinear (post-uni-skip
-  stream coefficients; derived leaves that are products of multilinears, e.g. the RAM output
-  check's `EqIoMask`) get small hand-rolled reference members instead, enumerated in the crate
-  docs.
+  fallback and the equivalence anchor. Derived ids correspond one-to-one with multilinears —
+  a relation whose derived term would be a product of multilinears is split into constituent
+  derived ids instead. The one structural escape is post-uni-skip stream rounds (coefficient
+  leaves quadratic in the stream variable), hand-rolled and enumerated in the crate docs.
 
 ```rust
 // jolt-kernels — illustrative. PCS carries only CommitmentScheme: streaming

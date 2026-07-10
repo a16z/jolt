@@ -402,11 +402,15 @@ where
     )
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "the three RAM output-check publics (eq, mask, val_io)"
+)]
 fn ram_output_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     output_address_challenges: &[PCS::Field],
     ram_output_address: &[PCS::Field],
-) -> Result<(PCS::Field, PCS::Field), VerifierError>
+) -> Result<(PCS::Field, PCS::Field, PCS::Field), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,

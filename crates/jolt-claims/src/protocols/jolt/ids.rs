@@ -99,8 +99,9 @@ pub enum RamRafEvaluationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamOutputCheckPublic {
-    EqIoMask,
-    NegEqIoMaskValIo,
+    EqAddress,
+    IoMask,
+    ValIo,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
