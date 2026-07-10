@@ -150,7 +150,6 @@ pub struct InstructionReadRafKernel<F: Field> {
     relation: InstructionReadRaf<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
-    gamma_sqr: F,
     r_reduction: Vec<F>,
     rows: Vec<Stage5InstructionReadRafRow>,
     /// Per-table cycle buckets, indexed by `LookupTableKind::index()`.
@@ -233,7 +232,6 @@ impl<F: Field> InstructionReadRafKernel<F> {
             relation: InstructionReadRaf::new(dimensions),
             dimensions,
             gamma,
-            gamma_sqr: gamma * gamma,
             r_reduction: r_reduction.to_vec(),
             rows,
             buckets,
@@ -415,6 +413,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
 
     /// The true quadratic for an address round, sampled at `c ∈ {0,1,2}`.
     fn address_message(&self) -> [F; 3] {
+        let gamma_sqr = self.gamma * self.gamma;
         let half = self.prefix_tables[0].evals().len() / 2;
         let mut evals = [F::zero(); 3];
         for (c, eval) in evals.iter_mut().enumerate() {
@@ -439,7 +438,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
                 right += self.raf_right.message_eval(b, half, c);
                 identity += self.raf_identity.message_eval(b, half, c);
             }
-            *eval = read + self.gamma * left + self.gamma_sqr * (right + identity);
+            *eval = read + self.gamma * left + gamma_sqr * (right + identity);
         }
         evals
     }
@@ -486,6 +485,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
     /// checkpoints to the γ-weighted operand/identity constants, and the
     /// per-phase eq tables materialize the virtual `ra` selectors.
     fn init_cycle_rounds(&mut self) {
+        let gamma_sqr = self.gamma * self.gamma;
         let empty_bits = LookupBits::new(0, 0);
         let table_values: Vec<F> = LookupTableKind::<RISCV_XLEN>::iter()
             .map(|table| {
@@ -498,8 +498,8 @@ impl<F: Field> InstructionReadRafKernel<F> {
             })
             .collect();
         let raf_interleaved =
-            self.gamma * self.raf_left.checkpoint + self.gamma_sqr * self.raf_right.checkpoint;
-        let raf_identity = self.gamma_sqr * self.raf_identity.checkpoint;
+            self.gamma * self.raf_left.checkpoint + gamma_sqr * self.raf_right.checkpoint;
+        let raf_identity = gamma_sqr * self.raf_identity.checkpoint;
 
         let combined_val: Vec<F> = self
             .rows
