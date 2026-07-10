@@ -24,6 +24,8 @@
 //! polynomials over the proof's shared embedding grid.
 
 mod backend;
+pub mod booleanity;
+pub mod bytecode_read_raf;
 mod commitment;
 mod error;
 pub mod instruction_claim_reduction;

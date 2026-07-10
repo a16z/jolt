@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
+use crate::booleanity::BooleanityAddressProver;
+use crate::bytecode_read_raf::BytecodeReadRafAddressProver;
 use crate::commitment::CommitWitness;
 use crate::instruction_claim_reduction::InstructionClaimReductionProver;
 use crate::instruction_input::InstructionInputProver;
@@ -53,6 +55,8 @@ where
     pub instruction_read_raf: Box<dyn InstructionReadRafProver<F>>,
     pub ram_ra_claim_reduction: Box<dyn RamRaClaimReductionProver<F>>,
     pub registers_val_evaluation: Box<dyn RegistersValEvaluationProver<F>>,
+    pub bytecode_read_raf_address: Box<dyn BytecodeReadRafAddressProver<F>>,
+    pub booleanity_address: Box<dyn BooleanityAddressProver<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -85,6 +89,8 @@ where
             instruction_read_raf: Box::new(ReferenceBackend),
             ram_ra_claim_reduction: Box::new(ReferenceBackend),
             registers_val_evaluation: Box::new(ReferenceBackend),
+            bytecode_read_raf_address: Box::new(ReferenceBackend),
+            booleanity_address: Box::new(ReferenceBackend),
         }
     }
 
