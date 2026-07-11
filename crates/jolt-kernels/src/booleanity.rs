@@ -20,21 +20,25 @@
 //! `Bₑₓₜ(X) = (1−X)²·B[2y] + X²·B[2y+1]` is the true cubic, sampled at four
 //! points. The initial `A = B` makes the input claim exactly zero.
 
+use std::collections::BTreeMap;
+
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhaseChallenges;
+use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims,
 };
+use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::views::{dense_view, eq_table};
-use crate::{KernelError, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::views::{address_fold, dense_view, eq_table};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
 /// The stage-6a booleanity address-phase slot. `reference_address` and
 /// `reference_cycle` are the little-endian reference points carried in
@@ -249,5 +253,82 @@ impl<F: Field> ProveSumcheck<F> for BooleanityAddressKernel<F> {
         Ok(BooleanityAddressPhaseOutputClaims {
             intermediate: self.eq_address.evals()[0] * inner,
         })
+    }
+}
+
+/// The stage-6b booleanity cycle-phase slot: a naive member — the cycle
+/// `Expr` references each checked opening squared (`x·x − x`), which the
+/// pointwise interpreter handles against one table per opening. Each opening
+/// table is the address fold of the committed one-hot grid at the 6a bound
+/// address point; the `EqAddressCycle` derived table is the (fixed) address
+/// eq factor times the reference-cycle eq table (the carried little-endian
+/// reference used verbatim, per the address-phase convention).
+pub trait BooleanityCycleProver<F: Field> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the relation's construction data"
+    )]
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        dimensions: BooleanityDimensions,
+        r_address: &[F],
+        reference_address: &[F],
+        reference_cycle: &[F],
+        challenges: &BooleanityCyclePhaseChallenges<F>,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = Booleanity<F>>>, KernelError<F>>;
+}
+
+impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        dimensions: BooleanityDimensions,
+        r_address: &[F],
+        reference_address: &[F],
+        reference_cycle: &[F],
+        challenges: &BooleanityCyclePhaseChallenges<F>,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = Booleanity<F>>>, KernelError<F>> {
+        let relation = Booleanity::new(
+            dimensions,
+            r_address.to_vec(),
+            reference_address.to_vec(),
+            reference_cycle.to_vec(),
+        );
+
+        let mut opening_tables = BTreeMap::new();
+        for opening in dimensions.layout.openings(JoltRelationId::Booleanity) {
+            let _ = opening_tables.insert(
+                opening,
+                Polynomial::new(address_fold(witness, opening, dimensions.log_t, r_address)?),
+            );
+        }
+
+        // The fixed address eq factor: both vectors pair positionally in the
+        // verifier's `derive_output_term` (each side reversed, so the product
+        // is the same either way).
+        let address_scalar =
+            try_eq_mle(r_address, reference_address).map_err(|_| KernelError::Unsupported {
+                reason: "booleanity address point and reference length mismatch",
+            })?;
+        let derived_tables = BTreeMap::from([(
+            JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
+            Polynomial::new(
+                eq_table(reference_cycle)
+                    .into_iter()
+                    .map(|eq| address_scalar * eq)
+                    .collect::<Vec<_>>(),
+            ),
+        )]);
+
+        Ok(Box::new(NaiveSumcheckProver::new(
+            relation,
+            challenges,
+            opening_tables,
+            derived_tables,
+            BindingOrder::LowToHigh,
+        )?))
     }
 }

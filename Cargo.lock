@@ -3572,6 +3572,7 @@ dependencies = [
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
+ "jolt-poly",
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-sumcheck",

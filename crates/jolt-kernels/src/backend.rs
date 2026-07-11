@@ -12,14 +12,18 @@ use std::collections::HashMap;
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
-use crate::booleanity::BooleanityAddressProver;
-use crate::bytecode_read_raf::BytecodeReadRafAddressProver;
+use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
+use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
 use crate::commitment::CommitWitness;
+use crate::inc_claim_reduction::IncClaimReductionProver;
 use crate::instruction_claim_reduction::InstructionClaimReductionProver;
 use crate::instruction_input::InstructionInputProver;
+use crate::instruction_ra_virtualization::InstructionRaVirtualizationProver;
 use crate::instruction_read_raf::InstructionReadRafProver;
+use crate::ram_hamming_booleanity::RamHammingBooleanityProver;
 use crate::ram_output_check::RamOutputCheckProver;
 use crate::ram_ra_claim_reduction::RamRaClaimReductionProver;
+use crate::ram_ra_virtualization::RamRaVirtualizationProver;
 use crate::ram_raf_evaluation::RamRafEvaluationProver;
 use crate::ram_read_write::RamReadWriteProver;
 use crate::ram_val_check::RamValCheckProver;
@@ -57,6 +61,12 @@ where
     pub registers_val_evaluation: Box<dyn RegistersValEvaluationProver<F>>,
     pub bytecode_read_raf_address: Box<dyn BytecodeReadRafAddressProver<F>>,
     pub booleanity_address: Box<dyn BooleanityAddressProver<F>>,
+    pub bytecode_read_raf_cycle: Box<dyn BytecodeReadRafCycleProver<F>>,
+    pub booleanity_cycle: Box<dyn BooleanityCycleProver<F>>,
+    pub ram_hamming_booleanity: Box<dyn RamHammingBooleanityProver<F>>,
+    pub ram_ra_virtualization: Box<dyn RamRaVirtualizationProver<F>>,
+    pub instruction_ra_virtualization: Box<dyn InstructionRaVirtualizationProver<F>>,
+    pub inc_claim_reduction: Box<dyn IncClaimReductionProver<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -91,6 +101,12 @@ where
             registers_val_evaluation: Box::new(ReferenceBackend),
             bytecode_read_raf_address: Box::new(ReferenceBackend),
             booleanity_address: Box::new(ReferenceBackend),
+            bytecode_read_raf_cycle: Box::new(ReferenceBackend),
+            booleanity_cycle: Box::new(ReferenceBackend),
+            ram_hamming_booleanity: Box::new(ReferenceBackend),
+            ram_ra_virtualization: Box::new(ReferenceBackend),
+            instruction_ra_virtualization: Box::new(ReferenceBackend),
+            inc_claim_reduction: Box::new(ReferenceBackend),
         }
     }
 

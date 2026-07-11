@@ -157,32 +157,12 @@ where
     let (batch, coefficients) =
         sumchecks.begin_batch(&inputs, &address_challenges, &mut recorder, transcript)?;
 
-    // The five stage cycle points, the same construction stage 6b's batch
-    // build performs from the upstream carriers (the stage-1 cycle binding is
-    // the reversed remainder point minus its stream variable, re-reversed).
-    let stage1_remainder_reversed: Vec<F> = stage1
-        .output_points
-        .outer_remainder
-        .left_instruction_input()
-        .iter()
-        .rev()
-        .copied()
-        .collect();
-    let stage1_cycle_binding = stage1_remainder_reversed
-        .split_first()
-        .map(|(_, cycle)| cycle.to_vec())
-        .ok_or(ProverError::Unsupported {
-            reason: "stage-1 remainder point is empty",
-        })?;
-    let registers_read_write_point = stage4.output_points.registers_read_write_point();
-    let registers_val_evaluation_point = stage5.output_points.registers_opening_point();
-    let stage_cycle_points: [Vec<F>; 5] = [
-        stage1_cycle_binding.iter().rev().copied().collect(),
-        stage2.output_points.product_remainder_point().to_vec(),
-        stage3.output_points.shift_opening_point().to_vec(),
-        registers_read_write_point[REGISTER_ADDRESS_BITS..].to_vec(),
-        registers_val_evaluation_point[REGISTER_ADDRESS_BITS..].to_vec(),
-    ];
+    let BytecodeStagePoints {
+        stage_cycle_points,
+        stage1_cycle_binding: _,
+        registers_read_write_point,
+        registers_val_evaluation_point,
+    } = bytecode_stage_points(stage1, stage2, stage3, stage4, stage5)?;
 
     // The per-row stage-value tables, via the verifier's own fold over the
     // padded preprocessing bytecode.
@@ -269,5 +249,55 @@ where
             output_points,
             challenges: carried,
         },
+    })
+}
+
+/// The bytecode read+RAF upstream cycle points shared by the stage-6a address
+/// phase and the stage-6b batch build: the five per-stage cycle bindings (the
+/// stage-1 binding is the reversed remainder point minus its stream variable,
+/// re-reversed), plus the register opening points whose 7-var address prefixes
+/// feed the stage-value folds.
+pub(crate) struct BytecodeStagePoints<F> {
+    pub stage_cycle_points: [Vec<F>; 5],
+    pub stage1_cycle_binding: Vec<F>,
+    pub registers_read_write_point: Vec<F>,
+    pub registers_val_evaluation_point: Vec<F>,
+}
+
+pub(crate) fn bytecode_stage_points<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+    stage2: &Stage2ClearOutput<F>,
+    stage3: &Stage3ClearOutput<F>,
+    stage4: &Stage4ClearOutput<F>,
+    stage5: &Stage5ClearOutput<F>,
+) -> Result<BytecodeStagePoints<F>, ProverError<F>> {
+    let stage1_remainder_reversed: Vec<F> = stage1
+        .output_points
+        .outer_remainder
+        .left_instruction_input()
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let stage1_cycle_binding = stage1_remainder_reversed
+        .split_first()
+        .map(|(_, cycle)| cycle.to_vec())
+        .ok_or(ProverError::Unsupported {
+            reason: "stage-1 remainder point is empty",
+        })?;
+    let registers_read_write_point = stage4.output_points.registers_read_write_point().to_vec();
+    let registers_val_evaluation_point = stage5.output_points.registers_opening_point().to_vec();
+    let stage_cycle_points: [Vec<F>; 5] = [
+        stage1_cycle_binding.iter().rev().copied().collect(),
+        stage2.output_points.product_remainder_point().to_vec(),
+        stage3.output_points.shift_opening_point().to_vec(),
+        registers_read_write_point[REGISTER_ADDRESS_BITS..].to_vec(),
+        registers_val_evaluation_point[REGISTER_ADDRESS_BITS..].to_vec(),
+    ];
+    Ok(BytecodeStagePoints {
+        stage_cycle_points,
+        stage1_cycle_binding,
+        registers_read_write_point,
+        registers_val_evaluation_point,
     })
 }

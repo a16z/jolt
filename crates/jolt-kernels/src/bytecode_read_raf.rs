@@ -16,19 +16,33 @@
 //! is quadratic, sampled at three points; binding is `LowToHigh` over the
 //! `log_K` bytecode address variables.
 
-use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
+use std::collections::BTreeMap;
+
+use jolt_claims::protocols::jolt::geometry::bytecode::{bytecode_ra, BytecodeReadRafDimensions};
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::bytecode_val_stage_opening;
+use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
+use jolt_claims::protocols::jolt::relations::bytecode::{
+    BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafCyclePhaseCommittedChallenges,
+};
+use jolt_claims::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
 };
+use jolt_verifier::stages::stage6b::bytecode_read_raf::{
+    BytecodeReadRafCycle, BytecodeReadRafCycleInputs,
+};
+use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
+use jolt_witness::WitnessProvider;
 
-use crate::views::eq_table;
-use crate::{KernelError, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::views::{address_fold, eq_table};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
 /// The stage-6a bytecode read+RAF address-phase slot. The typed relation data
 /// is the per-row stage-value table (the verifier's `read_raf_stage_values`
@@ -260,5 +274,119 @@ impl<F: Field> ProveSumcheck<F> for BytecodeReadRafAddressKernel<F> {
             intermediate,
             val_stages: Vec::new(),
         })
+    }
+}
+
+/// The stage-6b bytecode read+RAF cycle-phase slot: a naive member driven
+/// through the dispatch enum's *committed* anchor `Expr` — sound in full mode
+/// because the committed `Expr` with constant `BytecodeValStage` tables (the
+/// address fold values) and cycle-eq `StageCycleEq` publics computes the same
+/// summand the full-mode `Expr` describes. The `BytecodeRa` opening tables are
+/// address folds of the committed one-hot grids at the 6a address point's
+/// committed-width chunks.
+pub trait BytecodeReadRafCycleProver<F: Field> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the relation's construction data"
+    )]
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        dimensions: BytecodeReadRafDimensions,
+        r_address: &[F],
+        stage_cycle_points: &[Vec<F>; 5],
+        entry_bytecode_index: usize,
+        committed_chunk_bits: usize,
+        stage_values_at_r_address: [F; 5],
+        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>;
+}
+
+impl<F: Field> BytecodeReadRafCycleProver<F> for ReferenceBackend {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        dimensions: BytecodeReadRafDimensions,
+        r_address: &[F],
+        stage_cycle_points: &[Vec<F>; 5],
+        entry_bytecode_index: usize,
+        committed_chunk_bits: usize,
+        stage_values_at_r_address: [F; 5],
+        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>> {
+        let cycles = 1usize << dimensions.log_t();
+        // The table fold feeds only `expected_output`, which the kernel's
+        // relation copy never runs (the recipe's own batch instance does).
+        let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
+            dimensions,
+            r_address: r_address.to_vec(),
+            stage_cycle_points: stage_cycle_points.clone(),
+            entry_bytecode_index,
+            committed_chunk_bits,
+            table_fold: None,
+        })?;
+
+        let chunks = committed_address_chunks(r_address, committed_chunk_bits);
+        if chunks.len() != dimensions.num_committed_ra_polys() {
+            return Err(KernelError::Unsupported {
+                reason: "bytecode address chunk count disagrees with the committed RA count",
+            });
+        }
+        let mut opening_tables = BTreeMap::new();
+        for (index, chunk) in chunks.iter().enumerate() {
+            let _ = opening_tables.insert(
+                bytecode_ra(index),
+                Polynomial::new(address_fold(
+                    witness,
+                    bytecode_ra(index),
+                    dimensions.log_t(),
+                    chunk,
+                )?),
+            );
+        }
+        for (stage, value) in stage_values_at_r_address.into_iter().enumerate() {
+            let _ = opening_tables.insert(
+                bytecode_val_stage_opening(stage),
+                Polynomial::new(vec![value; cycles]),
+            );
+        }
+
+        let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
+        let entry_scalar = eq_table(r_address)[entry_bytecode_index];
+        let scaled_eq = |point: &[F], scalar: F| -> Vec<F> {
+            eq_table(point).into_iter().map(|eq| scalar * eq).collect()
+        };
+        // eq(zero cycle, ·): the cycle-0 boundary selector.
+        let mut entry_cycle = vec![F::zero(); cycles];
+        entry_cycle[0] = entry_scalar;
+        let mut derived_tables = BTreeMap::new();
+        for (stage, point) in stage_cycle_points.iter().enumerate() {
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(stage)),
+                Polynomial::new(eq_table(point)),
+            );
+        }
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
+            Polynomial::new(scaled_eq(&stage_cycle_points[0], int_at_r_address)),
+        );
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(BytecodeReadRafPublic::SpartanShiftRaf),
+            Polynomial::new(scaled_eq(&stage_cycle_points[2], int_at_r_address)),
+        );
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(BytecodeReadRafPublic::Entry),
+            Polynomial::new(entry_cycle),
+        );
+
+        Ok(Box::new(NaiveSumcheckProver::new(
+            relation,
+            challenges,
+            opening_tables,
+            derived_tables,
+            BindingOrder::LowToHigh,
+        )?))
     }
 }

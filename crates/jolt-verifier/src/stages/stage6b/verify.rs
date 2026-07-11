@@ -2,7 +2,7 @@ use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
     BytecodeClaimReductionLayout, JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_claims::NoChallenges;
+use jolt_claims::{NoChallenges, OutputClaims};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -40,7 +40,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{validate_member_presence, OutputAppend},
+        relations::validate_member_presence,
         stage1::Stage1Output,
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::Stage3Output,
@@ -330,8 +330,9 @@ fn validate_cycle_phase_claim_shape<F: Field>(
 /// Assemble the stage-6b consumed opening *values* from the address-phase claims
 /// and the upstream clear outputs into the generated `Stage6bInputClaims`
 /// aggregate. The `Option` cells track member presence, so a present member always
-/// has its input cell populated.
-fn stage6b_input_values_from_upstream<F: Field>(
+/// has its input cell populated. Public because the prover's stage-6b recipe
+/// builds its batch inputs through the same wiring.
+pub fn stage6b_input_values_from_upstream<F: Field>(
     sumchecks: &Stage6bSumchecks<F>,
     address_claims: &Stage6aOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
@@ -392,7 +393,7 @@ fn stage6b_input_values_from_upstream<F: Field>(
 /// and read no input point, so their cells come from the generated
 /// `empty_input_points` (empty, and present for present `Option` members exactly as
 /// the generated `derive_opening_points` requires).
-fn stage6b_input_points_from_upstream<F: Field>(
+pub fn stage6b_input_points_from_upstream<F: Field>(
     sumchecks: &Stage6bSumchecks<F>,
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
@@ -408,6 +409,51 @@ fn stage6b_input_points_from_upstream<F: Field>(
     }
 }
 
+/// The stage-6b Fiat-Shamir opening-claim values in canonical absorb order.
+/// Full relations and the optional members single-source their per-field order
+/// from the `OutputClaims` derive's `opening_values`; `booleanity` stays
+/// explicit because its `bytecode_ra` openings are conditionally deduped
+/// against the bytecode-read-RAF points (a runtime point-equality the output
+/// `Expr`s cannot express). Public because the prover's recorder absorbs the
+/// same curated sequence.
+pub fn stage6b_opening_values<F: Field>(
+    claims: &Stage6bOutputClaims<F>,
+    bytecode_read_raf_points: &[Vec<F>],
+    booleanity_point: &[F],
+) -> Vec<F> {
+    let mut values = claims.bytecode_read_raf.opening_values();
+    values.extend(&claims.booleanity.instruction_ra);
+    for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
+        if bytecode_read_raf_points
+            .get(index)
+            .is_some_and(|point| point.as_slice() == booleanity_point)
+        {
+            continue;
+        }
+        values.push(*opening_claim);
+    }
+    values.extend(&claims.booleanity.ram_ra);
+    values.extend(claims.ram_hamming_booleanity.opening_values());
+    values.extend(claims.ram_ra_virtualization.opening_values());
+    values.extend(claims.instruction_ra_virtualization.opening_values());
+    values.extend(claims.inc_claim_reduction.opening_values());
+    // Each advice member is a single-slot per-kind claims struct, so it
+    // contributes exactly its own kind's opening.
+    if let Some(advice) = &claims.trusted_advice {
+        values.extend(advice.opening_values());
+    }
+    if let Some(advice) = &claims.untrusted_advice {
+        values.extend(advice.opening_values());
+    }
+    if let Some(reduction) = &claims.bytecode_reduction {
+        values.extend(reduction.opening_values());
+    }
+    if let Some(reduction) = &claims.program_image_reduction {
+        values.extend(reduction.opening_values());
+    }
+    values
+}
+
 fn append_opening_claims<F, T>(
     transcript: &mut T,
     claims: &Stage6bOutputClaims<F>,
@@ -417,46 +463,8 @@ fn append_opening_claims<F, T>(
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    // Full relations and the optional members delegate to their derived
-    // `append_openings`, single-sourcing the per-field Fiat-Shamir order from the
-    // `OutputClaims` derive. `booleanity` stays explicit because its `bytecode_ra`
-    // openings are conditionally deduped against the bytecode-read-RAF points.
-    claims.bytecode_read_raf.append_openings(transcript);
-    for opening_claim in &claims.booleanity.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
-        if bytecode_read_raf_points
-            .get(index)
-            .is_some_and(|point| point.as_slice() == booleanity_point)
-        {
-            continue;
-        }
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for opening_claim in &claims.booleanity.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    claims.ram_hamming_booleanity.append_openings(transcript);
-    claims.ram_ra_virtualization.append_openings(transcript);
-    claims
-        .instruction_ra_virtualization
-        .append_openings(transcript);
-    claims.inc_claim_reduction.append_openings(transcript);
-    // The optional members single-source their per-field Fiat-Shamir order from the
-    // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
-    // struct, so it absorbs exactly its own kind's opening.
-    if let Some(advice) = &claims.trusted_advice {
-        advice.append_openings(transcript);
-    }
-    if let Some(advice) = &claims.untrusted_advice {
-        advice.append_openings(transcript);
-    }
-    if let Some(reduction) = &claims.bytecode_reduction {
-        reduction.append_openings(transcript);
-    }
-    if let Some(reduction) = &claims.program_image_reduction {
-        reduction.append_openings(transcript);
+    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
+        transcript.append_labeled(b"opening_claim", &value);
     }
 }
 

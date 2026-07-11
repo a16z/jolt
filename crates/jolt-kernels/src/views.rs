@@ -35,6 +35,35 @@ pub(crate) fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
     EqPolynomial::new(point.to_vec()).evaluations()
 }
 
+/// Fold the address dimension of an address-major `(K × T)` oracle grid by the
+/// eq weights of `point` (big-endian, `K = 2^point.len()`):
+/// `out[j] = Σ_k eq(point, k) · grid[(k << log_t) | j]`.
+pub(crate) fn address_fold<F: Field>(
+    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    opening: JoltOpeningId,
+    log_t: usize,
+    point: &[F],
+) -> Result<Vec<F>, KernelError<F>> {
+    let grid = dense_view(witness, opening)?;
+    let addresses = 1usize << point.len();
+    let cycles = 1usize << log_t;
+    if grid.len() != addresses << log_t {
+        return Err(KernelError::TableSizeMismatch {
+            table: format!("{opening:?}"),
+            expected: addresses << log_t,
+            got: grid.len(),
+        });
+    }
+    let eq_address = eq_table(point);
+    Ok((0..cycles)
+        .map(|j| {
+            (0..addresses)
+                .map(|k| grid[(k << log_t) | j] * eq_address[k])
+                .sum()
+        })
+        .collect())
+}
+
 /// Tile `base` `copies` times: the `(address ‖ cycle)`-indexed replication of a
 /// cycle-indexed table across the address dimension (address bits are the high
 /// bits of the joint index).
