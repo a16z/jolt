@@ -2062,10 +2062,16 @@ impl<F: Field> BytecodeReadRafCycleFactors<F> {
 
     #[cfg(feature = "cuda")]
     fn dense_chunk_vecs(&self) -> Option<Vec<Vec<F>>> {
+        use rayon::prelude::*;
         let current_len = self.current_len();
         Some(
             (0..self.len())
-                .map(|chunk| (0..current_len).map(|index| self.get(chunk, index)).collect())
+                .map(|chunk| {
+                    (0..current_len)
+                        .into_par_iter()
+                        .map(|index| self.get(chunk, index))
+                        .collect()
+                })
                 .collect(),
         )
     }
