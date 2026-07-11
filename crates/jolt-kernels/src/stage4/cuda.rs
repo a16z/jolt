@@ -221,7 +221,8 @@ impl CudaSparseRegistersState {
 
 fn fr_from_u64s(values: &[u64]) -> Vec<Fr> {
     use jolt_field::Field;
-    values.iter().map(|&v| Fr::from_u64(v)).collect()
+    use rayon::prelude::*;
+    values.par_iter().map(|&v| Fr::from_u64(v)).collect()
 }
 
 fn build_schedules(

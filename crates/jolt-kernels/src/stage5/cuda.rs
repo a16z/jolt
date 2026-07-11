@@ -29,9 +29,10 @@ impl CudaAddressPhaseState {
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let weight = ctx.upload(crate::cuda::as_fr_slice(u_evals)?).ok()?;
-        let lo: Vec<u64> = lookup_indices.iter().map(|&v| v as u64).collect();
-        let hi: Vec<u64> = lookup_indices.iter().map(|&v| (v >> 64) as u64).collect();
-        let flags: Vec<u8> = is_interleaved_operands.iter().map(|&b| u8::from(b)).collect();
+        use rayon::prelude::*;
+        let lo: Vec<u64> = lookup_indices.par_iter().map(|&v| v as u64).collect();
+        let hi: Vec<u64> = lookup_indices.par_iter().map(|&v| (v >> 64) as u64).collect();
+        let flags: Vec<u8> = is_interleaved_operands.par_iter().map(|&b| u8::from(b)).collect();
         let lookup_index_lo = ctx.upload_u64_slice(&lo).ok()?;
         let lookup_index_hi = ctx.upload_u64_slice(&hi).ok()?;
         let is_interleaved = ctx.upload_u8_slice(&flags).ok()?;
