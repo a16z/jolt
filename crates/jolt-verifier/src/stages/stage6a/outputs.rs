@@ -55,6 +55,10 @@ pub struct Stage6aCarriedChallenges<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aClearOutput<F: Field> {
+    /// The produced address-phase opening *values* (the staged intermediates
+    /// and, in committed-program mode, the `BytecodeValStage` claims), read by
+    /// stage 6b as its bytecode/booleanity input claims.
+    pub output_values: Stage6aOutputClaims<F>,
     /// The produced address-phase opening *points*, read by stage 6b to construct
     /// the cycle-phase batch.
     pub output_points: Stage6aOutputPoints<F>,
@@ -93,6 +97,13 @@ impl<F: Field, C> Stage6aOutput<F, C> {
         match self {
             Self::Clear(output) => &output.challenges,
             Self::Zk(output) => &output.challenges,
+        }
+    }
+
+    pub fn clear(&self) -> Result<&Stage6aClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6a" }),
         }
     }
 

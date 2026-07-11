@@ -194,7 +194,7 @@ where
     let stage2 = stage2.clear()?;
     let stage4 = stage4.clear()?;
     let stage5 = stage5.clear()?;
-    let claims_6a = &proof.clear_claims()?.stage6a;
+    let claims_6a = &stage6a.clear()?.output_values;
     let claims = &proof.clear_claims()?.stage6b;
 
     // Reject cycle-phase output claims whose presence disagrees with the member's

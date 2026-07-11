@@ -183,6 +183,7 @@ where
     address_sumchecks.append_output_claims(transcript, claims);
 
     Ok(Stage6aOutput::Clear(Stage6aClearOutput {
+        output_values: claims.clone(),
         output_points,
         challenges: carried,
     }))

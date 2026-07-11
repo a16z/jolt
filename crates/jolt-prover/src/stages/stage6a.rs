@@ -244,8 +244,9 @@ where
 
     Ok(Stage6aProverOutput {
         sumcheck_proof: recorded.proof,
-        claims: output_values,
+        claims: output_values.clone(),
         clear_output: Stage6aClearOutput {
+            output_values,
             output_points,
             challenges: carried,
         },

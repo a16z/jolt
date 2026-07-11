@@ -443,7 +443,6 @@ mod muldiv {
                     &stage3.clear_output,
                     &stage4.clear_output,
                     &stage5.clear_output,
-                    &stage6a.claims,
                     &stage6a.clear_output,
                     &witness,
                     &mut new_transcript,

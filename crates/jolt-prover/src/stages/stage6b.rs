@@ -36,7 +36,7 @@ use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
-use jolt_verifier::stages::stage6a::outputs::{Stage6aClearOutput, Stage6aOutputClaims};
+use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_verifier::stages::stage6b::bytecode_read_raf::{
     BytecodeReadRafCycle, BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
@@ -84,7 +84,6 @@ pub fn prove_stage6b<F, PCS, VC, C, T>(
     stage3: &Stage3ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
-    stage6a_claims: &Stage6aOutputClaims<F>,
     stage6a: &Stage6aClearOutput<F>,
     witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     transcript: &mut T,
@@ -238,7 +237,7 @@ where
 
     let inputs = stage6b_input_values_from_upstream(
         &sumchecks,
-        stage6a_claims,
+        &stage6a.output_values,
         &stage2.output_values,
         stage4,
         &stage5.output_values,
