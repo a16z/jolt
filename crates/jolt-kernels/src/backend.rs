@@ -15,6 +15,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
 use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
 use crate::commitment::CommitWitness;
+use crate::hamming_weight_claim_reduction::HammingWeightClaimReductionProver;
 use crate::inc_claim_reduction::IncClaimReductionProver;
 use crate::instruction_claim_reduction::InstructionClaimReductionProver;
 use crate::instruction_input::InstructionInputProver;
@@ -67,6 +68,7 @@ where
     pub ram_ra_virtualization: Box<dyn RamRaVirtualizationProver<F>>,
     pub instruction_ra_virtualization: Box<dyn InstructionRaVirtualizationProver<F>>,
     pub inc_claim_reduction: Box<dyn IncClaimReductionProver<F>>,
+    pub hamming_weight_claim_reduction: Box<dyn HammingWeightClaimReductionProver<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -107,6 +109,7 @@ where
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),
+            hamming_weight_claim_reduction: Box::new(ReferenceBackend),
         }
     }
 

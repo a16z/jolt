@@ -28,6 +28,7 @@ pub mod booleanity;
 pub mod bytecode_read_raf;
 mod commitment;
 mod error;
+pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
 pub mod instruction_input;

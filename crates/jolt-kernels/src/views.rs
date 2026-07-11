@@ -64,6 +64,35 @@ pub(crate) fn address_fold<F: Field>(
         .collect())
 }
 
+/// Fold the cycle dimension of an address-major `(K × T)` oracle grid by the
+/// eq weights of `point` (big-endian, `T = 2^point.len()`):
+/// `out[k] = Σ_j eq(point, j) · grid[(k << log_t) | j]`.
+pub(crate) fn cycle_fold<F: Field>(
+    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    opening: JoltOpeningId,
+    log_k: usize,
+    point: &[F],
+) -> Result<Vec<F>, KernelError<F>> {
+    let grid = dense_view(witness, opening)?;
+    let addresses = 1usize << log_k;
+    let cycles = 1usize << point.len();
+    if grid.len() != addresses * cycles {
+        return Err(KernelError::TableSizeMismatch {
+            table: format!("{opening:?}"),
+            expected: addresses * cycles,
+            got: grid.len(),
+        });
+    }
+    let eq_cycle = eq_table(point);
+    Ok((0..addresses)
+        .map(|k| {
+            (0..cycles)
+                .map(|j| grid[(k * cycles) | j] * eq_cycle[j])
+                .sum()
+        })
+        .collect())
+}
+
 /// Tile `base` `copies` times: the `(address ‖ cycle)`-indexed replication of a
 /// cycle-indexed table across the address dimension (address bits are the high
 /// bits of the joint index).

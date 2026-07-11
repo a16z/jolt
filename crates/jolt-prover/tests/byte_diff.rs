@@ -6,8 +6,8 @@
 //! (`verify_until_stage1`, then stage verifies as stages land), whose
 //! Fiat-Shamir transcript is byte-identical to the prover's by soundness of
 //! the accepted proof. The harness ratchets one stage at a time; today it
-//! pins stages 0 through 6b (config derivation, preamble, witness
-//! commitments, both uni-skips, all seven sumcheck batches, all claims, and
+//! pins stages 0 through 7 (config derivation, preamble, witness
+//! commitments, both uni-skips, all eight sumcheck batches, all claims, and
 //! every stage-boundary transcript state).
 
 #[cfg(feature = "prover-fixtures")]
@@ -27,6 +27,7 @@ mod muldiv {
     use jolt_prover::stages::stage5::prove_stage5;
     use jolt_prover::stages::stage6a::prove_stage6a;
     use jolt_prover::stages::stage6b::prove_stage6b;
+    use jolt_prover::stages::stage7::prove_stage7;
     use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -455,7 +456,7 @@ mod muldiv {
             );
             assert_eq!(stage6b.claims, legacy_claims.stage6b);
 
-            let _legacy_stage6b = jolt_verifier::stages::stage6b::verify(
+            let legacy_stage6b = jolt_verifier::stages::stage6b::verify(
                 &legacy_pre_stage1.checked,
                 &prover_preprocessing.verifier,
                 &legacy_proof,
@@ -473,6 +474,42 @@ mod muldiv {
                 new_transcript.state(),
                 legacy_transcript.state(),
                 "stage-6b transcript state diverged from legacy",
+            );
+
+            // The stage-7 ratchet: prove, then replay legacy's proof through
+            // the verifier's stage 7 for the boundary state.
+            let stage7 =
+                prove_stage7::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
+                    backend,
+                    &mut session,
+                    &legacy_pre_stage1.checked,
+                    &config,
+                    &prover_preprocessing,
+                    &stage6b.clear_output,
+                    &witness,
+                    &mut new_transcript,
+                )
+                .expect("stage 7 proves");
+
+            assert_eq!(
+                stage7.sumcheck_proof, legacy_proof.stages.stage7_sumcheck_proof,
+                "stage-7 sumcheck proof bytes diverged from legacy",
+            );
+            assert_eq!(stage7.claims, legacy_claims.stage7);
+
+            let _legacy_stage7 = jolt_verifier::stages::stage7::verify(
+                &legacy_pre_stage1.checked,
+                &legacy_proof,
+                &formula_dimensions,
+                &mut legacy_transcript,
+                &legacy_stage4,
+                &legacy_stage6b,
+            )
+            .expect("legacy proof must verify through stage 7");
+            assert_eq!(
+                new_transcript.state(),
+                legacy_transcript.state(),
+                "stage-7 transcript state diverged from legacy",
             );
         };
 
