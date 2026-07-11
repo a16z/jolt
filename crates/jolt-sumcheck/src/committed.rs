@@ -92,9 +92,11 @@ impl<F: Copy, C: Clone> CommittedSumcheckConsistency<F, C> {
 /// values — only the per-instance batching coefficients and the combined
 /// `(max_num_vars, max_degree)` dimensions.
 ///
-/// Instances are laid out with front-loaded dummy rounds: a shorter instance
-/// with `num_vars` rounds is active only in the last `num_vars` rounds, so its
-/// challenge suffix begins at `max_num_vars - num_vars`.
+/// A shorter instance is active only inside its window. Tail-aligned
+/// instances (the default — dummy rounds front-loaded) have their challenge
+/// suffix begin at `max_num_vars - num_vars`; head-aligned instances (the
+/// precommitted claim-reduction phases) bind the leading challenges and need
+/// their offset supplied explicitly via [`Self::try_instance_point_at`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchedCommittedSumcheckConsistency<F: Field, C> {
     pub consistency: CommittedSumcheckConsistency<F, C>,
@@ -104,11 +106,10 @@ pub struct BatchedCommittedSumcheckConsistency<F: Field, C> {
 }
 
 impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
-    /// Returns the front-padding offset for an instance with `num_vars`.
-    ///
-    /// Batched committed verification front-loads dummy rounds for smaller
-    /// instances, so an instance with `num_vars` is evaluated on the suffix
-    /// beginning at `max_num_vars - num_vars`.
+    /// Returns the tail-aligned default offset (`max_num_vars - num_vars`)
+    /// for an instance with `num_vars` — the suffix start when the instance's
+    /// dummy rounds are front-loaded. Head-aligned instances must not use
+    /// this; supply their offset to [`Self::try_instance_point_at`] directly.
     pub fn try_round_offset(&self, num_vars: usize) -> Result<usize, SumcheckError<F>> {
         self.max_num_vars
             .checked_sub(num_vars)

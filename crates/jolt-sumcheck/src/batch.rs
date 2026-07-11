@@ -11,17 +11,21 @@
 use jolt_field::Field;
 
 /// One present batch member: its input claim (the member's initial running
-/// claim), its batching coefficient, and its round count. Members are ordered
-/// by stage declaration order — the Fiat-Shamir absorb/draw order.
+/// claim), its batching coefficient, its round count, and its activation
+/// offset. Members are ordered by stage declaration order — the Fiat-Shamir
+/// absorb/draw order.
 ///
-/// Under the front-loaded batching layout a member with fewer rounds than the
-/// batch is inactive for the first `max_num_vars - rounds` rounds, so `rounds`
-/// doubles as the member's activation window.
+/// A member is active for rounds `[offset, offset + rounds)` and contributes
+/// the constant `claim / 2` polynomial outside that window. Most members are
+/// tail-aligned (`offset = max_num_vars - rounds`, the relation's default
+/// `instance_point_offset`); the precommitted claim-reduction cycle phases
+/// are head-aligned (`offset = 0`), binding the batch's leading challenges.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchMember<F> {
     pub input_claim: F,
     pub coefficient: F,
     pub rounds: usize,
+    pub offset: usize,
 }
 
 /// The computed head of a batched sumcheck: the present members (declaration
@@ -39,10 +43,13 @@ pub struct BatchPrelude<F> {
 
 impl<F: Field> BatchPrelude<F> {
     /// Combine `members` into the batch's initial running claim. The
-    /// `2^(max_num_vars − rounds)` scale front-loads each shorter member's
-    /// padding: an inactive round halves the member's contribution, so after
-    /// its `max_num_vars − rounds` inactive rounds the member enters its first
-    /// active round at its unscaled input claim.
+    /// `2^(max_num_vars − rounds)` scale is each shorter member's dummy-round
+    /// padding — its summand extended constantly over the batch's extra
+    /// variables — and is independent of where the member's window sits. A
+    /// tail-aligned member halves through its inactive rounds and enters its
+    /// window at the unscaled input claim; a head-aligned member is active
+    /// immediately at the padded scale, so its kernel must emit round
+    /// polynomials carrying that scale.
     ///
     /// # Panics
     ///

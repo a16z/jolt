@@ -5,7 +5,7 @@
 //! generated per-stage `verify_clear`/`verify_zk` tails in `jolt-verifier`: it
 //! consumes the [`BatchPrelude`] the generated `begin_batch` produced (so the
 //! head's Fiat-Shamir sequence is shared code, not convention), drives the
-//! members through the front-loaded-padding round loop, and records rounds
+//! members through the offset-windowed round loop, and records rounds
 //! through a [`SumcheckRecorder`] — the clear/ZK seam. Only this engine and
 //! the recorder touch the transcript; batch members compute pure field data.
 //!
@@ -34,10 +34,11 @@ use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
 /// [`prove_batch`]'s round loop. Object-safe on purpose: a stage's members are
 /// heterogeneous, and the engine takes them as `&mut [&mut dyn ProveRounds<F>]`.
 ///
-/// `round` indices are member-local (`0..num_rounds()`): under front-loaded
-/// padding a member is consulted only during its active window, and never
-/// learns the batch's earlier challenges (its opening point is the batch
-/// point's suffix).
+/// `round` indices are member-local (`0..num_rounds()`): a member is
+/// consulted only during its active window `[offset, offset + rounds)`, and
+/// never learns the batch's challenges outside it (its opening point is the
+/// length-`rounds` slice of the batch point starting at its offset —
+/// the suffix for tail-aligned members, the prefix for head-aligned ones).
 pub trait ProveRounds<F: Field> {
     /// The number of rounds/variables in this member's sumcheck.
     fn num_rounds(&self) -> usize;
@@ -120,6 +121,17 @@ where
                 got: member.num_rounds(),
             });
         }
+        // An oversized window would silently truncate: the round loop would
+        // never consult the member's final local rounds, yet every in-engine
+        // round check would still pass.
+        if described.offset + described.rounds > prelude.max_num_vars {
+            return Err(SumcheckError::BatchMemberWindowOutOfRange {
+                member: index,
+                offset: described.offset,
+                rounds: described.rounds,
+                max_num_vars: prelude.max_num_vars,
+            });
+        }
     }
     let max_num_vars = prelude.max_num_vars;
     assert!(
@@ -132,9 +144,11 @@ where
         reason = "2 is invertible in any field of characteristic != 2, and Jolt fields are large-prime"
     )]
     let two_inv = F::from_u64(2).inverse().unwrap();
-    // Each member's running claim, at the front-loaded padding scale: a member
+    // Each member's running claim, at the dummy-round padding scale: a member
     // starts at `input_claim * 2^(max - rounds)` and halves once per inactive
-    // round, reaching its true input claim exactly when it activates.
+    // round. A tail-aligned member reaches its true input claim exactly when
+    // it activates; a head-aligned member is active from round 0 and its
+    // kernel emits round polynomials at the padded scale.
     let mut member_claims: Vec<F> = prelude
         .members
         .iter()
@@ -149,8 +163,8 @@ where
 
         for (index, member) in members.iter_mut().enumerate() {
             let described = &prelude.members[index];
-            let activation = max_num_vars - described.rounds;
-            if round < activation {
+            let active = round >= described.offset && round < described.offset + described.rounds;
+            if !active {
                 // Inactive: the constant polynomial `claim / 2`, so
                 // `s(0) + s(1)` preserves the member's claim and evaluation at
                 // any challenge halves it.
@@ -158,7 +172,7 @@ where
                 round_polys.push(None);
                 continue;
             }
-            let poly = member.compute_message(round - activation, member_claims[index])?;
+            let poly = member.compute_message(round - described.offset, member_claims[index])?;
             let poly_degree = poly.degree();
             if poly_degree > prelude.max_degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
@@ -190,8 +204,7 @@ where
             match poly {
                 Some(poly) => {
                     member_claims[index] = poly.evaluate(challenge);
-                    let activation = max_num_vars - prelude.members[index].rounds;
-                    member.ingest_challenge(challenge, round - activation)?;
+                    member.ingest_challenge(challenge, round - prelude.members[index].offset)?;
                 }
                 None => member_claims[index] *= two_inv,
             }

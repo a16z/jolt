@@ -1202,11 +1202,13 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
                 input_claim: sum_long,
                 coefficient: coeff_long,
                 rounds: 3,
+                offset: 0,
             },
             BatchMember {
                 input_claim: sum_short,
                 coefficient: coeff_short,
                 rounds: 1,
+                offset: 2,
             },
         ],
         3,
@@ -1256,6 +1258,89 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
+/// Twin-transcript lock for a head-aligned member: a 1-round member at
+/// `offset: 0` is active in the batch's FIRST round and then halves through
+/// the trailing dummy rounds. Its kernel must emit at the dummy-round padding
+/// scale (the table sums to `2^(max − rounds) · input_claim`), so its final
+/// batch claim is the fully-bound value with the padding halved back out.
+#[test]
+fn prove_batch_clear_twin_head_aligned_member() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+    use jolt_field::{Invertible, MulPow2};
+
+    let sum_long = F::from_u64(1234);
+    let sum_short = F::from_u64(777);
+    let mut long = DenseMember::with_sum(3, sum_long, 5);
+    // The head-aligned kernel's table carries the 2^(3 - 1) padding scale.
+    let mut short = DenseMember::with_sum(1, sum_short.mul_pow_2(2), 91);
+
+    let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-head-twin");
+    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_transcript);
+    let coeff_long: F = prover_transcript.challenge_scalar();
+    let coeff_short: F = prover_transcript.challenge_scalar();
+    let prelude = BatchPrelude::new(
+        vec![
+            BatchMember {
+                input_claim: sum_long,
+                coefficient: coeff_long,
+                rounds: 3,
+                offset: 0,
+            },
+            BatchMember {
+                input_claim: sum_short,
+                coefficient: coeff_short,
+                rounds: 1,
+                offset: 0,
+            },
+        ],
+        3,
+        1,
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
+    let proved = prove_batch(
+        &prelude,
+        &mut members,
+        &mut recorder,
+        &mut prover_transcript,
+    )
+    .unwrap();
+    // The short member bound the batch's FIRST challenge, then halved twice.
+    let quarter = F::from_u64(4).inverse().unwrap();
+    assert_eq!(
+        proved.member_claims,
+        vec![long.final_eval(), short.final_eval() * quarter]
+    );
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_transcript)
+        .unwrap();
+
+    // Verifier twin: the claimed sum is position-independent — identical to
+    // the tail-aligned layout's.
+    let mut verifier_transcript = Blake2bTranscript::new(b"prove-batch-head-twin");
+    append_sumcheck_claim(&mut verifier_transcript, &sum_long);
+    append_sumcheck_claim(&mut verifier_transcript, &sum_short);
+    let verifier_coeff_long: F = verifier_transcript.challenge_scalar();
+    let verifier_coeff_short: F = verifier_transcript.challenge_scalar();
+    let claimed_sum =
+        verifier_coeff_long * sum_long + verifier_coeff_short * sum_short.mul_pow_2(2);
+    assert_eq!(claimed_sum, prelude.claimed_sum);
+    let reduction = recorded
+        .proof
+        .verify_compressed_boolean(3, 1, claimed_sum, &mut verifier_transcript)
+        .unwrap();
+    for value in &proved.member_claims {
+        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
+    }
+
+    assert_eq!(reduction.value, proved.final_claim);
+    assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}
+
 /// The committed twin of the batched engine: the same members proved through
 /// the committed recorder must be byte-identical to
 /// `verify_committed_consistency_dims` (coefficient draws included — no claim
@@ -1286,11 +1371,13 @@ fn prove_batch_committed_twin_matches_committed_consistency() {
                 input_claim: sum_long,
                 coefficient: coeff_long,
                 rounds: 3,
+                offset: 0,
             },
             BatchMember {
                 input_claim: sum_short,
                 coefficient: coeff_short,
                 rounds: 1,
+                offset: 2,
             },
         ],
         3,

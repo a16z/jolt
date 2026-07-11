@@ -426,6 +426,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                                     input_claim: __sum,
                                     coefficient: __coeff,
                                     rounds: __member.rounds(),
+                                    offset: __member.instance_point_offset(__max_num_vars)?,
                                 });
                             }
                         }
@@ -435,6 +436,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                                 input_claim: #sum,
                                 coefficient: #coeff,
                                 rounds: self.#id.rounds(),
+                                offset: self.#id.instance_point_offset(__max_num_vars)?,
                             });
                         }
                     }
@@ -602,10 +604,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     // Map each member's opening point through its
     // `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
-    // aggregate. Takes the batch challenge vector directly: under the front-loaded
-    // batching layout an instance's point is the length-`rounds` suffix of that
-    // vector, so no batch-result abstraction is needed and one method serves both the
-    // clear and ZK paths (each supplies its own challenge vector).
+    // aggregate. Takes the batch challenge vector directly: an instance's point
+    // is the length-`rounds` slice of that vector starting at its
+    // `instance_point_offset`, so no batch-result abstraction is needed and one
+    // method serves both the clear and ZK paths (each supplies its own
+    // challenge vector).
     let derive_points_method = {
         let field_bindings = plans.iter().map(|plan| {
             let id = &plan.ident;

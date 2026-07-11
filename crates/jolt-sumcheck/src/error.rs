@@ -120,6 +120,21 @@ pub enum SumcheckError<F: FieldCore> {
         got: usize,
     },
 
+    /// A batch member's activation window extends past the batch's last round.
+    #[error(
+        "batch member {member}: window [{offset}, {offset} + {rounds}) exceeds {max_num_vars} rounds"
+    )]
+    BatchMemberWindowOutOfRange {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// The member's activation offset.
+        offset: usize,
+        /// The member's round count.
+        rounds: usize,
+        /// The batch's total round count.
+        max_num_vars: usize,
+    },
+
     /// The caller selected a verifier path that is incompatible with the proof
     /// wire encoding.
     #[error("wrong sumcheck proof encoding: expected {expected}, got {got}")]

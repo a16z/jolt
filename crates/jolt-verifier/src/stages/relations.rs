@@ -1375,11 +1375,13 @@ mod begin_batch_tests {
                     input_claim: instruction_sum,
                     coefficient: instruction_coeff,
                     rounds: instruction_rounds,
+                    offset: max_num_vars - instruction_rounds,
                 },
                 BatchMember {
                     input_claim: registers_sum,
                     coefficient: registers_coeff,
                     rounds: registers_rounds,
+                    offset: max_num_vars - registers_rounds,
                 },
             ],
         );
