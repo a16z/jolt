@@ -9,7 +9,9 @@
 //! pins the ENTIRE clear proof: stages 0 through 8 (config derivation,
 //! preamble, witness commitments, both uni-skips, all eight sumcheck
 //! batches, all claims, the joint batched opening, and every stage-boundary
-//! transcript state through the end of the proof).
+//! transcript state), plus the assembled `JoltProof` from the top-level
+//! `prove()` — asserted equal to legacy's wire-for-wire and verified
+//! end-to-end.
 
 #[cfg(feature = "prover-fixtures")]
 #[expect(clippy::expect_used, clippy::panic)]
@@ -555,6 +557,28 @@ mod muldiv {
         };
 
         assert_backend_matches_legacy(&JoltBackend::reference());
+
+        // The full-proof ratchet: the top-level prove() runs the same stage
+        // sequence on a fresh session and assembles the complete JoltProof —
+        // it must equal legacy's wire-for-wire and verify end-to-end.
+        let backend = JoltBackend::reference();
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            &backend,
+            &prover_preprocessing,
+            &config,
+            &witness,
+            &public_io,
+        )
+        .expect("top-level prove");
+        assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+            false,
+        )
+        .expect("modular proof must verify end-to-end");
     }
 
     /// The PCS setup sizing legacy uses: the maximum embedding over the
