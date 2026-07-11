@@ -1,7 +1,10 @@
 //! Stage 6b: the cycle-phase batch — bytecode read+RAF and booleanity cycle
-//! phases, RAM Hamming booleanity, both RA virtualizations, and the increment
-//! claim reduction (the four precommitted `Option` members are absent; advice
-//! and committed-program modes are rejected upstream).
+//! phases, RAM Hamming booleanity, both RA virtualizations, the increment
+//! claim reduction, and the present advice claim-reduction cycle phases
+//! (head-aligned members; the committed-program `Option` members remain
+//! rejected upstream). An advice member with active address-phase rounds
+//! stages its intermediate claim here and its kernel object is carried to
+//! stage 7 for the address phase.
 //!
 //! Pure orchestration mirroring `stage6b::verify`: the bytecode gamma is
 //! carried from stage 6a's squeeze (no draw here), the instruction-RA and
@@ -19,10 +22,11 @@ use jolt_claims::protocols::jolt::geometry::bytecode::{
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     JoltFormulaDimensions, REGISTER_ADDRESS_BITS,
 };
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_kernels::advice_claim_reduction::AdviceReductionProver;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
@@ -41,6 +45,10 @@ use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhas
 use jolt_verifier::stages::stage6b::bytecode_read_raf::{
     BytecodeReadRafCycle, BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
     BytecodeReadRafTableFoldInputs,
+};
+use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
+    TrustedAdviceCyclePhase, TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhase,
+    UntrustedAdviceCyclePhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::inc_claim_reduction::{
     IncClaimReduction, IncClaimReductionChallenges,
@@ -63,12 +71,15 @@ use jolt_witness::WitnessProvider;
 use super::stage6a::{bytecode_stage_points, BytecodeStagePoints};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// Stage 6b's outputs: the wire proof, the wire claims, and the verifier-typed
-/// cross-stage carrier stage 7 consumes.
+/// Stage 6b's outputs: the wire proof, the wire claims, the verifier-typed
+/// cross-stage carrier stage 7 consumes, and the still-bound advice reduction
+/// kernels (present when scheduled) that span into stage 7's address phase.
 pub struct Stage6bProverOutput<F: Field, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
+    pub trusted_advice_member: Option<Box<dyn AdviceReductionProver<F>>>,
+    pub untrusted_advice_member: Option<Box<dyn AdviceReductionProver<F>>>,
 }
 
 /// Prove stage 6b on `transcript` (positioned at the stage-6a boundary).
@@ -98,13 +109,9 @@ where
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let precommitted = &checked.precommitted;
-    if precommitted.bytecode.is_some()
-        || precommitted.trusted_advice.is_some()
-        || precommitted.untrusted_advice.is_some()
-        || precommitted.program_image.is_some()
-    {
+    if precommitted.bytecode.is_some() || precommitted.program_image.is_some() {
         return Err(ProverError::Unsupported {
-            reason: "precommitted claim reductions are not yet supported",
+            reason: "committed-program claim reductions are not yet supported",
         });
     }
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
@@ -173,6 +180,15 @@ where
         stage_gammas: stage_gammas.each_ref().map(Vec::as_slice),
     };
 
+    // The staged advice RAM address points from stage 4's RAM value-check —
+    // the clear-only references the advice `FinalScale` terms read.
+    let advice_reference = |kind| {
+        stage4
+            .ram_val_check_init
+            .advice_contribution(kind)
+            .map(|contribution| contribution.opening_point.clone())
+    };
+
     let sumchecks = Stage6bSumchecks {
         bytecode_read_raf: BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
             dimensions: formula_dimensions.bytecode_read_raf,
@@ -208,8 +224,12 @@ where
             let [rw, val, reg_rw, reg_val] = inc_cycle_points.clone();
             IncClaimReduction::new(trace_dimensions, rw, val, reg_rw, reg_val)
         },
-        trusted_advice: None,
-        untrusted_advice: None,
+        trusted_advice: precommitted.trusted_advice.as_ref().map(|layout| {
+            TrustedAdviceCyclePhase::new(layout, advice_reference(JoltAdviceKind::Trusted))
+        }),
+        untrusted_advice: precommitted.untrusted_advice.as_ref().map(|layout| {
+            UntrustedAdviceCyclePhase::new(layout, advice_reference(JoltAdviceKind::Untrusted))
+        }),
         bytecode_reduction: None,
         program_image_reduction: None,
     };
@@ -229,8 +249,14 @@ where
             gamma: instruction_ra_gamma,
         },
         inc_claim_reduction: IncClaimReductionChallenges { gamma: inc_gamma },
-        trusted_advice: None,
-        untrusted_advice: None,
+        trusted_advice: sumchecks
+            .trusted_advice
+            .as_ref()
+            .map(|_| NoChallenges::default()),
+        untrusted_advice: sumchecks
+            .untrusted_advice
+            .as_ref()
+            .map(|_| NoChallenges::default()),
         bytecode_reduction: None,
         program_image_reduction: None,
     };
@@ -330,6 +356,34 @@ where
         witness,
     )?;
 
+    let prepare_advice =
+        |session: &mut ProofSession,
+         kind: JoltAdviceKind,
+         layout: Option<&jolt_claims::protocols::jolt::AdviceClaimReductionLayout>|
+         -> Result<Option<Box<dyn AdviceReductionProver<F>>>, ProverError<F>> {
+            let Some(layout) = layout else {
+                return Ok(None);
+            };
+            let reference = advice_reference(kind).ok_or(ProverError::Unsupported {
+                reason: "stage 4 staged no advice opening for a scheduled advice reduction",
+            })?;
+            Ok(Some(
+                backend
+                    .advice_claim_reduction
+                    .prepare(session, kind, layout, &reference, witness)?,
+            ))
+        };
+    let mut trusted_advice_member = prepare_advice(
+        session,
+        JoltAdviceKind::Trusted,
+        precommitted.trusted_advice.as_ref(),
+    )?;
+    let mut untrusted_advice_member = prepare_advice(
+        session,
+        JoltAdviceKind::Untrusted,
+        precommitted.untrusted_advice.as_ref(),
+    )?;
+
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![
         &mut *bytecode_read_raf,
         &mut *booleanity,
@@ -338,9 +392,37 @@ where
         &mut *instruction_ra_virtualization,
         &mut *inc_claim_reduction,
     ];
+    if let Some(member) = trusted_advice_member.as_mut() {
+        members.push(&mut **member);
+    }
+    if let Some(member) = untrusted_advice_member.as_mut() {
+        members.push(&mut **member);
+    }
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    // An advice member's wire claim: the intermediate handoff claim when its
+    // schedule continues into the stage-7 address phase, else the final
+    // (fully bound) advice opening.
+    let advice_claim =
+        |member: &Option<Box<dyn AdviceReductionProver<F>>>,
+         layout: Option<&jolt_claims::protocols::jolt::AdviceClaimReductionLayout>|
+         -> Result<Option<F>, ProverError<F>> {
+            let (Some(member), Some(layout)) = (member, layout) else {
+                return Ok(None);
+            };
+            Ok(Some(if layout.dimensions().has_address_phase() {
+                member.cycle_intermediate_claim()
+            } else {
+                member.final_claim()?
+            }))
+        };
+    let trusted_advice_claim =
+        advice_claim(&trusted_advice_member, precommitted.trusted_advice.as_ref())?;
+    let untrusted_advice_claim = advice_claim(
+        &untrusted_advice_member,
+        precommitted.untrusted_advice.as_ref(),
+    )?;
     let output_values = Stage6bOutputClaims {
         bytecode_read_raf: bytecode_read_raf.output_claims()?,
         booleanity: booleanity.output_claims()?,
@@ -348,8 +430,10 @@ where
         ram_ra_virtualization: ram_ra_virtualization.output_claims()?,
         instruction_ra_virtualization: instruction_ra_virtualization.output_claims()?,
         inc_claim_reduction: inc_claim_reduction.output_claims()?,
-        trusted_advice: None,
-        untrusted_advice: None,
+        trusted_advice: trusted_advice_claim
+            .map(|trusted| TrustedAdviceCyclePhaseOutputClaims { trusted }),
+        untrusted_advice: untrusted_advice_claim
+            .map(|untrusted| UntrustedAdviceCyclePhaseOutputClaims { untrusted }),
         bytecode_reduction: None,
         program_image_reduction: None,
     };
@@ -393,5 +477,7 @@ where
             output_points,
             bytecode_reduction_weights: None,
         },
+        trusted_advice_member,
+        untrusted_advice_member,
     })
 }

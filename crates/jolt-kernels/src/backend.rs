@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
+use crate::advice_claim_reduction::AdviceClaimReduction;
 use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
 use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
 use crate::commitment::CommitWitness;
@@ -69,6 +70,7 @@ where
     pub ram_ra_virtualization: Box<dyn RamRaVirtualizationProver<F>>,
     pub instruction_ra_virtualization: Box<dyn InstructionRaVirtualizationProver<F>>,
     pub inc_claim_reduction: Box<dyn IncClaimReductionProver<F>>,
+    pub advice_claim_reduction: Box<dyn AdviceClaimReduction<F>>,
     pub hamming_weight_claim_reduction: Box<dyn HammingWeightClaimReductionProver<F>>,
     pub joint_opening: Box<dyn JointOpeningPolynomials<F>>,
 }
@@ -111,6 +113,7 @@ where
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),
+            advice_claim_reduction: Box::new(ReferenceBackend),
             hamming_weight_claim_reduction: Box::new(ReferenceBackend),
             joint_opening: Box::new(ReferenceBackend),
         }

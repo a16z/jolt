@@ -16,7 +16,7 @@ use jolt_witness::protocols::jolt_vm::{
 };
 use jolt_witness::CommittedWitnessProvider;
 
-use crate::stages::stage0::prove_stage0;
+use crate::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
 use crate::stages::stage3::prove_stage3;
@@ -35,15 +35,23 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// the proof verbatim), `witness` the trace-backed provider the kernels read,
 /// and `public_io` the Fiat-Shamir preamble's program I/O.
 ///
+/// `trusted_advice` is the externally supplied (preprocessing-time)
+/// trusted-advice commitment and opening hint; pass it exactly when the guest
+/// consumes trusted advice. Untrusted advice needs no extra input — its
+/// polynomial is committed at prove time from the witness when
+/// `public_io.untrusted_advice` is non-empty.
+///
 /// Supported envelope: transparent (clear) proofs of the cycle-major trace
-/// layout only. Trusted/untrusted advice, committed-program preprocessing,
-/// precommitted claim reductions, and the address-major layout all return
-/// [`ProverError::Unsupported`] — the first three at stage 0, the layout
-/// here before any work runs.
+/// layout, with or without trusted/untrusted advice (non-dominant: the
+/// advice grid must not exceed the main commitment grid). Committed-program
+/// preprocessing, dominant advice, and the address-major layout return
+/// [`ProverError::Unsupported`] — the first two at stage 0, the layout here
+/// before any work runs.
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
+    trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
@@ -72,6 +80,7 @@ where
         &mut session,
         preprocessing,
         config,
+        trusted_advice,
         witness,
         public_io,
     )?;
@@ -161,7 +170,10 @@ where
         &checked,
         config,
         preprocessing,
+        &stage4.clear_output,
         &stage6b.clear_output,
+        stage6b.trusted_advice_member,
+        stage6b.untrusted_advice_member,
         witness,
         &mut transcript,
     )?;
@@ -172,6 +184,8 @@ where
         config,
         preprocessing,
         &stage0.commitments,
+        stage0.untrusted_advice_commitment.as_ref(),
+        trusted_advice.map(|trusted| &trusted.commitment),
         &stage0.hints,
         &stage6b.clear_output,
         &stage7.clear_output,
@@ -195,7 +209,7 @@ where
             stage7_sumcheck_proof: stage7.sumcheck_proof,
         },
         joint_opening_proof: stage8.joint_opening_proof,
-        untrusted_advice_commitment: None,
+        untrusted_advice_commitment: stage0.untrusted_advice_commitment,
         claims: JoltProofClaims::Clear(ClearProofClaims {
             stage1: stage1.claims,
             stage2: stage2.claims,

@@ -10,9 +10,11 @@
 //! squeeze, the PCS opening, the final evaluation-claim absorb — is
 //! `HomomorphicBatch::prove_batch`, byte-identical to the verifier's inlined
 //! sequence. The prover-only work is the grid-embedded witness materialization
-//! (the backend's joint-opening slot) and the hint reordering + combination
-//! (stage 0 retains hints in proof-commitment order; the batch runs in
-//! final-opening order).
+//! (the backend's joint-opening slot; advice polynomials block-embed rather
+//! than prefix-embed) and the hint reordering + combination (stage 0 retains
+//! hints in proof-commitment order, advice hints included; the batch runs in
+//! final-opening order, and the ragged advice hints pad with identity rows in
+//! `combine_hints`).
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
@@ -54,6 +56,8 @@ pub fn prove_stage8<F, PCS, VC, T>(
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     commitments: &JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&PCS::Output>,
+    trusted_advice_commitment: Option<&PCS::Output>,
     hints: &[(JoltCommittedPolynomial, PCS::OpeningHint)],
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
@@ -76,13 +80,9 @@ where
         });
     }
     let precommitted = &checked.precommitted;
-    if precommitted.bytecode.is_some()
-        || precommitted.trusted_advice.is_some()
-        || precommitted.untrusted_advice.is_some()
-        || precommitted.program_image.is_some()
-    {
+    if precommitted.bytecode.is_some() || precommitted.program_image.is_some() {
         return Err(ProverError::Unsupported {
-            reason: "precommitted claim reductions are not yet supported",
+            reason: "committed-program claim reductions are not yet supported",
         });
     }
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
@@ -133,9 +133,9 @@ where
     let entries = batch_entries::<F, PCS, VC>(
         &preprocessing.verifier,
         commitments,
-        None,
+        untrusted_advice_commitment,
         layout,
-        None,
+        trusted_advice_commitment,
         &opening_point,
         hamming_opening_point.as_slice(),
         inc_opening_point,
@@ -160,12 +160,14 @@ where
 
     // Witness materialization (grid-embedded, batch order) and the hints
     // reordered from stage 0's proof-commitment order.
-    let order = final_opening_polynomial_order(layout, false, false, None);
+    let include_trusted = precommitted.trusted_advice.is_some();
+    let include_untrusted = precommitted.untrusted_advice.is_some();
+    let order = final_opening_polynomial_order(layout, include_trusted, include_untrusted, None);
     let grid = CommitmentGrid {
         total_vars: config.commitment_total_vars(
             preprocessing.verifier.program.memory_layout(),
-            false,
-            false,
+            include_trusted,
+            include_untrusted,
         ),
         log_t,
     };

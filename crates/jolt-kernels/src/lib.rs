@@ -23,6 +23,7 @@
 //! The commitment kernel streams PCS commitments of the committed witness
 //! polynomials over the proof's shared embedding grid.
 
+pub mod advice_claim_reduction;
 mod backend;
 pub mod booleanity;
 pub mod bytecode_read_raf;

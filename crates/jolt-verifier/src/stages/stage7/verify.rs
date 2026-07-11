@@ -162,7 +162,7 @@ where
 /// `derive_output_term` never runs). An address phase is present exactly when its
 /// precommitted layout is committed and its dimensions carry active address rounds
 /// — the presence flag the input / challenge aggregates track in lockstep.
-fn build_stage7_sumchecks<F: Field>(
+pub fn build_stage7_sumchecks<F: Field>(
     hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,

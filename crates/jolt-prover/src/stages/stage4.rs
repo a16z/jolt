@@ -3,15 +3,16 @@
 //!
 //! Pure orchestration mirroring `stage4::verify`: the `Val_init`
 //! decomposition (public initial-RAM evaluation + init structure) is built
-//! with the verifier's own promoted helpers, and — the stage's one curated
-//! behavior — the batch carries `no_opening_values`, so the final absorbs use
-//! the claims struct's hand-ordered `opening_values()` (which interleaves any
-//! staged advice/program-image openings) instead of a generated method.
-//! Advice and committed-program modes are rejected at stage 0, so the init
-//! contributions are structurally empty here.
+//! with the verifier's own promoted helpers; the advice blocks' opening
+//! VALUES are the prover-only work (the advice polynomial evaluated at each
+//! block's address sub-point, staged transcript-silently before the RAM
+//! value-check gamma draw). The stage's one curated behavior: the batch
+//! carries `no_opening_values`, so the final absorbs use the claims struct's
+//! hand-ordered `opening_values()` (staged advice/program-image openings
+//! first, then registers, then RAM).
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
@@ -30,6 +31,7 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadW
 use jolt_verifier::stages::stage4::{
     public_initial_ram_evaluation, ram_val_check_init_structure, stage4_input_points_from_upstream,
     stage4_input_values_from_upstream, RamValCheckInitialEvaluation,
+    VerifiedRamValCheckAdviceContribution,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
@@ -95,25 +97,41 @@ where
 
     let public_eval = public_initial_ram_evaluation(checked, &preprocessing.verifier, r_address)?;
     // The prover-side untrusted-advice presence signal (the verifier reads the
-    // proof's commitment slot); today stage 0 rejects advice outright, so this
-    // is always false and the guard below is a forward-looking self-check.
+    // proof's commitment slot).
     let untrusted_advice_present = !checked.public_io.untrusted_advice.is_empty();
     let init_structure =
         ram_val_check_init_structure(checked, untrusted_advice_present, r_address, public_eval)?;
-    if init_structure.program_image_point.is_some()
-        || !init_structure.decomposition().contributions.is_empty()
-    {
+    if init_structure.program_image_point.is_some() {
         return Err(ProverError::Unsupported {
-            reason: "advice / committed-program init contributions are not yet supported",
+            reason: "committed-program init contributions are not yet supported",
         });
     }
-    // No contributions (guarded above), so the initial evaluation is the
-    // public portion alone — the same value `ram_val_check_initial_evaluation`
-    // attaches from the wire claims on the verifier side.
+    // The advice blocks' opening values: each advice polynomial evaluated at
+    // its block's address sub-point. Staged before the RAM value-check gamma
+    // draw, exactly as legacy's `prover_accumulate_advice` — transcript-silent
+    // on this branch (the claims flush with the stage-4 batch openings).
+    let advice_contributions = init_structure
+        .advice_blocks
+        .iter()
+        .map(|(kind, block)| {
+            let opening_value = backend.advice_claim_reduction.evaluate(
+                session,
+                *kind,
+                &block.opening_point,
+                witness,
+            )?;
+            Ok(VerifiedRamValCheckAdviceContribution {
+                kind: *kind,
+                selector: block.selector,
+                opening_point: block.opening_point.clone(),
+                opening_value,
+            })
+        })
+        .collect::<Result<Vec<_>, ProverError<F>>>()?;
     let ram_val_check_init = RamValCheckInitialEvaluation {
         public_eval,
         program_image_contribution: None,
-        advice_contributions: Vec::new(),
+        advice_contributions,
     };
 
     let sumchecks = Stage4Sumchecks {
@@ -164,9 +182,23 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    // The staged advice openings ride on the RAM value-check claims struct
+    // (the naive kernel fills only its own `Expr` leaves), mirroring the
+    // verifier's wire-claim attach.
+    let mut ram_val_check_claims = ram_val_check.output_claims()?;
+    for contribution in &ram_val_check_init.advice_contributions {
+        match contribution.kind {
+            JoltAdviceKind::Trusted => {
+                ram_val_check_claims.trusted_advice = Some(contribution.opening_value);
+            }
+            JoltAdviceKind::Untrusted => {
+                ram_val_check_claims.untrusted_advice = Some(contribution.opening_value);
+            }
+        }
+    }
     let output_values = Stage4OutputClaims {
         registers_read_write: registers_read_write.output_claims()?,
-        ram_val_check: ram_val_check.output_claims()?,
+        ram_val_check: ram_val_check_claims,
     };
     sumchecks.validate_output_claims(&output_values)?;
     let expected = sumchecks.expected_final_claim(

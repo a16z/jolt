@@ -147,7 +147,7 @@ fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
 }
 
 /// A word-aligned advice buffer's balanced Dory matrix variable count.
-fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
+pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
     let words = (max_advice_size_bytes / 8) as usize;
     words.next_power_of_two().max(1).ilog2() as usize
 }

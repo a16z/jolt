@@ -10,7 +10,7 @@ pub use outputs::{
 };
 pub use ram_val_check::{
     ram_val_check_init_structure, RamValCheckInitStructure, RamValCheckInitialEvaluation,
-    RamValCheckOutputClaims,
+    RamValCheckOutputClaims, VerifiedRamValCheckAdviceContribution,
 };
 pub use registers_read_write_checking::RegistersReadWriteOutputClaims;
 pub use verify::{
