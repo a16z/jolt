@@ -17,6 +17,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
+use jolt_poly::sparse_segments_mle_msb;
 use jolt_sumcheck::{
     prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
 };
@@ -101,11 +102,32 @@ where
     let untrusted_advice_present = !checked.public_io.untrusted_advice.is_empty();
     let init_structure =
         ram_val_check_init_structure(checked, untrusted_advice_present, r_address, public_eval)?;
-    if init_structure.program_image_point.is_some() {
-        return Err(ProverError::Unsupported {
-            reason: "committed-program init contributions are not yet supported",
-        });
-    }
+    // The committed program-image contribution: the image words' block MLE at
+    // the RAM address point (the public initial-RAM evaluation switched to
+    // inputs-only above, so this staged opening carries the image's share).
+    let program_image_contribution =
+        init_structure
+            .program_image_point
+            .as_ref()
+            .map(|point| {
+                let layout = checked.precommitted.program_image.as_ref().ok_or(
+                    ProverError::Unsupported {
+                        reason: "program-image init contribution without a committed layout",
+                    },
+                )?;
+                let program = preprocessing.program().ok_or(ProverError::Unsupported {
+                    reason: "full program preprocessing is unavailable",
+                })?;
+                let value = sparse_segments_mle_msb(
+                    std::iter::once((
+                        layout.start_index() as u128,
+                        program.ram.bytecode_words.as_slice(),
+                    )),
+                    point,
+                );
+                Ok::<_, ProverError<F>>((point.clone(), value))
+            })
+            .transpose()?;
     // The advice blocks' opening values: each advice polynomial evaluated at
     // its block's address sub-point. Staged before the RAM value-check gamma
     // draw, exactly as legacy's `prover_accumulate_advice` — transcript-silent
@@ -130,7 +152,7 @@ where
         .collect::<Result<Vec<_>, ProverError<F>>>()?;
     let ram_val_check_init = RamValCheckInitialEvaluation {
         public_eval,
-        program_image_contribution: None,
+        program_image_contribution,
         advice_contributions,
     };
 
@@ -186,6 +208,9 @@ where
     // (the naive kernel fills only its own `Expr` leaves), mirroring the
     // verifier's wire-claim attach.
     let mut ram_val_check_claims = ram_val_check.output_claims()?;
+    if let Some((_, value)) = &ram_val_check_init.program_image_contribution {
+        ram_val_check_claims.program_image = Some(*value);
+    }
     for contribution in &ram_val_check_init.advice_contributions {
         match contribution.kind {
             JoltAdviceKind::Trusted => {

@@ -19,6 +19,7 @@ use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     read_raf_stage_values, BytecodeReadRafStageValueInputs,
 };
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeLaneWeightInputs;
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     JoltFormulaDimensions, REGISTER_ADDRESS_BITS,
 };
@@ -26,7 +27,7 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, PrecommittedR
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_kernels::advice_claim_reduction::AdviceReductionProver;
+use jolt_kernels::precommitted_reduction::PrecommittedReductionProver;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
@@ -43,11 +44,14 @@ use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_verifier::stages::stage6b::bytecode_read_raf::{
-    BytecodeReadRafCycle, BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
-    BytecodeReadRafTableFoldInputs,
+    BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycle, BytecodeReadRafCycleInputs,
+    BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafTableFoldInputs,
 };
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
-    TrustedAdviceCyclePhase, TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhase,
+    bytecode_reduction_weights, BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseChallenges,
+    BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhase,
+    ProgramImageReductionCyclePhaseOutputClaims, TrustedAdviceCyclePhase,
+    TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::inc_claim_reduction::{
@@ -78,8 +82,10 @@ pub struct Stage6bProverOutput<F: Field, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
-    pub trusted_advice_member: Option<Box<dyn AdviceReductionProver<F>>>,
-    pub untrusted_advice_member: Option<Box<dyn AdviceReductionProver<F>>>,
+    pub trusted_advice_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
+    pub untrusted_advice_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
+    pub bytecode_reduction_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
+    pub program_image_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
 }
 
 /// Prove stage 6b on `transcript` (positioned at the stage-6a boundary).
@@ -109,11 +115,6 @@ where
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let precommitted = &checked.precommitted;
-    if precommitted.bytecode.is_some() || precommitted.program_image.is_some() {
-        return Err(ProverError::Unsupported {
-            reason: "committed-program claim reductions are not yet supported",
-        });
-    }
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
@@ -132,6 +133,12 @@ where
     let carried = &stage6a.challenges;
     let instruction_ra_gamma: F = transcript.challenge_scalar();
     let inc_gamma: F = transcript.challenge_scalar();
+    // The bytecode claim-reduction eta, drawn exactly when the bytecode
+    // layout is committed (the verifier's draw position).
+    let eta: Option<F> = precommitted
+        .bytecode
+        .as_ref()
+        .map(|_| transcript.challenge_scalar());
 
     // The batch legs, mirroring `Stage6bSumchecks::build` from the prover-side
     // carriers.
@@ -158,13 +165,9 @@ where
         registers_read_write_point[REGISTER_ADDRESS_BITS..].to_vec(),
         registers_val_evaluation_point[REGISTER_ADDRESS_BITS..].to_vec(),
     ];
-    let program = preprocessing
-        .verifier
-        .program
-        .as_full()
-        .ok_or(ProverError::Unsupported {
-            reason: "full bytecode preprocessing is unavailable",
-        })?;
+    let program = preprocessing.program().ok_or(ProverError::Unsupported {
+        reason: "full bytecode preprocessing is unavailable",
+    })?;
     let entry_bytecode_index = preprocessing
         .verifier
         .program
@@ -179,6 +182,31 @@ where
         register_val_evaluation_point: &registers_val_evaluation_point[..REGISTER_ADDRESS_BITS],
         stage_gammas: stage_gammas.each_ref().map(Vec::as_slice),
     };
+    // The committed-program weights and reference points, mirroring
+    // `Stage6bSumchecks::build`.
+    let bytecode_weights = precommitted
+        .bytecode
+        .as_ref()
+        .zip(eta)
+        .map(|(layout, eta)| {
+            bytecode_reduction_weights(
+                layout,
+                BytecodeLaneWeightInputs {
+                    eta,
+                    stage1_gammas: &stage_gammas[0],
+                    stage2_gammas: &stage_gammas[1],
+                    stage3_gammas: &stage_gammas[2],
+                    stage4_gammas: &stage_gammas[3],
+                    stage5_gammas: &stage_gammas[4],
+                    register_read_write_point: &registers_read_write_point[..REGISTER_ADDRESS_BITS],
+                    register_val_evaluation_point: &registers_val_evaluation_point
+                        [..REGISTER_ADDRESS_BITS],
+                },
+                &bytecode_r_address,
+            )
+        })
+        .transpose()?;
+    let ram_val_check_address = &stage4.output_points.ram_val_check_point()[..log_k];
 
     // The staged advice RAM address points from stage 4's RAM value-check —
     // the clear-only references the advice `FinalScale` terms read.
@@ -190,14 +218,25 @@ where
     };
 
     let sumchecks = Stage6bSumchecks {
-        bytecode_read_raf: BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
-            dimensions: formula_dimensions.bytecode_read_raf,
-            r_address: bytecode_r_address.clone(),
-            stage_cycle_points: stage_cycle_points.clone(),
-            entry_bytecode_index,
-            committed_chunk_bits: chunk_bits,
-            table_fold: Some(table_fold()),
-        })?,
+        bytecode_read_raf: if precommitted.bytecode.is_some() {
+            BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
+                dimensions: formula_dimensions.bytecode_read_raf,
+                r_address: bytecode_r_address.clone(),
+                stage_cycle_points: stage_cycle_points.clone(),
+                entry_bytecode_index,
+                committed_chunk_bits: chunk_bits,
+                val_stages: stage6a.output_values.bytecode_read_raf.val_stages.clone(),
+            })
+        } else {
+            BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
+                dimensions: formula_dimensions.bytecode_read_raf,
+                r_address: bytecode_r_address.clone(),
+                stage_cycle_points: stage_cycle_points.clone(),
+                entry_bytecode_index,
+                committed_chunk_bits: chunk_bits,
+                table_fold: Some(table_fold()),
+            })?
+        },
         booleanity: Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address.clone(),
@@ -230,8 +269,14 @@ where
         untrusted_advice: precommitted.untrusted_advice.as_ref().map(|layout| {
             UntrustedAdviceCyclePhase::new(layout, advice_reference(JoltAdviceKind::Untrusted))
         }),
-        bytecode_reduction: None,
-        program_image_reduction: None,
+        bytecode_reduction: precommitted
+            .bytecode
+            .as_ref()
+            .zip(bytecode_weights.clone())
+            .map(|(layout, weights)| BytecodeReductionCyclePhase::new(layout, weights)),
+        program_image_reduction: precommitted.program_image.as_ref().map(|layout| {
+            ProgramImageReductionCyclePhase::new(layout, ram_val_check_address.to_vec())
+        }),
     };
 
     // Hand-assembled (the generated draw is suppressed): the bytecode gamma
@@ -257,8 +302,15 @@ where
             .untrusted_advice
             .as_ref()
             .map(|_| NoChallenges::default()),
-        bytecode_reduction: None,
-        program_image_reduction: None,
+        bytecode_reduction: sumchecks
+            .bytecode_reduction
+            .as_ref()
+            .zip(eta)
+            .map(|(_, eta)| BytecodeReductionCyclePhaseChallenges { eta }),
+        program_image_reduction: sumchecks
+            .program_image_reduction
+            .as_ref()
+            .map(|_| NoChallenges::default()),
     };
 
     let inputs = stage6b_input_values_from_upstream(
@@ -281,8 +333,20 @@ where
 
     // The address-only stage-value fold, once, for the bytecode kernel's
     // constant `BytecodeValStage` tables (the recipe's relation instance
-    // recomputes the same fold internally for `expected_final_claim`).
-    let stage_values_at_r_address = {
+    // recomputes the same fold internally for `expected_final_claim`). In
+    // committed mode the constants ARE the stage-6a staged raw values — the
+    // same quantities the fold computes.
+    let stage_values_at_r_address = if precommitted.bytecode.is_some() {
+        let staged = &stage6a.output_values.bytecode_read_raf.val_stages;
+        let mut stage_values = [F::zero(); 5];
+        if staged.len() != stage_values.len() {
+            return Err(ProverError::Unsupported {
+                reason: "stage 6a staged the wrong number of bytecode val stages",
+            });
+        }
+        stage_values.copy_from_slice(staged);
+        stage_values
+    } else {
         let row_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
             bytecode: &program.bytecode.bytecode,
             register_read_write_point: &registers_read_write_point[..REGISTER_ADDRESS_BITS],
@@ -360,7 +424,7 @@ where
         |session: &mut ProofSession,
          kind: JoltAdviceKind,
          layout: Option<&jolt_claims::protocols::jolt::AdviceClaimReductionLayout>|
-         -> Result<Option<Box<dyn AdviceReductionProver<F>>>, ProverError<F>> {
+         -> Result<Option<Box<dyn PrecommittedReductionProver<F>>>, ProverError<F>> {
             let Some(layout) = layout else {
                 return Ok(None);
             };
@@ -383,6 +447,42 @@ where
         JoltAdviceKind::Untrusted,
         precommitted.untrusted_advice.as_ref(),
     )?;
+    let mut bytecode_reduction_member = precommitted
+        .bytecode
+        .as_ref()
+        .zip(bytecode_weights.as_ref())
+        .map(|(layout, weights)| {
+            backend.bytecode_claim_reduction.prepare(
+                session,
+                layout,
+                weights,
+                &program.bytecode.bytecode,
+            )
+        })
+        .transpose()?;
+    let mut program_image_member = precommitted
+        .program_image
+        .as_ref()
+        .map(|layout| {
+            let (point, _) = stage4
+                .ram_val_check_init
+                .program_image_contribution
+                .as_ref()
+                .ok_or(ProverError::Unsupported {
+                    reason: "stage 4 staged no program-image contribution",
+                })?;
+            backend
+                .program_image_claim_reduction
+                .prepare(
+                    session,
+                    layout,
+                    point,
+                    layout.start_index(),
+                    &program.ram.bytecode_words,
+                )
+                .map_err(ProverError::from)
+        })
+        .transpose()?;
 
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![
         &mut *bytecode_read_raf,
@@ -398,6 +498,12 @@ where
     if let Some(member) = untrusted_advice_member.as_mut() {
         members.push(&mut **member);
     }
+    if let Some(member) = bytecode_reduction_member.as_mut() {
+        members.push(&mut **member);
+    }
+    if let Some(member) = program_image_member.as_mut() {
+        members.push(&mut **member);
+    }
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
@@ -405,7 +511,7 @@ where
     // schedule continues into the stage-7 address phase, else the final
     // (fully bound) advice opening.
     let advice_claim =
-        |member: &Option<Box<dyn AdviceReductionProver<F>>>,
+        |member: &Option<Box<dyn PrecommittedReductionProver<F>>>,
          layout: Option<&jolt_claims::protocols::jolt::AdviceClaimReductionLayout>|
          -> Result<Option<F>, ProverError<F>> {
             let (Some(member), Some(layout)) = (member, layout) else {
@@ -434,8 +540,36 @@ where
             .map(|trusted| TrustedAdviceCyclePhaseOutputClaims { trusted }),
         untrusted_advice: untrusted_advice_claim
             .map(|untrusted| UntrustedAdviceCyclePhaseOutputClaims { untrusted }),
-        bytecode_reduction: None,
-        program_image_reduction: None,
+        bytecode_reduction: bytecode_reduction_member
+            .as_ref()
+            .zip(precommitted.bytecode.as_ref())
+            .map(|(member, layout)| {
+                Ok::<_, ProverError<F>>(if layout.dimensions().has_address_phase() {
+                    BytecodeReductionCyclePhaseOutputClaims {
+                        intermediate: Some(member.cycle_intermediate_claim()),
+                        chunks: Vec::new(),
+                    }
+                } else {
+                    BytecodeReductionCyclePhaseOutputClaims {
+                        intermediate: None,
+                        chunks: member.final_aux_claims()?,
+                    }
+                })
+            })
+            .transpose()?,
+        program_image_reduction: program_image_member
+            .as_ref()
+            .zip(precommitted.program_image.as_ref())
+            .map(|(member, layout)| {
+                Ok::<_, ProverError<F>>(ProgramImageReductionCyclePhaseOutputClaims {
+                    program_image: if layout.dimensions().has_address_phase() {
+                        member.cycle_intermediate_claim()
+                    } else {
+                        member.final_claim()?
+                    },
+                })
+            })
+            .transpose()?,
     };
     let expected = sumchecks.expected_final_claim(
         &coefficients,
@@ -475,9 +609,11 @@ where
         clear_output: Stage6bClearOutput {
             output_values,
             output_points,
-            bytecode_reduction_weights: None,
+            bytecode_reduction_weights: bytecode_weights,
         },
         trusted_advice_member,
         untrusted_advice_member,
+        bytecode_reduction_member,
+        program_image_member,
     })
 }

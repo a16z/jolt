@@ -17,14 +17,14 @@ use jolt_openings::CommitmentScheme;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltCommitments;
 use jolt_verifier::{
-    absorb_transcript_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
-    CheckedInputs, ProofTranscriptConfig,
+    absorb_committed_program_commitments, absorb_transcript_commitments,
+    absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::CommittedWitnessProvider;
 
 use crate::config::advice_total_vars;
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// The externally supplied trusted-advice commitment (produced at
 /// preprocessing time, before any proving) and its opening hint. Mirrors
@@ -53,8 +53,9 @@ where
 
 /// Validate inputs, seed the transcript, commit the witness (the untrusted
 /// advice polynomial in its own balanced grid), and absorb the commitments
-/// (main, then untrusted advice, then trusted advice — the verifier's own
-/// absorb order). Committed-program mode is not yet supported.
+/// (main, untrusted advice, trusted advice, then the preprocessing-held
+/// committed-program chunk/image commitments — the verifier's own absorb
+/// order).
 pub fn prove_stage0<F, PCS, VC, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
@@ -71,9 +72,13 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    if preprocessing.verifier.program.committed().is_some() {
+    // Committed-program mode needs the prover-retained full program + hints;
+    // require presence to agree with the verifier preprocessing's mode.
+    if preprocessing.verifier.program.committed().is_some()
+        != preprocessing.committed_program.is_some()
+    {
         return Err(ProverError::Unsupported {
-            reason: "committed-program mode is not yet supported by the modular prover",
+            reason: "committed-program prover data presence disagrees with the preprocessing mode",
         });
     }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
@@ -87,24 +92,6 @@ where
             reason: "trusted-advice commitment presence disagrees with the trusted advice bytes",
         });
     }
-    // The dominant-advice regime (an advice grid wider than the main
-    // commitment grid) changes the main commit layout and the reduction
-    // permutations; legacy supports it through a separate materialized commit
-    // path with no e2e coverage, and the reference streaming commit does not
-    // reproduce it. Guard it off like the other unverified modes.
-    let main_total_vars =
-        config.one_hot_config.committed_chunk_bits() + config.trace_length.ilog2() as usize;
-    let advice_dominates = |max_size: u64| advice_total_vars(max_size) > main_total_vars;
-    if (trusted_advice.is_some()
-        && advice_dominates(public_io.memory_layout.max_trusted_advice_size))
-        || (untrusted_advice_present
-            && advice_dominates(public_io.memory_layout.max_untrusted_advice_size))
-    {
-        return Err(ProverError::Unsupported {
-            reason: "dominant advice (advice grid wider than the main commitment grid) is not yet supported",
-        });
-    }
-
     // The verifier's own input validation doubles as the prover's self-check
     // and produces the normalized `CheckedInputs` the preamble absorbs.
     let checked = validate_inputs_from_parts(
@@ -118,6 +105,31 @@ where
         untrusted_advice_present,
         false,
     )?;
+
+    // The dominant-advice regime (an advice grid wider than every other
+    // commitment-grid candidate) has no e2e coverage anywhere; guard it off
+    // like the other unverified modes. Committed-program candidates count
+    // toward the grid width, so advice wider than the main matrix but inside
+    // a committed candidate is fine.
+    {
+        let mut grid_without_advice =
+            config.one_hot_config.committed_chunk_bits() + config.trace_length.ilog2() as usize;
+        if let Some(candidates) = CommittedProgramCandidates::from_schedule(&checked.precommitted) {
+            grid_without_advice = grid_without_advice
+                .max(candidates.bytecode_chunk_vars)
+                .max(candidates.program_image_vars);
+        }
+        let advice_dominates = |max_size: u64| advice_total_vars(max_size) > grid_without_advice;
+        if (trusted_advice.is_some()
+            && advice_dominates(public_io.memory_layout.max_trusted_advice_size))
+            || (untrusted_advice_present
+                && advice_dominates(public_io.memory_layout.max_untrusted_advice_size))
+        {
+            return Err(ProverError::Unsupported {
+                reason: "dominant advice (advice grid wider than the main commitment grid) is not yet supported",
+            });
+        }
+    }
 
     let mut transcript = T::new(b"Jolt");
     absorb_transcript_preamble(
@@ -145,6 +157,7 @@ where
             &public_io.memory_layout,
             trusted_advice.is_some(),
             untrusted_advice_present,
+            CommittedProgramCandidates::from_schedule(&checked.precommitted),
         ),
         log_t: config.trace_length.ilog2() as usize,
     };
@@ -181,6 +194,27 @@ where
     if let Some(trusted) = trusted_advice {
         hints.push((JoltCommittedPolynomial::TrustedAdvice, trusted.hint.clone()));
     }
+    // The committed-program hints ride from preprocessing (the chunk/image
+    // commitments were produced there, before any proving).
+    if let Some(committed) = &preprocessing.committed_program {
+        let expected_chunks = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .map_or(0, |layout| layout.chunk_count());
+        if committed.bytecode_chunk_hints.len() != expected_chunks {
+            return Err(ProverError::Unsupported {
+                reason: "committed-program chunk hint count disagrees with the bytecode schedule",
+            });
+        }
+        for (index, hint) in committed.bytecode_chunk_hints.iter().enumerate() {
+            hints.push((JoltCommittedPolynomial::BytecodeChunk(index), hint.clone()));
+        }
+        hints.push((
+            JoltCommittedPolynomial::ProgramImageInit,
+            committed.program_image_hint.clone(),
+        ));
+    }
 
     absorb_transcript_commitments(
         &commitments,
@@ -188,6 +222,13 @@ where
         trusted_advice.map(|trusted| &trusted.commitment),
         &mut transcript,
     );
+    if let Some(committed) = preprocessing.verifier.program.committed() {
+        absorb_committed_program_commitments(
+            &committed.bytecode_chunk_commitments,
+            &committed.program_image_commitment,
+            &mut transcript,
+        );
+    }
 
     Ok(Stage0Output {
         checked,

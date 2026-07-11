@@ -23,6 +23,11 @@ use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
+use std::collections::BTreeMap;
+
+use jolt_kernels::committed_program::{
+    build_committed_bytecode_chunk_coeffs, program_image_words_padded,
+};
 use jolt_kernels::{CommitmentGrid, JoltBackend, KernelError, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
@@ -39,7 +44,7 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 8's output: the joint PCS opening proof (the last wire component of
 /// a clear proof).
@@ -80,11 +85,6 @@ where
         });
     }
     let precommitted = &checked.precommitted;
-    if precommitted.bytecode.is_some() || precommitted.program_image.is_some() {
-        return Err(ProverError::Unsupported {
-            reason: "committed-program claim reductions are not yet supported",
-        });
-    }
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
@@ -162,12 +162,18 @@ where
     // reordered from stage 0's proof-commitment order.
     let include_trusted = precommitted.trusted_advice.is_some();
     let include_untrusted = precommitted.untrusted_advice.is_some();
-    let order = final_opening_polynomial_order(layout, include_trusted, include_untrusted, None);
+    let chunk_count = precommitted
+        .bytecode
+        .as_ref()
+        .map(|layout| layout.chunk_count());
+    let order =
+        final_opening_polynomial_order(layout, include_trusted, include_untrusted, chunk_count);
     let grid = CommitmentGrid {
         total_vars: config.commitment_total_vars(
             preprocessing.verifier.program.memory_layout(),
             include_trusted,
             include_untrusted,
+            CommittedProgramCandidates::from_schedule(precommitted),
         ),
         log_t,
     };
@@ -176,9 +182,31 @@ where
             reason: "commitment grid width disagrees with the unified opening point",
         });
     }
-    let polynomials = backend
-        .joint_opening
-        .prepare(session, witness, &order, grid)?;
+    // The committed-program polynomials are preprocessing data (not witness
+    // oracles): materialize them from the prover-retained full program.
+    let mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>> = BTreeMap::new();
+    if let Some(bytecode_layout) = &precommitted.bytecode {
+        let program = preprocessing.program().ok_or(ProverError::Unsupported {
+            reason: "full program preprocessing is unavailable",
+        })?;
+        let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
+            &program.bytecode.bytecode,
+            bytecode_layout.chunk_count(),
+        )?;
+        for (index, coeffs) in chunk_coeffs.into_iter().enumerate() {
+            let _ =
+                precommitted_tables.insert(JoltCommittedPolynomial::BytecodeChunk(index), coeffs);
+        }
+        let image_words = program_image_words_padded(&program.ram.bytecode_words);
+        let _ = precommitted_tables.insert(
+            JoltCommittedPolynomial::ProgramImageInit,
+            image_words.into_iter().map(F::from_u64).collect(),
+        );
+    }
+    let polynomials =
+        backend
+            .joint_opening
+            .prepare(session, witness, &order, &precommitted_tables, grid)?;
     let ordered_hints: Vec<PCS::OpeningHint> = order
         .iter()
         .map(|polynomial| {

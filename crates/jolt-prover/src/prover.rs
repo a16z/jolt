@@ -43,9 +43,11 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 ///
 /// Supported envelope: transparent (clear) proofs of the cycle-major trace
 /// layout, with or without trusted/untrusted advice (non-dominant: the
-/// advice grid must not exceed the main commitment grid). Committed-program
-/// preprocessing, dominant advice, and the address-major layout return
-/// [`ProverError::Unsupported`] — the first two at stage 0, the layout here
+/// advice grid must not exceed the main commitment grid) and with or without
+/// committed-program preprocessing (which requires
+/// `preprocessing.committed_program` — the prover-retained full program and
+/// chunk/image hints). Dominant advice and the address-major layout return
+/// [`ProverError::Unsupported`] — the former at stage 0, the layout here
 /// before any work runs.
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
@@ -174,6 +176,8 @@ where
         &stage6b.clear_output,
         stage6b.trusted_advice_member,
         stage6b.untrusted_advice_member,
+        stage6b.bytecode_reduction_member,
+        stage6b.program_image_member,
         witness,
         &mut transcript,
     )?;

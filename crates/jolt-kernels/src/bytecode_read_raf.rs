@@ -8,13 +8,19 @@
 //! `F_s(k) = Σ_{j: pc(j)=k} eq(r_cycle_s, j)` are the per-stage cycle-eq
 //! pushforwards onto the bytecode address domain, `Val'_s` are the per-row
 //! stage-value tables (from the verifier's own `read_raf_stage_values`
-//! fold) with the RAF address-identity folded into stages 1 and 3
+//! fold) with the RAF address-identity added at stages 1 and 3
 //! (`Val'_1 = Val_1 + γ⁵·Int`, `Val'_3 = Val_3 + γ⁴·Int` — the overall γ⁵/γ⁶
 //! RAF weights divided by the stage weights γ⁰/γ²), and the entry term is the
 //! product of two one-hots (the trace's first PC, the preprocessing entry
 //! index). Each term is quadratic per variable, so the true round polynomial
 //! is quadratic, sampled at three points; binding is `LowToHigh` over the
 //! `log_K` bytecode address variables.
+//!
+//! The raw `Val_s` tables and the `Int` identity table bind SEPARATELY (the
+//! per-round extension is linear, so the split computes field-identical
+//! messages to a pre-folded table): committed-program mode stages the five
+//! raw bound `Val_s` values as `BytecodeValStage` wire claims, which the
+//! folded table cannot produce.
 
 use std::collections::BTreeMap;
 
@@ -58,6 +64,7 @@ pub trait BytecodeReadRafAddressProver<F: Field> {
         &self,
         session: &mut ProofSession,
         dimensions: BytecodeReadRafDimensions,
+        committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
         bytecode_indices: Vec<usize>,
@@ -71,6 +78,7 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
         &self,
         _session: &mut ProofSession,
         dimensions: BytecodeReadRafDimensions,
+        committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
         bytecode_indices: Vec<usize>,
@@ -80,6 +88,7 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
     {
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
             dimensions,
+            committed_program,
             stage_values,
             stage_cycle_points,
             bytecode_indices,
@@ -91,14 +100,20 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
 
 pub struct BytecodeReadRafAddressKernel<F: Field> {
     relation: BytecodeReadRafAddressPhase<F>,
+    /// Committed-program mode stages the five raw bound `Val_s` wire claims.
+    committed_program: bool,
     /// `γ^{s}` batching weights for the five stage products, then `γ⁷` for the
     /// entry product.
     stage_weights: [F; 5],
     entry_weight: F,
+    /// The per-stage `Int` weights inside `Val'_s = Val_s + raf_weight_s·Int`.
+    raf_weights: [F; 5],
     /// The per-stage cycle-eq pushforwards `F_s`.
     pushforwards: [Polynomial<F>; 5],
-    /// The per-stage value tables with the RAF identity folded in.
+    /// The RAW per-stage value tables (no RAF fold — see the module doc).
     values: [Polynomial<F>; 5],
+    /// The RAF address identity `Int(k) = k`, bound alongside.
+    int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
     rounds_bound: usize,
@@ -107,6 +122,7 @@ pub struct BytecodeReadRafAddressKernel<F: Field> {
 impl<F: Field> BytecodeReadRafAddressKernel<F> {
     pub fn new(
         dimensions: BytecodeReadRafDimensions,
+        committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
         bytecode_indices: Vec<usize>,
@@ -158,8 +174,9 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
             Polynomial::new(table)
         });
 
-        // Stage-value tables, with the RAF identity `Int(k) = k` folded into
-        // stages 1 and 3 at the within-stage weights.
+        // The RAW stage-value tables; the RAF identity `Int(k) = k` binds as
+        // its own table with the within-stage weights γ⁵ (stage 1) and γ⁴
+        // (stage 3) applied at message time.
         let raf_weights = [
             gamma_powers[5],
             F::zero(),
@@ -168,14 +185,9 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
             F::zero(),
         ];
         let values = std::array::from_fn(|s| {
-            Polynomial::new(
-                stage_values
-                    .iter()
-                    .enumerate()
-                    .map(|(k, row)| row[s] + raf_weights[s] * F::from_u64(k as u64))
-                    .collect(),
-            )
+            Polynomial::new(stage_values.iter().map(|row| row[s]).collect())
         });
+        let int_table = Polynomial::new((0..addresses).map(|k| F::from_u64(k as u64)).collect());
 
         let one_hot = |index: usize| {
             let mut table = vec![F::zero(); addresses];
@@ -184,11 +196,14 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
         };
 
         Ok(Self {
-            relation: BytecodeReadRafAddressPhase::new(dimensions, 0),
+            relation: BytecodeReadRafAddressPhase::new(dimensions, committed_program),
+            committed_program,
             stage_weights: std::array::from_fn(|s| gamma_powers[s]),
             entry_weight: gamma_powers[7],
+            raf_weights,
             pushforwards,
             values,
+            int_table,
             entry_trace: one_hot(bytecode_indices[0]),
             entry_expected: one_hot(entry_bytecode_index),
             rounds_bound: 0,
@@ -215,10 +230,11 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
             };
             let mut sum = F::zero();
             for y in 0..half {
+                let int_ext = ext(&self.int_table, y);
                 for s in 0..5 {
                     sum += self.stage_weights[s]
                         * ext(&self.pushforwards[s], y)
-                        * ext(&self.values[s], y);
+                        * (ext(&self.values[s], y) + self.raf_weights[s] * int_ext);
                 }
                 sum += self.entry_weight * ext(&self.entry_trace, y) * ext(&self.entry_expected, y);
             }
@@ -240,6 +256,8 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
         for table in self.pushforwards.iter_mut().chain(self.values.iter_mut()) {
             table.bind_with_order(challenge, BindingOrder::LowToHigh);
         }
+        self.int_table
+            .bind_with_order(challenge, BindingOrder::LowToHigh);
         self.entry_trace
             .bind_with_order(challenge, BindingOrder::LowToHigh);
         self.entry_expected
@@ -266,13 +284,21 @@ impl<F: Field> ProveSumcheck<F> for BytecodeReadRafAddressKernel<F> {
         }
         let mut intermediate =
             self.entry_weight * self.entry_trace.evals()[0] * self.entry_expected.evals()[0];
+        let bound_int = self.int_table.evals()[0];
         for s in 0..5 {
-            intermediate +=
-                self.stage_weights[s] * self.pushforwards[s].evals()[0] * self.values[s].evals()[0];
+            intermediate += self.stage_weights[s]
+                * self.pushforwards[s].evals()[0]
+                * (self.values[s].evals()[0] + self.raf_weights[s] * bound_int);
         }
+        // Committed mode stages the five RAW bound `Val_s` values.
+        let val_stages = if self.committed_program {
+            self.values.iter().map(|table| table.evals()[0]).collect()
+        } else {
+            Vec::new()
+        };
         Ok(BytecodeReadRafAddressPhaseOutputClaims {
             intermediate,
-            val_stages: Vec::new(),
+            val_stages,
         })
     }
 }

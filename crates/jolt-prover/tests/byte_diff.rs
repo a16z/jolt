@@ -168,6 +168,7 @@ mod muldiv {
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
             pcs_setup: DoryScheme::setup_prover(setup_total_vars(memory_layout)),
+            committed_program: None,
         };
 
         let jolt_verifier::proof::JoltProofClaims::Clear(legacy_claims) = &legacy_proof.claims
@@ -494,6 +495,8 @@ mod muldiv {
                     &stage6b.clear_output,
                     stage6b.trusted_advice_member,
                     stage6b.untrusted_advice_member,
+                    stage6b.bytecode_reduction_member,
+                    stage6b.program_image_member,
                     &witness,
                     &mut new_transcript,
                 )
@@ -774,6 +777,7 @@ mod advice_consumer {
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
             pcs_setup: DoryScheme::setup_prover(setup_total_vars),
+            committed_program: None,
         };
 
         // The new-side trusted-advice commit (preprocessing-time in a real
@@ -859,6 +863,287 @@ mod advice_consumer {
             false,
         )
         .expect("modular advice proof must verify end-to-end");
+    }
+}
+
+#[cfg(feature = "prover-fixtures")]
+#[expect(clippy::expect_used)]
+mod committed_muldiv {
+    use jolt_claims::protocols::jolt::geometry::claim_reductions::{bytecode, program_image};
+    use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_kernels::committed_program::{
+        build_committed_bytecode_chunk_coeffs, program_image_words_padded,
+    };
+    use jolt_openings::{CommitmentScheme, StreamingCommitment};
+    use jolt_program::execution::{
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+    };
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_prover::{
+        CommittedProgramProverData, JoltBackend, JoltProverPreprocessing, ProverConfig,
+    };
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+    use jolt_prover_legacy::zkvm::RV64IMACProver;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::protocols::jolt_vm::{
+        JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackedJoltVmWitness,
+    };
+    use tracer::execution_backend::TracerBackend;
+
+    use common::jolt_device::MemoryConfig;
+
+    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+
+    /// Commit one dense table over its balanced matrix through the streaming
+    /// path (one row per `row_width` coefficients) — the preprocessing-time
+    /// counterpart of the stage-0 advice commit.
+    fn commit_table(
+        table: &[Fr],
+        row_width: usize,
+        setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
+    ) -> (
+        jolt_dory::DoryCommitment,
+        <DoryScheme as CommitmentScheme>::OpeningHint,
+    ) {
+        let mut partial = DoryScheme::begin(setup);
+        for row in table.chunks(row_width) {
+            DoryScheme::feed(&mut partial, row, setup);
+        }
+        DoryScheme::finish_with_hint(partial, setup)
+    }
+
+    /// Prove muldiv under committed-program preprocessing (chunk count 2,
+    /// matching the jolt-verifier committed fixture): the bytecode-chunk
+    /// candidate widens the commitment grid columns past the trace length,
+    /// exercising the materialized wide-row one-hot commit fallback.
+    #[test]
+    fn prover_matches_legacy_on_committed_muldiv() {
+        committed_muldiv_matches_legacy(2);
+    }
+
+    /// The mild-widening arm: at chunk count 64 the bytecode candidate still
+    /// exceeds the main matrix (widening the grid) but the columns fit the
+    /// trace, so the streaming one-hot commit path runs over the widened
+    /// grid.
+    #[test]
+    fn prover_matches_legacy_on_committed_muldiv_many_chunks() {
+        committed_muldiv_matches_legacy(64);
+    }
+
+    fn committed_muldiv_matches_legacy(bytecode_chunk_count: usize) {
+        let mut program = host::Program::new("muldiv-guest");
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
+
+        // --- Legacy side: committed preprocessing (the chunk/image commits
+        // happen here, before any proving), then prove.
+        let (bytecode_rows, init_memory_state, _, entry_address) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let elf_contents = program.get_elf_contents().expect("elf contents");
+
+        let legacy_program =
+            LegacyProgramPreprocessing::preprocess(bytecode_rows, init_memory_state, entry_address)
+                .expect("legacy preprocess");
+        let (shared, committed_program_prover_data, generators) =
+            JoltSharedPreprocessing::new_committed(
+                legacy_program,
+                io_device.memory_layout.clone(),
+                MAX_PADDED_TRACE_LENGTH,
+                bytecode_chunk_count,
+            );
+        let legacy_preprocessing = LegacyProverPreprocessing::new_committed(
+            shared,
+            committed_program_prover_data,
+            generators,
+        );
+        let legacy_prover = RV64IMACProver::gen_from_elf(
+            &legacy_preprocessing,
+            &elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let public_io = legacy_prover.program_io.clone();
+        let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+        let committed_view = verifier_preprocessing
+            .program
+            .committed()
+            .expect("committed verifier preprocessing")
+            .clone();
+
+        // --- New-prover side: the full program is rebuilt from the legacy
+        // prover data's retained copy (the verifier preprocessing carries only
+        // commitments).
+        let legacy_full = &legacy_preprocessing
+            .committed_program_prover_data
+            .as_ref()
+            .expect("legacy committed prover data")
+            .full;
+        let memory_layout = &public_io.memory_layout;
+        let full_program = JoltProgramPreprocessing {
+            bytecode: legacy_full.bytecode.as_ref().clone(),
+            ram: legacy_full.ram.clone(),
+            memory_layout: memory_layout.clone(),
+            max_padded_trace_length: MAX_PADDED_TRACE_LENGTH,
+        };
+
+        let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+        let memory_config = MemoryConfig {
+            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
+            max_input_size: memory_layout.max_input_size,
+            max_output_size: memory_layout.max_output_size,
+            stack_size: memory_layout.stack_size,
+            heap_size: memory_layout.heap_size,
+            program_size: Some(memory_layout.program_size),
+        };
+        let trace_output = TracerBackend::new()
+            .trace(
+                &jolt_program,
+                TraceInputs {
+                    inputs: inputs.clone(),
+                    untrusted_advice: Vec::new(),
+                    trusted_advice: Vec::new(),
+                    memory_config,
+                },
+            )
+            .expect("modular trace");
+
+        let config = ProverConfig::derive::<Fr>(
+            trace_output.trace.rows(),
+            memory_layout,
+            verifier_preprocessing.program.min_bytecode_address(),
+            verifier_preprocessing.program.program_image_len_words(),
+            MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive config");
+        assert_eq!(config.trace_length, legacy_proof.trace_length);
+        assert_eq!(config.one_hot_config, legacy_proof.one_hot_config);
+
+        let mut rows = trace_output.trace.rows().to_vec();
+        rows.resize(config.trace_length, TraceRow::default());
+        let padded_output = TraceOutput::new(
+            OwnedTrace::new(rows),
+            trace_output.device,
+            trace_output.final_memory,
+        );
+        let witness_config = JoltVmWitnessConfig::new(
+            config.trace_length.ilog2() as usize,
+            config.ram_K,
+            config.one_hot_config,
+        );
+        let witness_program = full_program.clone();
+        let witness = TraceBackedJoltVmWitness::new(
+            witness_config,
+            JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),
+        );
+
+        // Setup sizing: the committed candidates can exceed the main grid.
+        let bytecode_len = verifier_preprocessing.program.bytecode_len();
+        let bytecode_candidate =
+            bytecode::precommitted_candidate(bytecode_len, bytecode_chunk_count)
+                .expect("valid chunking");
+        let image_candidate = program_image::precommitted_candidate(
+            verifier_preprocessing.program.program_image_len_words(),
+        );
+        let setup_total_vars = (4usize + MAX_PADDED_TRACE_LENGTH.ilog2() as usize)
+            .max(bytecode_candidate)
+            .max(image_candidate);
+        let pcs_setup = DoryScheme::setup_prover(setup_total_vars);
+
+        // The new-side chunk/image commits (preprocessing-time in a real
+        // deployment): must reproduce legacy's commitment bytes exactly, and
+        // their hints feed the stage-8 joint opening.
+        let chunk_tables = build_committed_bytecode_chunk_coeffs::<Fr>(
+            &full_program.bytecode.bytecode,
+            bytecode_chunk_count,
+        )
+        .expect("chunk grids");
+        let chunk_shape = CommitmentMatrixShape::balanced(bytecode_candidate);
+        let mut bytecode_chunk_hints = Vec::new();
+        for (index, table) in chunk_tables.iter().enumerate() {
+            let (commitment, hint) =
+                commit_table(table, 1usize << chunk_shape.column_vars(), &pcs_setup);
+            assert_eq!(
+                commitment, committed_view.bytecode_chunk_commitments[index],
+                "bytecode chunk {index} commitment diverged from legacy's",
+            );
+            bytecode_chunk_hints.push(hint);
+        }
+        let image_words = program_image_words_padded(&full_program.ram.bytecode_words);
+        let image_table: Vec<Fr> = image_words.into_iter().map(Fr::from_u64).collect();
+        let image_shape = CommitmentMatrixShape::balanced(image_candidate);
+        let (image_commitment, program_image_hint) = commit_table(
+            &image_table,
+            1usize << image_shape.column_vars(),
+            &pcs_setup,
+        );
+        assert_eq!(
+            image_commitment, committed_view.program_image_commitment,
+            "program image commitment diverged from legacy's",
+        );
+
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup,
+            committed_program: Some(CommittedProgramProverData {
+                full: full_program,
+                bytecode_chunk_hints,
+                program_image_hint,
+            }),
+        };
+
+        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            &backend,
+            &prover_preprocessing,
+            &config,
+            None,
+            &witness,
+            &public_io,
+        )
+        .expect("top-level prove");
+
+        // Component-wise asserts give per-stage granularity when bytes
+        // diverge; the final whole-struct assert is the ratchet.
+        assert_eq!(proof.commitments, legacy_proof.commitments);
+        assert_eq!(
+            proof.stages.stage4_sumcheck_proof, legacy_proof.stages.stage4_sumcheck_proof,
+            "stage-4 bytes diverged (program-image contribution stages here)",
+        );
+        assert_eq!(
+            proof.stages.stage6a_sumcheck_proof, legacy_proof.stages.stage6a_sumcheck_proof,
+            "stage-6a bytes diverged (raw val stages staged here)",
+        );
+        assert_eq!(
+            proof.stages.stage6b_sumcheck_proof, legacy_proof.stages.stage6b_sumcheck_proof,
+            "stage-6b bytes diverged (committed read-RAF + reduction cycle phases run here)",
+        );
+        assert_eq!(
+            proof.stages.stage7_sumcheck_proof, legacy_proof.stages.stage7_sumcheck_proof,
+            "stage-7 bytes diverged (reduction address phases run here)",
+        );
+        assert_eq!(proof.claims, legacy_proof.claims);
+        assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
+
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+            false,
+        )
+        .expect("modular committed proof must verify end-to-end");
     }
 }
 

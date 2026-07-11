@@ -84,11 +84,9 @@ where
     W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows,
 {
     let log_t = checked.trace_length.ilog2() as usize;
-    if checked.precommitted.bytecode.is_some() {
-        return Err(ProverError::Unsupported {
-            reason: "committed-program bytecode claim reduction is not yet supported",
-        });
-    }
+    // Committed-program mode stages the five raw bound `Val_s` values as
+    // extra wire claims; the sumcheck itself is unchanged.
+    let committed_program = checked.precommitted.bytecode.is_some();
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
@@ -108,7 +106,7 @@ where
     let sumchecks = Stage6aSumchecks {
         bytecode_read_raf: BytecodeReadRafAddressPhase::new(
             formula_dimensions.bytecode_read_raf,
-            0,
+            committed_program,
         ),
         booleanity: BooleanityAddressPhase::new(booleanity_dimensions),
     };
@@ -165,14 +163,10 @@ where
     } = bytecode_stage_points(stage1, stage2, stage3, stage4, stage5)?;
 
     // The per-row stage-value tables, via the verifier's own fold over the
-    // padded preprocessing bytecode.
-    let program = preprocessing
-        .verifier
-        .program
-        .as_full()
-        .ok_or(ProverError::Unsupported {
-            reason: "full bytecode preprocessing is unavailable",
-        })?;
+    // padded bytecode (the prover-retained copy in committed mode).
+    let program = preprocessing.program().ok_or(ProverError::Unsupported {
+        reason: "full bytecode preprocessing is unavailable",
+    })?;
     let stage_gammas = carried.bytecode_read_raf.stage_gamma_powers();
     let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
         bytecode: &program.bytecode.bytecode,
@@ -201,6 +195,7 @@ where
     let mut bytecode_read_raf = backend.bytecode_read_raf_address.prepare(
         session,
         formula_dimensions.bytecode_read_raf,
+        committed_program,
         stage_values,
         &stage_cycle_points,
         bytecode_indices,

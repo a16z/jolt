@@ -19,6 +19,8 @@
 //! harness scale, never a performance path — an optimized backend returns
 //! lazy/sparse or device-backed implementations).
 
+use std::collections::BTreeMap;
+
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Field;
@@ -32,12 +34,16 @@ use crate::{KernelError, ProofSession, ReferenceBackend};
 
 /// The stage-8 joint-opening polynomial slot: materialize `polynomials` (in
 /// the given order — the final-opening batch order) embedded over `grid`.
+/// `precommitted_tables` carries the committed-program polynomials (bytecode
+/// chunks, program image) the recipe materialized from the prover-retained
+/// full program — they are preprocessing data, not witness oracles.
 pub trait JointOpeningPolynomials<F: Field> {
     fn prepare(
         &self,
         session: &mut ProofSession,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
         polynomials: &[JoltCommittedPolynomial],
+        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>>;
 }
@@ -48,13 +54,17 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
         _session: &mut ProofSession,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
         polynomials: &[JoltCommittedPolynomial],
+        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
         let domain = 1usize << grid.total_vars;
         polynomials
             .iter()
             .map(|&polynomial| {
-                let table = dense_view(witness, final_opening_id(polynomial))?;
+                let table = match precommitted_tables.get(&polynomial) {
+                    Some(table) => table.clone(),
+                    None => dense_view(witness, final_opening_id(polynomial))?,
+                };
                 if table.len() > domain {
                     return Err(KernelError::TableSizeMismatch {
                         table: format!("{polynomial:?}"),
@@ -64,7 +74,9 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
                 }
                 let embedded = match polynomial {
                     JoltCommittedPolynomial::TrustedAdvice
-                    | JoltCommittedPolynomial::UntrustedAdvice => {
+                    | JoltCommittedPolynomial::UntrustedAdvice
+                    | JoltCommittedPolynomial::BytecodeChunk(_)
+                    | JoltCommittedPolynomial::ProgramImageInit => {
                         block_embed(&table, grid, polynomial)?
                     }
                     _ => {

@@ -104,24 +104,39 @@ where
     let mut stream = witness.committed_stream(id, row_width)?;
 
     match descriptor.encoding {
+        PolynomialEncoding::OneHot if row_width > (1usize << grid.log_t) => {
+            // A precommitted candidate widened the grid columns past the
+            // trace length, so one committed row packs multiple `k`-blocks of
+            // the flat `(K × T)` matrix — inexpressible through the
+            // column-major one-hot stream. Materialize the flat table and
+            // feed dense rows (the same MSM legacy's materialized path runs).
+            let flat = materialize_one_hot_flat::<F>(
+                &mut stream,
+                descriptor.dimensions.rows(),
+                1usize << grid.log_t,
+            )?;
+            let mut partial = PCS::begin(setup);
+            for row in flat.chunks(row_width) {
+                PCS::feed(&mut partial, row, setup);
+            }
+            Ok(PCS::finish_with_hint(partial, setup))
+        }
         PolynomialEncoding::OneHot => {
             // The one-hot `(K × T)` matrix: `K = 2^(log_rows − log_t)` and the
             // stream yields `row_width` cycles of hot addresses per chunk.
-            let one_hot_k = 1usize
-                .checked_shl(
-                    descriptor
-                        .dimensions
-                        .log_rows
-                        .checked_sub(grid.log_t)
-                        .ok_or_else(|| KernelError::InvalidGeometry {
-                            reason: format!(
-                                "one-hot polynomial {id:?} has fewer variables than log_t"
-                            ),
-                        })? as u32,
-                )
+            let log_k = descriptor
+                .dimensions
+                .log_rows
+                .checked_sub(grid.log_t)
                 .ok_or_else(|| KernelError::InvalidGeometry {
-                    reason: format!("one-hot K overflow for {id:?}"),
+                    reason: format!("one-hot polynomial {id:?} has fewer variables than log_t"),
                 })?;
+            let one_hot_k =
+                1usize
+                    .checked_shl(log_k as u32)
+                    .ok_or_else(|| KernelError::InvalidGeometry {
+                        reason: format!("one-hot K overflow for {id:?}"),
+                    })?;
             let mut context = PCS::begin_one_hot_column_major_stream(setup, row_width);
             let mut chunk_commitments = Vec::new();
             while let Some(chunk) = stream.next_chunk()? {
@@ -151,6 +166,42 @@ where
             Ok(PCS::finish_with_hint(partial, setup))
         }
     }
+}
+
+/// Drain a one-hot stream (per-cycle hot addresses) into the flat `(K × T)`
+/// 0/1 table (`flat[k · T + cycle]`), `total = K · T` entries long.
+fn materialize_one_hot_flat<F: Field>(
+    stream: &mut Box<dyn jolt_witness::PolynomialStream<F> + '_>,
+    total: usize,
+    cycles: usize,
+) -> Result<Vec<F>, KernelError<F>> {
+    let mut flat = vec![F::zero(); total];
+    let mut cycle = 0usize;
+    while let Some(chunk) = stream.next_chunk()? {
+        let PolynomialChunk::OneHot(indices) = chunk else {
+            return Err(KernelError::UnsupportedChunk {
+                reason: "one-hot polynomial streamed a non-one-hot chunk".to_owned(),
+            });
+        };
+        for hot in indices {
+            if cycle >= cycles {
+                return Err(KernelError::UnsupportedChunk {
+                    reason: "one-hot stream ran past the trace length".to_owned(),
+                });
+            }
+            if let Some(k) = hot {
+                let index = k * cycles + cycle;
+                if index >= total {
+                    return Err(KernelError::UnsupportedChunk {
+                        reason: "one-hot address outside the (K × T) grid".to_owned(),
+                    });
+                }
+                flat[index] = F::one();
+            }
+            cycle += 1;
+        }
+    }
+    Ok(flat)
 }
 
 fn feed_dense_chunk<F, PCS>(

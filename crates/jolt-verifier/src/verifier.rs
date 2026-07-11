@@ -540,17 +540,35 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         transcript,
     );
     if let Some(committed) = preprocessing.program.committed() {
-        for commitment in &committed.bytecode_chunk_commitments {
-            append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-            transcript.append(commitment);
-        }
-        append_payload_label(
-            transcript,
-            b"program_image_commitment",
+        absorb_committed_program_commitments(
+            &committed.bytecode_chunk_commitments,
             &committed.program_image_commitment,
+            transcript,
         );
-        transcript.append(&committed.program_image_commitment);
     }
+}
+
+/// Absorbs the preprocessing-held committed-program commitments (per-chunk
+/// bytecode, then the program image), immediately after the proof-carried
+/// commitments. Shared verbatim by the prover's stage 0.
+pub fn absorb_committed_program_commitments<C, T>(
+    bytecode_chunk_commitments: &[C],
+    program_image_commitment: &C,
+    transcript: &mut T,
+) where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    for commitment in bytecode_chunk_commitments {
+        append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
+        transcript.append(commitment);
+    }
+    append_payload_label(
+        transcript,
+        b"program_image_commitment",
+        program_image_commitment,
+    );
+    transcript.append(program_image_commitment);
 }
 
 /// Absorbs the proof-derived polynomial commitments (increment, one-hot `ra`,

@@ -1,8 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    geometry::{
-        booleanity::BooleanityDimensions, claim_reductions::bytecode as bytecode_reduction,
-        dimensions::JoltFormulaDimensions,
-    },
+    geometry::{booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions},
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
@@ -51,13 +48,7 @@ where
 {
     let log_t = formula_dimensions.trace.log_t();
 
-    let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
-    let committed_program = bytecode_reduction_layout.is_some();
-    let num_bytecode_val_stages = if committed_program {
-        bytecode_reduction::NUM_BYTECODE_VAL_STAGES
-    } else {
-        0
-    };
+    let committed_program = checked.precommitted.bytecode.is_some();
 
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
@@ -67,7 +58,7 @@ where
     let address_sumchecks = Stage6aSumchecks {
         bytecode_read_raf: BytecodeReadRafAddressPhase::new(
             formula_dimensions.bytecode_read_raf,
-            num_bytecode_val_stages,
+            committed_program,
         ),
         booleanity: BooleanityAddressPhase::new(booleanity_dimensions),
     };
@@ -227,7 +218,7 @@ mod tests {
         let sumchecks = Stage6aSumchecks::<Fr> {
             bytecode_read_raf: BytecodeReadRafAddressPhase::new(
                 BytecodeReadRafDimensions::new(3, 4, 2),
-                2,
+                true,
             ),
             booleanity: BooleanityAddressPhase::new(BooleanityDimensions::new(
                 JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
@@ -236,13 +227,13 @@ mod tests {
             )),
         };
         let mut claims = sample_claims();
-        claims.bytecode_read_raf.val_stages = vec![fr(903), fr(904)];
+        claims.bytecode_read_raf.val_stages = (903..908).map(fr).collect();
 
         let mut got = RecordingTranscript::default();
         sumchecks.append_output_claims(&mut got, &claims);
 
         let mut want = RecordingTranscript::default();
-        for value in [fr(901), fr(903), fr(904), fr(902)] {
+        for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
             want.append_labeled(b"opening_claim", &value);
         }
 

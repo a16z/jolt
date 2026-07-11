@@ -1,6 +1,5 @@
-//! Stage 7: the Hamming-weight claim-reduction batch plus the present advice
-//! address phases (committed-program `Option` members remain rejected
-//! upstream).
+//! Stage 7: the Hamming-weight claim-reduction batch plus the present
+//! precommitted address phases (advice, committed bytecode, program image).
 //!
 //! Pure orchestration mirroring `stage7::verify`: the whole batch is the
 //! verifier's own promoted `build_stage7_sumchecks` (an advice address phase
@@ -15,7 +14,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::Ha
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_kernels::advice_claim_reduction::AdviceReductionProver;
+use jolt_kernels::precommitted_reduction::PrecommittedReductionProver;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
@@ -27,6 +26,9 @@ use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::advice_address_phase::{
     TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
+};
+use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
+    BytecodeReductionAddressPhaseOutputClaims, ProgramImageReductionAddressPhaseOutputClaims,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::stage7_hamming_virtualization_address_points;
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
@@ -55,8 +57,10 @@ pub fn prove_stage7<F, PCS, VC, C, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
-    mut trusted_advice_member: Option<Box<dyn AdviceReductionProver<F>>>,
-    mut untrusted_advice_member: Option<Box<dyn AdviceReductionProver<F>>>,
+    mut trusted_advice_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
+    mut untrusted_advice_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
+    mut bytecode_reduction_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
+    mut program_image_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
     witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     transcript: &mut T,
 ) -> Result<Stage7ProverOutput<F, C>, ProverError<F>>
@@ -69,11 +73,6 @@ where
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let precommitted = &checked.precommitted;
-    if precommitted.bytecode.is_some() || precommitted.program_image.is_some() {
-        return Err(ProverError::Unsupported {
-            reason: "committed-program claim reductions are not yet supported",
-        });
-    }
     let formula_dimensions =
         jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions::try_from(
             config.one_hot_config.dimensions(
@@ -161,12 +160,48 @@ where
         }
         (None, _) => None,
     };
+    let mut bytecode_reduction = match (
+        &sumchecks.bytecode_address_phase,
+        bytecode_reduction_member.as_mut(),
+    ) {
+        (Some(_), Some(member)) => {
+            member.transition_to_address_phase();
+            Some(member)
+        }
+        (Some(_), None) => {
+            return Err(ProverError::Unsupported {
+                reason: "stage 6b carried no bytecode kernel for the scheduled address phase",
+            });
+        }
+        (None, _) => None,
+    };
+    let mut program_image = match (
+        &sumchecks.program_image_address_phase,
+        program_image_member.as_mut(),
+    ) {
+        (Some(_), Some(member)) => {
+            member.transition_to_address_phase();
+            Some(member)
+        }
+        (Some(_), None) => {
+            return Err(ProverError::Unsupported {
+                reason: "stage 6b carried no program-image kernel for the scheduled address phase",
+            });
+        }
+        (None, _) => None,
+    };
 
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut *hamming];
     if let Some(member) = trusted_advice.as_mut() {
         members.push(&mut ***member);
     }
     if let Some(member) = untrusted_advice.as_mut() {
+        members.push(&mut ***member);
+    }
+    if let Some(member) = bytecode_reduction.as_mut() {
+        members.push(&mut ***member);
+    }
+    if let Some(member) = program_image.as_mut() {
         members.push(&mut ***member);
     }
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
@@ -190,8 +225,22 @@ where
                 })
             })
             .transpose()?,
-        bytecode_address_phase: None,
-        program_image_address_phase: None,
+        bytecode_address_phase: bytecode_reduction
+            .as_ref()
+            .map(|member| {
+                Ok::<_, ProverError<F>>(BytecodeReductionAddressPhaseOutputClaims {
+                    chunks: member.final_aux_claims()?,
+                })
+            })
+            .transpose()?,
+        program_image_address_phase: program_image
+            .as_ref()
+            .map(|member| {
+                Ok::<_, ProverError<F>>(ProgramImageReductionAddressPhaseOutputClaims {
+                    program_image: member.final_claim()?,
+                })
+            })
+            .transpose()?,
     };
     sumchecks.validate_output_claims(&output_values)?;
     let expected = sumchecks.expected_final_claim(

@@ -83,13 +83,14 @@ impl ProverConfig {
     }
 
     /// The shared commitment-embedding variable count: the one-hot main matrix
-    /// (`log_k_chunk + log_T`) maxed with the advice candidates that are
-    /// actually present in this run.
+    /// (`log_k_chunk + log_T`) maxed with the advice and committed-program
+    /// candidates that are actually present in this run.
     pub fn commitment_total_vars(
         &self,
         memory_layout: &MemoryLayout,
         has_trusted_advice: bool,
         has_untrusted_advice: bool,
+        committed_program: Option<CommittedProgramCandidates>,
     ) -> usize {
         let mut total_vars =
             self.one_hot_config.committed_chunk_bits() + self.trace_length.ilog2() as usize;
@@ -98,6 +99,11 @@ impl ProverConfig {
         }
         if has_untrusted_advice {
             total_vars = total_vars.max(advice_total_vars(memory_layout.max_untrusted_advice_size));
+        }
+        if let Some(committed) = committed_program {
+            total_vars = total_vars
+                .max(committed.bytecode_chunk_vars)
+                .max(committed.program_image_vars);
         }
         total_vars
     }
@@ -142,6 +148,28 @@ fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
         JoltOneHotConfig {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
+        }
+    }
+}
+
+/// The committed-program precommitted candidates' variable counts, folded
+/// into the shared commitment grid alongside the advice candidates.
+#[derive(Clone, Copy, Debug)]
+pub struct CommittedProgramCandidates {
+    pub bytecode_chunk_vars: usize,
+    pub program_image_vars: usize,
+}
+
+impl CommittedProgramCandidates {
+    /// Read the candidates off the validated precommitted schedule: present
+    /// exactly when committed-program layouts are.
+    pub fn from_schedule(schedule: &jolt_verifier::stages::PrecommittedSchedule) -> Option<Self> {
+        match (&schedule.bytecode, &schedule.program_image) {
+            (Some(bytecode), Some(image)) => Some(Self {
+                bytecode_chunk_vars: bytecode.chunk_shape().total_vars(),
+                program_image_vars: image.image_shape().total_vars(),
+            }),
+            _ => None,
         }
     }
 }
