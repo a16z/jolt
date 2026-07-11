@@ -283,7 +283,7 @@ pub(crate) struct CudaRaVirtualD4State {
 }
 
 impl CudaRaVirtualD4State {
-    pub(crate) fn new<F: Field>(chunks: &[Vec<F>], gamma_powers: &[F]) -> Option<Self> {
+    pub(crate) fn new<F: Field>(chunks: &[&[F]], gamma_powers: &[F]) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         if chunks.is_empty() || chunks.len() != gamma_powers.len() * 4 {
             return None;
@@ -381,12 +381,15 @@ impl CudaRaVirtualD4Sparse {
                 flat_tables.extend_from_slice(&v.inner_limbs().0);
             }
         }
-        let mut values: Vec<i16> = Vec::with_capacity(num_chunks * source_rows);
-        for chunk in indices {
-            for entry in *chunk {
-                values.push(entry.map_or(-1, i16::from));
-            }
-        }
+        let values: Vec<i16> = {
+            use rayon::prelude::*;
+            indices
+                .par_iter()
+                .flat_map(|chunk| {
+                    chunk.par_iter().map(|entry| entry.map_or(-1, i16::from))
+                })
+                .collect()
+        };
         let gamma_powers = ctx.upload(crate::cuda::as_fr_slice(gamma_powers)?).ok()?;
 
         Some(Self::Sparse {

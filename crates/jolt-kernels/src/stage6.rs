@@ -5448,8 +5448,13 @@ impl<F: Field> InstructionRaVirtualChunks<'_, F> {
                 return Some(state);
             }
         }
+        if let Self::Dense(InstructionRaVirtualDenseChunks::Borrowed(chunks)) = self {
+            return cuda::CudaRaVirtualD4State::new(chunks, gamma_powers)
+                .map(cuda::CudaRaVirtualD4Sparse::Dense);
+        }
         let chunk_vecs = self.dense_chunk_vecs()?;
-        cuda::CudaRaVirtualD4State::new(&chunk_vecs, gamma_powers)
+        let refs: Vec<&[F]> = chunk_vecs.iter().map(Vec::as_slice).collect();
+        cuda::CudaRaVirtualD4State::new(&refs, gamma_powers)
             .map(cuda::CudaRaVirtualD4Sparse::Dense)
     }
 }
