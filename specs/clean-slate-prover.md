@@ -560,7 +560,11 @@ re-enters it, with the phase transition a method on the instance trait.
    items, not folklore.
 2. *O(rounds·degree) traffic.* Only round polynomials, claims, and commitments cross the seam;
    nothing T-sized does in the output direction. No accessor exposes kernel-internal tables.
-   (Prepare-time *inputs* may be T-sized typed relation data — the read-RAF rows.)
+   (Prepare-time *inputs* may be T-sized typed relation data — the read-RAF rows. One
+   output-direction carve-out: the joint-opening slot returns `MultilinearPoly` *handles* over
+   the grid-embedded committed polynomials, because the PCS opening must drive their
+   `fold_rows` — the handles may be lazy or device-backed; only the PCS's O(√N)-sized fold
+   results cross back.)
 3. *Async-compatible wording.* Contracts promise "returns the values," never "the work has
    completed"; `ingest_challenge` may enqueue. The per-round Fiat-Shamir challenge is the only
    protocol-forced synchronization point; everything else (members within a round, commitment

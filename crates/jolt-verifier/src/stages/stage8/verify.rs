@@ -30,14 +30,17 @@ use jolt_openings::{
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
-struct Stage8BatchEntry<'a, F: Field, C> {
-    id: JoltOpeningId,
-    commitment: &'a C,
+/// One assembled final-opening batch entry. Public because the prover's
+/// stage-8 recipe assembles its PCS batch statement through the same
+/// [`batch_entries`] wiring.
+pub struct Stage8BatchEntry<'a, F: Field, C> {
+    pub id: JoltOpeningId,
+    pub commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
-    opening_claim: Option<F>,
+    pub opening_claim: Option<F>,
     /// Lagrange factor embedding this polynomial's own opening point into the
     /// unified opening point.
-    scale: F,
+    pub scale: F,
 }
 
 #[expect(
@@ -118,7 +121,8 @@ where
 
     let entries = batch_entries(
         preprocessing,
-        proof,
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
         layout,
         trusted_advice_commitment,
         &opening_point,
@@ -229,16 +233,19 @@ where
     }))
 }
 
-/// Builds the final PCS batch in the canonical order from
-/// [`final_opening_polynomial_order`], resolving each polynomial's commitment,
-/// opening claim (clear mode only), and unified-point embedding scale.
 #[expect(
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
-fn batch_entries<'a, F, PCS, VC, ZkProof>(
+/// Assemble the final-opening batch entries in `final_opening_polynomial_order`,
+/// pairing each polynomial's commitment with its opening claim (clear mode) and
+/// its Lagrange embedding scale. Public because the prover's stage-8 recipe
+/// builds its PCS batch statement from the same assembly (passing its own
+/// stage-0 commitments where the verifier passes the proof's).
+pub fn batch_entries<'a, F, PCS, VC>(
     preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    proof: &'a JoltProof<PCS, VC, ZkProof>,
+    commitments: &'a JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&'a PCS::Output>,
     layout: JoltRaPolynomialLayout,
     trusted_advice_commitment: Option<&'a PCS::Output>,
     opening_point: &[F],
@@ -274,12 +281,12 @@ where
         let (commitment, own_point, opening_claim): (&PCS::Output, &[F], Option<F>) =
             match polynomial {
                 JoltCommittedPolynomial::RamInc => (
-                    &proof.commitments.ram_inc,
+                    &commitments.ram_inc,
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
                 ),
                 JoltCommittedPolynomial::RdInc => (
-                    &proof.commitments.rd_inc,
+                    &commitments.rd_inc,
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
                 ),
@@ -289,7 +296,7 @@ where
                     let (commitment_list, claim_list): (&[PCS::Output], Option<&[F]>) =
                         match polynomial {
                             JoltCommittedPolynomial::InstructionRa(_) => (
-                                &proof.commitments.instruction_ra,
+                                &commitments.instruction_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7
                                         .hamming_weight_claim_reduction
@@ -298,13 +305,13 @@ where
                                 }),
                             ),
                             JoltCommittedPolynomial::BytecodeRa(_) => (
-                                &proof.commitments.bytecode_ra,
+                                &commitments.bytecode_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7.hamming_weight_claim_reduction.bytecode_ra.as_slice()
                                 }),
                             ),
                             JoltCommittedPolynomial::RamRa(_) => (
-                                &proof.commitments.ram_ra,
+                                &commitments.ram_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7.hamming_weight_claim_reduction.ram_ra.as_slice()
                                 }),
@@ -332,9 +339,7 @@ where
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = match polynomial {
                         JoltCommittedPolynomial::TrustedAdvice => trusted_advice_commitment,
-                        JoltCommittedPolynomial::UntrustedAdvice => {
-                            proof.untrusted_advice_commitment.as_ref()
-                        }
+                        JoltCommittedPolynomial::UntrustedAdvice => untrusted_advice_commitment,
                         JoltCommittedPolynomial::BytecodeChunk(index) => committed_program
                             .and_then(|committed| committed.bytecode_chunk_commitments.get(index)),
                         JoltCommittedPolynomial::ProgramImageInit => {

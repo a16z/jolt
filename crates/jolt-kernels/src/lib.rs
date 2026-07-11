@@ -35,6 +35,7 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 mod naive;
+pub mod opening;
 pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;

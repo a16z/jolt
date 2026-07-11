@@ -21,6 +21,7 @@ use crate::instruction_claim_reduction::InstructionClaimReductionProver;
 use crate::instruction_input::InstructionInputProver;
 use crate::instruction_ra_virtualization::InstructionRaVirtualizationProver;
 use crate::instruction_read_raf::InstructionReadRafProver;
+use crate::opening::JointOpeningPolynomials;
 use crate::ram_hamming_booleanity::RamHammingBooleanityProver;
 use crate::ram_output_check::RamOutputCheckProver;
 use crate::ram_ra_claim_reduction::RamRaClaimReductionProver;
@@ -69,6 +70,7 @@ where
     pub instruction_ra_virtualization: Box<dyn InstructionRaVirtualizationProver<F>>,
     pub inc_claim_reduction: Box<dyn IncClaimReductionProver<F>>,
     pub hamming_weight_claim_reduction: Box<dyn HammingWeightClaimReductionProver<F>>,
+    pub joint_opening: Box<dyn JointOpeningPolynomials<F>>,
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -110,6 +112,7 @@ where
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),
             hamming_weight_claim_reduction: Box::new(ReferenceBackend),
+            joint_opening: Box::new(ReferenceBackend),
         }
     }
 
