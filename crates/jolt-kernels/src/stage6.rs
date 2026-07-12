@@ -5530,7 +5530,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
                 reason: "RA virtual degree bound is unsupported",
             });
         }
-        if chunks.current_len() != eq_cycle.len() {
+        if split_eq.is_none() && chunks.current_len() != eq_cycle.len() {
             return Err(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "RA virtual chunks have inconsistent lengths",
@@ -6589,8 +6589,13 @@ fn ram_ra_virtual_state<'a, F: Field>(
         trace_rounds,
         "stage6.input.stage5.ram_ra_claim_reduction.RamRa",
     )?;
-    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
-    require_operand_count("stage6.ram_ra_virtual.eq", trace_len, eq_cycle.len())?;
+    let eq_cycle = if backend == "cuda" {
+        Vec::new()
+    } else {
+        let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
+        require_operand_count("stage6.ram_ra_virtual.eq", trace_len, eq_cycle.len())?;
+        eq_cycle
+    };
 
     let outputs = ram_ra_virtual_output_plans(program, witness.ram_ra_chunks.len())?;
 
@@ -6660,13 +6665,6 @@ fn instruction_ra_virtual_state<'a, F: Field>(
         trace_rounds,
         "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
     )?;
-    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
-    require_operand_count(
-        "stage6.instruction_ra_virtual.eq",
-        trace_len,
-        eq_cycle.len(),
-    )?;
-
     let chunks_per_virtual = witness.instruction_ra_chunks.len() / witness.virtual_count;
     let gamma = store.scalar("stage6.instruction_ra_virtual.gamma")?;
     let outputs =
@@ -6683,6 +6681,18 @@ fn instruction_ra_virtual_state<'a, F: Field>(
             )?)
         }
         _ => None,
+    };
+
+    let eq_cycle = if backend == "cuda" && sparse_chunks.is_some() {
+        Vec::new()
+    } else {
+        let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
+        require_operand_count(
+            "stage6.instruction_ra_virtual.eq",
+            trace_len,
+            eq_cycle.len(),
+        )?;
+        eq_cycle
     };
 
     if let Some(sparse_chunks) = sparse_chunks {
