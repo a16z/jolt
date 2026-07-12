@@ -599,12 +599,15 @@ impl CudaCoreBooleanitySparse {
                 flat_tables.extend_from_slice(&v.inner_limbs().0);
             }
         }
-        let mut present_mask = Vec::with_capacity(source_rows);
-        let mut values = Vec::with_capacity(source_rows * poly_stride);
-        for row in indices {
-            present_mask.push(row.present_mask());
-            values.extend_from_slice(row.values());
-        }
+        let (present_mask, values): (Vec<u64>, Vec<u8>) = {
+            use rayon::prelude::*;
+            let present_mask = indices.par_iter().map(|row| row.present_mask()).collect();
+            let values = indices
+                .par_iter()
+                .flat_map_iter(|row| row.values().iter().copied())
+                .collect();
+            (present_mask, values)
+        };
         let rho = ctx.upload(crate::cuda::as_fr_slice(rho)?).ok()?;
 
         Some(Self::Sparse {
