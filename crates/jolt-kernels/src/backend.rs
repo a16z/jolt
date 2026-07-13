@@ -10,7 +10,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_openings::CommitmentScheme;
 
 use crate::advice_claim_reduction::AdviceClaimReduction;
 use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
@@ -84,57 +84,12 @@ where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// The always-present reference backend: every slot served by the naive
-    /// tier. It is the equivalence anchor optimized backends are tested
-    /// against, and the fallback partial backends compose over. Its commit
-    /// slot streams, hence the [`StreamingCommitment`] bound — a
-    /// reference-implementation requirement, not a seam one.
-    pub fn reference() -> Self
-    where
-        PCS: StreamingCommitment,
-    {
-        Self {
-            commit: Box::new(ReferenceBackend),
-            spartan_outer: Box::new(ReferenceBackend),
-            spartan_product: Box::new(ReferenceBackend),
-            ram_read_write: Box::new(ReferenceBackend),
-            instruction_claim_reduction: Box::new(ReferenceBackend),
-            ram_raf_evaluation: Box::new(ReferenceBackend),
-            ram_output_check: Box::new(ReferenceBackend),
-            spartan_shift: Box::new(ReferenceBackend),
-            instruction_input: Box::new(ReferenceBackend),
-            registers_claim_reduction: Box::new(ReferenceBackend),
-            registers_read_write: Box::new(ReferenceBackend),
-            ram_val_check: Box::new(ReferenceBackend),
-            instruction_read_raf: Box::new(ReferenceBackend),
-            ram_ra_claim_reduction: Box::new(ReferenceBackend),
-            registers_val_evaluation: Box::new(ReferenceBackend),
-            bytecode_read_raf_address: Box::new(ReferenceBackend),
-            booleanity_address: Box::new(ReferenceBackend),
-            bytecode_read_raf_cycle: Box::new(ReferenceBackend),
-            booleanity_cycle: Box::new(ReferenceBackend),
-            ram_hamming_booleanity: Box::new(ReferenceBackend),
-            ram_ra_virtualization: Box::new(ReferenceBackend),
-            instruction_ra_virtualization: Box::new(ReferenceBackend),
-            inc_claim_reduction: Box::new(ReferenceBackend),
-            advice_claim_reduction: Box::new(ReferenceBackend),
-            bytecode_claim_reduction: Box::new(ReferenceBackend),
-            program_image_claim_reduction: Box::new(ReferenceBackend),
-            hamming_weight_claim_reduction: Box::new(ReferenceBackend),
-            joint_opening: Box::new(ReferenceBackend),
-        }
-    }
-
     /// Open the proof-scoped session that slot state lives in. One session
     /// per proof; drop it when the proof is assembled.
     pub fn begin_proof(&self) -> ProofSession {
         ProofSession::default()
     }
 }
-
-/// The reference implementations' marker type: implements every slot trait
-/// (each per-relation module hosts its impl next to the kernel it wraps).
-pub struct ReferenceBackend;
 
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///

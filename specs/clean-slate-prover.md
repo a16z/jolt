@@ -152,10 +152,13 @@ Key abstractions introduced:
   *optimized* dispatch — each hop equivalence-tested against the tier above.
 
 - **Per-relation kernel interfaces** (in `jolt-kernels`, one module per relation mirroring the
-  verifier's per-relation files, e.g. `spartan_outer`): each module defines the slot's
-  object-safe factory and instance traits — build compute state from the relation's typed
-  dimensions and `&dyn WitnessProvider`; instances implement `ProveRounds` and own the
-  `final_evals → SumcheckOutputClaims` mapping — and hosts the reference implementation.
+  verifier's per-relation files, e.g. `spartan_outer`): each crate-root module defines the
+  slot's object-safe factory and instance traits — build compute state from the relation's
+  typed dimensions and `&dyn WitnessProvider`; instances implement `ProveRounds` and own the
+  `final_evals → SumcheckOutputClaims` mapping. The reference implementation lives in the
+  module's sibling under `reference/` (the reference backend's directory — the seam never
+  depends on it; a future optimized backend is a sibling directory implementing the same
+  crate-root traits).
   `jolt-prover` stage recipes hold no compute and name no concrete kernel type: implementations
   are selected by the `JoltBackend` value, so swapping naive-backed → streaming → device never
   touches orchestration.

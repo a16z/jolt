@@ -7,9 +7,10 @@
 //! Kernel APIs consume witness oracles, field elements, and PCS setups —
 //! never a transcript, never Fiat-Shamir — and return canonical values.
 //! Sumcheck kernels implement `jolt_sumcheck::ProveRounds` and are added per
-//! relation as stages demand them, each in a per-relation module defining
-//! the slot's object-safe factory/instance traits next to the reference
-//! implementation. The [`NaiveSumcheckProver`] is the reference tier: it
+//! relation as stages demand them: each per-relation module at the crate
+//! root defines the slot's object-safe factory/instance traits (the seam),
+//! and its sibling under [`reference`] holds the reference implementation.
+//! The [`NaiveSumcheckProver`] is the reference tier: it
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness
 //! scale with zero relation-specific code; optimized kernels are
@@ -37,7 +38,6 @@ pub mod instruction_claim_reduction;
 pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
-mod naive;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod program_image_claim_reduction;
@@ -48,6 +48,7 @@ pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
 pub mod ram_val_check;
+pub mod reference;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
@@ -55,10 +56,10 @@ pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
 mod sumcheck;
-mod views;
 
-pub use backend::{JoltBackend, ProofSession, ReferenceBackend};
+pub use backend::{JoltBackend, ProofSession};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
-pub use naive::NaiveSumcheckProver;
+pub use reference::naive::NaiveSumcheckProver;
+pub use reference::ReferenceBackend;
 pub use sumcheck::ProveSumcheck;
