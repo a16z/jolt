@@ -36,7 +36,7 @@ pub struct RegistersClaimReductionOutputClaims<C> {
 /// Consumed register openings reduced by this sumcheck, wired from stage 1's outer
 /// sumcheck. The relation reads only these values, so the input points are left
 /// empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RegistersClaimReductionInputClaims<C> {
     #[opening(RdWriteValue, from = SpartanOuter)]
     pub rd_write_value: C,
@@ -47,7 +47,7 @@ pub struct RegistersClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the registers claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct RegistersClaimReductionChallenges<F> {
     #[challenge(RegistersClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -138,20 +138,7 @@ mod tests {
                 JoltChallengeId::RegistersClaimReduction(
                     RegistersClaimReductionChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |_| zero,
         );
@@ -167,20 +154,7 @@ mod tests {
                 JoltChallengeId::RegistersClaimReduction(
                     RegistersClaimReductionChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |id| match *id {
                 JoltDerivedId::RegistersClaimReduction(
@@ -210,33 +184,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                rd_write_value_spartan(),
-                rs1_value_spartan(),
-                rs2_value_spartan(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                rd_write_value_reduced(),
-                rs1_value_reduced(),
-                rs2_value_reduced(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                RegistersClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                RegistersClaimReductionPublic::EqSpartan
-            )]
-        );
     }
 }

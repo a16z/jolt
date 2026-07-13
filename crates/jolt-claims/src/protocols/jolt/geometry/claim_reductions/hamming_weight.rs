@@ -2,9 +2,10 @@ use jolt_field::{Field, RingCore};
 
 use crate::opening;
 
-use super::super::super::{JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial};
+use super::super::super::{JoltExpr, JoltOpeningId, JoltRelationId};
 use super::super::dimensions::JoltFormulaPointError;
 use super::super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
+use super::super::ram::ram_hamming_weight;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct HammingWeightClaimReductionDimensions {
@@ -109,13 +110,6 @@ pub(crate) fn virtualization_claim(polynomial: JoltRaPolynomial) -> JoltOpeningI
 
 pub(crate) fn reduced_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
     polynomial.opening(JoltRelationId::HammingWeightClaimReduction)
-}
-
-pub(crate) fn ram_hamming_weight() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RamHammingWeight,
-        JoltRelationId::RamHammingBooleanity,
-    )
 }
 
 #[cfg(test)]

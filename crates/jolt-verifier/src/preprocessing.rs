@@ -1,7 +1,7 @@
 //! Verifier preprocessing inputs.
 
 use common::jolt_device::MemoryLayout;
-use jolt_crypto::{DeriveSetup, VectorCommitment};
+use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use serde::{Deserialize, Serialize};
@@ -140,24 +140,6 @@ where
             preprocessing_digest,
             pcs_setup,
             vc_setup,
-        }
-    }
-
-    /// Reuses the PCS setup source to derive the vector-commitment setup.
-    pub fn from_pcs_prover_setup(
-        program: ProgramPreprocessing<PCS>,
-        preprocessing_digest: [u8; 32],
-        pcs_prover_setup: &PCS::ProverSetup,
-        vc_capacity: usize,
-    ) -> Self
-    where
-        VC::Setup: DeriveSetup<PCS::ProverSetup>,
-    {
-        Self {
-            program,
-            preprocessing_digest,
-            pcs_setup: PCS::verifier_setup(pcs_prover_setup),
-            vc_setup: Some(VC::Setup::derive(pcs_prover_setup, vc_capacity)),
         }
     }
 }

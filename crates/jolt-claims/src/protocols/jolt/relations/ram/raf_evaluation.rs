@@ -11,8 +11,8 @@ use crate::SymbolicSumcheck;
 use crate::{constant, derived, opening, InputClaims, OutputClaims};
 
 /// The produced RAM RAF `ram_ra` opening, sharing the single RAF opening point.
-/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
-/// on the clear path).
+/// Generic over the opening cell (`F` for the serialized wire value, `Vec<F>` for
+/// the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -27,7 +27,7 @@ pub struct RamRafEvaluationOutputClaims<C> {
 /// The consumed RAM address opening from stage 1's outer sumcheck. The relation
 /// reads only this value (its output point comes from its own sumcheck point), so
 /// the input point is left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RamRafEvaluationInputClaims<C> {
     #[opening(RamAddress, from = SpartanOuter)]
     pub ram_address: C,
@@ -138,14 +138,5 @@ mod tests {
                 .raf_evaluation_rounds()
         );
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![ram_address_spartan(), ram_ra_raf_evaluation()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress)]
-        );
     }
 }

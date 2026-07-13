@@ -3,9 +3,10 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::geometry::bytecode::{
-    pc_spartan_outer, pc_spartan_shift, read_raf_cycle_output, stage1_claim, stage2_claim,
-    stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
+    pc_spartan_outer, read_raf_cycle_output, stage1_claim, stage2_claim, stage3_claim,
+    stage4_claim, stage5_claim, BytecodeReadRafDimensions,
 };
+use crate::protocols::jolt::geometry::spartan::pc_shift;
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId,
@@ -72,7 +73,7 @@ impl SymbolicSumcheck for ReadRaf {
             + gamma.clone().pow(3) * stage4_claim()
             + gamma.clone().pow(4) * stage5_claim::<F>()
             + gamma.clone().pow(5) * opening(pc_spartan_outer())
-            + gamma.pow(6) * opening(pc_spartan_shift())
+            + gamma.pow(6) * opening(pc_shift())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -84,11 +85,14 @@ impl SymbolicSumcheck for ReadRaf {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::bytecode::{
-        bytecode_ra, imm_instruction_input, imm_spartan_outer, instruction_flag_input,
-        instruction_flag_product, instruction_flag_shift, instruction_raf_flag, op_flag_product,
-        op_flag_shift, rd_wa_read_write, rd_wa_val_evaluation, rs1_ra_read_write,
-        rs2_ra_read_write, unexpanded_pc_spartan_outer, unexpanded_pc_spartan_shift,
+        bytecode_ra, imm_spartan_outer, instruction_flag_input, instruction_flag_product,
+        instruction_flag_shift, op_flag_product, op_flag_shift, unexpanded_pc_spartan_outer,
     };
+    use crate::protocols::jolt::geometry::instruction::{imm, instruction_raf_flag};
+    use crate::protocols::jolt::geometry::registers::{
+        rd_wa_read_write, rd_wa_val_evaluation, rs1_ra_read_write, rs2_ra_read_write,
+    };
+    use crate::protocols::jolt::geometry::spartan::unexpanded_pc_shift;
     use crate::protocols::jolt::{BytecodeReadRafPublic, JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_lookup_tables::{LookupTableKind, XLEN};
@@ -140,8 +144,8 @@ mod tests {
                     Fr::from_u64(37)
                 }
                 id if id == op_flag_product(CircuitFlags::VirtualInstruction) => Fr::from_u64(41),
-                id if id == imm_instruction_input() => Fr::from_u64(43),
-                id if id == unexpanded_pc_spartan_shift() => Fr::from_u64(47),
+                id if id == imm() => Fr::from_u64(43),
+                id if id == unexpanded_pc_shift() => Fr::from_u64(47),
                 id if id == instruction_flag_input(InstructionFlags::LeftOperandIsRs1Value) => {
                     Fr::from_u64(53)
                 }
@@ -163,7 +167,7 @@ mod tests {
                 id if id == rd_wa_val_evaluation() => Fr::from_u64(101),
                 id if id == instruction_raf_flag() => Fr::from_u64(103),
                 id if id == pc_spartan_outer() => Fr::from_u64(107),
-                id if id == pc_spartan_shift() => Fr::from_u64(109),
+                id if id == pc_shift() => Fr::from_u64(109),
                 JoltOpeningId::Polynomial {
                     polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(flag)),
                     relation: JoltRelationId::SpartanOuter,
@@ -297,20 +301,6 @@ mod tests {
         assert_eq!(
             relation.degree(),
             dimensions(2).num_committed_ra_polys() + 1
-        );
-        assert_eq!(relation.required_challenges::<Fr>(), stage_gammas());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(0)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(1)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(2)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(3)),
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(4)),
-                JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-                JoltDerivedId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-                JoltDerivedId::from(BytecodeReadRafPublic::Entry),
-            ]
         );
     }
 

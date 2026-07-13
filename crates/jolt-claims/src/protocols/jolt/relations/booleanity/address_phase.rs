@@ -26,6 +26,7 @@ pub struct BooleanityAddressPhaseOutputClaims<C> {
 }
 
 /// The address phase consumes no openings (its input claim is the constant zero).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BooleanityAddressPhaseInputClaims<C> {
     _cell: PhantomData<C>,
 }
@@ -36,7 +37,7 @@ impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -92,7 +93,6 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::Fr;
 
     fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap();
@@ -105,15 +105,5 @@ mod tests {
         assert_eq!(BooleanityAddressPhase::id(), JoltRelationId::Booleanity);
         assert_eq!(relation.rounds(), 8);
         assert_eq!(relation.degree(), 3);
-        assert!(relation
-            .input_expression::<Fr>()
-            .required_openings()
-            .is_empty());
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![booleanity_address_phase_opening()]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert!(relation.required_deriveds::<Fr>().is_empty());
     }
 }

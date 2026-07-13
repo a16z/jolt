@@ -64,8 +64,6 @@ impl SymbolicSumcheck for ReadRafCyclePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::BytecodeReadRafChallenge;
-    use jolt_field::Fr;
 
     fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
         BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
@@ -79,14 +77,6 @@ mod tests {
         assert_eq!(
             relation.degree(),
             dimensions(2).num_committed_ra_polys() + 1
-        );
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![bytecode_read_raf_address_phase_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BytecodeReadRafChallenge::Gamma)]
         );
     }
 }

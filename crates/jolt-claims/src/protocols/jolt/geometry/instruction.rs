@@ -10,7 +10,13 @@ use super::super::{
     InstructionReadRafPublic, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial,
 };
+use super::claim_reductions::instruction::{
+    left_instruction_input_reduced, lookup_output_reduced, right_instruction_input_reduced,
+};
 use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError};
+use super::spartan::{
+    left_instruction_input_product, lookup_output_product, right_instruction_input_product,
+};
 
 pub(crate) const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
 pub(crate) const READ_RAF_BASE_DEGREE: usize = 2;
@@ -207,29 +213,17 @@ pub fn read_raf_output_openings(
 ) -> InstructionReadRafOutputOpenings {
     InstructionReadRafOutputOpenings {
         lookup_table_flags: LookupTableKind::<XLEN>::iter()
-            .map(read_raf_lookup_table_flag_opening)
+            .map(lookup_table_flag)
             .collect(),
         instruction_ra: (0..dimensions.num_virtual_ra_polys())
-            .map(read_raf_instruction_ra_opening)
+            .map(instruction_ra)
             .collect(),
-        instruction_raf_flag: read_raf_instruction_raf_flag_opening(),
+        instruction_raf_flag: instruction_raf_flag(),
     }
 }
 
 pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
     [(lookup_output_reduced(), lookup_output_product())]
-}
-
-pub fn read_raf_lookup_table_flag_opening(table: LookupTableKind<XLEN>) -> JoltOpeningId {
-    lookup_table_flag(table)
-}
-
-pub fn read_raf_instruction_ra_opening(index: usize) -> JoltOpeningId {
-    instruction_ra(index)
-}
-
-pub fn read_raf_instruction_raf_flag_opening() -> JoltOpeningId {
-    instruction_raf_flag()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,7 +248,7 @@ pub fn ra_virtualization_output_openings(
         .map(|virtual_index| {
             let start = virtual_index * dimensions.num_committed_per_virtual();
             (start..start + dimensions.num_committed_per_virtual())
-                .map(ra_virtualization_committed_instruction_ra_opening)
+                .map(committed_instruction_ra)
                 .collect()
         })
         .collect();
@@ -262,10 +256,6 @@ pub fn ra_virtualization_output_openings(
     InstructionRaVirtualizationOutputOpenings {
         committed_instruction_ra_by_virtual,
     }
-}
-
-pub fn ra_virtualization_committed_instruction_ra_opening(index: usize) -> JoltOpeningId {
-    committed_instruction_ra(index)
 }
 
 pub(crate) fn eq_table_value(table: LookupTableKind<XLEN>) -> InstructionReadRafPublic {
@@ -312,84 +302,28 @@ where
     product
 }
 
-pub(crate) fn left_instruction_input_product() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::LeftInstructionInput,
-        JoltRelationId::SpartanProductVirtualization,
-    )
-}
-
-pub(crate) fn right_instruction_input_product() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RightInstructionInput,
-        JoltRelationId::SpartanProductVirtualization,
-    )
-}
-
-fn left_instruction_input_reduced() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::LeftInstructionInput,
-        JoltRelationId::InstructionClaimReduction,
-    )
-}
-
-fn right_instruction_input_reduced() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RightInstructionInput,
-        JoltRelationId::InstructionClaimReduction,
-    )
-}
-
-fn lookup_output_product() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::LookupOutput,
-        JoltRelationId::SpartanProductVirtualization,
-    )
-}
-
-pub(crate) fn lookup_output_reduced() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::LookupOutput,
-        JoltRelationId::InstructionClaimReduction,
-    )
-}
-
-pub(crate) fn left_lookup_operand_reduced() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::LeftLookupOperand,
-        JoltRelationId::InstructionClaimReduction,
-    )
-}
-
-pub(crate) fn right_lookup_operand_reduced() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RightLookupOperand,
-        JoltRelationId::InstructionClaimReduction,
-    )
-}
-
-pub(crate) fn instruction_ra(index: usize) -> JoltOpeningId {
+pub fn instruction_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionRa(index),
         JoltRelationId::InstructionReadRaf,
     )
 }
 
-fn committed_instruction_ra(index: usize) -> JoltOpeningId {
+pub fn committed_instruction_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::InstructionRa(index),
         JoltRelationId::InstructionRaVirtualization,
     )
 }
 
-pub(crate) fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
+pub fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupTableFlag(table.index()),
         JoltRelationId::InstructionReadRaf,
     )
 }
 
-pub(crate) fn instruction_raf_flag() -> JoltOpeningId {
+pub fn instruction_raf_flag() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionRafFlag,
         JoltRelationId::InstructionReadRaf,

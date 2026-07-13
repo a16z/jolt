@@ -18,7 +18,6 @@
 //! | [`claim`] | [`SumcheckClaim`] (input statement) and [`EvaluationClaim`] (reduction output) |
 //! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
-//! | [`batched_verifier`] | [`BatchedSumcheckVerifier`] — batched verification via RLC |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
 //! | [`round_proof`] | [`RoundMessage`] and [`ClearRound`] traits |
@@ -40,14 +39,11 @@
 //! - [`BooleanHypercube`] — the standard `{0,1}` sumcheck round domain.
 //! - [`CenteredIntegerDomain`] — centered consecutive-integer sumcheck round domain.
 //! - [`SumcheckError`] — error variants: `RoundCheckFailed`, `DegreeBoundExceeded`,
-//!   `WrongNumberOfRounds`, `EmptyClaims`.
+//!   `WrongNumberOfRounds`.
 //!
 //! ## Verifiers
 //! - [`SumcheckVerifier`] — single-instance verifier. Replays the Fiat-Shamir
 //!   transcript and checks each round.
-//! - [`BatchedSumcheckVerifier`] — batched verification via random linear
-//!   combination. Supports claims with different `num_vars` and `degree` bounds
-//!   via front-loaded padding.
 //!
 //! ## Per-round proof types
 //! - [`RoundMessage`] — degree bound and transcript absorption.
@@ -67,7 +63,6 @@
 //! ```
 //!
 
-pub mod batched_verifier;
 pub mod claim;
 pub mod committed;
 pub mod domain;
@@ -98,13 +93,11 @@ where
     transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
 }
 
-pub use batched_verifier::{
-    BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
-};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 pub use committed::{
-    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
-    CommittedSumcheckProof, VerifiedCommittedRound,
+    BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
+    CommittedRoundWitness, CommittedSumcheckConsistency, CommittedSumcheckProof,
+    VerifiedCommittedRound,
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;

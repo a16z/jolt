@@ -33,16 +33,23 @@ pub(crate) fn booleanity_cycle_output<F>(dimensions: BooleanityDimensions) -> Jo
 where
     F: RingCore,
 {
+    booleanity_output(booleanity_output_openings(dimensions.layout))
+}
+
+/// The booleanity fold `eq · Σ_i γ^{2i} (x_i² − x_i)` over any boolean-checked
+/// opening list; shared by the base and lattice-mode variants of the relation
+/// so the formula has one owner.
+pub(crate) fn booleanity_output<F>(openings: impl IntoIterator<Item = JoltOpeningId>) -> JoltExpr<F>
+where
+    F: RingCore,
+{
     let gamma = challenge(BooleanityChallenge::Gamma);
     let eq_address_cycle = derived(BooleanityPublic::EqAddressCycle);
     let mut output = JoltExpr::zero();
 
-    for (i, opening_id) in booleanity_output_openings(dimensions.layout)
-        .into_iter()
-        .enumerate()
-    {
-        let ra = opening(opening_id);
-        output = output + gamma.clone().pow(2 * i) * (ra.clone() * ra.clone() - ra);
+    for (i, opening_id) in openings.into_iter().enumerate() {
+        let x = opening(opening_id);
+        output = output + gamma.clone().pow(2 * i) * (x.clone() * x.clone() - x);
     }
 
     eq_address_cycle * output

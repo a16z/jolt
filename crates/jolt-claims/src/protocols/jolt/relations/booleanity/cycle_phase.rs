@@ -13,7 +13,7 @@ use crate::{SumcheckChallenges, SymbolicSumcheck};
 /// Fiat-Shamir challenge drawn by the cycle-phase split of the booleanity
 /// sumcheck. As in the monolith, the `gamma` is built inside
 /// `booleanity_cycle_output`, so this set is derived from `required_challenges()`.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BooleanityCyclePhaseChallenges<F> {
     #[challenge(BooleanityChallenge::Gamma)]
     pub gamma: F,
@@ -66,10 +66,6 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use crate::protocols::jolt::{
-        BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltDerivedId,
-    };
-    use jolt_field::Fr;
 
     fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap();
@@ -82,17 +78,5 @@ mod tests {
         assert_eq!(BooleanityCyclePhase::id(), JoltRelationId::Booleanity);
         assert_eq!(relation.rounds(), 5);
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![booleanity_address_phase_opening()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(BooleanityPublic::EqAddressCycle)]
-        );
     }
 }

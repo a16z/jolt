@@ -46,7 +46,9 @@ pub struct InstructionRaSumcheckParams<F: JoltField> {
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     pub r_address: OpeningPoint<BIG_ENDIAN, F>,
     pub one_hot_params: OneHotParams,
-    pub gamma_powers: Vec<F>,
+    /// The single squeezed batching scalar; the per-virtual folding weights are
+    /// its powers ([`Self::gamma_powers`]).
+    pub gamma: F,
     pub n_virtual_ra_polys: usize,
     pub n_committed_ra_polys: usize,
     /// Number of committed ra polynomials that multiply together to
@@ -86,16 +88,30 @@ impl<F: JoltField> InstructionRaSumcheckParams<F> {
         );
         let (_, r_cycle) = r.split_at(ra_virtual_log_k_chunk);
 
-        let gamma_powers = transcript.challenge_scalar_powers(n_virtual_ra_polys);
+        // One squeeze, byte-identical to the former
+        // `challenge_scalar_powers(n_virtual_ra_polys)` draw (which squeezes once
+        // and expands locally).
+        let gamma: F = transcript.challenge_scalar();
         Self {
             r_cycle,
             one_hot_params: one_hot_params.clone(),
             r_address: OpeningPoint::new(r_address),
-            gamma_powers,
+            gamma,
             n_virtual_ra_polys,
             n_committed_ra_polys,
             n_committed_per_virtual,
         }
+    }
+
+    /// The per-virtual folding weights `[1, γ, γ², ...]` (length
+    /// `n_virtual_ra_polys`) — the expansion `challenge_scalar_powers` formerly
+    /// applied to the same squeezed scalar.
+    pub fn gamma_powers(&self) -> Vec<F> {
+        let mut powers = vec![F::one(); self.n_virtual_ra_polys];
+        for index in 1..powers.len() {
+            powers[index] = powers[index - 1] * self.gamma;
+        }
+        powers
     }
 }
 
@@ -105,6 +121,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
     }
 
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let gamma_powers = self.gamma_powers();
         let mut res = F::zero();
 
         for i in 0..self.n_virtual_ra_polys {
@@ -112,7 +129,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
             );
-            res += self.gamma_powers[i] * ra_i_claim;
+            res += gamma_powers[i] * ra_i_claim;
         }
 
         res
@@ -144,7 +161,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
 
     #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
-        self.gamma_powers.clone()
+        self.gamma_powers()
     }
 
     #[cfg(feature = "zk")]
@@ -176,9 +193,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
         let r = self.normalize_opening_point(sumcheck_challenges);
         let eq_eval: F = EqPolynomial::mle_endian(&self.r_cycle, &r);
 
-        self.gamma_powers
-            .iter()
-            .map(|gamma_i| eq_eval * *gamma_i)
+        self.gamma_powers()
+            .into_iter()
+            .map(|gamma_i| eq_eval * gamma_i)
             .collect()
     }
 }
@@ -211,7 +228,7 @@ impl<F: JoltField> InstructionRaSumcheckProver<F> {
             .collect();
 
         let n_committed_per_virtual = params.n_committed_per_virtual;
-        let gamma_powers = &params.gamma_powers;
+        let gamma_powers = params.gamma_powers();
 
         let ra_i_polys = H_indices
             .into_par_iter()
@@ -301,6 +318,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
             .params
             .one_hot_params
             .compute_r_address_chunks::<F>(&self.params.r_address.r);
+        let gamma_powers = self.params.gamma_powers();
 
         for (i, r_address) in r_address_chunks.into_iter().enumerate() {
             // Undo the per-batch γ scaling applied in `initialize` before caching openings,
@@ -308,7 +326,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
             let mut claim = self.ra_i_polys[i].final_sumcheck_claim();
             if i % self.params.n_committed_per_virtual == 0 {
                 let batch = i / self.params.n_committed_per_virtual;
-                let gamma = self.params.gamma_powers[batch];
+                let gamma = gamma_powers[batch];
                 if gamma != F::one() {
                     claim = claim / gamma;
                 }
@@ -373,6 +391,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let eq_eval = EqPolynomial::mle_endian(&self.params.r_cycle, &r);
+        let gamma_powers = self.params.gamma_powers();
 
         // Claims of the committed ra polynomials.
         let mut committed_ra_claims = (0..self.params.n_committed_ra_polys).map(|i| {
@@ -389,7 +408,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
             let committed_ra_prod = (&mut committed_ra_claims)
                 .take(self.params.n_committed_per_virtual)
                 .product::<F>();
-            ra_acc += self.params.gamma_powers[i] * committed_ra_prod;
+            ra_acc += gamma_powers[i] * committed_ra_prod;
         }
 
         eq_eval * ra_acc

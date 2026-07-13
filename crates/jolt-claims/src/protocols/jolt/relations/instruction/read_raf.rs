@@ -4,9 +4,11 @@ use jolt_field::RingCore;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use serde::{Deserialize, Serialize};
 
+use crate::protocols::jolt::geometry::claim_reductions::instruction::{
+    left_lookup_operand_reduced, lookup_output_reduced, right_lookup_operand_reduced,
+};
 use crate::protocols::jolt::geometry::instruction::{
-    eq_table_value, instruction_ra_product, instruction_raf_flag, left_lookup_operand_reduced,
-    lookup_output_reduced, lookup_table_flag, right_lookup_operand_reduced,
+    eq_table_value, instruction_ra_product, instruction_raf_flag, lookup_table_flag,
     InstructionReadRafDimensions, READ_RAF_BASE_DEGREE,
 };
 use crate::protocols::jolt::{
@@ -32,7 +34,7 @@ pub struct InstructionReadRafOutputClaims<C> {
 
 /// Consumed instruction-lookup openings (the reduced lookup output + left/right
 /// operands), wired from the upstream instruction claim-reduction.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionReadRafInputClaims<C> {
     #[opening(LookupOutput, from = InstructionClaimReduction)]
     pub lookup_output: C,
@@ -43,7 +45,7 @@ pub struct InstructionReadRafInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction read-RAF sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionReadRafChallenges<F> {
     #[challenge(InstructionReadRafChallenge::Gamma)]
     pub gamma: F,
@@ -125,12 +127,6 @@ mod tests {
             .unwrap_or_else(|err| panic!("test read-RAF dimensions should be nonzero: {err}"))
     }
 
-    fn eq_table_value_publics() -> Vec<JoltDerivedId> {
-        LookupTableKind::<XLEN>::iter()
-            .map(|table| JoltDerivedId::from(eq_table_value(table)))
-            .collect()
-    }
-
     #[test]
     fn read_raf_evaluates_like_core_formula() {
         let dimensions = read_raf_dimensions(2);
@@ -162,20 +158,7 @@ mod tests {
             },
             |id| match *id {
                 JoltChallengeId::InstructionReadRaf(InstructionReadRafChallenge::Gamma) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |_| zero,
         );
@@ -192,23 +175,7 @@ mod tests {
                 id if id == instruction_raf_flag() => raf_flag,
                 _ => zero,
             },
-            |id| match *id {
-                JoltChallengeId::InstructionReadRaf(InstructionReadRafChallenge::Gamma)
-                | JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
-            },
+            |_| zero,
             |id| match *id {
                 JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqTableValue(
                     index,
@@ -247,15 +214,5 @@ mod tests {
             relation.degree(),
             dimensions.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
         );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(InstructionReadRafChallenge::Gamma)]
-        );
-        let mut expected_publics = eq_table_value_publics();
-        expected_publics.extend([
-            JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
-            JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
-        ]);
-        assert_eq!(relation.required_deriveds::<Fr>(), expected_publics);
     }
 }

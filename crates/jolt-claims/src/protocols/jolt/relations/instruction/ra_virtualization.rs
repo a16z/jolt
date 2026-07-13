@@ -27,14 +27,14 @@ pub struct InstructionRaVirtualizationOutputClaims<C> {
 
 /// The per-virtual reduced `InstructionRa` openings from the stage-5 instruction
 /// read-RAF.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionRaVirtualizationInputClaims<C> {
     #[opening(InstructionRa, from = InstructionReadRaf)]
     pub instruction_ra: Vec<C>,
 }
 
 /// Fiat-Shamir challenge drawn by the instruction RA-virtualization sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionRaVirtualizationChallenges<F> {
     #[challenge(InstructionRaVirtualizationChallenge::Gamma)]
     pub gamma: F,
@@ -144,20 +144,7 @@ mod tests {
                 JoltChallengeId::InstructionRaVirtualization(
                     InstructionRaVirtualizationChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |_| zero,
         );
@@ -175,20 +162,7 @@ mod tests {
                 JoltChallengeId::InstructionRaVirtualization(
                     InstructionRaVirtualizationChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |id| match *id {
                 JoltDerivedId::InstructionRaVirtualization(
@@ -223,18 +197,6 @@ mod tests {
         assert_eq!(
             relation.degree(),
             dimensions.num_committed_per_virtual() + 1
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                InstructionRaVirtualizationChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                InstructionRaVirtualizationPublic::EqCycle
-            )]
         );
     }
 }

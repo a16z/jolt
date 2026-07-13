@@ -18,7 +18,7 @@ pub struct BytecodeReadRafOutputClaims<C> {
 }
 
 /// The `BytecodeReadRafAddrClaim` intermediate consumed from the address phase.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReadRafInputClaims<C> {
     #[opening(BytecodeReadRafAddrClaim, from = BytecodeReadRaf)]
     pub address_phase: C,

@@ -1,48 +1,33 @@
 //! Shared per-relation opening-claim plumbing.
 //!
-//! The claim data model (the opening cells, the `OutputClaims`/`InputClaims`
-//! resolvers, and the value↔point zip) lives in `jolt-claims` and is re-exported
-//! here so existing `crate::stages::relations::{..}` paths keep resolving. Those
-//! traits are implemented by `#[derive(OutputClaims)]` / `#[derive(InputClaims)]`
-//! (crate `jolt-claims-derive`) on each relation's claim struct, making the
-//! canonical opening **order** and **count** a single-sourced consequence of a
-//! struct's field declaration order.
+//! The claim data model (the `OutputClaims`/`InputClaims` resolvers) lives in
+//! `jolt-claims` and is re-exported here so existing
+//! `crate::stages::relations::{..}` paths keep resolving. Those traits are
+//! implemented by `#[derive(OutputClaims)]` / `#[derive(InputClaims)]` (crate
+//! `jolt-claims-derive`) on each relation's cell-generic claim struct: the value
+//! resolver on the `F` cell and the opening-point accessors on the `Vec<F>` cell.
+//! This makes the canonical opening **order** and **count** a single-sourced
+//! consequence of a struct's field declaration order.
 //!
 //! Transcript I/O stays here: [`OutputAppend::append_openings`] is a thin
 //! verifier-side consumer of [`OutputClaims::opening_values`], so `jolt-claims`
 //! stays transcript-free while the Fiat-Shamir order remains single-sourced.
 
-pub use jolt_claims::{
-    zip_openings, GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, SumcheckChallenges,
-    ZipOpenings,
-};
+pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 
-use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
-};
+/// `#[derive(SumcheckBatch)]` generates a stage's aggregate claim types from a
+/// struct of [`ConcreteSumcheck`] instances; re-exported here alongside the
+/// per-relation claim plumbing it composes. See `specs/sumcheck-batch-derive.md`.
+pub use jolt_verifier_derive::SumcheckBatch;
+
+use std::collections::BTreeSet;
+
+use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_transcript::Transcript;
 
 use crate::VerifierError;
-
-/// Reject a relation's sumcheck spec that isn't a positive-degree
-/// Boolean-hypercube sumcheck. Every stage that runs a compressed-Boolean batched
-/// sumcheck applies this guard to its relation specs before trusting them; sharing
-/// it keeps the two error conditions identical across stages.
-pub fn check_relation_boolean_hypercube(
-    stage: JoltRelationId,
-    domain: JoltSumcheckDomain,
-    degree: usize,
-) -> Result<(), VerifierError> {
-    if degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree { stage, degree });
-    }
-    if !matches!(domain, JoltSumcheckDomain::BooleanHypercube) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage });
-    }
-    Ok(())
-}
 
 /// Transcript-side companion to [`OutputClaims`]: append a relation's produced
 /// openings to the Fiat-Shamir transcript in canonical order.
@@ -74,29 +59,35 @@ impl<F: Field, C: OutputClaims<F>> OutputAppend<F> for C {}
 pub type ConcreteSumcheckChallenges<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Challenges<F>;
 
-/// The consumed-claim struct of a [`ConcreteSumcheck`] instance, projected through
-/// its symbolic relation's [`Inputs`](SymbolicSumcheck::Inputs) GAT at cell `C`.
-pub type ConcreteSumcheckInputs<F, S, C> =
-    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Inputs<C>;
-/// The produced-claim struct of a [`ConcreteSumcheck`] instance, projected through
-/// its symbolic relation's [`Outputs`](SymbolicSumcheck::Outputs) GAT at cell `C`.
-pub type ConcreteSumcheckOutputs<F, S, C> =
-    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<C>;
+/// A [`ConcreteSumcheck`]'s consumed-claim values (wire form; implements [`InputClaims`]).
+pub type SumcheckInputClaims<F, S> =
+    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Inputs<F>;
+/// A [`ConcreteSumcheck`]'s consumed-claim opening points (carries per-field accessors).
+pub type SumcheckInputPoints<F, S> =
+    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Inputs<::std::vec::Vec<F>>;
+/// A [`ConcreteSumcheck`]'s produced-claim values (wire form; implements [`OutputClaims`]).
+pub type SumcheckOutputClaims<F, S> =
+    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<F>;
+/// A [`ConcreteSumcheck`]'s produced-claim opening points (carries per-field accessors).
+pub type SumcheckOutputPoints<F, S> =
+    <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<::std::vec::Vec<F>>;
 
 /// A single sumcheck instance, driven identically by the prover (while producing
 /// its proof) and the verifier (after checking it).
 ///
-/// Each relation's consumed/produced claim structs are generic over a *cell*:
-/// `OpeningClaim<F>` (point + value) on the clear path, `Vec<F>` (point only) on
-/// the ZK path, and `F` (value only) for the serialized wire form. Methods that
-/// need only points ([`derive_opening_points`](Self::derive_opening_points)) are
-/// generic over any [`GetPoint`] cell and run in both modes; methods that read
-/// values pin the `OpeningClaim<F>` cell and run only on the clear path. This
-/// makes "a ZK opening carries no value" a compile-time fact.
+/// Each relation's consumed/produced claims are split into a *Values* form (the
+/// serialized wire form, the cell-generic claim struct at `F` — one value per
+/// opening) and a *Points* form (the derived opening points, the same struct at
+/// `Vec<F>` — one point per opening). Methods that need only points
+/// ([`derive_opening_points`](Self::derive_opening_points),
+/// [`derive_output_term`](Self::derive_output_term)) take the Points forms and run
+/// in both modes; methods that read values ([`input_claim`](Self::input_claim),
+/// [`expected_output`](Self::expected_output)) take the Values forms. This makes
+/// "a ZK opening carries no value" a compile-time fact.
 pub trait ConcreteSumcheck<F: Field>
 where
-    ConcreteSumcheckInputs<F, Self, OpeningClaim<F>>: InputClaims<F>,
-    ConcreteSumcheckOutputs<F, Self, OpeningClaim<F>>: OutputClaims<F>,
+    SumcheckInputClaims<F, Self>: InputClaims<F>,
+    SumcheckOutputClaims<F, Self>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, JoltChallengeId>,
 {
     /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
@@ -109,24 +100,16 @@ where
         ChallengeId = JoltChallengeId,
     >;
 
-    /// The symbolic relation backing this instance.
     fn symbolic(&self) -> &Self::Symbolic;
 
     fn id(&self) -> JoltRelationId {
         Self::Symbolic::id()
     }
 
-    /// The sumcheck domain, from the symbolic relation.
-    fn domain(&self) -> JoltSumcheckDomain {
-        self.symbolic().domain()
-    }
-
-    /// The sumcheck round count, from the symbolic relation.
     fn rounds(&self) -> usize {
         self.symbolic().rounds()
     }
 
-    /// The per-round degree bound, from the symbolic relation.
     fn degree(&self) -> usize {
         self.symbolic().degree()
     }
@@ -160,25 +143,114 @@ where
         .map_err(VerifierError::from)
     }
 
+    /// This relation's cross-relation opening aliases, as `(aliased, canonical
+    /// source)` id pairs: each aliased opening is produced by this relation's
+    /// output `Expr` but is the same polynomial, at the same (structurally
+    /// identical) point, as the `source` opening produced by another member of the
+    /// same stage batch. Aliased openings appear on the wire claims struct as
+    /// plain (present) cells but are absorbed/committed once via their source, so
+    /// the generated drivers use this set three ways: the absorb skips the aliased
+    /// ids, the shape/count arithmetic subtracts them (see
+    /// [`wire_output_openings`](Self::wire_output_openings)), and the generated
+    /// `validate_aliases` — run by every `expected_final_claim` — enforces the
+    /// wire copies equal their sources. That equality check is load-bearing: the
+    /// aliased cells are never Fiat-Shamir-absorbed and the batch fold pins only
+    /// their random linear combination, so downstream consumers reading a copy
+    /// rely on it. BlindFold's `OpeningAlias` wiring is derived from these same
+    /// pairs, which is why this is an associated function (no instance state): the
+    /// alias structure is a constant of the relation, consumable without
+    /// constructing one.
+    ///
+    /// Point equality is NOT checked at runtime: opening points are derived (not
+    /// wire data), and an alias is only declarable when both relations bind the
+    /// same batch-point slice and derive it identically — a structural invariant.
+    /// The declaration invariants (each aliased id owned + `Expr`-referenced by
+    /// the declaring relation, each source absorbed by another member binding an
+    /// identical point slice) are pinned by hand-written tests in each declaring
+    /// stage (`alias_declarations_are_valid`).
+    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+
+    /// The opening ids this instance absorbs into the transcript (and commits in
+    /// ZK): the output-`Expr`-referenced set minus the aliased openings (absorbed
+    /// once via their canonical source). The generated `output_claim_count` sums
+    /// these; the generated `validate_output_claims` compares the wire claims
+    /// against them. A relation that absorbs openings its own output `Expr` does
+    /// not reference (values whose constraining fold happens downstream, e.g. the
+    /// product remainder's stage-6a-consumed flags) overrides this to add them.
+    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId>
+    where
+        Self: Sized,
+    {
+        let mut openings = self.symbolic().expected_output_openings::<F>();
+        for (aliased, _) in Self::aliased_output_openings() {
+            let _ = openings.remove(&aliased);
+        }
+        openings
+    }
+
+    /// The offset of this instance's point within the batch challenge vector: the
+    /// instance is bound on `batch_point[offset .. offset + rounds]`. Defaults to
+    /// the front-loaded suffix (`batch_num_vars - rounds`); the two-phase address
+    /// relations (stages 6/7) override to `0` (the prefix), and the stage-2 RAM
+    /// relations to their phase-1 offset. Consumed by the generated
+    /// `derive_opening_points` driver when slicing each member's point.
+    fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
+        batch_num_vars.checked_sub(self.rounds()).ok_or_else(|| {
+            VerifierError::StageClaimSumcheckFailed {
+                stage: self.id(),
+                reason: format!(
+                    "batch challenge vector has {batch_num_vars} entries, fewer than the \
+                     instance's {} rounds",
+                    self.rounds()
+                ),
+            }
+        })
+    }
+
+    /// The `batch_point[offset .. offset + rounds]` slice this instance is bound
+    /// on, where `offset` is [`instance_point_offset`](Self::instance_point_offset)
+    /// (the overridable knob; this method is the derived slice, so the
+    /// offset/rounds pairing is single-sourced). Called by the generated
+    /// `derive_opening_points` when slicing each member's point.
+    fn instance_point<'a>(&self, batch_point: &'a [F]) -> Result<&'a [F], VerifierError> {
+        let offset = self.instance_point_offset(batch_point.len())?;
+        let rounds = self.rounds();
+        offset
+            .checked_add(rounds)
+            .and_then(|end| batch_point.get(offset..end))
+            .ok_or(VerifierError::StageClaimSumcheckFailed {
+                stage: self.id(),
+                reason: format!(
+                    "instance point [{offset}, {offset} + {rounds}) exceeds the batch \
+                     challenge vector ({} entries)",
+                    batch_point.len(),
+                ),
+            })
+    }
+
     /// Map this instance's sumcheck point and the upstream input points into the
     /// produced openings' points. Value-independent, so it runs in both the clear
     /// and ZK paths; any cross-input consistency required for a well-defined point
     /// (e.g. address agreement) is checked here.
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        inputs: &ConcreteSumcheckInputs<F, Self, C>,
-    ) -> Result<ConcreteSumcheckOutputs<F, Self, Vec<F>>, VerifierError>;
+        input_points: &SumcheckInputPoints<F, Self>,
+    ) -> Result<SumcheckOutputPoints<F, Self>, VerifierError>;
 
-    /// Resolve a `Derived` in this relation's **input** expression: from the input
-    /// points and the drawn challenges. The input claim is the claimed sum *before*
-    /// binding, so no produced openings and no bound point are available here.
-    /// Defaults to "no input deriveds"; overridden by relations that have them
-    /// (e.g. `RamValCheck`'s `InitEval`/`InitSelector`).
-    fn derive_input_term<C: GetPoint<F>>(
+    /// Resolve a `Derived` in this relation's **input** expression: from the drawn
+    /// challenges. The input claim is the claimed sum *before* binding, so no
+    /// produced openings and no bound point are available here. Defaults to "no
+    /// input deriveds"; overridden by relations that have them (e.g. `RamValCheck`'s
+    /// `InitEval`/`InitSelector`).
+    fn derive_input_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &ConcreteSumcheckInputs<F, Self, C>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: *id })
@@ -187,14 +259,14 @@ where
     /// Resolve a `Derived` in this relation's **output** expression: from the input
     /// points, the produced openings' points (the bound point, post-binding), and the
     /// drawn challenges. The output claim is checked *after* binding, so the produced
-    /// openings exist — hence `outputs` is non-optional. Most `eq`/`lt` deriveds live
-    /// here (they evaluate at this sumcheck's bound point). Defaults to "no output
-    /// deriveds"; overridden by relations that have them.
-    fn derive_output_term<C: GetPoint<F>>(
+    /// openings' points exist — hence `output_points` is non-optional. Most `eq`/`lt`
+    /// deriveds live here (they evaluate at this sumcheck's bound point). Defaults to
+    /// "no output deriveds"; overridden by relations that have them.
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &ConcreteSumcheckInputs<F, Self, C>,
-        _outputs: &ConcreteSumcheckOutputs<F, Self, OpeningClaim<F>>,
+        _input_points: &SumcheckInputPoints<F, Self>,
+        _output_points: &SumcheckOutputPoints<F, Self>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: *id })
@@ -208,12 +280,12 @@ where
     /// produced.
     fn input_claim(
         &self,
-        inputs: &ConcreteSumcheckInputs<F, Self, OpeningClaim<F>>,
+        input_values: &SumcheckInputClaims<F, Self>,
         challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         self.symbolic().input_expression::<F>().try_evaluate(
             |id| {
-                inputs
+                input_values
                     .resolve_input(id)
                     .ok_or(VerifierError::MissingOpeningClaim { id: *id })
             },
@@ -222,24 +294,24 @@ where
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
             },
-            |id| self.derive_input_term(id, inputs, challenges),
+            |id| self.derive_input_term(id, challenges),
         )
     }
 
-    /// The expected output claim, evaluated from the output `Expr` against the
-    /// produced opening values, the drawn `challenges`, and the relation's derived
-    /// public values. The input points feed those derivations but the input
-    /// *values* are not needed, so the inputs are taken over any [`GetPoint`] cell.
-    /// Shared by prover and verifier; clear only.
-    fn expected_output<C: GetPoint<F>>(
+    /// The expected output claim, evaluated from the produced opening *values*, the
+    /// produced opening *points* (for output deriveds), the input points, the drawn
+    /// `challenges`, and the relation's derived public values. Shared by prover and
+    /// verifier; clear only.
+    fn expected_output(
         &self,
-        inputs: &ConcreteSumcheckInputs<F, Self, C>,
-        outputs: &ConcreteSumcheckOutputs<F, Self, OpeningClaim<F>>,
+        input_points: &SumcheckInputPoints<F, Self>,
+        output_values: &SumcheckOutputClaims<F, Self>,
+        output_points: &SumcheckOutputPoints<F, Self>,
         challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
-                outputs
+                output_values
                     .resolve_output(id)
                     .ok_or(VerifierError::MissingOpeningClaim { id: *id })
             },
@@ -248,9 +320,135 @@ where
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
             },
-            |id| self.derive_output_term(id, inputs, outputs, challenges),
+            |id| self.derive_output_term(id, input_points, output_points, challenges),
         )
     }
+}
+
+/// One member's absorbed opening scalars: its claims' `canonical_order`-aligned
+/// values minus the member's [aliased
+/// openings](ConcreteSumcheck::aliased_output_openings) (absorbed once via
+/// their canonical source relation). Called by the generated `opening_values`
+/// per member, in member declaration order.
+pub fn absorbed_opening_values<F, I>(claims: &SumcheckOutputClaims<F, I>) -> Vec<F>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    let skip: BTreeSet<_> = I::aliased_output_openings()
+        .into_iter()
+        .map(|(aliased, _)| aliased)
+        .collect();
+    claims
+        .canonical_order()
+        .into_iter()
+        .zip(claims.opening_values())
+        .filter(|(id, _)| !skip.contains(id))
+        .map(|(_, value)| value)
+        .collect()
+}
+
+/// Assert an optional member's output-claims presence agrees with the instance:
+/// reject a present instance missing its claims cell, and reject claims
+/// supplied for an absent instance. Called by the generated
+/// `validate_output_claims` for each `Option` member (before its shape check),
+/// and directly by a stage that curates its own shape checks (stage 6b).
+pub fn validate_member_presence<F, I>(
+    member: Option<&I>,
+    claims: Option<&SumcheckOutputClaims<F, I>>,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    match (member, claims) {
+        (Some(_), Some(_)) | (None, None) => Ok(()),
+        (Some(member), None) => Err(VerifierError::StageClaimPublicInputFailed {
+            stage: member.id(),
+            reason: "present instance is missing its output claims".to_string(),
+        }),
+        (None, Some(claims)) => Err(match claims.canonical_order().into_iter().next() {
+            Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening },
+            None => VerifierError::StageClaimPublicInputFailed {
+                stage: <I::Symbolic as SymbolicSumcheck>::id(),
+                reason: "output claims supplied for an absent instance".to_string(),
+            },
+        }),
+    }
+}
+
+/// Enforce one member's declared cross-relation opening aliases: each aliased
+/// wire cell (resolved from the DECLARING member's claims) must equal its
+/// canonical source opening, resolved across the batch by `resolve_source`
+/// (the generated batch-wide resolver). Load-bearing — aliased cells are never
+/// Fiat-Shamir absorbed and the batch fold pins only their random linear
+/// combination, so downstream consumers reading a copy rely on this equality.
+/// Called by the generated `validate_aliases` per member.
+pub fn validate_member_aliases<F, I>(
+    member: &I,
+    claims: &SumcheckOutputClaims<F, I>,
+    resolve_source: impl Fn(&JoltOpeningId) -> Option<F>,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    for (aliased, source) in I::aliased_output_openings() {
+        let target = claims
+            .resolve_output(&aliased)
+            .ok_or(VerifierError::MissingOpeningClaim { id: aliased })?;
+        let source_value =
+            resolve_source(&source).ok_or(VerifierError::MissingOpeningClaim { id: source })?;
+        if target != source_value {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: member.id(),
+                left: aliased,
+                right: source,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Assert one member's wire claims match its expected output shape: the
+/// provided `canonical_order` id-set, minus the member's aliased openings
+/// (absorbed via their canonical source; their value equality is enforced
+/// separately by `validate_aliases`), must equal the member's
+/// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings). Called by
+/// the generated `validate_output_claims` per member.
+pub fn validate_member_output_shape<F, I>(
+    member: &I,
+    claims: &SumcheckOutputClaims<F, I>,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+{
+    let expected = member.wire_output_openings();
+    let aliased: BTreeSet<_> = I::aliased_output_openings()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let provided: BTreeSet<_> = claims
+        .canonical_order()
+        .into_iter()
+        .filter(|id| !aliased.contains(id))
+        .collect();
+    if provided != expected {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: member.id(),
+            reason: format!(
+                "output claim shape mismatch: expected {} openings, got {}",
+                expected.len(),
+                provided.len(),
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
@@ -326,34 +524,18 @@ pub(crate) mod draw_recording {
     }
 }
 
+/// The append-order recorder shared by the stage `append_output_claims` ordering
+/// locks: unlike the challenge recorder, it observes only byte appends.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    use jolt_claims::protocols::jolt::{
-        JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
-    };
-    use jolt_claims_derive::{InputClaims, OutputClaims};
+pub(crate) mod append_recording {
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_riscv::{CircuitFlags, CIRCUIT_FLAGS};
-
-    fn fr(value: u64) -> Fr {
-        Fr::from_u64(value)
-    }
-
-    fn virt(polynomial: JoltVirtualPolynomial, relation: JoltRelationId) -> JoltOpeningId {
-        JoltOpeningId::virtual_polynomial(polynomial, relation)
-    }
-
-    fn committed(polynomial: JoltCommittedPolynomial, relation: JoltRelationId) -> JoltOpeningId {
-        JoltOpeningId::committed(polynomial, relation)
-    }
+    use jolt_transcript::Transcript;
 
     /// A minimal `Transcript` double that records each appended byte chunk, so
     /// that append order can be compared without depending on the digest.
     #[derive(Clone, Default)]
-    struct RecordingTranscript {
-        chunks: Vec<Vec<u8>>,
+    pub(crate) struct RecordingTranscript {
+        pub(crate) chunks: Vec<Vec<u8>>,
     }
 
     impl Transcript for RecordingTranscript {
@@ -375,6 +557,32 @@ mod tests {
             [0u8; 32]
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use jolt_claims::protocols::jolt::{
+        JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
+    };
+    use jolt_claims_derive::{InputClaims, OutputClaims};
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_riscv::CircuitFlags;
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    fn virt(polynomial: JoltVirtualPolynomial, relation: JoltRelationId) -> JoltOpeningId {
+        JoltOpeningId::virtual_polynomial(polynomial, relation)
+    }
+
+    fn committed(polynomial: JoltCommittedPolynomial, relation: JoltRelationId) -> JoltOpeningId {
+        JoltOpeningId::committed(polynomial, relation)
+    }
+
+    use super::append_recording::RecordingTranscript;
 
     /// The chunk stream produced by appending `opening_values()` one-by-one is
     /// the reference Fiat-Shamir order; `append_openings` must reproduce it.
@@ -658,87 +866,53 @@ mod tests {
     }
 
     #[test]
-    fn zip_openings_pairs_values_with_points() {
-        // `Vec` families zip element-wise; scalar leaves take their single point.
-        let values = InstructionLeaf {
-            lookup_table_flags: vec![fr(1), fr(2)],
-            instruction_ra: vec![fr(3)],
-            instruction_raf_flag: fr(4),
-        };
-        let points = InstructionLeaf {
+    fn output_leaf_point_accessors_follow_fields() {
+        // The point cell (`C = Vec<F>`) exposes per-field accessors returning the
+        // derived opening points: scalar `&[F]`, `Vec` `&[Vec<F>]`.
+        let points = InstructionLeaf::<Vec<Fr>> {
             lookup_table_flags: vec![vec![fr(10)], vec![fr(11)]],
             instruction_ra: vec![vec![fr(12), fr(13)]],
             instruction_raf_flag: vec![fr(14)],
         };
-        let zipped: InstructionLeaf<OpeningClaim<Fr>> = zip_openings(&values, &points);
         assert_eq!(
-            zipped.lookup_table_flags,
-            vec![
-                OpeningClaim {
-                    point: vec![fr(10)],
-                    value: fr(1),
-                },
-                OpeningClaim {
-                    point: vec![fr(11)],
-                    value: fr(2),
-                },
-            ],
+            points.lookup_table_flags(),
+            &[vec![fr(10)], vec![fr(11)]] as &[Vec<Fr>]
         );
         assert_eq!(
-            zipped.instruction_ra,
-            vec![OpeningClaim {
-                point: vec![fr(12), fr(13)],
-                value: fr(3),
-            }],
+            points.instruction_ra(),
+            &[vec![fr(12), fr(13)]] as &[Vec<Fr>]
         );
-        assert_eq!(
-            zipped.instruction_raf_flag,
-            OpeningClaim {
-                point: vec![fr(14)],
-                value: fr(4),
-            },
-        );
+        assert_eq!(points.instruction_raf_flag(), &[fr(14)] as &[Fr]);
     }
 
     #[test]
-    fn zip_openings_follows_option_presence() {
-        // A `Some` value pairs with its point; a `None` value stays `None`.
-        let present: OptionalOutput<OpeningClaim<Fr>> = zip_openings(
-            &OptionalOutput {
-                untrusted: Some(fr(5)),
-                ram_inc: fr(6),
-            },
-            &OptionalOutput {
-                untrusted: Some(vec![fr(7)]),
-                ram_inc: vec![fr(8)],
-            },
-        );
-        assert_eq!(
-            present.untrusted,
-            Some(OpeningClaim {
-                point: vec![fr(7)],
-                value: fr(5),
-            })
-        );
-        assert_eq!(
-            present.ram_inc,
-            OpeningClaim {
-                point: vec![fr(8)],
-                value: fr(6),
-            }
-        );
+    fn output_leaf_option_point_accessor() {
+        // The `Option` point accessor surfaces the point only when `Some`.
+        let present = OptionalOutput::<Vec<Fr>> {
+            untrusted: Some(vec![fr(7)]),
+            ram_inc: vec![fr(8)],
+        };
+        assert_eq!(present.untrusted(), Some(&[fr(7)] as &[Fr]));
+        assert_eq!(present.ram_inc(), &[fr(8)] as &[Fr]);
 
-        let absent: OptionalOutput<OpeningClaim<Fr>> = zip_openings(
-            &OptionalOutput {
-                untrusted: None,
-                ram_inc: fr(6),
-            },
-            &OptionalOutput {
-                untrusted: None,
-                ram_inc: vec![fr(8)],
-            },
-        );
-        assert_eq!(absent.untrusted, None);
+        let absent = OptionalOutput::<Vec<Fr>> {
+            untrusted: None,
+            ram_inc: vec![fr(8)],
+        };
+        assert_eq!(absent.untrusted(), None);
+    }
+
+    #[test]
+    fn input_leaf_point_accessors_follow_fields() {
+        // The `InputClaims` derive emits point accessors on the `Vec<F>` cell too.
+        let points = ReductionInputs::<Vec<Fr>> {
+            raf: vec![fr(1)],
+            read_write: vec![fr(2)],
+            val_check: vec![fr(3)],
+        };
+        assert_eq!(points.raf(), &[fr(1)] as &[Fr]);
+        assert_eq!(points.read_write(), &[fr(2)] as &[Fr]);
+        assert_eq!(points.val_check(), &[fr(3)] as &[Fr]);
     }
 
     #[derive(InputClaims)]
@@ -822,50 +996,228 @@ mod tests {
             None,
         );
     }
+}
 
-    // A `Vec` field whose payload annotation is an *array* indexes the family by
-    // enum element: `op_flags[i]` is `OpFlags(CIRCUIT_FLAGS[i])`. Exercised in
-    // both derives.
-    #[derive(InputClaims)]
-    struct EnumIndexedInputs<C> {
-        #[opening(OpFlags(CIRCUIT_FLAGS), from = SpartanOuter)]
-        op_flags: Vec<C>,
+#[cfg(test)]
+// `Fixture*Sumchecks` exist only to exercise `#[derive(SumcheckBatch)]`.
+#[expect(clippy::unwrap_used)]
+mod sumcheck_batch_derive_tests {
+    use super::SumcheckBatch;
+    use crate::stages::stage5::{
+        InstructionReadRaf, InstructionReadRafOutputClaims, RegistersValEvaluation,
+        RegistersValEvaluationOutputClaims,
+    };
+    use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
+    use jolt_field::{Field, Fr, FromPrimitiveInt};
+
+    fn instruction_read_raf() -> InstructionReadRaf<Fr> {
+        InstructionReadRaf::new(InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap())
     }
 
-    #[derive(OutputClaims)]
-    #[relation(SpartanOuter)]
-    struct EnumIndexedOutputs<C> {
-        #[opening(OpFlags(CIRCUIT_FLAGS))]
-        op_flags: Vec<C>,
+    fn registers_val_evaluation() -> RegistersValEvaluation<Fr> {
+        RegistersValEvaluation::new(TraceDimensions::new(4))
+    }
+
+    #[derive(SumcheckBatch)]
+    // The generated absorb resolves the alias skip-sets statically (no instance
+    // state), so this alias-free fixture's members are never read.
+    #[expect(dead_code)]
+    struct FixtureSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: RegistersValEvaluation<F>,
     }
 
     #[test]
-    fn enum_indexed_vec_resolves_by_flag() {
-        let relation = JoltRelationId::SpartanOuter;
-        let values: Vec<Fr> = (0..CIRCUIT_FLAGS.len()).map(|i| fr(i as u64)).collect();
-
-        let inputs = EnumIndexedInputs {
-            op_flags: values.clone(),
+    fn output_aggregate_opening_values_follow_declaration_order() {
+        let fr = Fr::from_u64;
+        let sumchecks = FixtureSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: registers_val_evaluation(),
         };
-        let outputs = EnumIndexedOutputs {
-            op_flags: values.clone(),
+        let claims = FixtureOutputClaims::<Fr> {
+            instruction_read_raf: InstructionReadRafOutputClaims {
+                lookup_table_flags: vec![fr(1), fr(2)],
+                instruction_ra: vec![fr(3)],
+                instruction_raf_flag: fr(4),
+            },
+            registers_val_evaluation: RegistersValEvaluationOutputClaims {
+                rd_inc: fr(5),
+                rd_wa: fr(6),
+            },
         };
-        for (i, flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
-            let id = virt(JoltVirtualPolynomial::OpFlags(flag), relation);
-            assert_eq!(inputs.resolve_input(&id), Some(fr(i as u64)));
-            assert_eq!(outputs.resolve_output(&id), Some(fr(i as u64)));
-        }
 
-        // Same flag, different relation misses; the encoders follow declaration order.
         assert_eq!(
-            inputs.resolve_input(&virt(
-                JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
-                JoltRelationId::SpartanShift,
-            )),
-            None,
+            sumchecks.opening_values(&claims),
+            vec![fr(1), fr(2), fr(3), fr(4), fr(5), fr(6)],
         );
-        assert_eq!(outputs.opening_values().len(), CIRCUIT_FLAGS.len());
-        assert_eq!(outputs.opening_values(), values);
-        assert_append_matches_values(&outputs);
+    }
+
+    #[derive(SumcheckBatch)]
+    struct FixtureOptionSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: Option<RegistersValEvaluation<F>>,
+    }
+
+    #[test]
+    fn output_aggregate_chains_present_and_skips_absent_option_members() {
+        let fr = Fr::from_u64;
+        let instruction = || InstructionReadRafOutputClaims {
+            lookup_table_flags: vec![fr(1)],
+            instruction_ra: vec![fr(2)],
+            instruction_raf_flag: fr(3),
+        };
+
+        let with_registers = FixtureOptionSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: Some(registers_val_evaluation()),
+        };
+        let present = FixtureOptionOutputClaims::<Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: Some(RegistersValEvaluationOutputClaims {
+                rd_inc: fr(4),
+                rd_wa: fr(5),
+            }),
+        };
+        assert_eq!(
+            with_registers.opening_values(&present),
+            vec![fr(1), fr(2), fr(3), fr(4), fr(5)]
+        );
+
+        let without_registers = FixtureOptionSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: None,
+        };
+        let absent = FixtureOptionOutputClaims::<Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: None,
+        };
+        assert_eq!(
+            without_registers.opening_values(&absent),
+            vec![fr(1), fr(2), fr(3)]
+        );
+    }
+
+    /// Wire claims supplied for an `Option` member whose instance did not run are
+    /// rejected by the generated `validate_output_claims` (attributed to the first
+    /// supplied opening id), and the well-formed absent case still validates.
+    #[test]
+    fn validate_output_claims_rejects_claims_for_absent_member() {
+        use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
+
+        let fr = Fr::from_u64;
+        let dimensions = InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap();
+        let sumchecks = FixtureOptionSumchecks::<Fr> {
+            instruction_read_raf: InstructionReadRaf::new(dimensions),
+            registers_val_evaluation: None,
+        };
+
+        // Shape-correct instruction claims (sized from the geometry), so the absent
+        // member's supplied claims are the only defect.
+        let openings = read_raf_output_openings(dimensions);
+        let instruction = || InstructionReadRafOutputClaims {
+            lookup_table_flags: vec![fr(0); openings.lookup_table_flags.len()],
+            instruction_ra: vec![fr(0); openings.instruction_ra.len()],
+            instruction_raf_flag: fr(0),
+        };
+
+        let unexpected = FixtureOptionOutputClaims::<Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: Some(RegistersValEvaluationOutputClaims {
+                rd_inc: fr(1),
+                rd_wa: fr(2),
+            }),
+        };
+        assert!(matches!(
+            sumchecks.validate_output_claims(&unexpected),
+            Err(crate::VerifierError::UnexpectedOpeningClaim { .. })
+        ));
+
+        let well_formed = FixtureOptionOutputClaims::<Fr> {
+            instruction_read_raf: instruction(),
+            registers_val_evaluation: None,
+        };
+        assert!(sumchecks.validate_output_claims(&well_formed).is_ok());
+    }
+
+    // The opt-out fixture: `#[sumcheck_batch(no_opening_values)]` must still
+    // generate the five aggregate structs but emit NO `opening_values` /
+    // `append_output_claims` on the source struct. The inherent `opening_values`
+    // below would collide with a generated one (the compiler rejects two inherent
+    // methods of the same name), so this module compiling at all proves the
+    // opt-out suppressed it.
+    #[derive(SumcheckBatch)]
+    #[sumcheck_batch(no_opening_values)]
+    // The custom absorb below never reads the members (no aliased sets to consult).
+    #[expect(dead_code)]
+    struct FixtureCustomSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: RegistersValEvaluation<F>,
+    }
+
+    impl FixtureCustomSumchecks<Fr> {
+        /// A curated order distinct from the generated declaration order, to prove
+        /// this is the one in effect (the generated method would chain instruction
+        /// then registers; this reverses them).
+        #[expect(
+            clippy::unused_self,
+            reason = "the signature mirrors the generated method it collides with"
+        )]
+        fn opening_values(&self, claims: &FixtureCustomOutputClaims<Fr>) -> Vec<Fr> {
+            use crate::stages::relations::OutputClaims as _;
+            claims
+                .registers_val_evaluation
+                .opening_values()
+                .into_iter()
+                .chain(claims.instruction_read_raf.opening_values())
+                .collect()
+        }
+    }
+
+    #[test]
+    fn no_opening_values_suppresses_generated_impl() {
+        let fr = Fr::from_u64;
+        let sumchecks = FixtureCustomSumchecks {
+            instruction_read_raf: instruction_read_raf(),
+            registers_val_evaluation: registers_val_evaluation(),
+        };
+        let claims = FixtureCustomOutputClaims::<Fr> {
+            instruction_read_raf: InstructionReadRafOutputClaims {
+                lookup_table_flags: vec![fr(1)],
+                instruction_ra: vec![fr(2)],
+                instruction_raf_flag: fr(3),
+            },
+            registers_val_evaluation: RegistersValEvaluationOutputClaims {
+                rd_inc: fr(4),
+                rd_wa: fr(5),
+            },
+        };
+
+        // The hand-written curated order (registers first), proving no generated
+        // `opening_values` (which would be instruction-first) shadows or collides.
+        assert_eq!(
+            sumchecks.opening_values(&claims),
+            vec![fr(4), fr(5), fr(1), fr(2), fr(3)]
+        );
+    }
+
+    // The draw opt-out fixture: `#[sumcheck_batch(no_draw_challenges)]` must emit
+    // NO `draw_challenges` on the source struct (a stage whose member challenges
+    // have stage-level provenance hand-assembles its aggregate; the generated draw
+    // would squeeze at the wrong transcript position if it existed). The inherent
+    // `draw_challenges` below — with a deliberately incompatible signature — would
+    // collide with a generated one, so this module compiling at all proves the
+    // opt-out suppressed it.
+    #[derive(SumcheckBatch)]
+    #[sumcheck_batch(no_draw_challenges)]
+    #[expect(dead_code)]
+    struct FixtureNoDrawSumchecks<F: Field> {
+        instruction_read_raf: InstructionReadRaf<F>,
+        registers_val_evaluation: RegistersValEvaluation<F>,
+    }
+
+    impl<F: Field> FixtureNoDrawSumchecks<F> {
+        #[expect(dead_code, clippy::unused_self)]
+        fn draw_challenges(&self) {}
     }
 }

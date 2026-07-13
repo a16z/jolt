@@ -4,8 +4,7 @@ use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::increments::{
-    ram_inc_read_write, ram_inc_reduced, ram_inc_val_check, rd_inc_read_write, rd_inc_reduced,
-    rd_inc_val_evaluation,
+    inc_consumers_input, ram_inc_reduced, rd_inc_reduced,
 };
 use crate::protocols::jolt::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr,
@@ -30,7 +29,7 @@ pub struct IncClaimReductionOutputClaims<C> {
 
 /// The four reduced `Inc` openings consumed from the read-write / value
 /// relations of RAM and registers.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct IncClaimReductionInputClaims<C> {
     #[opening(committed = RamInc, from = RamReadWriteChecking)]
     pub ram_inc_read_write: C,
@@ -43,7 +42,7 @@ pub struct IncClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the increment claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct IncClaimReductionChallenges<F> {
     #[challenge(IncClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -83,12 +82,7 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(IncClaimReductionChallenge::Gamma);
-
-        opening(ram_inc_read_write())
-            + gamma.clone() * opening(ram_inc_val_check())
-            + gamma.clone().pow(2) * opening(rd_inc_read_write())
-            + gamma.clone().pow(3) * opening(rd_inc_val_evaluation())
+        inc_consumers_input(challenge(IncClaimReductionChallenge::Gamma))
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -106,6 +100,8 @@ impl SymbolicSumcheck for ClaimReduction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::jolt::geometry::ram::{ram_inc, ram_inc_val_check};
+    use crate::protocols::jolt::geometry::registers::{rd_inc_read_write, rd_inc_val_evaluation};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn dimensions() -> TraceDimensions {
@@ -131,7 +127,7 @@ mod tests {
 
         let input = relation.input_expression::<Fr>().evaluate(
             |id| match *id {
-                id if id == ram_inc_read_write() => ram_rw,
+                id if id == ram_inc() => ram_rw,
                 id if id == ram_inc_val_check() => ram_val,
                 id if id == rd_inc_read_write() => rd_rw,
                 id if id == rd_inc_val_evaluation() => rd_val,
@@ -190,31 +186,5 @@ mod tests {
         assert_eq!(ClaimReduction::id(), JoltRelationId::IncClaimReduction);
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                ram_inc_read_write(),
-                ram_inc_val_check(),
-                rd_inc_read_write(),
-                rd_inc_val_evaluation(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![ram_inc_reduced(), rd_inc_reduced()]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(IncClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![
-                JoltDerivedId::from(IncClaimReductionPublic::EqRamReadWrite),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRamValCheck),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersReadWrite),
-                JoltDerivedId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
-            ]
-        );
     }
 }

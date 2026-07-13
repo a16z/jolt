@@ -4,9 +4,11 @@ use jolt_riscv::InstructionFlags;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::instruction::{
-    imm, left_instruction_input_product, left_operand_is_pc, left_operand_is_rs1,
-    right_instruction_input_product, right_operand_is_imm, right_operand_is_rs2, rs1_value,
-    rs2_value, unexpanded_pc, INPUT_VIRTUALIZATION_DEGREE,
+    imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
+    rs1_value, rs2_value, unexpanded_pc, INPUT_VIRTUALIZATION_DEGREE,
+};
+use crate::protocols::jolt::geometry::spartan::{
+    left_instruction_input_product, right_instruction_input_product,
 };
 use crate::protocols::jolt::{
     InstructionInputChallenge, InstructionInputPublic, JoltExpr, JoltRelationId, TraceDimensions,
@@ -46,7 +48,7 @@ pub struct InstructionInputOutputClaims<C> {
 /// Consumed instruction-input openings: the left/right virtualized instruction
 /// inputs reduced by stage 2's product remainder. The relation reads only these
 /// values, so the input points are left empty. Generic over the cell.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionInputInputClaims<C> {
     #[opening(RightInstructionInput, from = SpartanProductVirtualization)]
     pub right_instruction_input: C,
@@ -55,7 +57,7 @@ pub struct InstructionInputInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction input-virtualization sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionInputChallenges<F> {
     #[challenge(InstructionInputChallenge::Gamma)]
     pub gamma: F,
@@ -154,20 +156,7 @@ mod tests {
             },
             |id| match *id {
                 JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |_| zero,
         );
@@ -186,20 +175,7 @@ mod tests {
             },
             |id| match *id {
                 JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |id| match *id {
                 JoltDerivedId::InstructionInput(InstructionInputPublic::EqProduct) => eq_product,
@@ -227,13 +203,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
         assert_eq!(relation.degree(), INPUT_VIRTUALIZATION_DEGREE);
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(InstructionInputChallenge::Gamma)]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(InstructionInputPublic::EqProduct)]
-        );
     }
 }

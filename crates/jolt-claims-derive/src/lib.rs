@@ -9,10 +9,12 @@
 //! paths), so the derives can be applied to structs in any crate that depends on
 //! `jolt-claims`.
 //!
-//! The claim struct is generic over an opening *cell* (`OpeningClaim<F>` on the
-//! clear path, `Vec<F>` for ZK points, `F` for the serialized wire form). The
-//! generated impls read each field's value through the `GetValue` cell trait, so
-//! one struct definition serves all three forms.
+//! The claim struct is generic over an opening *cell*, instantiated at `F` (the
+//! serialized wire value) or `Vec<F>` (the verifier-derived opening point). Each
+//! derive emits the value resolver (`OutputClaims` / `InputClaims`) on the `F`
+//! form and per-field point accessors on the `Vec<F>` form, so one struct
+//! definition serves both forms with no `GetValue` / `GetPoint` cell trait
+//! indirection.
 //!
 //! ## `#[derive(OutputClaims)]`
 //!
@@ -45,12 +47,11 @@
 //! Arity is read from the field type, not the annotation. A `C` or `Option<C>`
 //! field is a single opening: `Variant` must be a unit variant or a
 //! payload-carrying variant (`OpFlags(CircuitFlags::VirtualInstruction)`). A
-//! `Vec<C>` field is an indexed family; element `i` maps to:
-//! - `Variant(i)` for a `usize`-indexed variant, e.g. `#[opening(LookupTableFlag)]`
-//!   → `LookupTableFlag(i)`; or
-//! - `Variant(ARRAY[i])` when the annotation supplies a per-element payload array,
-//!   e.g. `#[opening(OpFlags(CIRCUIT_FLAGS))]` → `OpFlags(CIRCUIT_FLAGS[i])`, for
-//!   families keyed by an enum rather than a contiguous index.
+//! `Vec<C>` field is an indexed family: element `i` maps to `Variant(i)` for a
+//! `usize`-indexed variant, e.g. `#[opening(LookupTableFlag)]` →
+//! `LookupTableFlag(i)`. A payload-carrying variant is always scalar; a family
+//! keyed by an enum is declared as one field per element (see
+//! `OuterRemainderOutputClaims` / `BytecodeReadRafAddressPhaseInputClaims`).
 //!
 //! `InputClaims` leaves additionally take `, from = ProducingRelation`.
 //!
@@ -149,43 +150,24 @@ fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Fi
     }
 }
 
-/// The first type generic parameter (the opening *cell*, conventionally `C`).
-fn cell_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
-    generics
+/// A claim struct must have exactly one generic type parameter (the opening
+/// *cell*, conventionally `C`) and no lifetimes, consts, or where-clause: the
+/// derive instantiates it at `F` (value form) and `Vec<F>` (point form), so any
+/// other shape would make those instantiations ill-formed. Errors clearly rather
+/// than emitting a wrongly instantiated impl.
+fn ensure_single_cell_generic(generics: &syn::Generics) -> syn::Result<()> {
+    let type_params = generics
         .params
         .iter()
-        .find_map(|param| match param {
-            GenericParam::Type(param) => Some(param.ident.clone()),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            syn::Error::new_spanned(
-                generics,
-                "expected an opening-cell generic parameter (e.g. `<C>`)",
-            )
-        })
-}
-
-/// Build the impl header for a cell-generic claim struct: introduce a fresh
-/// field-value type parameter, require the struct's cell parameter to expose it
-/// via `GetValue`, and return `(value_param, impl_generics, ty_generics,
-/// where_clause)`.
-fn cell_impl_pieces(
-    generics: &syn::Generics,
-) -> syn::Result<(Ident, TokenStream2, TokenStream2, TokenStream2)> {
-    let cell = cell_type_param(generics)?;
-    let value = Ident::new("__JoltCellValue", proc_macro2::Span::call_site());
-    let params = &generics.params;
-    let (_, ty_generics, _) = generics.split_for_impl();
-    let impl_generics = quote!(<#value: ::jolt_field::Field, #params>);
-    let orig_predicates = generics
-        .where_clause
-        .as_ref()
-        .map(|where_clause| &where_clause.predicates);
-    let where_clause = quote! {
-        where #cell: ::jolt_claims::GetValue<#value>, #orig_predicates
-    };
-    Ok((value, impl_generics, quote!(#ty_generics), where_clause))
+        .filter(|param| matches!(param, GenericParam::Type(_)))
+        .count();
+    if generics.where_clause.is_some() || generics.params.len() != 1 || type_params != 1 {
+        return Err(syn::Error::new_spanned(
+            generics,
+            "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_struct_relation(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
@@ -330,6 +312,21 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
             "advice openings are scalar; a `Vec` advice field has no indexed id",
         ));
     }
+    if is_many
+        && matches!(
+            &spec.kind,
+            LeafKind::Virtual {
+                payload: Some(_),
+                ..
+            }
+        )
+    {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "per-element payload arrays (e.g. `OpFlags(CIRCUIT_FLAGS)` on a `Vec`) are not \
+             supported; declare one field per element instead",
+        ));
+    }
     Ok(FieldPlan {
         ident,
         is_option: is_option_type(&field.ty),
@@ -347,11 +344,10 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
     match kind {
         LeafKind::Virtual { variant, payload } => {
             let polynomial = match (index, payload) {
-                // Indexed family over an enum payload: the field is a `Vec` and the
-                // annotation supplies the per-element payload *array*, so element `i`
-                // maps to `Variant(ARRAY[i])` (e.g. `OpFlags(CIRCUIT_FLAGS[i])`).
-                (Some(index), Some(payload)) => {
-                    quote!(#jolt::JoltVirtualPolynomial::#variant(#payload[#index]))
+                // A payload-carrying variant is always scalar; the `Vec`+payload
+                // combination is rejected in `plan_field`.
+                (Some(_), Some(_)) => {
+                    unreachable!("Vec fields with payload annotations are rejected in plan_field")
                 }
                 // Indexed family over a `usize` payload: `Variant(i)`.
                 (Some(index), None) => quote!(#jolt::JoltVirtualPolynomial::#variant(#index)),
@@ -377,7 +373,7 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
 
 fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let (value, impl_generics, ty_generics, where_clause) = cell_impl_pieces(&input.generics)?;
+    ensure_single_cell_generic(&input.generics)?;
     let struct_relation = parse_struct_relation(&input.attrs)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
@@ -385,7 +381,6 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         .map(|field| plan_field(field, struct_relation.as_ref()))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let get = quote!(::jolt_claims::GetValue::value);
     let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
     // `order_chains` lists each leaf's id (per `Vec` element, per `Some` `Option`) in
     // field-declaration order, so it lists exactly the ids `resolve_output` hits.
@@ -406,9 +401,9 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             let id = id_expr(kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
-                for (index, __cell) in self.#ident.iter().enumerate() {
+                for (index, __value) in self.#ident.iter().enumerate() {
                     if *id == #id {
-                        return ::core::option::Option::Some(#get(__cell));
+                        return ::core::option::Option::Some(*__value);
                     }
                 }
             });
@@ -416,9 +411,9 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             let id = id_expr(kind, relation, None);
             order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
             resolve_arms.push(quote! {
-                if let ::core::option::Option::Some(__cell) = &self.#ident {
+                if let ::core::option::Option::Some(__value) = &self.#ident {
                     if *id == #id {
-                        return ::core::option::Option::Some(#get(__cell));
+                        return ::core::option::Option::Some(*__value);
                     }
                 }
             });
@@ -427,50 +422,18 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
             resolve_arms.push(quote! {
                 if *id == #id {
-                    return ::core::option::Option::Some(#get(&self.#ident));
+                    return ::core::option::Option::Some(self.#ident);
                 }
             });
         }
     }
 
-    // Field-wise zip of the value-only (`F`) and point-only (`Vec<F>`) cell forms
-    // into the clear `OpeningClaim<F>` form: one `OpeningClaim` per leaf,
-    // element-wise for `Vec` families, value-driven for `Option` leaves.
-    let opening = quote!(::jolt_claims::OpeningClaim);
-    let zip_field = Ident::new("__JoltZipField", proc_macro2::Span::call_site());
-    let mut zip_inits = Vec::new();
-    for plan in &plans {
-        let ident = &plan.ident;
-        if plan.is_many {
-            zip_inits.push(quote! {
-                #ident: values.#ident.iter().zip(points.#ident.iter())
-                    .map(|(__value, __point)| #opening {
-                        point: ::std::clone::Clone::clone(__point),
-                        value: *__value,
-                    })
-                    .collect(),
-            });
-        } else if plan.is_option {
-            zip_inits.push(quote! {
-                #ident: values.#ident.as_ref().map(|__value| #opening {
-                    point: points.#ident.clone().unwrap_or_default(),
-                    value: *__value,
-                }),
-            });
-        } else {
-            zip_inits.push(quote! {
-                #ident: #opening {
-                    point: ::std::clone::Clone::clone(&points.#ident),
-                    value: values.#ident,
-                },
-            });
-        }
-    }
+    let point_accessors = plans.iter().map(point_accessor);
 
     Ok(quote! {
-        impl #impl_generics ::jolt_claims::OutputClaims<#value>
-            for #name #ty_generics #where_clause
-        {
+        // The value resolver lives on the value cell (`C = F`): each field is read
+        // as `F` (or `Vec<F>` / `Option<F>`) directly.
+        impl<F: ::jolt_field::Field> ::jolt_claims::OutputClaims<F> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -480,36 +443,57 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             fn resolve_output(
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltOpeningId,
-            ) -> ::core::option::Option<#value> {
+            ) -> ::core::option::Option<F> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
             }
         }
 
-        impl<#zip_field: ::jolt_field::Field> ::jolt_claims::ZipOpenings<#zip_field>
-            for #name<#opening<#zip_field>>
-        {
-            type Values = #name<#zip_field>;
-            type Points = #name<::std::vec::Vec<#zip_field>>;
-            fn zip_openings(values: &Self::Values, points: &Self::Points) -> Self {
-                #name {
-                    #(#zip_inits)*
-                }
-            }
+        // The per-field opening-point accessors live on the point cell
+        // (`C = Vec<F>`): each field is a `Vec<F>` point (or `Vec<Vec<F>>` /
+        // `Option<Vec<F>>`). A field and its accessor share a name; `x` reads the
+        // field, `x()` calls the accessor.
+        impl<F: ::jolt_field::Field> #name<::std::vec::Vec<F>> {
+            #(#point_accessors)*
         }
     })
 }
 
+/// A per-field opening-point accessor on the point cell (`C = Vec<F>`): scalar
+/// `fn f(&self) -> &[F]`, `Vec` `fn f(&self) -> &[Vec<F>]`, `Option`
+/// `fn f(&self) -> Option<&[F]>`.
+fn point_accessor(plan: &FieldPlan) -> TokenStream2 {
+    let ident = &plan.ident;
+    if plan.is_many {
+        quote! {
+            pub fn #ident(&self) -> &[::std::vec::Vec<F>] {
+                &self.#ident
+            }
+        }
+    } else if plan.is_option {
+        quote! {
+            pub fn #ident(&self) -> ::core::option::Option<&[F]> {
+                self.#ident.as_deref()
+            }
+        }
+    } else {
+        quote! {
+            pub fn #ident(&self) -> &[F] {
+                &self.#ident
+            }
+        }
+    }
+}
+
 fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let (value, impl_generics, ty_generics, where_clause) = cell_impl_pieces(&input.generics)?;
+    ensure_single_cell_generic(&input.generics)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
         .iter()
         .map(|field| plan_field(field, None))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let get = quote!(::jolt_claims::GetValue::value);
     let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
     let mut resolve_arms = Vec::new();
     // Mirrors the resolve iteration (id per leaf, per `Vec` element, per `Some`
@@ -528,9 +512,9 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
             let id = id_expr(kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
-                for (index, __cell) in self.#ident.iter().enumerate() {
+                for (index, __value) in self.#ident.iter().enumerate() {
                     if *id == #id {
-                        return ::core::option::Option::Some(#get(__cell));
+                        return ::core::option::Option::Some(*__value);
                     }
                 }
             });
@@ -542,10 +526,10 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
                 order_chains.push(quote!(.chain(::core::iter::once(#id))));
             }
             let hit = if *is_option {
-                // The field is `Option<C>`; surface the value if present.
-                quote!(return self.#ident.as_ref().map(|__cell| #get(__cell));)
+                // The field is `Option<F>`; surface the value if present.
+                quote!(return self.#ident;)
             } else {
-                quote!(return ::core::option::Option::Some(#get(&self.#ident));)
+                quote!(return ::core::option::Option::Some(self.#ident);)
             };
             resolve_arms.push(quote! {
                 if *id == #id {
@@ -555,10 +539,10 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     }
 
+    let point_accessors = plans.iter().map(point_accessor);
+
     Ok(quote! {
-        impl #impl_generics ::jolt_claims::InputClaims<#value>
-            for #name #ty_generics #where_clause
-        {
+        impl<F: ::jolt_field::Field> ::jolt_claims::InputClaims<F> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -568,10 +552,14 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
             fn resolve_input(
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltOpeningId,
-            ) -> ::core::option::Option<#value> {
+            ) -> ::core::option::Option<F> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
             }
+        }
+
+        impl<F: ::jolt_field::Field> #name<::std::vec::Vec<F>> {
+            #(#point_accessors)*
         }
     })
 }

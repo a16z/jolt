@@ -19,18 +19,27 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
-use crate::stages::relations::{ConcreteSumcheck, GetPoint, OpeningClaim};
-use crate::stages::stage5::Stage5ClearOutput;
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
 
-/// Wire the single reduced `RamRa` opening from the stage-5 RAM RA claim
-/// reduction. (Verifier-side constructor for the moved
-/// [`RamRaVirtualizationInputClaims`].)
-pub fn ram_ra_virtualization_inputs_from_upstream<F: Field>(
-    stage5: &Stage5ClearOutput<F>,
-) -> RamRaVirtualizationInputClaims<OpeningClaim<F>> {
+/// Wire the single reduced `RamRa` opening *value* from the stage-5 RAM RA claim
+/// reduction. Clear-only (the values aggregate exists only in clear mode).
+pub fn ram_ra_virtualization_input_values_from_upstream<F: Field>(
+    stage5: &Stage5OutputClaims<F>,
+) -> RamRaVirtualizationInputClaims<F> {
     RamRaVirtualizationInputClaims {
-        ram_ra_reduced: stage5.output_claims.ram_ra_claim_reduction.ram_ra.clone(),
+        ram_ra_reduced: stage5.ram_ra_claim_reduction.ram_ra,
+    }
+}
+
+/// Wire the single reduced `RamRa` opening *point* from the stage-5 RAM RA claim
+/// reduction. ZK-agnostic: both proving modes expose the stage-5 output points.
+pub fn ram_ra_virtualization_input_points_from_upstream<F: Field>(
+    stage5: &Stage5OutputPoints<F>,
+) -> RamRaVirtualizationInputClaims<Vec<F>> {
+    RamRaVirtualizationInputClaims {
+        ram_ra_reduced: stage5.ram_ra_claim_reduction.ram_ra().to_vec(),
     }
 }
 
@@ -77,10 +86,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
         &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RamRaVirtualizationInputClaims<C>,
+        _input_points: &RamRaVirtualizationInputClaims<Vec<F>>,
     ) -> Result<RamRaVirtualizationOutputClaims<Vec<F>>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         let ram_ra = committed_address_chunks(&self.ram_reduced_address, self.committed_chunk_bits)
@@ -90,21 +99,20 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
         Ok(RamRaVirtualizationOutputClaims { ram_ra })
     }
 
-    fn derive_output_term<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _inputs: &RamRaVirtualizationInputClaims<C>,
-        outputs: &RamRaVirtualizationOutputClaims<OpeningClaim<F>>,
+        _input_points: &RamRaVirtualizationInputClaims<Vec<F>>,
+        output_points: &RamRaVirtualizationOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let log_t = self.dimensions.log_t();
-        let point = outputs
-            .ram_ra
+        let point = output_points
+            .ram_ra()
             .first()
-            .map(GetPoint::point)
             .ok_or_else(|| public_input_failed("RAM RA virtualization produced no openings"))?;
         let r_cycle = point
             .get(point.len() - log_t..)

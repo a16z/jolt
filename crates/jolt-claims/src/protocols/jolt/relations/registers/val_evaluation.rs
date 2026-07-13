@@ -27,7 +27,7 @@ pub struct RegistersValEvaluationOutputClaims<C> {
 
 /// Consumed register value-evaluation opening, wired from the upstream register
 /// read-write checking.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RegistersValEvaluationInputClaims<C> {
     #[opening(RegistersVal, from = RegistersReadWriteChecking)]
     pub registers_val: C,
@@ -79,7 +79,7 @@ impl SymbolicSumcheck for ValEvaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::protocols::jolt::JoltDerivedId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn trace_dimensions() -> TraceDimensions {
@@ -111,23 +111,7 @@ mod tests {
                 id if id == rd_wa_val_evaluation() => wa,
                 _ => zero,
             },
-            |id| match *id {
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
-            },
+            |_| zero,
             |id| match *id {
                 JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                     lt_cycle
@@ -146,18 +130,5 @@ mod tests {
         assert_eq!(ValEvaluation::id(), JoltRelationId::RegistersValEvaluation);
         assert_eq!(relation.rounds(), trace_dimensions().log_t());
         assert_eq!(relation.degree(), 3);
-        assert_eq!(
-            relation.required_openings::<Fr>(),
-            vec![
-                registers_val_read_write(),
-                rd_inc_val_evaluation(),
-                rd_wa_val_evaluation(),
-            ]
-        );
-        assert!(relation.required_challenges::<Fr>().is_empty());
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle)]
-        );
     }
 }

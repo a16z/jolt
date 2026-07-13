@@ -15,6 +15,34 @@ use super::super::{
 use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use super::dimensions::JoltFormulaPointError;
 use super::error::require_len;
+use super::instruction::{imm, instruction_raf_flag, lookup_table_flag, unexpanded_pc};
+use super::registers::{
+    rd_wa_read_write, rd_wa_val_evaluation, rs1_ra_read_write, rs2_ra_read_write,
+};
+use super::spartan::unexpanded_pc_shift;
+
+/// Per-stage (1..=5) gamma-power vector lengths for the bytecode read-RAF stage
+/// folds — the arities of the prover's `challenge_scalar_powers` draws. The
+/// verifier stores each stage's single drawn scalar and expands it with
+/// [`stage_gamma_powers`], so these lengths are single-sourced with the
+/// fold-side `require_len` guards.
+///
+/// [`stage_gamma_powers`]: crate::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges::stage_gamma_powers
+pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
+    // Stage 1: UnexpandedPC, Imm, then one per circuit flag (all Spartan outer).
+    2 + NUM_CIRCUIT_FLAGS,
+    // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
+    // product-virtualization flags.
+    4,
+    // Stage 3: Imm (instruction input), UnexpandedPC (shift), the four
+    // operand-source flags, IsNoop, VirtualInstruction, IsFirstInSequence.
+    9,
+    // Stage 4: the RdWa, Rs1Ra, Rs2Ra register read-write openings.
+    3,
+    // Stage 5: RdWa (registers val evaluation), InstructionRafFlag, then one
+    // per lookup table flag.
+    2 + LookupTableKind::<XLEN>::COUNT,
+];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafDimensions {
@@ -238,12 +266,12 @@ pub struct BytecodeReadRafStageValueInputs<'a, F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafRegisterEqEvals<F> {
+struct BytecodeReadRafRegisterEqEvals<F> {
     pub read_write: Vec<F>,
     pub val_evaluation: Vec<F>,
 }
 
-pub fn read_raf_register_eq_evals<F>(
+fn read_raf_register_eq_evals<F>(
     register_read_write_point: &[F],
     register_val_evaluation_point: &[F],
 ) -> BytecodeReadRafRegisterEqEvals<F>
@@ -288,11 +316,11 @@ pub fn read_raf_public_values<F>(
 where
     F: Field,
 {
-    require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
-    require_len(inputs.stage2_gammas, 4)?;
-    require_len(inputs.stage3_gammas, 9)?;
-    require_len(inputs.stage4_gammas, 3)?;
-    require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
+    require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
+    require_len(inputs.stage2_gammas, BYTECODE_STAGE_GAMMA_COUNTS[1])?;
+    require_len(inputs.stage3_gammas, BYTECODE_STAGE_GAMMA_COUNTS[2])?;
+    require_len(inputs.stage4_gammas, BYTECODE_STAGE_GAMMA_COUNTS[3])?;
+    require_len(inputs.stage5_gammas, BYTECODE_STAGE_GAMMA_COUNTS[4])?;
 
     let expected_domain = 1usize << inputs.r_address.len();
     if inputs.bytecode.len() != expected_domain {
@@ -348,7 +376,7 @@ where
     clippy::too_many_arguments,
     reason = "Each gamma slice corresponds to one protocol subexpression."
 )]
-pub fn read_raf_row_values<F>(
+fn read_raf_row_values<F>(
     instruction: &JoltInstructionRow,
     register_read_write_eq: &[F],
     register_val_evaluation_eq: &[F],
@@ -445,10 +473,7 @@ pub fn read_raf_output_openings(
 }
 
 pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
-    [(
-        unexpanded_pc_spartan_shift(),
-        unexpanded_pc_instruction_input(),
-    )]
+    [(unexpanded_pc_shift(), unexpanded_pc())]
 }
 
 pub(crate) fn stage1_claim<F>() -> JoltExpr<F>
@@ -484,8 +509,8 @@ where
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage3Gamma);
 
-    opening(imm_instruction_input())
-        + beta.clone() * opening(unexpanded_pc_spartan_shift())
+    opening(imm())
+        + beta.clone() * opening(unexpanded_pc_shift())
         + beta.clone().pow(2)
             * opening(instruction_flag_input(
                 InstructionFlags::LeftOperandIsRs1Value,
@@ -570,27 +595,6 @@ pub(crate) fn instruction_flag_product(flag: InstructionFlags) -> JoltOpeningId 
     )
 }
 
-pub(crate) fn imm_instruction_input() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::Imm,
-        JoltRelationId::InstructionInputVirtualization,
-    )
-}
-
-fn unexpanded_pc_instruction_input() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::UnexpandedPC,
-        JoltRelationId::InstructionInputVirtualization,
-    )
-}
-
-pub(crate) fn unexpanded_pc_spartan_shift() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::UnexpandedPC,
-        JoltRelationId::SpartanShift,
-    )
-}
-
 pub(crate) fn instruction_flag_input(flag: InstructionFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(flag),
@@ -612,54 +616,8 @@ pub(crate) fn op_flag_shift(flag: CircuitFlags) -> JoltOpeningId {
     )
 }
 
-pub(crate) fn rd_wa_read_write() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RdWa,
-        JoltRelationId::RegistersReadWriteChecking,
-    )
-}
-
-pub(crate) fn rs1_ra_read_write() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::Rs1Ra,
-        JoltRelationId::RegistersReadWriteChecking,
-    )
-}
-
-pub(crate) fn rs2_ra_read_write() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::Rs2Ra,
-        JoltRelationId::RegistersReadWriteChecking,
-    )
-}
-
-pub(crate) fn rd_wa_val_evaluation() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RdWa,
-        JoltRelationId::RegistersValEvaluation,
-    )
-}
-
-pub(crate) fn instruction_raf_flag() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::InstructionRafFlag,
-        JoltRelationId::InstructionReadRaf,
-    )
-}
-
-fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::LookupTableFlag(table.index()),
-        JoltRelationId::InstructionReadRaf,
-    )
-}
-
 pub(crate) fn pc_spartan_outer() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanOuter)
-}
-
-pub(crate) fn pc_spartan_shift() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
 pub(crate) fn bytecode_ra(index: usize) -> JoltOpeningId {

@@ -20,6 +20,7 @@ use super::super::super::{
     BytecodeClaimReductionPublic, JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId, JoltVirtualPolynomial,
 };
+use super::super::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
 use super::super::dimensions::{
     log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
@@ -46,11 +47,6 @@ pub const fn total_lanes() -> usize {
 
 /// Fixed lane capacity for committed bytecode rows.
 pub const COMMITTED_BYTECODE_LANE_CAPACITY: usize = total_lanes().next_power_of_two();
-
-#[inline(always)]
-pub const fn committed_lanes() -> usize {
-    COMMITTED_BYTECODE_LANE_CAPACITY
-}
 
 pub const fn committed_lane_vars() -> usize {
     COMMITTED_BYTECODE_LANE_CAPACITY.trailing_zeros() as usize
@@ -306,9 +302,9 @@ impl BytecodeClaimReductionLayout {
                 got: inputs.r_bc.len(),
             });
         }
-        if inputs.lane_weights.len() != committed_lanes() {
+        if inputs.lane_weights.len() != COMMITTED_BYTECODE_LANE_CAPACITY {
             return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
-                expected: committed_lanes(),
+                expected: COMMITTED_BYTECODE_LANE_CAPACITY,
                 got: inputs.lane_weights.len(),
             });
         }
@@ -395,11 +391,11 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
 pub fn lane_weights<F: Field>(
     inputs: BytecodeLaneWeightInputs<'_, F>,
 ) -> Result<Vec<F>, JoltFormulaPointError> {
-    require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
-    require_len(inputs.stage2_gammas, 4)?;
-    require_len(inputs.stage3_gammas, 9)?;
-    require_len(inputs.stage4_gammas, 3)?;
-    require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
+    require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
+    require_len(inputs.stage2_gammas, BYTECODE_STAGE_GAMMA_COUNTS[1])?;
+    require_len(inputs.stage3_gammas, BYTECODE_STAGE_GAMMA_COUNTS[2])?;
+    require_len(inputs.stage4_gammas, BYTECODE_STAGE_GAMMA_COUNTS[3])?;
+    require_len(inputs.stage5_gammas, BYTECODE_STAGE_GAMMA_COUNTS[4])?;
     require_opening_point_len(inputs.register_read_write_point, REGISTER_ADDRESS_BITS)?;
     require_opening_point_len(inputs.register_val_evaluation_point, REGISTER_ADDRESS_BITS)?;
 
@@ -420,7 +416,7 @@ pub fn lane_weights<F: Field>(
         None,
     );
 
-    let mut weights = vec![F::zero(); committed_lanes()];
+    let mut weights = vec![F::zero(); COMMITTED_BYTECODE_LANE_CAPACITY];
 
     {
         let coeff = eta_powers[0];
@@ -659,10 +655,10 @@ mod tests {
         );
         assert_eq!(layout.raf_flag_idx + 1, total_lanes());
 
-        assert!(committed_lanes().is_power_of_two());
-        assert!(committed_lanes() >= total_lanes());
-        assert!(committed_lanes() < 2 * total_lanes());
-        assert_eq!(1 << committed_lane_vars(), committed_lanes());
+        assert!(COMMITTED_BYTECODE_LANE_CAPACITY.is_power_of_two());
+        assert!(COMMITTED_BYTECODE_LANE_CAPACITY >= total_lanes());
+        assert!(COMMITTED_BYTECODE_LANE_CAPACITY < 2 * total_lanes());
+        assert_eq!(1 << committed_lane_vars(), COMMITTED_BYTECODE_LANE_CAPACITY);
     }
 
     #[test]
@@ -855,20 +851,21 @@ mod tests {
                 .unwrap_or_else(|error| panic!("opening point should assemble: {error}"));
 
             let r_bc = [fr(23)];
-            let mut lane_weight_values = vec![Fr::from_u64(0); committed_lanes()];
+            let mut lane_weight_values = vec![Fr::from_u64(0); COMMITTED_BYTECODE_LANE_CAPACITY];
             for (lane, weight) in lane_weight_values.iter_mut().enumerate() {
                 *weight = fr(3 + lane as u64);
             }
 
             let chunk_cycle_len = 2usize;
             let eq_rbc = EqPolynomial::<Fr>::evals(&r_bc, None);
-            let mut grid = vec![Fr::from_u64(0); committed_lanes() * chunk_cycle_len];
+            let mut grid =
+                vec![Fr::from_u64(0); COMMITTED_BYTECODE_LANE_CAPACITY * chunk_cycle_len];
             for (lane, lane_weight) in lane_weight_values.iter().enumerate() {
                 for (cycle, eq_cycle) in eq_rbc.iter().enumerate() {
                     let index = trace_order.address_cycle_to_index(
                         lane,
                         cycle,
-                        committed_lanes(),
+                        COMMITTED_BYTECODE_LANE_CAPACITY,
                         chunk_cycle_len,
                     );
                     grid[index] = *lane_weight * *eq_cycle;

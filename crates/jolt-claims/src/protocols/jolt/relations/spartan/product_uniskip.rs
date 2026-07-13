@@ -11,9 +11,9 @@ use crate::protocols::jolt::geometry::spartan::{
     product_uniskip_opening, product_uniskip_weight, SpartanProductDimensions,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
-use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{opening, InputClaims, OutputClaims, SumcheckDomain, SymbolicSumcheck};
 
 /// Consumed product uni-skip inputs: the three Spartan-outer openings the first
 /// round reduces (`product`, `should_branch`, `should_jump`), each reweighted by a
@@ -31,8 +31,8 @@ pub struct ProductUniskipInputClaims<C> {
 }
 
 /// Produced product uni-skip opening (the single reduced univariate-skip value).
-/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
-/// on the clear path).
+/// Generic over the opening cell (`F` for the serialized wire value, `Vec<F>` for
+/// the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -66,8 +66,8 @@ impl SymbolicSumcheck for ProductUniskip {
         JoltRelationId::SpartanProductVirtualization
     }
 
-    fn domain(&self) -> JoltSumcheckDomain {
-        JoltSumcheckDomain::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE)
+    fn domain(&self) -> SumcheckDomain {
+        SumcheckDomain::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE)
     }
 
     fn rounds(&self) -> usize {

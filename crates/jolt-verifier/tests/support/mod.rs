@@ -13,57 +13,6 @@ pub enum VerifierPhase {
     Zk,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FixtureId {
-    MulDivSmall,
-    FibonacciSmall,
-    FibonacciMedium,
-    MemoryOps,
-    CollatzSmall,
-    Sha2Small,
-    MulDivZkSmall,
-    ZkStage1Prefix,
-    AdviceConsumer,
-    CommittedMulDivSmall,
-    PublicIoMismatch,
-    TrustedAdviceMismatch,
-    MixedProofMode,
-    ConfigMismatch,
-    OpeningClaimMismatch,
-    BlindFoldMismatch,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TestCase {
-    pub name: &'static str,
-    pub zk: bool,
-    pub fixture: FixtureId,
-    pub checked_at: VerifierPhase,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FixtureMetadata {
-    pub id: FixtureId,
-    pub name: &'static str,
-    pub zk: bool,
-    pub has_trusted_advice: bool,
-    pub expected_prover_accepts: bool,
-    pub notes: &'static str,
-}
-
-pub fn assert_unique_case_names(cases: &[TestCase]) {
-    for (index, case) in cases.iter().enumerate() {
-        for other in &cases[index + 1..] {
-            assert_ne!(case.name, other.name, "duplicate test case name");
-        }
-    }
-}
-
-pub fn assert_case_metadata_matches(case: TestCase, metadata: FixtureMetadata) {
-    assert_eq!(case.fixture, metadata.id);
-    assert_eq!(case.zk, metadata.zk);
-}
-
 pub fn assert_accepts_mode(zk: bool, result: Result<(), VerifierError>) {
     let result_debug = format!("{result:?}");
 

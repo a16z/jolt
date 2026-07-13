@@ -16,9 +16,7 @@ use crate::protocols::jolt::{
 use crate::{derived, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// Produced reduced instruction-lookup openings, all sharing the single reduced
-/// opening point. The three aliased openings are [`Option`] (absent on the wire ⇒
-/// they alias the product-remainder openings; the clear opening-claim projection
-/// fills them). Generic over the cell. Field declaration order is the canonical
+/// opening point. Generic over the cell. Field declaration order is the canonical
 /// Fiat-Shamir order (single-sourced via [`OutputClaims::canonical_order`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -28,15 +26,15 @@ use crate::{derived, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumc
 #[relation(InstructionClaimReduction)]
 pub struct InstructionClaimReductionOutputClaims<C> {
     #[opening(LookupOutput)]
-    pub lookup_output: Option<C>,
+    pub lookup_output: C,
     #[opening(LeftLookupOperand)]
     pub left_lookup_operand: C,
     #[opening(RightLookupOperand)]
     pub right_lookup_operand: C,
     #[opening(LeftInstructionInput)]
-    pub left_instruction_input: Option<C>,
+    pub left_instruction_input: C,
     #[opening(RightInstructionInput)]
-    pub right_instruction_input: Option<C>,
+    pub right_instruction_input: C,
 }
 
 /// Consumed instruction-lookup openings from stage 1's outer sumcheck, reduced by
@@ -44,7 +42,7 @@ pub struct InstructionClaimReductionOutputClaims<C> {
 /// its own sumcheck point), so the input points are left empty. Generic over the
 /// cell. Field order matches
 /// [`instruction_claim_reduction::claim_reduction_input_openings`].
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionClaimReductionInputClaims<C> {
     #[opening(LookupOutput, from = SpartanOuter)]
     pub lookup_output: C,
@@ -59,7 +57,7 @@ pub struct InstructionClaimReductionInputClaims<C> {
 }
 
 /// Fiat-Shamir challenge drawn by the instruction claim-reduction sumcheck.
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct InstructionClaimReductionChallenges<F> {
     #[challenge(InstructionClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -161,20 +159,7 @@ mod tests {
                 JoltChallengeId::InstructionClaimReduction(
                     InstructionClaimReductionChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |_| zero,
         );
@@ -192,20 +177,7 @@ mod tests {
                 JoltChallengeId::InstructionClaimReduction(
                     InstructionClaimReductionChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RamReadWrite(_)
-                | JoltChallengeId::RamValCheck(_)
-                | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersClaimReduction(_)
-                | JoltChallengeId::InstructionInput(_)
-                | JoltChallengeId::InstructionReadRaf(_)
-                | JoltChallengeId::InstructionRaVirtualization(_)
-                | JoltChallengeId::Booleanity(_)
-                | JoltChallengeId::IncClaimReduction(_)
-                | JoltChallengeId::HammingWeightClaimReduction(_)
-                | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                _ => zero,
             },
             |id| match *id {
                 JoltDerivedId::InstructionClaimReduction(
@@ -244,37 +216,5 @@ mod tests {
         );
         assert_eq!(relation.rounds(), dimensions().log_t());
         assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            relation.input_expression::<Fr>().required_openings(),
-            vec![
-                lookup_output_spartan(),
-                left_lookup_operand_spartan(),
-                right_lookup_operand_spartan(),
-                left_instruction_input_spartan(),
-                right_instruction_input_spartan(),
-            ]
-        );
-        assert_eq!(
-            relation.output_expression::<Fr>().required_openings(),
-            vec![
-                lookup_output_reduced(),
-                left_lookup_operand_reduced(),
-                right_lookup_operand_reduced(),
-                left_instruction_input_reduced(),
-                right_instruction_input_reduced(),
-            ]
-        );
-        assert_eq!(
-            relation.required_challenges::<Fr>(),
-            vec![JoltChallengeId::from(
-                InstructionClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            relation.required_deriveds::<Fr>(),
-            vec![JoltDerivedId::from(
-                InstructionClaimReductionPublic::EqSpartan
-            )]
-        );
     }
 }

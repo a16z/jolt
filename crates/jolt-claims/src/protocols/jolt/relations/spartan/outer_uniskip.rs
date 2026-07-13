@@ -10,7 +10,7 @@ use crate::protocols::jolt::geometry::dimensions::{
 };
 use crate::protocols::jolt::geometry::spartan::{outer_uniskip_opening, SpartanOuterDimensions};
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltSumcheckDomain,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
 use crate::{opening, InputClaims, OutputClaims, SumcheckDomain, SymbolicSumcheck};
 
@@ -27,7 +27,7 @@ impl<C> Default for OuterUniskipInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<crate::OpeningClaim<F>> {
+impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -38,8 +38,8 @@ impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<crate::OpeningClaim<F>
 }
 
 /// Produced Spartan outer univariate-skip opening (the single reduced
-/// univariate-skip value). Generic over the cell (`F` on the wire / serialized
-/// proof form, `OpeningClaim<F>` on the clear path).
+/// univariate-skip value). Generic over the opening cell (`F` for the serialized
+/// wire value, `Vec<F>` for the derived opening point).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -76,7 +76,7 @@ impl SymbolicSumcheck for OuterUniskip {
     }
 
     fn domain(&self) -> SumcheckDomain {
-        JoltSumcheckDomain::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE)
+        SumcheckDomain::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE)
     }
 
     fn rounds(&self) -> usize {

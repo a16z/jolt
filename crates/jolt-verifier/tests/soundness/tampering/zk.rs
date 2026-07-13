@@ -262,7 +262,7 @@ fn tampered_zk_stage7_batch_output_commitment_count_rejects_now() {
 #[test]
 fn tampered_zk_joint_opening_eval_commitment_rejects_now() {
     with_zk_verifier_stack(|| {
-        assert_zk_target_active("zk.joint_opening_proof.eval_commitment");
+        tamper_manifest::assert_zk_target_active("zk.joint_opening_proof.eval_commitment");
         let mut case = crate::support::verifier_fixtures::zk_muldiv_case();
         case.proof.joint_opening_proof.0.y_com = None;
 
@@ -274,7 +274,7 @@ fn tampered_zk_joint_opening_eval_commitment_rejects_now() {
 #[test]
 fn tampered_blindfold_proof_rejects_now() {
     with_zk_verifier_stack(|| {
-        assert_zk_target_active("zk.blindfold_proof");
+        tamper_manifest::assert_zk_target_active("zk.blindfold_proof");
         let mut case = crate::support::verifier_fixtures::zk_muldiv_case();
         let JoltProofClaims::Zk { blindfold_proof } = &mut case.proof.claims else {
             panic!("ZK fixture must carry a BlindFold proof");
@@ -330,16 +330,6 @@ where
         panic!("ZK fixture must use committed sumcheck proofs");
     };
     let _ = proof.output_claims.commitments.pop();
-}
-
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn assert_zk_target_active(name: &str) {
-    let target = tamper_manifest::required_target(name);
-    tamper_manifest::assert_manifest_target_is_active(target);
-    assert!(
-        target.mode.includes(true),
-        "tamper target mode does not include ZK: {target:?}"
-    );
 }
 
 #[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]

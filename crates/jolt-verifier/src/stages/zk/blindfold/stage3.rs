@@ -19,17 +19,17 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(SpartanShiftChallenge::Gamma)),
-        input.stage3.challenges.shift_gamma,
+        input.stage3.challenges.shift.gamma,
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(InstructionInputChallenge::Gamma)),
-        input.stage3.challenges.instruction_gamma,
+        input.stage3.challenges.instruction_input.gamma,
     )?;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(
             RegistersClaimReductionChallenge::Gamma,
         )),
-        input.stage3.challenges.registers_gamma,
+        input.stage3.challenges.registers_claim_reduction.gamma,
     )?;
 
     let shift_point = input
@@ -38,9 +38,9 @@ where
         .try_instance_point(shift.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
-    // Stage 1's remainder cycle point, recomputed from `stage1.remainder_consistency`
-    // (the stage-2 carrier no longer stores it as a `product_tau_low` field).
-    let product_tau_low = stage1_remainder_cycle(input);
+    // Stage 1's remainder cycle point (low half), read from the stage-2 carrier's
+    // `product_tau_low`.
+    let product_tau_low = input.stage2.product_tau_low.clone();
     let eq_plus_one_outer =
         EqPlusOnePolynomial::new(product_tau_low.clone()).evaluate(&shift_opening_point);
     let product_point = input
@@ -88,50 +88,67 @@ where
             .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
     )?;
 
-    let output_ids = vec![
-        spartan::unexpanded_pc_shift(),
-        spartan::pc_shift(),
-        spartan::is_virtual_shift(),
-        spartan::is_first_in_sequence_shift(),
-        spartan::is_noop_shift(),
-        instruction::left_operand_is_rs1(),
-        instruction::rs1_value(),
-        instruction::left_operand_is_pc(),
-        instruction::right_operand_is_rs2(),
-        instruction::rs2_value(),
-        instruction::right_operand_is_imm(),
-        instruction::imm(),
-        registers_claim_reduction::rd_write_value_reduced(),
-    ];
-    let aliases = vec![
-        OpeningAlias::new(instruction::unexpanded_pc(), spartan::unexpanded_pc_shift()),
-        OpeningAlias::new(
-            registers_claim_reduction::rs1_value_reduced(),
-            instruction::rs1_value(),
-        ),
-        OpeningAlias::new(
-            registers_claim_reduction::rs2_value_reduced(),
-            instruction::rs2_value(),
-        ),
-    ];
+    // Single-sourced from the relations' declared alias pairs
+    // (`ConcreteSumcheck::aliased_output_openings`): the committed output rows
+    // absorb each member's canonical openings minus its aliased ids, and the
+    // `OpeningAlias` rows mirror the same `(aliased, source)` pairs — so
+    // BlindFold's row layout cannot drift from the clear path's generated absorb
+    // and `validate_aliases`.
+    let alias_pairs: Vec<_> = <crate::stages::stage3::outputs::InstructionInput<PCS::Field> as
+        crate::stages::relations::ConcreteSumcheck<PCS::Field>>::aliased_output_openings()
+        .into_iter()
+        .chain(<crate::stages::stage3::outputs::RegistersClaimReduction<PCS::Field> as
+            crate::stages::relations::ConcreteSumcheck<PCS::Field>>::aliased_output_openings())
+        .collect();
+    let aliased_targets: std::collections::BTreeSet<_> =
+        alias_pairs.iter().map(|(aliased, _)| *aliased).collect();
+
+    let zero = PCS::Field::zero();
+    let mut output_ids = relations::spartan::SpartanShiftOutputClaims::<PCS::Field> {
+        unexpanded_pc: zero,
+        pc: zero,
+        is_virtual: zero,
+        is_first_in_sequence: zero,
+        is_noop: zero,
+    }
+    .canonical_order();
+    output_ids.extend(
+        relations::instruction::InstructionInputOutputClaims::<PCS::Field> {
+            left_operand_is_rs1: zero,
+            rs1_value: zero,
+            left_operand_is_pc: zero,
+            unexpanded_pc: zero,
+            right_operand_is_rs2: zero,
+            rs2_value: zero,
+            right_operand_is_imm: zero,
+            imm: zero,
+        }
+        .canonical_order()
+        .into_iter()
+        .filter(|id| !aliased_targets.contains(id)),
+    );
+    output_ids.extend(
+        relations::claim_reductions::registers::RegistersClaimReductionOutputClaims::<PCS::Field> {
+            rd_write_value: zero,
+            rs1_value: zero,
+            rs2_value: zero,
+        }
+        .canonical_order()
+        .into_iter()
+        .filter(|id| !aliased_targets.contains(id)),
+    );
+    let aliases = alias_pairs
+        .into_iter()
+        .map(|(aliased, source)| OpeningAlias::new(aliased, source))
+        .collect::<Vec<_>>();
     add_batched_stage(
         builder,
         "stage3.batch",
         shift.domain(),
         &[
-            shift.rounds(),
-            instruction_input.rounds(),
-            registers_reduction.rounds(),
-        ],
-        &[
-            shift.input_expression::<PCS::Field>(),
-            instruction_input.input_expression::<PCS::Field>(),
-            registers_reduction.input_expression::<PCS::Field>(),
-        ],
-        &[
-            shift.output_expression::<PCS::Field>(),
-            instruction_input.output_expression::<PCS::Field>(),
-            registers_reduction.output_expression::<PCS::Field>(),
+            relation_claim(&shift),
+            relation_claim(&instruction_input),
+            relation_claim(&registers_reduction),
         ],
         &input.stage3.batch_consistency,
         &input.stage3.batch_output_claims,

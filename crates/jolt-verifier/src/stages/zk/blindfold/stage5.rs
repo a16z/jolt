@@ -21,7 +21,7 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(InstructionReadRafChallenge::Gamma)),
-        input.stage5.challenges.instruction_gamma,
+        input.stage5.challenges.instruction_read_raf.gamma,
     )?;
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
@@ -52,8 +52,8 @@ where
         .evaluate(&instruction_opening.r_address);
     let identity_eval =
         IdentityPolynomial::new(2 * RISCV_XLEN).evaluate(&instruction_opening.r_address);
-    let instruction_gamma_squared =
-        input.stage5.challenges.instruction_gamma * input.stage5.challenges.instruction_gamma;
+    let instruction_gamma_squared = input.stage5.challenges.instruction_read_raf.gamma
+        * input.stage5.challenges.instruction_read_raf.gamma;
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
         values.public(
             JoltDerivedId::from(InstructionReadRafPublic::EqTableValue(table.index())),
@@ -64,20 +64,20 @@ where
     values.public(
         JoltDerivedId::from(InstructionReadRafPublic::EqRafConstant),
         eq_reduction
-            * (input.stage5.challenges.instruction_gamma * left_operand_eval
+            * (input.stage5.challenges.instruction_read_raf.gamma * left_operand_eval
                 + instruction_gamma_squared * right_operand_eval),
     )?;
     values.public(
         JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
         eq_reduction
             * (instruction_gamma_squared * identity_eval
-                - input.stage5.challenges.instruction_gamma * left_operand_eval
+                - input.stage5.challenges.instruction_read_raf.gamma * left_operand_eval
                 - instruction_gamma_squared * right_operand_eval),
     )?;
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)),
-        input.stage5.challenges.ram_gamma,
+        input.stage5.challenges.ram_ra_claim_reduction.gamma,
     )?;
     let ram_point = input
         .stage5
@@ -122,85 +122,38 @@ where
     )?;
 
     let mut output_ids = Vec::new();
-    output_ids.extend(map_jolt_opening_ids(
-        instruction_output_openings.lookup_table_flags,
-    ));
-    output_ids.extend(map_jolt_opening_ids(
-        instruction_output_openings.instruction_ra,
-    ));
-    output_ids.push(VerifierOpeningId::Jolt(
-        instruction_output_openings.instruction_raf_flag,
-    ));
-    output_ids.extend(map_jolt_opening_ids(
+    output_ids.extend(instruction_output_openings.lookup_table_flags);
+    output_ids.extend(instruction_output_openings.instruction_ra);
+    output_ids.push(instruction_output_openings.instruction_raf_flag);
+    output_ids.extend(
         relations::ram::RamRaClaimReductionOutputClaims::<PCS::Field> {
             ram_ra: PCS::Field::zero(),
         }
         .canonical_order(),
-    ));
-    output_ids.extend(map_jolt_opening_ids(
+    );
+    output_ids.extend(
         relations::registers::RegistersValEvaluationOutputClaims::<PCS::Field> {
             rd_inc: PCS::Field::zero(),
             rd_wa: PCS::Field::zero(),
         }
         .canonical_order(),
-    ));
+    );
 
     let batch_claims = [
-        (
-            instruction_claims.rounds(),
-            map_jolt_expr(instruction_claims.input_expression::<PCS::Field>()),
-            map_jolt_expr(instruction_claims.output_expression::<PCS::Field>()),
-        ),
-        (
-            ram_claims.rounds(),
-            map_jolt_expr(ram_claims.input_expression::<PCS::Field>()),
-            map_jolt_expr(ram_claims.output_expression::<PCS::Field>()),
-        ),
-        (
-            registers_claims.rounds(),
-            map_jolt_expr(registers_claims.input_expression::<PCS::Field>()),
-            map_jolt_expr(registers_claims.output_expression::<PCS::Field>()),
-        ),
+        relation_claim(&instruction_claims),
+        relation_claim(&ram_claims),
+        relation_claim(&registers_claims),
     ];
-    let coefficients = &input.stage5.batch_consistency.batching_coefficients;
-    if batch_claims.len() != coefficients.len() {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "stage5.batch: expected {} batching coefficients, got {}",
-                batch_claims.len(),
-                coefficients.len()
-            ),
-        });
-    }
-    let input_claim = batch_claims.iter().zip(coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((rounds, input_expr, _), coefficient)| {
-            let scale = *coefficient
-                * PCS::Field::pow2(input.stage5.batch_consistency.max_num_vars - *rounds);
-            acc + scale_expr(input_expr.clone(), scale)
-        },
-    );
-    let output_claim = batch_claims.iter().zip(coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((_, _, output_expr), coefficient)| {
-            acc + scale_expr(output_expr.clone(), *coefficient)
-        },
-    );
 
-    add_stage(
+    add_batched_stage(
         builder,
         "stage5.batch",
-        SumcheckStatement::new(
-            input.stage5.batch_consistency.max_num_vars,
-            input.stage5.batch_consistency.max_degree,
-        ),
-        domain_spec(instruction_claims.domain()),
-        input.stage5.batch_consistency.consistency.clone(),
+        instruction_claims.domain(),
+        &batch_claims,
+        &input.stage5.batch_consistency,
         &input.stage5.batch_output_claims,
         values,
         output_ids,
         Vec::new(),
-        input_claim,
-        output_claim,
     )
 }

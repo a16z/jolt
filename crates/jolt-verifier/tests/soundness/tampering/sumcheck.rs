@@ -7,10 +7,13 @@
 )]
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use crate::support::{tamper_manifest, verifier_fixtures::VerifierFixtureCase};
+use crate::support::{
+    tamper_manifest,
+    verifier_fixtures::{standard_muldiv_case, VerifierFixtureCase},
+};
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use crate::support::proof_claims::{offset_opening_claim, opening_claim, upsert_opening_claim};
+use crate::support::proof_claims::{offset_opening_claim, opening_claim};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     geometry::{
@@ -22,13 +25,11 @@ use jolt_claims::protocols::jolt::{
         dimensions::JoltFormulaDimensions,
         instruction, ram, registers,
         spartan::{
-            outer_opening, outer_uniskip_opening, product_outer_opening,
-            product_should_branch_outer_opening, product_should_jump_outer_opening,
-            product_uniskip_opening, SpartanOuterDimensions,
+            outer_opening, outer_uniskip_opening, product_uniskip_opening, SpartanOuterDimensions,
         },
     },
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-    JoltVirtualPolynomial, PrecommittedReductionLayout,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+    PrecommittedReductionLayout,
 };
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::{protocols::jolt::geometry::spartan, protocols::jolt::relations, OutputClaims};
@@ -48,7 +49,7 @@ use num_traits::Zero;
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage1_sumcheck_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage1_uniskip_round(&base);
     tamper_each_stage1_remainder_round(&base);
     tamper_stage1_round_counts(&base);
@@ -57,7 +58,7 @@ fn tampered_stage1_sumcheck_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage1_opening_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
     for (target_name, id) in stage1_required_openings(&base) {
         offset_claim_rejects(&base, target_name, id);
@@ -67,7 +68,7 @@ fn tampered_stage1_opening_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_uniskip_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage2_uniskip_round(&base);
     tamper_stage2_uniskip_round_counts(&base);
 }
@@ -75,7 +76,7 @@ fn tampered_stage2_uniskip_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_sumcheck_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage2_batch_round(&base);
     tamper_stage2_batch_round_counts(&base);
 }
@@ -83,30 +84,30 @@ fn tampered_stage2_sumcheck_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_input_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
-    for id in stage2_uniskip_openings()
-        .into_iter()
-        .chain(stage2_batch_input_openings())
-    {
-        offset_claim_rejects(&base, id.0, id.1);
-    }
+    // The Spartan-outer input openings this stage consumes are already swept by
+    // tampered_stage1_opening_claims_reject (every SPARTAN_OUTER_R1CS_INPUTS
+    // variable). Only the product uni-skip output claim, which lives under the
+    // SpartanProductVirtualization relation, is unique to this stage.
+    offset_claim_rejects(
+        &base,
+        "stage2.claims.product_uniskip_output_claim",
+        product_uniskip_opening(),
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_output_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
+    // Every wire cell is present (the aliased reduction cells carry
+    // validated-equal copies of the product-remainder values), so a plain offset
+    // suffices; the aliased offsets are rejected by the generated
+    // `validate_aliases`, the rest by the batch fold.
     for (target_name, id) in stage2_formula_output_openings() {
-        let replacement_claim = stage2_effective_output_claim(&base, id) + Fr::from_u64(1);
-        tamper_manifest::assert_verifier_fixture_tamper_rejects(
-            manifest_target(target_name),
-            &base,
-            |case| {
-                upsert_opening_claim(&mut case.proof, id, replacement_claim);
-            },
-        );
+        offset_claim_rejects(&base, target_name, id);
     }
 
     for (target_name, id) in [
@@ -126,7 +127,7 @@ fn tampered_stage2_output_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_ram_phase_config_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
         manifest_target("proof.rw_config"),
@@ -149,7 +150,7 @@ fn tampered_stage2_ram_phase_config_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage3_sumcheck_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage3_batch_round(&base);
     tamper_stage3_batch_round_counts(&base);
 }
@@ -157,7 +158,7 @@ fn tampered_stage3_sumcheck_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage3_output_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
     for (target_name, id) in stage3_formula_output_openings() {
         offset_claim_rejects(&base, target_name, id);
@@ -167,7 +168,7 @@ fn tampered_stage3_output_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage4_sumcheck_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage4_batch_round(&base);
     tamper_stage4_batch_round_counts(&base);
 }
@@ -175,7 +176,7 @@ fn tampered_stage4_sumcheck_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage4_output_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
     for (target_name, id) in stage4_formula_output_openings() {
         offset_claim_rejects(&base, target_name, id);
@@ -195,7 +196,7 @@ fn tampered_stage4_advice_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage5_sumcheck_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage5_batch_round(&base);
     tamper_stage5_batch_round_counts(&base);
 }
@@ -203,7 +204,7 @@ fn tampered_stage5_sumcheck_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage5_output_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
     for (target_name, id) in stage5_formula_output_openings(&base) {
         offset_claim_rejects(&base, target_name, id);
@@ -213,7 +214,7 @@ fn tampered_stage5_output_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage6_sumcheck_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage6_address_phase_round(&base);
     tamper_stage6_address_phase_round_counts(&base);
     tamper_each_stage6_cycle_phase_round(&base);
@@ -223,7 +224,7 @@ fn tampered_stage6_sumcheck_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage6_output_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
     for (target_name, id) in stage6_formula_output_openings(&base) {
         offset_claim_rejects(&base, target_name, id);
@@ -243,7 +244,7 @@ fn tampered_stage6_advice_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage7_sumcheck_payload_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_each_stage7_batch_round(&base);
     tamper_stage7_batch_round_counts(&base);
 }
@@ -251,7 +252,7 @@ fn tampered_stage7_sumcheck_payload_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage7_output_claims_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
 
     for (target_name, id) in stage7_formula_output_openings(&base) {
         offset_claim_rejects(&base, target_name, id);
@@ -307,11 +308,6 @@ fn tampered_stage6_sumcheck_payload_reject() {}
 #[test]
 #[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
 fn tampered_stage7_sumcheck_payload_reject() {}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn verifier_fixture_case() -> VerifierFixtureCase {
-    crate::support::verifier_fixtures::standard_muldiv_case()
-}
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn real_advice_case() -> VerifierFixtureCase {
@@ -771,61 +767,6 @@ fn stage1_required_openings(base: &VerifierFixtureCase) -> Vec<(&'static str, Jo
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_uniskip_openings() -> Vec<(&'static str, JoltOpeningId)> {
-    vec![
-        ("stage1.claims.outer", product_outer_opening()),
-        ("stage1.claims.outer", product_should_branch_outer_opening()),
-        ("stage1.claims.outer", product_should_jump_outer_opening()),
-        (
-            "stage2.claims.product_uniskip_output_claim",
-            product_uniskip_opening(),
-        ),
-    ]
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_batch_input_openings() -> Vec<(&'static str, JoltOpeningId)> {
-    vec![
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::RamReadValue),
-        ),
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::RamWriteValue),
-        ),
-        (
-            "stage2.claims.product_uniskip_output_claim",
-            product_uniskip_opening(),
-        ),
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::LookupOutput),
-        ),
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::LeftLookupOperand),
-        ),
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::RightLookupOperand),
-        ),
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::LeftInstructionInput),
-        ),
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::RightInstructionInput),
-        ),
-        (
-            "stage1.claims.outer",
-            outer_virtual(JoltVirtualPolynomial::RamAddress),
-        ),
-    ]
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn stage2_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
     let mut openings = Vec::new();
     openings.extend(
@@ -958,11 +899,11 @@ fn stage5_formula_output_openings(
     openings.extend(LookupTableKind::<RISCV_XLEN>::iter().map(|table| {
         (
             "stage5.claims.instruction_read_raf.lookup_table_flags",
-            instruction::read_raf_lookup_table_flag_opening(table),
+            instruction::lookup_table_flag(table),
         )
     }));
     for index in 0.. {
-        let id = instruction::read_raf_instruction_ra_opening(index);
+        let id = instruction::instruction_ra(index);
         if opening_claim(&base.proof, id).is_none() {
             break;
         }
@@ -970,7 +911,7 @@ fn stage5_formula_output_openings(
     }
     openings.push((
         "stage5.claims.instruction_read_raf.instruction_raf_flag",
-        instruction::read_raf_instruction_raf_flag_opening(),
+        instruction::instruction_raf_flag(),
     ));
     openings.extend(
         [ram::ram_ra_claim_reduction()]
@@ -1100,19 +1041,14 @@ fn stage6_advice_output_openings(base: &VerifierFixtureCase) -> Vec<(&'static st
         openings.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Trusted, layout.dimensions())
                 .into_iter()
-                .map(|id| ("stage6.claims.advice_cycle_phase.trusted.opening_claim", id)),
+                .map(|id| ("stage6.claims.trusted_advice.trusted", id)),
         );
     }
     if let Some(layout) = untrusted_layout {
         openings.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Untrusted, layout.dimensions())
                 .into_iter()
-                .map(|id| {
-                    (
-                        "stage6.claims.advice_cycle_phase.untrusted.opening_claim",
-                        id,
-                    )
-                }),
+                .map(|id| ("stage6.claims.untrusted_advice.untrusted", id)),
         );
     }
 
@@ -1160,13 +1096,13 @@ fn stage7_advice_output_openings(base: &VerifierFixtureCase) -> Vec<(&'static st
 
     if trusted_layout.is_some_and(|layout| layout.dimensions().has_address_phase()) {
         openings.push((
-            "stage7.claims.advice_address_phase.trusted.opening_claim",
+            "stage7.claims.trusted_advice.trusted",
             advice::final_advice_opening(JoltAdviceKind::Trusted),
         ));
     }
     if untrusted_layout.is_some_and(|layout| layout.dimensions().has_address_phase()) {
         openings.push((
-            "stage7.claims.advice_address_phase.untrusted.opening_claim",
+            "stage7.claims.untrusted_advice.untrusted",
             advice::final_advice_opening(JoltAdviceKind::Untrusted),
         ));
     }
@@ -1189,62 +1125,4 @@ fn stage6_dimensions(base: &VerifierFixtureCase) -> JoltFormulaDimensions {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn manifest_target(name: &str) -> tamper_manifest::TamperTarget {
     tamper_manifest::required_target(name)
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn outer_virtual(polynomial: JoltVirtualPolynomial) -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(polynomial, JoltRelationId::SpartanOuter)
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_effective_output_claim(base: &VerifierFixtureCase, id: JoltOpeningId) -> Fr {
-    opening_claim(&base.proof, id)
-        .or_else(|| stage2_output_alias_claim(base, id))
-        .unwrap_or_else(|| Fr::from_u64(0))
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_output_alias_claim(base: &VerifierFixtureCase, id: JoltOpeningId) -> Option<Fr> {
-    let alias = stage2_output_alias(id)?;
-    opening_claim(&base.proof, alias)
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage2_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
-    if id == instruction_claim_reduction::lookup_output_reduced() {
-        Some(spartan::lookup_output_product())
-    } else if id == instruction_claim_reduction::left_instruction_input_reduced() {
-        Some(spartan::left_instruction_input_product())
-    } else if id == instruction_claim_reduction::right_instruction_input_reduced() {
-        Some(spartan::right_instruction_input_product())
-    } else {
-        None
-    }
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage3_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
-    if id == instruction::unexpanded_pc() {
-        Some(spartan::unexpanded_pc_shift())
-    } else if id == registers_claim_reduction::rs1_value_reduced() {
-        Some(instruction::rs1_value())
-    } else if id == registers_claim_reduction::rs2_value_reduced() {
-        Some(instruction::rs2_value())
-    } else {
-        None
-    }
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn stage6_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
-    match id {
-        JoltOpeningId::Polynomial {
-            polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
-            relation: JoltRelationId::Booleanity,
-        } => Some(JoltOpeningId::committed(
-            JoltCommittedPolynomial::BytecodeRa(index),
-            JoltRelationId::BytecodeReadRaf,
-        )),
-        _ => None,
-    }
 }

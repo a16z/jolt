@@ -1,10 +1,10 @@
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use crate::support::{self, tamper_manifest};
+use crate::support::{self, tamper_manifest, verifier_fixtures::standard_muldiv_case};
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn public_io_memory_layout_mismatch_rejects_now() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
         tamper_manifest::required_target("public_io.memory_layout"),
         &base,
@@ -17,7 +17,7 @@ fn public_io_memory_layout_mismatch_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn invalid_trace_length_rejects_now() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
         tamper_manifest::required_target("proof.trace_length"),
         &base,
@@ -30,7 +30,7 @@ fn invalid_trace_length_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn excessive_trace_length_rejects_now() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
         tamper_manifest::required_target("proof.trace_length"),
         &base,
@@ -43,7 +43,7 @@ fn excessive_trace_length_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn invalid_ram_domain_rejects_now() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
         tamper_manifest::required_target("proof.ram_K"),
         &base,
@@ -56,7 +56,7 @@ fn invalid_ram_domain_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn zero_ram_domain_rejects_now() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
         tamper_manifest::required_target("proof.ram_K"),
         &base,
@@ -69,7 +69,7 @@ fn zero_ram_domain_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn oversized_public_input_rejects_now() {
-    let mut case = verifier_fixture_case();
+    let mut case = standard_muldiv_case();
     case.public_io.inputs =
         vec![0; case.preprocessing.program.memory_layout().max_input_size as usize + 1];
 
@@ -79,7 +79,7 @@ fn oversized_public_input_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn oversized_public_output_rejects_now() {
-    let mut case = verifier_fixture_case();
+    let mut case = standard_muldiv_case();
     case.public_io.outputs =
         vec![0; case.preprocessing.program.memory_layout().max_output_size as usize + 1];
 
@@ -89,7 +89,7 @@ fn oversized_public_output_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_public_input_bytes_reject() {
-    let base = verifier_fixture_case();
+    let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
         tamper_manifest::required_target("public_io.inputs"),
         &base,
@@ -103,8 +103,3 @@ fn tampered_public_input_bytes_reject() {
 #[test]
 #[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
 fn preamble_tampering_requires_verifier_fixtures() {}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-fn verifier_fixture_case() -> crate::support::verifier_fixtures::VerifierFixtureCase {
-    crate::support::verifier_fixtures::standard_muldiv_case()
-}
