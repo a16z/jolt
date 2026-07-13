@@ -672,10 +672,10 @@ mod tests {
             opening_count,
             rv64::NUM_R1CS_INPUTS + FIELD_INLINE_APPENDED_COLUMNS
         );
-        assert_eq!(
-            formula.public_coefficients().len(),
-            opening_count * opening_count + opening_count + 1
-        );
+        // The factored publics: the tau kernel, one Az and one Bz weight per
+        // opening (appended field-inline columns included), and the two
+        // affine constants.
+        assert_eq!(formula.public_coefficients().len(), 2 * opening_count + 3);
     }
 
     #[cfg(feature = "field-inline")]
