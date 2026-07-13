@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -15,6 +16,12 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     /// One opening hint per committed bytecode chunk, in chunk order.
     pub bytecode_chunk_hints: Vec<PCS::OpeningHint>,
     pub program_image_hint: PCS::OpeningHint,
+    /// The trace order the chunk commitments' coefficient grids were built
+    /// under at preprocessing time (legacy couples the two through one
+    /// process-global layout). Stage 0 rejects a proof config whose order
+    /// disagrees — the chunk tables stages 6b/8 rebuild would transpose
+    /// against the absorbed commitments and fail only at verification.
+    pub trace_order: TracePolynomialOrder,
 }
 
 /// The prover's preprocessing is a strict superset of the verifier's: the

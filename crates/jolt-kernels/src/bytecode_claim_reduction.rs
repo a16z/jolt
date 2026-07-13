@@ -7,9 +7,9 @@
 //! core runs over:
 //! - value table: the chunk-weight fold `Σ_c chunk_rbc_weight_c · chunk_c`
 //!   of the committed chunk coefficient grids,
-//! - eq table: `lane_weights[lane] · eq(r_bc)[cycle]` over the cycle-major
-//!   `(lane, cycle)` grid — the η/γ-folded lane weights carrying the whole
-//!   input-claim algebra,
+//! - eq table: `lane_weights[lane] · eq(r_bc)[cycle]` over the `(lane,
+//!   cycle)` grid in the proof's trace order — the η/γ-folded lane weights
+//!   carrying the whole input-claim algebra,
 //! - aux tables: the raw per-chunk grids, bound alongside; their fully bound
 //!   coefficients are the final per-chunk opening values.
 
@@ -50,8 +50,11 @@ impl<F: Field> BytecodeClaimReduction<F> for ReferenceBackend {
         bytecode: &[JoltInstructionRow],
     ) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>> {
         let reduction = layout.precommitted().clone();
-        let chunk_coeffs: Vec<Vec<F>> =
-            build_committed_bytecode_chunk_coeffs(bytecode, layout.chunk_count())?;
+        let chunk_coeffs: Vec<Vec<F>> = build_committed_bytecode_chunk_coeffs(
+            bytecode,
+            layout.chunk_count(),
+            layout.trace_order(),
+        )?;
         let chunk_len = chunk_coeffs[0].len();
         if chunk_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
             return Err(KernelError::TableSizeMismatch {
@@ -72,7 +75,8 @@ impl<F: Field> BytecodeClaimReduction<F> for ReferenceBackend {
         let eq_cycle = eq_table(&weights.r_bc);
         let eq_template: Vec<F> = (0..chunk_len)
             .map(|index| {
-                let (lane, cycle) = chunk_index_to_lane_cycle(index, chunk_cycle_len);
+                let (lane, cycle) =
+                    chunk_index_to_lane_cycle(index, chunk_cycle_len, layout.trace_order());
                 weights.lane_weights[lane] * eq_cycle[cycle]
             })
             .collect();

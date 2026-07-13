@@ -825,6 +825,7 @@ mod advice_consumer {
             let advice_grid = CommitmentGrid {
                 total_vars: advice_vars(memory_layout.max_trusted_advice_size),
                 log_t: 0,
+                log_k_chunk: 0,
                 // Advice grids always place cycle-major — see `CommitmentGrid`.
                 order: TracePolynomialOrder::CycleMajor,
             };
@@ -909,6 +910,7 @@ mod advice_consumer {
 mod committed_muldiv {
     use jolt_claims::protocols::jolt::geometry::claim_reductions::{bytecode, program_image};
     use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -924,6 +926,7 @@ mod committed_muldiv {
         CommittedProgramProverData, JoltBackend, JoltProverPreprocessing, ProverConfig,
     };
     use jolt_prover_legacy::host;
+    use jolt_prover_legacy::poly::commitment::dory::{DoryContext, DoryGlobals, DoryLayout};
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
     use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
@@ -963,7 +966,7 @@ mod committed_muldiv {
     /// exercising the materialized wide-row one-hot commit fallback.
     #[test]
     fn prover_matches_legacy_on_committed_muldiv() {
-        committed_muldiv_matches_legacy(2);
+        committed_muldiv_matches_legacy(2, TracePolynomialOrder::CycleMajor);
     }
 
     /// The mild-widening arm: at chunk count 64 the bytecode candidate still
@@ -972,10 +975,37 @@ mod committed_muldiv {
     /// grid.
     #[test]
     fn prover_matches_legacy_on_committed_muldiv_many_chunks() {
-        committed_muldiv_matches_legacy(64);
+        committed_muldiv_matches_legacy(64, TracePolynomialOrder::CycleMajor);
     }
 
-    fn committed_muldiv_matches_legacy(bytecode_chunk_count: usize) {
+    /// The address-major arms (no legacy test exists, but legacy supports
+    /// the combination — the harness's live run IS the oracle): the widened
+    /// grid exercises the embedding-extra strides (`one_hot_stride = 2^e`),
+    /// and the chunk grids interleave lane/cycle transposed.
+    #[test]
+    fn prover_matches_legacy_on_committed_muldiv_address_major() {
+        committed_muldiv_matches_legacy(2, TracePolynomialOrder::AddressMajor);
+    }
+
+    #[test]
+    fn prover_matches_legacy_on_committed_muldiv_many_chunks_address_major() {
+        committed_muldiv_matches_legacy(64, TracePolynomialOrder::AddressMajor);
+    }
+
+    fn committed_muldiv_matches_legacy(bytecode_chunk_count: usize, order: TracePolynomialOrder) {
+        if order == TracePolynomialOrder::AddressMajor {
+            // Must precede the committed PREPROCESSING, not just the prover:
+            // the chunk/image commitments bake the layout in at
+            // preprocessing time. See the advice module on the initializer
+            // idiom and nextest process isolation.
+            DoryGlobals::initialize_context(
+                1,
+                2,
+                DoryContext::Main,
+                Some(DoryLayout::AddressMajor),
+            )
+            .expect("initialize the main Dory context");
+        }
         let mut program = host::Program::new("muldiv-guest");
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
 
@@ -1057,7 +1087,7 @@ mod committed_muldiv {
             )
             .expect("modular trace");
 
-        let config = ProverConfig::derive::<Fr>(
+        let mut config = ProverConfig::derive::<Fr>(
             trace_output.trace.rows(),
             memory_layout,
             verifier_preprocessing.program.min_bytecode_address(),
@@ -1065,8 +1095,13 @@ mod committed_muldiv {
             MAX_PADDED_TRACE_LENGTH,
         )
         .expect("derive config");
+        config.trace_polynomial_order = order;
         assert_eq!(config.trace_length, legacy_proof.trace_length);
         assert_eq!(config.one_hot_config, legacy_proof.one_hot_config);
+        assert_eq!(
+            config.trace_polynomial_order,
+            legacy_proof.trace_polynomial_order
+        );
 
         let mut rows = trace_output.trace.rows().to_vec();
         rows.resize(config.trace_length, TraceRow::default());
@@ -1105,6 +1140,7 @@ mod committed_muldiv {
         let chunk_tables = build_committed_bytecode_chunk_coeffs::<Fr>(
             &full_program.bytecode.bytecode,
             bytecode_chunk_count,
+            order,
         )
         .expect("chunk grids");
         let chunk_shape = CommitmentMatrixShape::balanced(bytecode_candidate);
@@ -1138,6 +1174,7 @@ mod committed_muldiv {
                 full: full_program,
                 bytecode_chunk_hints,
                 program_image_hint,
+                trace_order: order,
             }),
         };
 

@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId, TracePolynomialOrder};
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use std::collections::BTreeMap;
@@ -169,23 +169,12 @@ where
             CommittedProgramCandidates::from_schedule(precommitted),
         ),
         log_t,
+        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         order: config.trace_polynomial_order,
     };
     if grid.total_vars != opening_point.len() {
         return Err(ProverError::Unsupported {
             reason: "commitment grid width disagrees with the unified opening point",
-        });
-    }
-    // The kernels' address-major stride math assumes an unwidened grid (no
-    // embedding extra between addresses). prove() can't reach here widened —
-    // stage 0 rejects committed-program × address-major and dominant advice —
-    // but a direct stage caller can (a dominant advice anchor also satisfies
-    // the width check above), so guard rather than silently mis-embed.
-    if config.trace_polynomial_order == TracePolynomialOrder::AddressMajor
-        && grid.total_vars != config.one_hot_config.committed_chunk_bits() + log_t
-    {
-        return Err(ProverError::Unsupported {
-            reason: "address-major with a widened commitment grid",
         });
     }
     // The committed-program polynomials are preprocessing data (not witness
@@ -198,6 +187,7 @@ where
         let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
             &program.bytecode.bytecode,
             bytecode_layout.chunk_count(),
+            bytecode_layout.trace_order(),
         )?;
         for (index, coeffs) in chunk_coeffs.into_iter().enumerate() {
             let _ =

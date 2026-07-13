@@ -81,19 +81,16 @@ where
             reason: "committed-program prover data presence disagrees with the preprocessing mode",
         });
     }
-    // Committed program × address-major is unimplemented on this side: the
-    // chunk-lane placement transposes with the layout and the committed
-    // candidates widen the grid past the kernels' stride math (legacy DOES
-    // support the combination — its proofs verify through this workspace's
-    // verifier — so a live-legacy oracle exists whenever this gets built).
-    // Guarding it off also keeps every supported address-major grid
-    // unwidened (advice never widens without dominating, which is rejected
-    // below), so the kernels need no embedding-extra arm.
-    if config.trace_polynomial_order == TracePolynomialOrder::AddressMajor
-        && preprocessing.verifier.program.committed().is_some()
+    // The chunk commitments bake their trace order in at preprocessing time;
+    // a disagreeing proof config would transpose the rebuilt chunk tables
+    // against the absorbed commitments and fail only at verification.
+    if preprocessing
+        .committed_program
+        .as_ref()
+        .is_some_and(|committed| committed.trace_order != config.trace_polynomial_order)
     {
         return Err(ProverError::Unsupported {
-            reason: "committed-program preprocessing under the address-major trace layout",
+            reason: "committed-program preprocessing was built for a different trace layout",
         });
     }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
@@ -123,7 +120,7 @@ where
 
     // The dominant-advice regime (an advice grid wider than every other
     // commitment-grid candidate) has no e2e coverage anywhere; guard it off
-    // like the other unverified modes. Committed-program candidates count
+    // until an oracle-backed test exists. Committed-program candidates count
     // toward the grid width, so advice wider than the main matrix but inside
     // a committed candidate is fine.
     {
@@ -175,6 +172,7 @@ where
             CommittedProgramCandidates::from_schedule(&checked.precommitted),
         ),
         log_t: config.trace_length.ilog2() as usize,
+        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         order: config.trace_polynomial_order,
     };
     let committed =
@@ -191,6 +189,7 @@ where
         let advice_grid = CommitmentGrid {
             total_vars: advice_total_vars(public_io.memory_layout.max_untrusted_advice_size),
             log_t: 0,
+            log_k_chunk: 0,
             // Advice grids always place cycle-major — see `CommitmentGrid`.
             order: TracePolynomialOrder::CycleMajor,
         };

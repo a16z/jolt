@@ -45,9 +45,8 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// must not exceed the main commitment grid) and with or without
 /// committed-program preprocessing (which requires
 /// `preprocessing.committed_program` — the prover-retained full program and
-/// chunk/image hints). Dominant advice, and committed-program preprocessing
-/// combined with the address-major layout (unimplemented here; legacy
-/// supports it), return [`ProverError::Unsupported`] at stage 0.
+/// chunk/image hints). Dominant advice returns
+/// [`ProverError::Unsupported`] at stage 0.
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,

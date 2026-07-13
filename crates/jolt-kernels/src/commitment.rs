@@ -11,8 +11,8 @@
 //! address and cycle-chunk exactly as the legacy prover's tiered commit did).
 //!
 //! Under the address-major order every polynomial's coefficients scatter
-//! cycle-block-strided across the whole grid (`index = t · 2^(total_vars −
-//! log_t) + k`, dense polynomials at address slot zero), so no
+//! cycle-block-strided across the whole grid (`index = t · cycle_stride +
+//! k · one_hot_stride`, dense polynomials at address slot zero), so no
 //! cycle-contiguous stream exists; the reference implementation materializes
 //! the full grid table and feeds dense rows — the same per-row MSMs legacy's
 //! materialized address-major commit runs, full matrix height included (its
@@ -32,11 +32,16 @@ use crate::{KernelError, ProofSession, ReferenceBackend};
 /// shapes (advice, committed program). `order` is the proof's
 /// coefficient-placement mode; dedicated advice grids are always
 /// [`TracePolynomialOrder::CycleMajor`] (their placement is contiguous in
-/// both proof layouts — legacy's strides collapse outside the main context).
+/// both proof layouts — legacy's strides collapse outside the main context)
+/// with `log_k_chunk` 0 (no one-hot polynomials).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentGrid {
     pub total_vars: usize,
     pub log_t: usize,
+    /// The committed one-hot address width — the main matrix contributes
+    /// `log_k_chunk + log_t` of `total_vars`; the rest is the
+    /// precommitted-candidate embedding extra.
+    pub log_k_chunk: usize,
     pub order: TracePolynomialOrder,
 }
 
@@ -46,14 +51,20 @@ impl CommitmentGrid {
     }
 
     /// The address-major per-cycle block width: cycle `t`'s coefficients
-    /// occupy grid indices `[t · cycle_stride, (t+1) · cycle_stride)`. Equals
-    /// the committed one-hot `K` when the grid is unwidened — the only
-    /// address-major shape the recipes admit (a widened grid would put an
-    /// embedding stride between addresses, which this math does not model;
-    /// stages 0 and 8 reject the combination).
+    /// occupy grid indices `[t · cycle_stride, (t+1) · cycle_stride)` —
+    /// legacy's `dense_stride = 2^(e + log_k_chunk)`.
     pub const fn cycle_stride(&self) -> usize {
         debug_assert!(self.total_vars >= self.log_t);
         1 << (self.total_vars - self.log_t)
+    }
+
+    /// The address-major within-block address stride — legacy's
+    /// `one_hot_stride = 2^e`, where `e` is the embedding extra a
+    /// precommitted candidate wider than the main matrix leaves between
+    /// addresses (`1` on unwidened grids).
+    pub const fn one_hot_stride(&self) -> usize {
+        debug_assert!(self.total_vars >= self.log_t + self.log_k_chunk);
+        1 << (self.total_vars - self.log_t - self.log_k_chunk)
     }
 }
 
@@ -204,9 +215,9 @@ where
 
 /// Drain a committed stream into the full `2^total_vars` address-major grid
 /// table: cycle `t`'s coefficients occupy the block at `t · cycle_stride` — a
-/// one-hot's hot address lands at `t · cycle_stride + k`, a dense coefficient
-/// at the block's address slot zero (legacy's `scaled_index = cycle ·
-/// dense_stride + k · one_hot_stride` with no embedding extra). Eager-dense
+/// one-hot's hot address lands at `t · cycle_stride + k · one_hot_stride`, a
+/// dense coefficient at the block's address slot zero (legacy's
+/// `scaled_index = cycle · dense_stride + k · one_hot_stride`). Eager-dense
 /// like the stage-8 joint-opening slot: a reference-tier trade-off.
 fn materialize_address_major<F: Field>(
     stream: &mut Box<dyn jolt_witness::PolynomialStream<F> + '_>,
@@ -215,6 +226,8 @@ fn materialize_address_major<F: Field>(
     id: JoltCommittedPolynomial,
 ) -> Result<Vec<F>, KernelError<F>> {
     let cycle_stride = grid.cycle_stride();
+    let one_hot_stride = grid.one_hot_stride();
+    let one_hot_k = 1usize << grid.log_k_chunk;
     let cycles = 1usize << grid.log_t;
     let mut table = vec![F::zero(); 1usize << grid.total_vars];
     let mut cycle = 0usize;
@@ -234,14 +247,14 @@ fn materialize_address_major<F: Field>(
                 }
                 for hot in indices {
                     if let Some(k) = hot {
-                        if k >= cycle_stride {
+                        if k >= one_hot_k {
                             return Err(KernelError::UnsupportedChunk {
                                 reason: format!(
                                     "one-hot address for {id:?} outside its cycle block"
                                 ),
                             });
                         }
-                        table[cycle * cycle_stride + k] = F::one();
+                        table[cycle * cycle_stride + k * one_hot_stride] = F::one();
                     }
                     cycle += 1;
                 }

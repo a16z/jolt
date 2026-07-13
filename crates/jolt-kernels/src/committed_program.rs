@@ -2,20 +2,22 @@
 //! coefficient grids and the padded program-image word vector, built from the
 //! prover-retained full program.
 //!
-//! Each bytecode chunk is a `(lanes × chunk_cycles)` matrix in cycle-major
-//! order (`index = lane · chunk_cycle_len + chunk_cycle`): one column per
-//! bytecode row in the chunk, one lane per committed row attribute (the
-//! one-hot `rs1`/`rs2`/`rd` blocks, the scalar unexpanded-PC and immediate
-//! lanes, the circuit/instruction flag blocks, the lookup-table selector
-//! block, and the RAF flag — [`BYTECODE_LANE_LAYOUT`]). The same grids back
-//! the preprocessing-time chunk commitments, the stage-6b bytecode claim
-//! reduction, and the stage-8 joint opening, so they are built here once and
-//! shared.
+//! Each bytecode chunk is a `(lanes × chunk_cycles)` grid interleaved by the
+//! proof's trace order (`index = order.address_cycle_to_index(lane,
+//! chunk_cycle, lane_capacity, chunk_cycle_len)` — lane plays the address
+//! role): one bytecode row per chunk cycle, one lane per committed row
+//! attribute (the one-hot `rs1`/`rs2`/`rd` blocks, the scalar unexpanded-PC
+//! and immediate lanes, the circuit/instruction flag blocks, the
+//! lookup-table selector block, and the RAF flag — [`BYTECODE_LANE_LAYOUT`]).
+//! The same grids back the preprocessing-time chunk commitments, the
+//! stage-6b bytecode claim reduction, and the stage-8 joint opening, so they
+//! are built here once and shared.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     is_valid_committed_bytecode_chunking_for_len, total_lanes, BYTECODE_LANE_LAYOUT,
     COMMITTED_BYTECODE_LANE_CAPACITY,
 };
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::Field;
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
 use jolt_riscv::instructions::Noop;
@@ -83,10 +85,12 @@ fn for_each_active_lane_value<F: Field>(
     }
 }
 
-/// Build the per-chunk committed bytecode coefficient grids, cycle-major.
+/// Build the per-chunk committed bytecode coefficient grids, interleaved by
+/// the proof's trace order.
 pub fn build_committed_bytecode_chunk_coeffs<F: Field>(
     instructions: &[JoltInstructionRow],
     chunk_count: usize,
+    order: TracePolynomialOrder,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
     let bytecode_len = instructions.len();
     if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
@@ -106,16 +110,25 @@ pub fn build_committed_bytecode_chunk_coeffs<F: Field>(
         let coeffs = &mut chunk_coeffs[cycle / chunk_cycle_len];
         let chunk_cycle = cycle % chunk_cycle_len;
         for_each_active_lane_value::<F>(instruction, |lane, value| {
-            coeffs[lane * chunk_cycle_len + chunk_cycle] += value;
+            coeffs[order.address_cycle_to_index(
+                lane,
+                chunk_cycle,
+                lane_capacity,
+                chunk_cycle_len,
+            )] += value;
         });
     }
     Ok(chunk_coeffs)
 }
 
-/// The `(lane, cycle)` coordinates of a cycle-major chunk-grid index — the
-/// pairing the reduction's lane-weight/eq template walks.
-pub fn chunk_index_to_lane_cycle(index: usize, chunk_cycle_len: usize) -> (usize, usize) {
-    (index / chunk_cycle_len, index % chunk_cycle_len)
+/// The `(lane, cycle)` coordinates of a chunk-grid index in the given trace
+/// order — the pairing the reduction's lane-weight/eq template walks.
+pub fn chunk_index_to_lane_cycle(
+    index: usize,
+    chunk_cycle_len: usize,
+    order: TracePolynomialOrder,
+) -> (usize, usize) {
+    order.index_to_address_cycle(index, COMMITTED_BYTECODE_LANE_CAPACITY, chunk_cycle_len)
 }
 
 /// The committed program-image polynomial's word vector: the RAM-remapped
