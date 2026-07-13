@@ -22,6 +22,8 @@ jobs:
         with:
           mdbook-version: "0.4.10"
       - name: Install mdbook-katex
-        run: cargo install mdbook-katex
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook-katex
       - name: Build Jolt Book
         run: mdbook build ./book
