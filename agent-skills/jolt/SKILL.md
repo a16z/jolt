@@ -22,7 +22,7 @@ The guest has a real heap — `Vec`, `String`, alloc types work freely inside th
 |-------|-----------|
 | `Vec<T>` param in no_std | `[T; N], len: u32` — or switch to std mode |
 | `[T; N]` where N > 32 in no_std | Split across multiple params (serde_core array size limit) |
-| `usize` | `u32` (guest is 32-bit) |
+| `usize` | `u64` (guest is 64-bit RISC-V) |
 | `f32` / `f64` | Fixed-point integer (e.g. `i64 * 1_000_000`) — RV64IMAC has no FPU |
 | `std::io`, `std::net` | Cannot run in guest — explain and stop |
 | Non-determinism | Pass seed/timestamp as explicit input |
