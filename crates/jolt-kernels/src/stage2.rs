@@ -1898,7 +1898,7 @@ impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
                 claim, inputs, store, backend,
             )?)),
             Stage2Relation::RamOutputCheck => Ok(Self::RamOutputCheck(ram_output_state(
-                claim, inputs, store,
+                claim, inputs, store, backend,
             )?)),
             relation => Err(Stage2KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
@@ -2423,9 +2423,6 @@ struct DenseInstanceState<F: Field> {
 }
 
 impl<F: Field> DenseInstanceState<F> {
-    fn new(factors: Vec<Vec<F>>) -> Self {
-        Self::new_with_backend(factors, "cpu")
-    }
 
     fn new_with_backend(factors: Vec<Vec<F>>, backend: &'static str) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
@@ -2742,6 +2739,7 @@ fn ram_output_state<'a, F: Field>(
     claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<RamOutputState<'a, F>, Stage2KernelError> {
     let ram = inputs.ram.ok_or(Stage2KernelError::MissingKernelInput {
         kernel: "jolt_stage2_ram_output_check",
@@ -2773,7 +2771,7 @@ fn ram_output_state<'a, F: Field>(
         }
     }
     Ok(RamOutputState {
-        dense: DenseInstanceState::new(vec![eq, io_mask, diff]),
+        dense: DenseInstanceState::new_with_backend(vec![eq, io_mask, diff], backend),
         final_ram: ram.final_ram,
         nonzero_final_ram,
     })
