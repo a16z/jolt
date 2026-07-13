@@ -1891,7 +1891,7 @@ impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
             )),
             Stage2Relation::InstructionLookupClaimReduction => {
                 Ok(Self::InstructionLookupClaimReduction(
-                    instruction_lookup_state(claim, inputs, store)?,
+                    instruction_lookup_state(claim, inputs, store, backend)?,
                 ))
             }
             Stage2Relation::RamRafEvaluation => Ok(Self::RamRafEvaluation(ram_raf_state(
@@ -2207,6 +2207,7 @@ struct InstructionLookupState<'a, F: Field> {
     gamma_cub: F,
     gamma_quart: F,
     phase: InstructionLookupPhase<F>,
+    backend: &'static str,
 }
 
 impl<F: Field> InstructionLookupState<'_, F> {
@@ -2224,6 +2225,7 @@ impl<F: Field> InstructionLookupState<'_, F> {
                     &self.r_spartan,
                     &challenges,
                     [self.gamma, self.gamma_sqr, self.gamma_cub, self.gamma_quart],
+                    self.backend,
                 ));
                 return;
             }
@@ -2270,10 +2272,18 @@ struct InstructionLookupPhase1<F: Field> {
     p: Vec<F>,
     q: Vec<F>,
     challenges: Vec<F>,
+    p_len: usize,
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<cuda::CudaDenseState>>,
 }
 
 impl<F: Field> InstructionLookupPhase1<F> {
-    fn new(cycles: &[Stage2InstructionLookupCycle], r_spartan: &[F], gamma_powers: [F; 4]) -> Self {
+    fn new(
+        cycles: &[Stage2InstructionLookupCycle],
+        r_spartan: &[F],
+        gamma_powers: [F; 4],
+        backend: &'static str,
+    ) -> Self {
         let (r_hi, r_lo) = r_spartan.split_at(r_spartan.len() / 2);
         let p = EqPolynomial::<F>::evals(r_lo, None);
         let eq_suffix = EqPolynomial::<F>::evals(r_hi, None);
@@ -2295,29 +2305,54 @@ impl<F: Field> InstructionLookupPhase1<F> {
                     gamma_powers,
                 )
             })
-            .collect();
+            .collect::<Vec<F>>();
+        #[cfg(feature = "cuda")]
+        let cuda = build_cuda_dense(backend, &[&p, &q]);
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
+        let p_len = p.len();
         Self {
             p,
             q,
             challenges: Vec::new(),
+            p_len,
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase1::round_poly")]
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    return poly;
+                }
+            }
+        }
         round_poly_from_factor_slices(&[&self.p, &self.q], 2)
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase1::bind")]
     fn bind(&mut self, challenge: F) {
         self.challenges.push(challenge);
+        self.p_len /= 2;
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         let mut scratch = Vec::new();
         bind_dense_evals_reuse(&mut self.p, &mut scratch, challenge);
         bind_dense_evals_reuse(&mut self.q, &mut scratch, challenge);
     }
 
     fn should_transition_to_phase2(&self) -> bool {
-        self.p.len() == 2
+        self.p_len == 2
     }
 }
 
@@ -2325,6 +2360,10 @@ struct InstructionLookupPhase2<F: Field> {
     eq: Vec<F>,
     combined: Vec<F>,
     outputs: [Vec<F>; 5],
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<cuda::CudaDenseState>>,
+    #[cfg(feature = "cuda")]
+    cuda_outputs: Option<Box<cuda::CudaDenseState>>,
 }
 
 impl<F: Field> InstructionLookupPhase2<F> {
@@ -2334,6 +2373,7 @@ impl<F: Field> InstructionLookupPhase2<F> {
         r_spartan: &[F],
         challenges: &[F],
         gamma_powers: [F; 4],
+        backend: &'static str,
     ) -> Self {
         let n_remaining_rounds = r_spartan.len() - challenges.len();
         let remaining_len = 1usize << n_remaining_rounds;
@@ -2366,20 +2406,52 @@ impl<F: Field> InstructionLookupPhase2<F> {
             }
             combined.push(row_combined);
         }
+        let eq = EqPolynomial::<F>::evals(r_hi, Some(eq_prefix));
+        #[cfg(feature = "cuda")]
+        let cuda = build_cuda_dense(backend, &[&eq, &combined]);
+        #[cfg(feature = "cuda")]
+        let cuda_outputs = build_cuda_dense(
+            backend,
+            &[
+                &outputs[0], &outputs[1], &outputs[2], &outputs[3], &outputs[4],
+            ],
+        );
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Self {
-            eq: EqPolynomial::<F>::evals(r_hi, Some(eq_prefix)),
+            eq,
             combined,
             outputs,
+            #[cfg(feature = "cuda")]
+            cuda,
+            #[cfg(feature = "cuda")]
+            cuda_outputs,
         }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase2::round_poly")]
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    return poly;
+                }
+            }
+        }
         round_poly_from_factor_slices(&[&self.eq, &self.combined], 2)
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase2::bind")]
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let (Some(cuda), Some(cuda_outputs)) = (&mut self.cuda, &mut self.cuda_outputs) {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() && cuda_outputs.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         let mut scratch = Vec::new();
         bind_dense_evals_reuse(&mut self.eq, &mut scratch, challenge);
         bind_dense_evals_reuse(&mut self.combined, &mut scratch, challenge);
@@ -2391,9 +2463,17 @@ impl<F: Field> InstructionLookupPhase2<F> {
     fn final_evals(&self) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
         INSTRUCTION_LOOKUP_EVAL_NAMES
             .iter()
-            .zip(&self.outputs)
-            .map(|(&(name, oracle), output)| {
-                output
+            .enumerate()
+            .map(|(index, &(name, oracle))| {
+                #[cfg(feature = "cuda")]
+                if let Some(cuda_outputs) = &self.cuda_outputs {
+                    if let Ok(value) = cuda_outputs.factor_eval(index) {
+                        if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                            return Ok(named_eval(name, oracle, value));
+                        }
+                    }
+                }
+                self.outputs[index]
                     .first()
                     .copied()
                     .map(|value| named_eval(name, oracle, value))
@@ -2505,6 +2585,21 @@ fn as_fr_factors<F: Field>(factors: &[Vec<F>]) -> Option<Vec<&[Fr]>> {
         .iter()
         .map(|factor| crate::cuda::as_fr_slice(factor))
         .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_dense<F: Field>(
+    backend: &'static str,
+    factors: &[&[F]],
+) -> Option<Box<cuda::CudaDenseState>> {
+    if backend != "cuda" {
+        return None;
+    }
+    let fr_factors = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect::<Option<Vec<&[Fr]>>>()?;
+    cuda::CudaDenseState::new(&fr_factors).map(Box::new)
 }
 
 #[cfg(feature = "cuda")]
@@ -2652,6 +2747,7 @@ fn instruction_lookup_state<'a, F: Field>(
     _claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<InstructionLookupState<'a, F>, Stage2KernelError> {
     let cycles = inputs
         .instruction_lookup_cycles
@@ -2689,7 +2785,9 @@ fn instruction_lookup_state<'a, F: Field>(
             cycles,
             r_spartan,
             [gamma, gamma_sqr, gamma_cub, gamma_quart],
+            backend,
         )),
+        backend,
     })
 }
 
