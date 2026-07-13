@@ -77,13 +77,6 @@ where
     T: Transcript<Challenge = F>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
-    // The reference embedding (low-index prefix for the dense trace polys) is
-    // only the cycle-major layout's; see the joint-opening slot docs.
-    if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
-        return Err(ProverError::Unsupported {
-            reason: "address-major trace layout is not yet supported by the joint opening",
-        });
-    }
     let precommitted = &checked.precommitted;
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
         log_t,
@@ -176,10 +169,23 @@ where
             CommittedProgramCandidates::from_schedule(precommitted),
         ),
         log_t,
+        order: config.trace_polynomial_order,
     };
     if grid.total_vars != opening_point.len() {
         return Err(ProverError::Unsupported {
             reason: "commitment grid width disagrees with the unified opening point",
+        });
+    }
+    // The kernels' address-major stride math assumes an unwidened grid (no
+    // embedding extra between addresses). prove() can't reach here widened —
+    // stage 0 rejects committed-program × address-major and dominant advice —
+    // but a direct stage caller can (a dominant advice anchor also satisfies
+    // the width check above), so guard rather than silently mis-embed.
+    if config.trace_polynomial_order == TracePolynomialOrder::AddressMajor
+        && grid.total_vars != config.one_hot_config.committed_chunk_bits() + log_t
+    {
+        return Err(ProverError::Unsupported {
+            reason: "address-major with a widened commitment grid",
         });
     }
     // The committed-program polynomials are preprocessing data (not witness

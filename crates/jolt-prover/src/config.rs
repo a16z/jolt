@@ -28,6 +28,10 @@ pub struct ProverConfig {
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
+    /// Coefficient placement of the trace polynomials in the commitment
+    /// matrix. [`ProverConfig::derive`] always picks cycle-major (legacy has
+    /// no production selection logic); address-major is chosen by
+    /// overwriting this field after derivation.
     pub trace_polynomial_order: TracePolynomialOrder,
 }
 

@@ -3,26 +3,31 @@
 //!
 //! The batch opening RLCs every committed polynomial at one unified point over
 //! the full grid domain, so each polynomial must present `grid.total_vars`
-//! variables: the one-hot grids span it natively, the dense trace
-//! polynomials occupy a low-index prefix and zero-extend, and the advice
-//! polynomials BLOCK-embed — their own balanced matrix (`2^σ_a` columns)
-//! lands in the grid matrix's top-left corner, so advice coefficient
-//! `row · 2^σ_a + col` sits at grid index `row · 2^σ_main + col` (strided,
-//! not contiguous; the legacy `vmp_precommitted_contribution` layout the
-//! commitment and `commitment_embedding_scale` agree on). WARNING: the
-//! prefix embedding matches the verifier's `commitment_embedding_scale` only
-//! under `TracePolynomialOrder::CycleMajor` (the address coordinates lead the
-//! unified point); the address-major layout needs a strided embedding — the
-//! recipe guards it off. The slot returns [`MultilinearPoly`] objects because
-//! the PCS opening drives them lazily (`fold_rows`); the reference impl
-//! materializes every table dense and simultaneously (a test oracle at
-//! harness scale, never a performance path — an optimized backend returns
-//! lazy/sparse or device-backed implementations).
+//! variables. Cycle-major: the one-hot grids span it natively, the dense
+//! trace polynomials occupy a low-index prefix and zero-extend.
+//! Address-major: every trace polynomial scatters cycle-block-strided —
+//! coefficient `(k, t)` at grid index `t · cycle_stride + k` (the witness's
+//! native `k · T + t` views permute, dense polynomials sit at address slot
+//! zero) — matching the address-major commit placement and the verifier's
+//! `commitment_embedding_scale` under the `[r_cycle ‖ r_address]` unified
+//! point. In both orders the advice polynomials BLOCK-embed — their own
+//! balanced matrix (`2^σ_a` columns) lands in the grid matrix's top-left
+//! corner, so advice coefficient `row · 2^σ_a + col` sits at grid index
+//! `row · 2^σ_main + col` (strided, not contiguous; the legacy
+//! `vmp_precommitted_contribution` layout the commitment and
+//! `commitment_embedding_scale` agree on). The committed-program tables'
+//! address-major placement (a lane/cycle transpose) is unimplemented — the
+//! recipes guard the combination off and this slot rejects it. The slot
+//! returns [`MultilinearPoly`] objects because the PCS opening drives them
+//! lazily (`fold_rows`); the reference impl materializes every table dense
+//! and simultaneously (a test oracle at harness scale, never a performance
+//! path — an optimized backend returns lazy/sparse or device-backed
+//! implementations).
 
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
@@ -74,10 +79,21 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
                 }
                 let embedded = match polynomial {
                     JoltCommittedPolynomial::TrustedAdvice
-                    | JoltCommittedPolynomial::UntrustedAdvice
-                    | JoltCommittedPolynomial::BytecodeChunk(_)
-                    | JoltCommittedPolynomial::ProgramImageInit => {
+                    | JoltCommittedPolynomial::UntrustedAdvice => {
                         block_embed(&table, grid, polynomial)?
+                    }
+                    JoltCommittedPolynomial::BytecodeChunk(_)
+                    | JoltCommittedPolynomial::ProgramImageInit => {
+                        if grid.order == TracePolynomialOrder::AddressMajor {
+                            return Err(KernelError::Unsupported {
+                                reason:
+                                    "committed-program embeddings under the address-major layout",
+                            });
+                        }
+                        block_embed(&table, grid, polynomial)?
+                    }
+                    _ if grid.order == TracePolynomialOrder::AddressMajor => {
+                        address_major_embed(&table, grid, polynomial)?
                     }
                     _ => {
                         let mut table = table;
@@ -89,6 +105,59 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
             })
             .collect()
     }
+}
+
+/// Embed a trace polynomial cycle-block-strided over the address-major grid:
+/// a one-hot table's native `k · T + t` view permutes to `t · cycle_stride +
+/// k`; a dense (per-cycle) table sits at each cycle block's address slot
+/// zero.
+fn address_major_embed<F: Field>(
+    table: &[F],
+    grid: CommitmentGrid,
+    polynomial: JoltCommittedPolynomial,
+) -> Result<Vec<F>, KernelError<F>> {
+    let cycles = 1usize << grid.log_t;
+    let cycle_stride = grid.cycle_stride();
+    let mut embedded = vec![F::zero(); 1usize << grid.total_vars];
+    match polynomial {
+        JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
+            if table.len() > cycles {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("{polynomial:?}"),
+                    expected: cycles,
+                    got: table.len(),
+                });
+            }
+            for (cycle, value) in table.iter().enumerate() {
+                embedded[cycle * cycle_stride] = *value;
+            }
+        }
+        JoltCommittedPolynomial::InstructionRa(_)
+        | JoltCommittedPolynomial::BytecodeRa(_)
+        | JoltCommittedPolynomial::RamRa(_) => {
+            if !table.len().is_multiple_of(cycles) || table.len() / cycles > cycle_stride {
+                return Err(KernelError::InvalidGeometry {
+                    reason: format!(
+                        "one-hot table for {polynomial:?} ({} entries) is not a (K × {cycles}) \
+                         grid with K at most {cycle_stride}",
+                        table.len()
+                    ),
+                });
+            }
+            let one_hot_k = table.len() / cycles;
+            for k in 0..one_hot_k {
+                for cycle in 0..cycles {
+                    embedded[cycle * cycle_stride + k] = table[k * cycles + cycle];
+                }
+            }
+        }
+        _ => {
+            return Err(KernelError::Unsupported {
+                reason: "only trace polynomials embed address-major",
+            });
+        }
+    }
+    Ok(embedded)
 }
 
 /// Embed an advice polynomial's balanced matrix into the grid matrix's

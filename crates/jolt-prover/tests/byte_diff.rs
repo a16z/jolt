@@ -608,7 +608,7 @@ mod muldiv {
 #[cfg(feature = "prover-fixtures")]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
-    use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
@@ -621,7 +621,7 @@ mod advice_consumer {
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::poly::commitment::commitment_scheme::CommitmentScheme as LegacyCommitmentScheme;
     use jolt_prover_legacy::poly::commitment::dory::{
-        DoryCommitmentScheme, DoryContext, DoryGlobals,
+        DoryCommitmentScheme, DoryContext, DoryGlobals, DoryLayout,
     };
     use jolt_prover_legacy::poly::multilinear_polynomial::MultilinearPolynomial;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -650,6 +650,35 @@ mod advice_consumer {
     /// verify the modular proof end-to-end against the trusted commitment.
     #[test]
     fn prover_matches_legacy_on_advice_consumer() {
+        advice_consumer_matches_legacy(TracePolynomialOrder::CycleMajor);
+    }
+
+    /// The address-major arm (legacy oracle: `advice_e2e_dory_address_major`):
+    /// the advice commits and block embeddings are layout-invariant, but the
+    /// claim-reduction round schedules and the main-grid commit placement are
+    /// not.
+    #[test]
+    fn prover_matches_legacy_on_advice_consumer_address_major() {
+        advice_consumer_matches_legacy(TracePolynomialOrder::AddressMajor);
+    }
+
+    fn advice_consumer_matches_legacy(order: TracePolynomialOrder) {
+        if order == TracePolynomialOrder::AddressMajor {
+            // `DoryGlobals::set_layout` is `cfg(test)` (unreachable from an
+            // external integration test); the pub initializer's layout
+            // parameter stores the same process-global, and the placeholder
+            // dims are overwritten when the legacy prover re-initializes the
+            // main context (preserving the current layout). The flipped
+            // layout is never restored — nextest's process-per-test model
+            // (this workspace's mandated runner) isolates sibling tests.
+            DoryGlobals::initialize_context(
+                1,
+                2,
+                DoryContext::Main,
+                Some(DoryLayout::AddressMajor),
+            )
+            .expect("initialize the main Dory context");
+        }
         let mut program = host::Program::new("advice-consumer-guest");
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
         let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
@@ -738,7 +767,9 @@ mod advice_consumer {
             .expect("full program preprocessing")
             .clone();
 
-        let config = ProverConfig::derive::<Fr>(
+        // Derivation always picks cycle-major; address-major is a caller
+        // override of the pub config field.
+        let mut config = ProverConfig::derive::<Fr>(
             trace_output.trace.rows(),
             memory_layout,
             verifier_preprocessing.program.min_bytecode_address(),
@@ -746,9 +777,14 @@ mod advice_consumer {
             MAX_PADDED_TRACE_LENGTH,
         )
         .expect("derive config");
+        config.trace_polynomial_order = order;
         assert_eq!(config.trace_length, legacy_proof.trace_length);
         assert_eq!(config.ram_K, legacy_proof.ram_K);
         assert_eq!(config.one_hot_config, legacy_proof.one_hot_config);
+        assert_eq!(
+            config.trace_polynomial_order,
+            legacy_proof.trace_polynomial_order
+        );
 
         let mut rows = trace_output.trace.rows().to_vec();
         rows.resize(config.trace_length, TraceRow::default());
@@ -789,6 +825,8 @@ mod advice_consumer {
             let advice_grid = CommitmentGrid {
                 total_vars: advice_vars(memory_layout.max_trusted_advice_size),
                 log_t: 0,
+                // Advice grids always place cycle-major — see `CommitmentGrid`.
+                order: TracePolynomialOrder::CycleMajor,
             };
             let mut committed = backend
                 .commit
@@ -1144,6 +1182,209 @@ mod committed_muldiv {
             false,
         )
         .expect("modular committed proof must verify end-to-end");
+    }
+}
+
+#[cfg(feature = "prover-fixtures")]
+#[expect(clippy::expect_used)]
+mod address_major {
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_program::execution::{
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+    };
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::poly::commitment::dory::{DoryContext, DoryGlobals, DoryLayout};
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+    use jolt_prover_legacy::zkvm::RV64IMACProver;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::protocols::jolt_vm::{
+        JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackedJoltVmWitness,
+    };
+    use tracer::execution_backend::TracerBackend;
+
+    use common::jolt_device::MemoryConfig;
+
+    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+
+    /// Prove fibonacci under the address-major trace layout with both provers
+    /// (legacy oracle: `fib_e2e_dory_address_major`); assert component-wise
+    /// byte equality of the assembled proofs and verify the modular proof
+    /// end-to-end. Address-major changes the Fiat-Shamir preamble scalar, the
+    /// witness commitment placement (cycle-block-strided), and the stage-8
+    /// unified point/embeddings; stages 1-7 differ only through the
+    /// challenges.
+    #[test]
+    fn prover_matches_legacy_on_address_major_fibonacci() {
+        // `DoryGlobals::set_layout` is `cfg(test)` (unreachable from an
+        // external integration test); the pub initializer's layout parameter
+        // stores the same process-global, and the placeholder dims are
+        // overwritten when the legacy prover re-initializes the main context
+        // (preserving the current layout). The flipped layout is never
+        // restored — nextest's process-per-test model (this workspace's
+        // mandated runner) isolates sibling tests.
+        DoryGlobals::initialize_context(1, 2, DoryContext::Main, Some(DoryLayout::AddressMajor))
+            .expect("initialize the main Dory context");
+
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&50u32).expect("serialize inputs");
+
+        // --- Legacy side: standard full preprocessing; the layout rides the
+        // process-global set above.
+        let (bytecode, init_memory_state, _, entry_address) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let elf_contents = program.get_elf_contents().expect("elf contents");
+
+        let legacy_program =
+            LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
+                .expect("legacy preprocess");
+        let shared = JoltSharedPreprocessing::new(
+            legacy_program,
+            io_device.memory_layout.clone(),
+            MAX_PADDED_TRACE_LENGTH,
+        );
+        let legacy_preprocessing = LegacyProverPreprocessing::new(shared);
+        let legacy_prover = RV64IMACProver::gen_from_elf(
+            &legacy_preprocessing,
+            &elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let public_io = legacy_prover.program_io.clone();
+        let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+
+        // --- New-prover side: trace independently through the modular stack.
+        let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+        let memory_layout = &public_io.memory_layout;
+        let memory_config = MemoryConfig {
+            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
+            max_input_size: memory_layout.max_input_size,
+            max_output_size: memory_layout.max_output_size,
+            stack_size: memory_layout.stack_size,
+            heap_size: memory_layout.heap_size,
+            program_size: Some(memory_layout.program_size),
+        };
+        let trace_output = TracerBackend::new()
+            .trace(
+                &jolt_program,
+                TraceInputs {
+                    inputs: inputs.clone(),
+                    untrusted_advice: Vec::new(),
+                    trusted_advice: Vec::new(),
+                    memory_config,
+                },
+            )
+            .expect("modular trace");
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full()
+            .expect("full program preprocessing")
+            .clone();
+
+        // Derivation always picks cycle-major; address-major is a caller
+        // override of the pub config field.
+        let mut config = ProverConfig::derive::<Fr>(
+            trace_output.trace.rows(),
+            memory_layout,
+            verifier_preprocessing.program.min_bytecode_address(),
+            verifier_preprocessing.program.program_image_len_words(),
+            MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive config");
+        config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
+        assert_eq!(config.trace_length, legacy_proof.trace_length);
+        assert_eq!(config.ram_K, legacy_proof.ram_K);
+        assert_eq!(config.rw_config, legacy_proof.rw_config);
+        assert_eq!(config.one_hot_config, legacy_proof.one_hot_config);
+        assert_eq!(
+            config.trace_polynomial_order,
+            legacy_proof.trace_polynomial_order
+        );
+
+        let mut rows = trace_output.trace.rows().to_vec();
+        rows.resize(config.trace_length, TraceRow::default());
+        let padded_output = TraceOutput::new(
+            OwnedTrace::new(rows),
+            trace_output.device,
+            trace_output.final_memory,
+        );
+        let witness_config = JoltVmWitnessConfig::new(
+            config.trace_length.ilog2() as usize,
+            config.ram_K,
+            config.one_hot_config,
+        );
+        let witness = TraceBackedJoltVmWitness::new(
+            witness_config,
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        );
+
+        let advice_vars =
+            |bytes: u64| ((bytes / 8) as usize).next_power_of_two().max(1).ilog2() as usize;
+        let setup_total_vars = (4usize + MAX_PADDED_TRACE_LENGTH.ilog2() as usize)
+            .max(advice_vars(memory_layout.max_trusted_advice_size))
+            .max(advice_vars(memory_layout.max_untrusted_advice_size));
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(setup_total_vars),
+            committed_program: None,
+        };
+
+        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            &backend,
+            &prover_preprocessing,
+            &config,
+            None,
+            &witness,
+            &public_io,
+        )
+        .expect("top-level prove");
+
+        // Component-wise asserts give per-stage granularity when bytes
+        // diverge; the final whole-struct assert is the ratchet.
+        assert_eq!(
+            proof.commitments, legacy_proof.commitments,
+            "witness commitments diverged (address-major strided placement commits here)",
+        );
+        assert_eq!(
+            proof.stages.stage1_sumcheck_proof, legacy_proof.stages.stage1_sumcheck_proof,
+            "stage-1 bytes diverged (the preamble layout scalar seeds every challenge)",
+        );
+        assert_eq!(
+            proof.stages.stage6b_sumcheck_proof,
+            legacy_proof.stages.stage6b_sumcheck_proof
+        );
+        assert_eq!(
+            proof.stages.stage7_sumcheck_proof,
+            legacy_proof.stages.stage7_sumcheck_proof
+        );
+        assert_eq!(
+            proof.joint_opening_proof, legacy_proof.joint_opening_proof,
+            "joint opening diverged (the [cycle ‖ address] unified point and strided embeddings)",
+        );
+        assert_eq!(proof.claims, legacy_proof.claims);
+        assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
+
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+            false,
+        )
+        .expect("modular address-major proof must verify end-to-end");
     }
 }
 

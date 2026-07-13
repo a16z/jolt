@@ -4,13 +4,21 @@
 //! Every witness polynomial is committed as a matrix in one common grid shape
 //! (`2^⌈total_vars/2⌉` columns), not per-polynomial squares: the stage-8 joint
 //! opening combines the commitments homomorphically, which is only meaningful
-//! when they share row geometry. Dense polynomials stream row-by-row through
-//! [`StreamingCommitment::feed`]-family calls; one-hot polynomials stream
-//! per-cycle hot indices through the column-major one-hot path (a `(K × T)`
-//! matrix whose rows interleave address and cycle-chunk exactly as the legacy
-//! prover's tiered commit did).
+//! when they share row geometry. Under the cycle-major order, dense
+//! polynomials stream row-by-row through [`StreamingCommitment::feed`]-family
+//! calls and one-hot polynomials stream per-cycle hot indices through the
+//! column-major one-hot path (a `(K × T)` matrix whose rows interleave
+//! address and cycle-chunk exactly as the legacy prover's tiered commit did).
+//!
+//! Under the address-major order every polynomial's coefficients scatter
+//! cycle-block-strided across the whole grid (`index = t · 2^(total_vars −
+//! log_t) + k`, dense polynomials at address slot zero), so no
+//! cycle-contiguous stream exists; the reference implementation materializes
+//! the full grid table and feeds dense rows — the same per-row MSMs legacy's
+//! materialized address-major commit runs, full matrix height included (its
+//! trailing identity rows are part of the wire hint).
 
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
@@ -21,16 +29,31 @@ use crate::{KernelError, ProofSession, ReferenceBackend};
 /// The shared embedding grid every witness polynomial is committed in:
 /// `2^⌈total_vars/2⌉` columns, where `total_vars` is the maximum over the
 /// one-hot main matrix (`log_k_chunk + log_t`) and any precommitted-candidate
-/// shapes (advice, committed program).
+/// shapes (advice, committed program). `order` is the proof's
+/// coefficient-placement mode; dedicated advice grids are always
+/// [`TracePolynomialOrder::CycleMajor`] (their placement is contiguous in
+/// both proof layouts — legacy's strides collapse outside the main context).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentGrid {
     pub total_vars: usize,
     pub log_t: usize,
+    pub order: TracePolynomialOrder,
 }
 
 impl CommitmentGrid {
     pub const fn num_columns(&self) -> usize {
         1 << self.total_vars.div_ceil(2)
+    }
+
+    /// The address-major per-cycle block width: cycle `t`'s coefficients
+    /// occupy grid indices `[t · cycle_stride, (t+1) · cycle_stride)`. Equals
+    /// the committed one-hot `K` when the grid is unwidened — the only
+    /// address-major shape the recipes admit (a widened grid would put an
+    /// embedding stride between addresses, which this math does not model;
+    /// stages 0 and 8 reject the combination).
+    pub const fn cycle_stride(&self) -> usize {
+        debug_assert!(self.total_vars >= self.log_t);
+        1 << (self.total_vars - self.log_t)
     }
 }
 
@@ -103,6 +126,17 @@ where
     let row_width = grid.num_columns();
     let mut stream = witness.committed_stream(id, row_width)?;
 
+    if grid.order == TracePolynomialOrder::AddressMajor {
+        // No cycle-contiguous stream exists in this order (see the module
+        // doc): materialize the strided grid table and feed dense rows.
+        let table = materialize_address_major::<F>(&mut stream, descriptor.encoding, grid, id)?;
+        let mut partial = PCS::begin(setup);
+        for row in table.chunks(row_width) {
+            PCS::feed(&mut partial, row, setup);
+        }
+        return Ok(PCS::finish_with_hint(partial, setup));
+    }
+
     match descriptor.encoding {
         PolynomialEncoding::OneHot if row_width > (1usize << grid.log_t) => {
             // A precommitted candidate widened the grid columns past the
@@ -166,6 +200,107 @@ where
             Ok(PCS::finish_with_hint(partial, setup))
         }
     }
+}
+
+/// Drain a committed stream into the full `2^total_vars` address-major grid
+/// table: cycle `t`'s coefficients occupy the block at `t · cycle_stride` — a
+/// one-hot's hot address lands at `t · cycle_stride + k`, a dense coefficient
+/// at the block's address slot zero (legacy's `scaled_index = cycle ·
+/// dense_stride + k · one_hot_stride` with no embedding extra). Eager-dense
+/// like the stage-8 joint-opening slot: a reference-tier trade-off.
+fn materialize_address_major<F: Field>(
+    stream: &mut Box<dyn jolt_witness::PolynomialStream<F> + '_>,
+    encoding: PolynomialEncoding,
+    grid: CommitmentGrid,
+    id: JoltCommittedPolynomial,
+) -> Result<Vec<F>, KernelError<F>> {
+    let cycle_stride = grid.cycle_stride();
+    let cycles = 1usize << grid.log_t;
+    let mut table = vec![F::zero(); 1usize << grid.total_vars];
+    let mut cycle = 0usize;
+    let overrun = || KernelError::UnsupportedChunk {
+        reason: format!("stream for {id:?} ran past the trace length"),
+    };
+    while let Some(chunk) = stream.next_chunk()? {
+        match chunk {
+            PolynomialChunk::OneHot(indices) => {
+                if encoding != PolynomialEncoding::OneHot {
+                    return Err(KernelError::UnsupportedChunk {
+                        reason: format!("dense polynomial {id:?} streamed a one-hot chunk"),
+                    });
+                }
+                if cycle + indices.len() > cycles {
+                    return Err(overrun());
+                }
+                for hot in indices {
+                    if let Some(k) = hot {
+                        if k >= cycle_stride {
+                            return Err(KernelError::UnsupportedChunk {
+                                reason: format!(
+                                    "one-hot address for {id:?} outside its cycle block"
+                                ),
+                            });
+                        }
+                        table[cycle * cycle_stride + k] = F::one();
+                    }
+                    cycle += 1;
+                }
+            }
+            // A zero run's unit is COEFFICIENTS (the dense consumers' reading);
+            // one cycle = one dense coefficient here, but a one-hot cycle is a
+            // K-wide block — reject like every cycle-major one-hot path.
+            PolynomialChunk::Zeros(len) => {
+                if encoding == PolynomialEncoding::OneHot {
+                    return Err(KernelError::UnsupportedChunk {
+                        reason: format!("one-hot polynomial {id:?} streamed a non-one-hot chunk"),
+                    });
+                }
+                if cycle + len > cycles {
+                    return Err(overrun());
+                }
+                cycle += len;
+            }
+            chunk => {
+                if encoding == PolynomialEncoding::OneHot {
+                    return Err(KernelError::UnsupportedChunk {
+                        reason: format!("one-hot polynomial {id:?} streamed a non-one-hot chunk"),
+                    });
+                }
+                let values = dense_chunk_values(chunk, id)?;
+                if cycle + values.len() > cycles {
+                    return Err(overrun());
+                }
+                for value in values {
+                    table[cycle * cycle_stride] = value;
+                    cycle += 1;
+                }
+            }
+        }
+    }
+    Ok(table)
+}
+
+/// Promote a dense-typed chunk's coefficients to field elements. One-hot and
+/// zero-run chunks are the caller's business (its match arms consume them
+/// before reaching this).
+fn dense_chunk_values<F: Field>(
+    chunk: PolynomialChunk<F>,
+    id: JoltCommittedPolynomial,
+) -> Result<Vec<F>, KernelError<F>> {
+    Ok(match chunk {
+        PolynomialChunk::Dense(values) => values,
+        PolynomialChunk::U64(values) => values.into_iter().map(F::from_u64).collect(),
+        PolynomialChunk::U8(values) => values.into_iter().map(F::from_u8).collect(),
+        PolynomialChunk::U16(values) => values.into_iter().map(F::from_u16).collect(),
+        PolynomialChunk::U32(values) => values.into_iter().map(F::from_u32).collect(),
+        PolynomialChunk::I64(values) => values.into_iter().map(F::from_i64).collect(),
+        PolynomialChunk::I128(values) => values.into_iter().map(F::from_i128).collect(),
+        PolynomialChunk::Zeros(_) | PolynomialChunk::OneHot(_) => {
+            return Err(KernelError::UnsupportedChunk {
+                reason: format!("non-dense chunk for {id:?} reached the dense promotion"),
+            });
+        }
+    })
 }
 
 /// Drain a one-hot stream (per-cycle hot addresses) into the flat `(K × T)`

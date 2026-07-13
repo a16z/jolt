@@ -9,7 +9,7 @@
 //! witness-commitment kernel; only the absorbs happen here.
 
 use common::jolt_device::JoltDevice;
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
@@ -79,6 +79,21 @@ where
     {
         return Err(ProverError::Unsupported {
             reason: "committed-program prover data presence disagrees with the preprocessing mode",
+        });
+    }
+    // Committed program × address-major is unimplemented on this side: the
+    // chunk-lane placement transposes with the layout and the committed
+    // candidates widen the grid past the kernels' stride math (legacy DOES
+    // support the combination — its proofs verify through this workspace's
+    // verifier — so a live-legacy oracle exists whenever this gets built).
+    // Guarding it off also keeps every supported address-major grid
+    // unwidened (advice never widens without dominating, which is rejected
+    // below), so the kernels need no embedding-extra arm.
+    if config.trace_polynomial_order == TracePolynomialOrder::AddressMajor
+        && preprocessing.verifier.program.committed().is_some()
+    {
+        return Err(ProverError::Unsupported {
+            reason: "committed-program preprocessing under the address-major trace layout",
         });
     }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
@@ -160,6 +175,7 @@ where
             CommittedProgramCandidates::from_schedule(&checked.precommitted),
         ),
         log_t: config.trace_length.ilog2() as usize,
+        order: config.trace_polynomial_order,
     };
     let committed =
         backend
@@ -175,6 +191,8 @@ where
         let advice_grid = CommitmentGrid {
             total_vars: advice_total_vars(public_io.memory_layout.max_untrusted_advice_size),
             log_t: 0,
+            // Advice grids always place cycle-major — see `CommitmentGrid`.
+            order: TracePolynomialOrder::CycleMajor,
         };
         let mut advice = backend.commit.commit_witness(
             session,

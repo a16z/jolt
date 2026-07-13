@@ -3,7 +3,6 @@
 //! the complete [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
-use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_kernels::JoltBackend;
@@ -41,14 +40,14 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// polynomial is committed at prove time from the witness when
 /// `public_io.untrusted_advice` is non-empty.
 ///
-/// Supported envelope: transparent (clear) proofs of the cycle-major trace
-/// layout, with or without trusted/untrusted advice (non-dominant: the
-/// advice grid must not exceed the main commitment grid) and with or without
+/// Supported envelope: transparent (clear) proofs in either trace layout,
+/// with or without trusted/untrusted advice (non-dominant: the advice grid
+/// must not exceed the main commitment grid) and with or without
 /// committed-program preprocessing (which requires
 /// `preprocessing.committed_program` — the prover-retained full program and
-/// chunk/image hints). Dominant advice and the address-major layout return
-/// [`ProverError::Unsupported`] — the former at stage 0, the layout here
-/// before any work runs.
+/// chunk/image hints). Dominant advice, and committed-program preprocessing
+/// combined with the address-major layout (unimplemented here; legacy
+/// supports it), return [`ProverError::Unsupported`] at stage 0.
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -68,14 +67,6 @@ where
         + JoltVmStage5InstructionReadRafRows
         + JoltVmStage6Rows,
 {
-    // Fail fast on the unsupported trace layout (stage 8's embedding is
-    // cycle-major only); the mode guards in stages 0/8 remain for direct
-    // stage callers.
-    if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
-        return Err(ProverError::Unsupported {
-            reason: "address-major trace layout is not yet supported",
-        });
-    }
     let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         backend,
