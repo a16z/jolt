@@ -1868,10 +1868,10 @@ enum Stage6ProverInstanceState<'a, F: Field> {
     Booleanity(BooleanityStage6State<F>),
     CoreBooleanity(Box<CoreBooleanityStage6State<'a, F>>),
     BytecodeReadRaf(Box<BytecodeReadRafStage6State<F>>),
-    HammingBooleanity(Box<HammingBooleanityStage6State<F>>),
+    HammingBooleanity(HammingBooleanityStage6State<F>),
     RamRaVirtual(InstructionRaVirtualStage6State<'a, F>),
     InstructionRaVirtual(InstructionRaVirtualStage6State<'a, F>),
-    IncClaimReduction(Box<IncClaimReductionStage6State<F>>),
+    IncClaimReduction(IncClaimReductionStage6State<F>),
     Dense(DenseStage6State<F>),
 }
 
@@ -1893,11 +1893,11 @@ impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
             }
             Stage6Relation::HammingBooleanity => {
                 hamming_booleanity_state(program, claim, inputs, store, active_scale, backend)
-                    .map(|state| Self::HammingBooleanity(Box::new(state)))
+                    .map(Self::HammingBooleanity)
             }
             Stage6Relation::IncClaimReduction => {
                 inc_claim_reduction_state(program, claim, inputs, store, active_scale, backend)
-                    .map(|state| Self::IncClaimReduction(Box::new(state)))
+                    .map(Self::IncClaimReduction)
             }
             Stage6Relation::RamRaVirtual => {
                 ram_ra_virtual_state(program, claim, inputs, store, active_scale, backend)
@@ -4197,9 +4197,9 @@ pub(crate) struct HammingBooleanityStage6State<F: Field> {
     output: FactorOutput,
     pub(crate) active_scale: F,
     #[cfg(feature = "cuda")]
-    cuda: Option<cuda::CudaHammingBooleanityState>,
+    cuda: Option<Box<cuda::CudaHammingBooleanityState>>,
     #[cfg(feature = "cuda")]
-    cuda_eq: Option<crate::split_eq::CudaGruenSplitEq>,
+    cuda_eq: Option<Box<crate::split_eq::CudaGruenSplitEq>>,
 }
 
 impl<F: Field> HammingBooleanityStage6State<F> {
@@ -4224,7 +4224,7 @@ impl<F: Field> HammingBooleanityStage6State<F> {
         )?;
         #[cfg(feature = "cuda")]
         let cuda = if backend == "cuda" {
-            cuda::CudaHammingBooleanityState::new(&hamming_weight)
+            cuda::CudaHammingBooleanityState::new(&hamming_weight).map(Box::new)
         } else {
             None
         };
@@ -4235,6 +4235,7 @@ impl<F: Field> HammingBooleanityStage6State<F> {
         let cuda_eq = if cuda.is_some() {
             crate::cuda::shared_ctx()
                 .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &eq))
+                .map(Box::new)
         } else {
             None
         };
@@ -4407,7 +4408,7 @@ struct IncClaimReductionStage6State<F: Field> {
     outputs: [FactorOutput; 2],
     active_scale: F,
     #[cfg(feature = "cuda")]
-    cuda: Option<cuda::CudaIncState>,
+    cuda: Option<Box<cuda::CudaIncState>>,
 }
 
 impl<F: Field> IncClaimReductionStage6State<F> {
@@ -6476,6 +6477,7 @@ fn inc_claim_reduction_state<F: Field>(
             &ram_inc,
             &rd_inc,
         )
+        .map(Box::new)
     } else {
         None
     };
