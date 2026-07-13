@@ -17,18 +17,41 @@ where
         .proof
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
-    let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
+    let registers_claims = relations::registers::ReadWriteChecking::new(register_dimensions);
     let ram_init = ram_val_check_init(input)?;
-    let ram_val_claims = ram::val_check::<PCS::Field>(trace_dimensions, ram_init);
+    // Supply the `Val_init` decomposition scalars as `Public` values (formerly
+    // baked as `Term` constants in the expression); the advice / program-image
+    // openings they weight remain hidden witnesses.
+    values.public(
+        JoltDerivedId::from(RamValCheckPublic::InitEval),
+        ram_init.public_eval,
+    )?;
+    for contribution in &ram_init.contributions {
+        values.public(
+            JoltDerivedId::from(contribution.selector),
+            contribution.neg_selector,
+        )?;
+    }
+    let ram_val_claims = relations::ram::RamValCheck::new(relations::ram::RamValCheckShape {
+        dimensions: trace_dimensions,
+        contributions: ram_init
+            .contributions
+            .iter()
+            .map(|contribution| relations::ram::RamValContribution {
+                selector: contribution.selector,
+                opening: contribution.opening,
+            })
+            .collect(),
+    });
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)),
-        input.stage4.challenges.registers_gamma,
+        input.stage4.challenges.registers_read_write.gamma,
     )?;
     let registers_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(registers_claims.sumcheck.rounds)
+        .try_instance_point(registers_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_opening = register_dimensions
         .read_write_opening_point(&registers_point)
@@ -36,11 +59,7 @@ where
     let registers_reduction_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(
-            jolt_claims::protocols::jolt::TraceDimensions::new(log_t)
-                .sumcheck(3)
-                .rounds,
-        )
+        .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_reduction_opening = registers_reduction_point
         .iter()
@@ -48,19 +67,19 @@ where
         .copied()
         .collect::<Vec<_>>();
     values.public(
-        JoltPublicId::from(RegistersReadWritePublic::EqCycle),
+        JoltDerivedId::from(RegistersReadWritePublic::EqCycle),
         try_eq_mle(&registers_reduction_opening, &registers_opening.r_cycle)
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma)),
-        input.stage4.challenges.ram_val_check_gamma,
+        input.stage4.challenges.ram_val_check.gamma,
     )?;
     let ram_val_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(ram_val_claims.sumcheck.rounds)
+        .try_instance_point(ram_val_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamValCheck, error))?;
     let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
     let r_cycle = input
@@ -73,84 +92,61 @@ where
             reason: "RAM read-write opening point is shorter than the RAM address".to_string(),
         })?;
     values.public(
-        JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
+        JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
         LtPolynomial::evaluate(&ram_val_cycle, r_cycle)
-            + input.stage4.challenges.ram_val_check_gamma,
+            + input.stage4.challenges.ram_val_check.gamma,
     )?;
 
     let mut output_ids = Vec::new();
     if input.proof.untrusted_advice_commitment.is_some() {
-        output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
-            JoltAdviceKind::Untrusted,
-        )));
+        output_ids.push(ram::val_check_advice_opening(JoltAdviceKind::Untrusted));
     }
     if input.checked.trusted_advice_commitment_present {
-        output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
-            JoltAdviceKind::Trusted,
-        )));
+        output_ids.push(ram::val_check_advice_opening(JoltAdviceKind::Trusted));
     }
     if input.checked.precommitted.program_image.is_some() {
-        output_ids.push(VerifierOpeningId::Jolt(
-            program_image::ram_val_check_contribution_opening(),
-        ));
+        output_ids.push(program_image::ram_val_check_contribution_opening());
     }
-    output_ids.extend(map_jolt_opening_ids(
-        registers::read_write_checking_output_openings().to_vec(),
-    ));
-    output_ids.extend(map_jolt_opening_ids(
-        ram::val_check_output_openings().to_vec(),
-    ));
-
-    let mut batch_claims = vec![(
-        registers_claims.sumcheck.rounds,
-        map_jolt_expr(registers_claims.input.expression().clone()),
-        map_jolt_expr(registers_claims.output.expression().clone()),
-    )];
-    batch_claims.push((
-        ram_val_claims.sumcheck.rounds,
-        map_jolt_expr(ram_val_claims.input.expression().clone()),
-        map_jolt_expr(ram_val_claims.output.expression().clone()),
-    ));
-
-    let coefficients = &input.stage4.batch_consistency.batching_coefficients;
-    if batch_claims.len() != coefficients.len() {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "stage4.batch: expected {} batching coefficients, got {}",
-                batch_claims.len(),
-                coefficients.len()
-            ),
-        });
-    }
-    let input_claim = batch_claims.iter().zip(coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((rounds, input_expr, _), coefficient)| {
-            let scale = *coefficient
-                * PCS::Field::pow2(input.stage4.batch_consistency.max_num_vars - *rounds);
-            acc + scale_expr(input_expr.clone(), scale)
-        },
+    output_ids.extend(
+        relations::registers::RegistersReadWriteOutputClaims::<PCS::Field> {
+            registers_val: PCS::Field::zero(),
+            rs1_ra: PCS::Field::zero(),
+            rs2_ra: PCS::Field::zero(),
+            rd_wa: PCS::Field::zero(),
+            rd_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     );
-    let output_claim = batch_claims.iter().zip(coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((_, _, output_expr), coefficient)| {
-            acc + scale_expr(output_expr.clone(), *coefficient)
-        },
+    // The advice / program-image openings are produced by the RAM value-check
+    // instance, but the stage-4 commit (flush) order appends them *first* (above),
+    // before the registers; so here, at the tail, only the main `ram_ra`/`ram_inc`
+    // canonical order is emitted (advice / program-image leaves left `None`),
+    // preserving the prover's per-stage opening-id block order.
+    output_ids.extend(
+        relations::ram::RamValCheckOutputClaims::<PCS::Field> {
+            untrusted_advice: None,
+            trusted_advice: None,
+            program_image: None,
+            ram_ra: PCS::Field::zero(),
+            ram_inc: PCS::Field::zero(),
+        }
+        .canonical_order(),
     );
 
-    add_stage(
+    let batch_claims = [
+        relation_claim(&registers_claims),
+        relation_claim(&ram_val_claims),
+    ];
+
+    add_batched_stage(
         builder,
         "stage4.batch",
-        SumcheckStatement::new(
-            input.stage4.batch_consistency.max_num_vars,
-            input.stage4.batch_consistency.max_degree,
-        ),
-        domain_spec(registers_claims.sumcheck),
-        input.stage4.batch_consistency.consistency.clone(),
+        registers_claims.domain(),
+        &batch_claims,
+        &input.stage4.batch_consistency,
         &input.stage4.batch_output_claims,
         values,
         output_ids,
         Vec::new(),
-        input_claim,
-        output_claim,
     )
 }

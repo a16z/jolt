@@ -26,7 +26,7 @@ use crate::constraint::ConstraintMatrices;
 /// Stores per-cycle sparse constraint matrices and dimensional metadata.
 /// All evaluation methods exploit the uniform (repeated-constraint) structure.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct R1csKey<F: Field> {
     pub matrices: ConstraintMatrices<F>,
     pub num_cycles: usize,

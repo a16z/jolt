@@ -8,7 +8,7 @@ use jolt_blindfold::{
     BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
     FinalOpeningBinding, WitnessCoordinate,
 };
-use jolt_claims::{challenge, constant, opening, public, Expr};
+use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
@@ -624,15 +624,15 @@ pub fn deep_values(
 pub fn deep_claims() -> (TestExpr, TestExpr, TestExpr, TestExpr, TestExpr, TestExpr) {
     let stage1_input =
         opening(Opening::Start) * opening(Opening::Aux) * challenge(Challenge::Scale)
-            + public(Public::Offset)
+            + derived(Public::Offset)
             - challenge(Challenge::Bias);
     let stage1_output = opening(Opening::Link);
     let stage2_input =
-        opening(Opening::Link) * challenge(Challenge::Mix) + public(Public::Multiplier);
+        opening(Opening::Link) * challenge(Challenge::Mix) + derived(Public::Multiplier);
     let stage2_output = opening(Opening::Mid) * opening(Opening::Aux) + challenge(Challenge::Bias);
     let stage3_input = opening(Opening::Mid) + opening(Opening::Start) * challenge(Challenge::Bias);
     let stage3_output = opening(Opening::Final) * opening(Opening::Aux) * opening(Opening::Start)
-        + challenge(Challenge::Mix) * public(Public::Offset)
+        + challenge(Challenge::Mix) * derived(Public::Offset)
         + opening(Opening::Link) * opening(Opening::Mid);
     (
         stage1_input,

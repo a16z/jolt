@@ -12,7 +12,10 @@ use crate::support::proof_claims::offset_opening_claim;
 use crate::support::{tamper_manifest, verifier_fixtures};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
-    formulas::{committed_openings::final_opening_ids, dimensions::JoltFormulaDimensions},
+    geometry::{
+        committed_openings::{final_opening_id, final_opening_polynomial_order},
+        dimensions::JoltFormulaDimensions,
+    },
     JoltOpeningId,
 };
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -53,7 +56,7 @@ fn stage8_final_opening_ids(base: &verifier_fixtures::VerifierFixtureCase) -> Ve
         base.proof.ram_K,
     ))
     .expect("verifier fixture has invalid final opening dimensions");
-    final_opening_ids(
+    final_opening_polynomial_order(
         dimensions.ra_layout,
         base.trusted_advice_commitment.is_some(),
         base.proof.untrusted_advice_commitment.is_some(),
@@ -62,6 +65,9 @@ fn stage8_final_opening_ids(base: &verifier_fixtures::VerifierFixtureCase) -> Ve
             .committed()
             .map(|committed| committed.bytecode_chunk_count()),
     )
+    .into_iter()
+    .map(final_opening_id)
+    .collect()
 }
 
 #[test]

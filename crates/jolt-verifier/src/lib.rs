@@ -13,14 +13,6 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-pub use stages::relations::{
-    GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, SumcheckInstance,
-};
-pub use stages::zk::committed::zk_vector_commitment_capacity_requirement;
-// Derive macros share the names of the traits they implement (distinct
-// namespaces), so `#[derive(OutputClaims)]` and `impl OutputClaims` can both be
-// reached as `crate::{OutputClaims, InputClaims}`.
-pub use jolt_verifier_derive::{InputClaims, OutputClaims};
 pub use verifier::{
     absorb_transcript_commitments, absorb_transcript_preamble, validate_inputs_from_parts, verify,
     verify_until_stage1, CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,

@@ -120,7 +120,19 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
                 self.advice_stream_kind(JoltVmAdviceStreamKind::Untrusted)
             }
             JoltCommittedPolynomial::BytecodeChunk(_)
-            | JoltCommittedPolynomial::ProgramImageInit => Err(WitnessError::UnknownOracle {
+            | JoltCommittedPolynomial::ProgramImageInit
+            | JoltCommittedPolynomial::UnsignedIncChunk(_)
+            | JoltCommittedPolynomial::UnsignedIncMsb
+            | JoltCommittedPolynomial::TrustedAdviceBytes
+            | JoltCommittedPolynomial::UntrustedAdviceBytes
+            | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
+            | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
+            | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
+            | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
+            | JoltCommittedPolynomial::BytecodeRafFlag { .. }
+            | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
+            | JoltCommittedPolynomial::BytecodeImmBytes { .. }
+            | JoltCommittedPolynomial::ProgramImageBytes => Err(WitnessError::UnknownOracle {
                 namespace: JOLT_VM_NAMESPACE.name,
             }),
         }

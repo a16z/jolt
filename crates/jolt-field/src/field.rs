@@ -1,14 +1,11 @@
-#[cfg(feature = "allocative")]
-use allocative::Allocative;
-use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::Mul;
 
 use crate::{
-    CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize, FixedBytes,
-    FromPrimitiveInt, MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes, RingCore,
-    TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator, WithSmallScalarAccumulator,
+    CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize, FromPrimitiveInt,
+    MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes, RingCore, TranscriptChallenge,
+    WithAccumulator, WithSignedProductAccumulator, WithSmallScalarAccumulator,
 };
 
 /// Prime field element abstraction used throughout Jolt.
@@ -35,7 +32,6 @@ pub trait Field:
     + CanonicalBytes
     + ReducingBytes
     + TranscriptChallenge
-    + FixedBytes<32>
     + FixedByteSize
     + CanonicalBitLength
     + CanonicalU64
@@ -45,20 +41,8 @@ pub trait Field:
     + WithSignedProductAccumulator
     + MulPow2
     + MulPrimitiveInt
-    + Serialize
-    + DeserializeOwned
-    + MaybeAllocative
 {
 }
-
-#[cfg(feature = "allocative")]
-pub trait MaybeAllocative: Allocative {}
-#[cfg(feature = "allocative")]
-impl<T: Allocative> MaybeAllocative for T {}
-#[cfg(not(feature = "allocative"))]
-pub trait MaybeAllocative {}
-#[cfg(not(feature = "allocative"))]
-impl<T> MaybeAllocative for T {}
 
 /// Multiplication with fast-path short-circuits for zero and one.
 ///

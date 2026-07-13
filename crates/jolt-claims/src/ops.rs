@@ -227,11 +227,9 @@ mod tests {
     #[test]
     fn expression_ops_build_sum_of_products() {
         let expr: Expr<Fr, Opening> =
-            opening(Opening::A) * opening(Opening::B) + challenge(0) * opening(Opening::A) - 3;
+            opening(Opening::A) * opening(Opening::B) + challenge(0usize) * opening(Opening::A) - 3;
 
         assert_eq!(expr.terms.len(), 3);
-        assert_eq!(expr.required_openings(), vec![Opening::A, Opening::B]);
-        assert_eq!(expr.num_challenges(), 1);
     }
 
     #[test]
@@ -239,7 +237,11 @@ mod tests {
         let expr: Expr<Fr, Opening> =
             opening(Opening::A) * constant(Fr::from_u64(7)) + constant(Fr::from_u64(2));
 
-        let value = expr.evaluate_without_public(|_| Fr::from_u64(3), |_| Fr::from_u64(0));
+        let value = expr.evaluate(
+            |_| Fr::from_u64(3),
+            |_| Fr::from_u64(0),
+            |()| Fr::from_u64(0),
+        );
 
         assert_eq!(value, Fr::from_u64(23));
     }

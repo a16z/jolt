@@ -167,7 +167,11 @@ fn validate_proof_round_count(buf: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
+#[expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "tests may panic on assertion failures"
+)]
 mod tests {
     use super::*;
     use jolt_field::RandomSampling;
@@ -186,7 +190,7 @@ mod tests {
 
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let serialized = serde_json::to_vec(&commitment).expect("serialize commitment");
         let deserialized: DoryCommitment =
@@ -212,7 +216,8 @@ mod tests {
             .map(|_| <Fr as RandomSampling>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
-        let (commitment, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, hint) =
+            crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
         let proof = crate::DoryScheme::open(
@@ -222,7 +227,8 @@ mod tests {
             &prover_setup,
             Some(hint),
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
         let result = crate::DoryScheme::verify(
@@ -254,14 +260,15 @@ mod tests {
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
         let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript);
+            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
+                .unwrap();
 
         let serialized = serde_json::to_vec(&proof).expect("serialize proof");
         let deserialized: DoryProof =
             serde_json::from_slice(&serialized).expect("deserialize proof");
 
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
         let result = crate::DoryScheme::verify(
@@ -289,7 +296,8 @@ mod tests {
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-oversized");
         let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript);
+            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
+                .unwrap();
 
         let mut bytes = Vec::new();
         proof

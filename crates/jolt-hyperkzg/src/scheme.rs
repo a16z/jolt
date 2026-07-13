@@ -13,10 +13,11 @@ use std::marker::PhantomData;
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::{FromPrimitiveInt, RandomSampling};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
-use jolt_poly::Polynomial;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_poly::MultilinearPoly;
+use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::HyperKZGError;
 use crate::kzg::{self, kzg_open_batch, kzg_verify_batch};
@@ -248,55 +249,54 @@ impl<P: PairingGroup> Commitment for HyperKZGScheme<P> {
 
 impl<P: PairingGroup> CommitmentScheme for HyperKZGScheme<P>
 where
-    P::ScalarField: AppendToTranscript,
-    P::G1: AppendToTranscript,
+    P::ScalarField: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G1: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G2: Serialize + DeserializeOwned,
 {
     type Field = P::ScalarField;
     type Proof = HyperKZGProof<P>;
     type ProverSetup = HyperKZGProverSetup<P>;
     type VerifierSetup = HyperKZGVerifierSetup<P>;
-    type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
     type SetupParams = (usize, P::G1, P::G2);
 
     fn setup(
         (max_num_vars, g1, g2): Self::SetupParams,
-    ) -> (Self::ProverSetup, Self::VerifierSetup) {
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
         let mut rng = rand_core::OsRng;
         let max_degree = 1usize << max_num_vars;
         let prover = HyperKZGScheme::setup(&mut rng, max_degree, g1, g2);
         let verifier = Self::verifier_setup(&prover);
-        (prover, verifier)
+        Ok((prover, verifier))
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
         HyperKZGVerifierSetup::from(prover_setup)
     }
 
-    fn commit<S: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+    fn commit<S: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &S,
         setup: &Self::ProverSetup,
-    ) -> (Self::Output, Self::OpeningHint) {
-        // HyperKZG always works on dense evaluations.
-        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
-        poly.for_each_row(poly.num_vars(), &mut |_, row| {
-            evaluations.extend_from_slice(row);
-        });
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        // HyperKZG always works on dense evaluations; `to_dense` borrows them
+        // when the source is already dense.
+        let evaluations = poly.to_dense();
         let point = kzg::kzg_commit::<P>(&evaluations, setup)
-            .expect("SRS must be large enough for the polynomial");
-        (HyperKZGCommitment { point }, ())
+            .map_err(|e| OpeningsError::CommitFailed(format!("HyperKZG commit failed: {e:?}")))?;
+        Ok((HyperKZGCommitment { point }, ()))
     }
 
-    fn open(
-        poly: &Self::Polynomial,
+    fn open<S: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &S,
         point: &[Self::Field],
         _eval: Self::Field,
         setup: &Self::ProverSetup,
         _hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Self::Proof {
-        Self::open(setup, poly.evaluations(), point, transcript)
-            .expect("HyperKZG open should not fail with valid inputs")
+    ) -> Result<Self::Proof, OpeningsError> {
+        let evaluations = poly.to_dense();
+        Self::open(setup, &evaluations, point, transcript)
+            .map_err(|e| OpeningsError::ProveFailed(format!("HyperKZG open failed: {e:?}")))
     }
 
     fn verify(
@@ -310,28 +310,13 @@ where
         Self::verify(setup, commitment, point, &eval, proof, transcript)
             .map_err(|_| OpeningsError::VerificationFailed)
     }
-
-    fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-        point: &[Self::Field],
-        eval: &Self::Field,
-    ) {
-        transcript.append(&LabelWithCount(
-            b"hyperkzg_opening_point",
-            point.len() as u64,
-        ));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"hyperkzg_opening_eval"));
-        eval.append_to_transcript(transcript);
-    }
 }
 
 impl<P: PairingGroup> AdditivelyHomomorphic for HyperKZGScheme<P>
 where
-    P::ScalarField: AppendToTranscript,
-    P::G1: AppendToTranscript,
+    P::ScalarField: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G1: AppendToTranscript + Serialize + DeserializeOwned,
+    P::G2: Serialize + DeserializeOwned,
 {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
@@ -344,6 +329,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
+
     use super::*;
     use jolt_crypto::Bn254;
     use jolt_field::Fr;
@@ -374,7 +361,7 @@ mod tests {
             let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
             let eval = poly.evaluate(&point);
 
-            let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+            let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
 
             let mut prover_transcript = Blake2bTranscript::new(b"test");
             let proof = <TestScheme as CommitmentScheme>::open(
@@ -384,7 +371,8 @@ mod tests {
                 &pk,
                 None,
                 &mut prover_transcript,
-            );
+            )
+            .unwrap();
 
             let mut verifier_transcript = Blake2bTranscript::new(b"test");
             let result = <TestScheme as CommitmentScheme>::verify(
@@ -411,7 +399,7 @@ mod tests {
         let eval = poly.evaluate(&point);
         let wrong_eval = eval + Fr::from_u64(1);
 
-        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
 
         let mut prover_transcript = Blake2bTranscript::new(b"test-bad");
         let proof = <TestScheme as CommitmentScheme>::open(
@@ -421,7 +409,8 @@ mod tests {
             &pk,
             None,
             &mut prover_transcript,
-        );
+        )
+        .unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::new(b"test-bad");
         let result = <TestScheme as CommitmentScheme>::verify(
@@ -446,7 +435,7 @@ mod tests {
         let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
-        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
 
         let mut prover_transcript = Blake2bTranscript::new(b"test-missing-com");
         let mut proof = <TestScheme as CommitmentScheme>::open(
@@ -456,7 +445,8 @@ mod tests {
             &pk,
             None,
             &mut prover_transcript,
-        );
+        )
+        .unwrap();
         let _ = proof.com.pop();
 
         let mut verifier_transcript = Blake2bTranscript::new(b"test-missing-com");
@@ -479,8 +469,8 @@ mod tests {
         let g1 = Bn254::g1_generator();
         let g2 = Bn254::g2_generator();
 
-        let (_pk1, vk1) = <TestScheme as CommitmentScheme>::setup((4, g1, g2));
-        let (_pk2, vk2) = <TestScheme as CommitmentScheme>::setup((4, g1, g2));
+        let (_pk1, vk1) = <TestScheme as CommitmentScheme>::setup((4, g1, g2)).unwrap();
+        let (_pk2, vk2) = <TestScheme as CommitmentScheme>::setup((4, g1, g2)).unwrap();
 
         assert_ne!(vk1.beta_g2, vk2.beta_g2);
     }
@@ -496,7 +486,7 @@ mod tests {
         let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
-        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
 
         let mut prover_transcript = Blake2bTranscript::new(b"test-tamper");
         let mut proof = <TestScheme as CommitmentScheme>::open(
@@ -506,7 +496,8 @@ mod tests {
             &pk,
             None,
             &mut prover_transcript,
-        );
+        )
+        .unwrap();
 
         // Tamper with proof: swap v[0] and v[1]
         let v1 = proof.v[1].clone();
@@ -534,8 +525,8 @@ mod tests {
         let poly_a = Polynomial::<Fr>::random(ell, &mut rng);
         let poly_b = Polynomial::<Fr>::random(ell, &mut rng);
 
-        let (ca, ()) = TestScheme::commit(poly_a.evaluations(), &pk);
-        let (cb, ()) = TestScheme::commit(poly_b.evaluations(), &pk);
+        let (ca, ()) = TestScheme::commit(poly_a.evaluations(), &pk).unwrap();
+        let (cb, ()) = TestScheme::commit(poly_b.evaluations(), &pk).unwrap();
 
         let sum_evals: Vec<Fr> = poly_a
             .evaluations()
@@ -543,7 +534,7 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| *a + *b)
             .collect();
-        let (c_sum_direct, ()) = TestScheme::commit(&sum_evals, &pk);
+        let (c_sum_direct, ()) = TestScheme::commit(&sum_evals, &pk).unwrap();
 
         let c_sum_combined = TestScheme::combine(&[ca, cb], &[Fr::from_u64(1), Fr::from_u64(1)]);
 
@@ -565,8 +556,8 @@ mod tests {
         let s_a = Fr::random(&mut rng);
         let s_b = Fr::random(&mut rng);
 
-        let (ca, ()) = TestScheme::commit(poly_a.evaluations(), &pk);
-        let (cb, ()) = TestScheme::commit(poly_b.evaluations(), &pk);
+        let (ca, ()) = TestScheme::commit(poly_a.evaluations(), &pk).unwrap();
+        let (cb, ()) = TestScheme::commit(poly_b.evaluations(), &pk).unwrap();
 
         let combined_evals: Vec<Fr> = poly_a
             .evaluations()
@@ -574,7 +565,7 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| s_a * *a + s_b * *b)
             .collect();
-        let (c_direct, ()) = TestScheme::commit(&combined_evals, &pk);
+        let (c_direct, ()) = TestScheme::commit(&combined_evals, &pk).unwrap();
 
         let c_combined = TestScheme::combine(&[ca, cb], &[s_a, s_b]);
 
@@ -594,11 +585,12 @@ mod tests {
             let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
             let eval = poly.evaluate(&point);
 
-            let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+            let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
 
             let mut pt = Blake2bTranscript::new(b"rand-test");
             let proof =
-                <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
+                <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt)
+                    .unwrap();
 
             let mut vt = Blake2bTranscript::new(b"rand-test");
             <TestScheme as CommitmentScheme>::verify(
@@ -656,10 +648,11 @@ mod tests {
         let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
-        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
 
         let mut pt = Blake2bTranscript::new(b"trivial");
-        let proof = <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
+        let proof = <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt)
+            .unwrap();
 
         let mut vt = Blake2bTranscript::new(b"trivial");
         <TestScheme as CommitmentScheme>::verify(&commitment, &point, eval, &proof, &vk, &mut vt)

@@ -1,90 +1,63 @@
 //! The stage 4 `RegistersReadWriteChecking` sumcheck instance.
 //!
-//! A self-contained relation object driven identically by the prover (while
-//! producing the stage 4 batch proof) and the verifier (after checking it). It
-//! owns the register read-write point derivation and the `EqCycle` public-value
-//! computation, so the input/output claim algebra lives here once instead of
-//! being hand-coded on each side.
+//! Owns the register read-write point derivation and the `EqCycle` public-value
+//! computation.
 
-use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
-        registers,
-    },
-    JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId, RegistersReadWriteChallenge,
-    RegistersReadWritePublic,
+use jolt_claims::protocols::jolt::relations;
+pub use jolt_claims::protocols::jolt::relations::registers::{
+    RegistersReadWriteChallenges, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
 };
+use jolt_claims::protocols::jolt::{
+    geometry::dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
+    JoltDerivedId, JoltRelationId, RegistersReadWritePublic,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-use jolt_verifier_derive::{InputClaims, OutputClaims};
-use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
-use crate::stages::stage3::outputs::Stage3ClearOutput;
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage3::{Stage3OutputClaims, Stage3OutputPoints};
 use crate::VerifierError;
 
-/// Produced register read-write openings, all sharing the single read-write
-/// opening point. Generic over the cell (`F` on the wire, `Vec<F>` for ZK points,
-/// `OpeningClaim<F>` on the clear path).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(RegistersReadWriteChecking)]
-pub struct RegistersReadWriteOutputClaims<C> {
-    #[opening(RegistersVal)]
-    pub registers_val: C,
-    #[opening(Rs1Ra)]
-    pub rs1_ra: C,
-    #[opening(Rs2Ra)]
-    pub rs2_ra: C,
-    #[opening(RdWa)]
-    pub rd_wa: C,
-    #[opening(committed = RdInc)]
-    pub rd_inc: C,
+/// Wire the consumed opening *values* from stage 3's registers claim-reduction
+/// output. Takes the ZK-agnostic stage-3 output-claims aggregate.
+pub fn registers_read_write_input_values_from_upstream<F: Field>(
+    stage3: &Stage3OutputClaims<F>,
+) -> RegistersReadWriteInputClaims<F> {
+    let reduction = &stage3.registers_claim_reduction;
+    RegistersReadWriteInputClaims {
+        rd_write_value: reduction.rd_write_value,
+        rs1_value: reduction.rs1_value,
+        rs2_value: reduction.rs2_value,
+    }
 }
 
-/// Consumed register openings reduced by the read-write checking sumcheck, wired
-/// from the upstream registers claim-reduction relation (stage 3). Generic over
-/// the cell.
-#[derive(Clone, Debug, InputClaims)]
-pub struct RegistersReadWriteInputClaims<C> {
-    #[opening(RdWriteValue, from = RegistersClaimReduction)]
-    pub rd_write_value: C,
-    #[opening(Rs1Value, from = RegistersClaimReduction)]
-    pub rs1_value: C,
-    #[opening(Rs2Value, from = RegistersClaimReduction)]
-    pub rs2_value: C,
-}
-
-impl<F: Field> RegistersReadWriteInputClaims<OpeningClaim<F>> {
-    /// Wire the consumed openings from stage 3's registers claim-reduction output,
-    /// all sharing that relation's opening point.
-    pub fn from_upstream(stage3: &Stage3ClearOutput<F>) -> Self {
-        // The stage-3 register-reduction openings already carry their shared
-        // opening point (point + value), so the consumed claims are just clones.
-        let reduction = &stage3.output_claims.registers_claim_reduction;
-        Self {
-            rd_write_value: reduction.rd_write_value.clone(),
-            rs1_value: reduction.rs1_value.clone(),
-            rs2_value: reduction.rs2_value.clone(),
-        }
+/// Wire the consumed opening *points* from stage 3's registers claim-reduction
+/// output, all sharing that relation's opening point. Takes the ZK-agnostic
+/// stage-3 output-points aggregate.
+pub fn registers_read_write_input_points_from_upstream<F: Field>(
+    stage3: &Stage3OutputPoints<F>,
+) -> RegistersReadWriteInputClaims<Vec<F>> {
+    let reduction = &stage3.registers_claim_reduction;
+    RegistersReadWriteInputClaims {
+        rd_write_value: reduction.rd_write_value().to_vec(),
+        rs1_value: reduction.rs1_value().to_vec(),
+        rs2_value: reduction.rs2_value().to_vec(),
     }
 }
 
 pub struct RegistersReadWriteChecking<F: Field> {
-    claims: JoltRelationClaims<F>,
+    symbolic: relations::registers::ReadWriteChecking,
     register_dimensions: ReadWriteDimensions,
-    gamma: F,
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> RegistersReadWriteChecking<F> {
-    pub fn new(register_dimensions: ReadWriteDimensions, gamma: F) -> Self {
+    pub fn new(register_dimensions: ReadWriteDimensions) -> Self {
         Self {
-            claims: registers::read_write_checking(register_dimensions),
+            symbolic: relations::registers::ReadWriteChecking::new(register_dimensions),
             register_dimensions,
-            gamma,
+            _field: core::marker::PhantomData,
         }
     }
 }
@@ -96,18 +69,17 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
-    type Inputs<C> = RegistersReadWriteInputClaims<C>;
-    type Outputs<C> = RegistersReadWriteOutputClaims<C>;
+impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
+    type Symbolic = relations::registers::ReadWriteChecking;
 
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
     }
 
-    fn derive_opening_points<C: GetPoint<F>>(
+    fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _inputs: &RegistersReadWriteInputClaims<C>,
+        _input_points: &RegistersReadWriteInputClaims<Vec<F>>,
     ) -> Result<RegistersReadWriteOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .register_dimensions
@@ -123,28 +95,20 @@ impl<F: Field> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        match id {
-            JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => {
-                Ok(self.gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        }
-    }
-
-    fn resolve_public<C: GetPoint<F>>(
+    fn derive_output_term(
         &self,
-        id: &JoltPublicId,
-        inputs: &RegistersReadWriteInputClaims<C>,
-        outputs: &RegistersReadWriteOutputClaims<OpeningClaim<F>>,
+        id: &JoltDerivedId,
+        input_points: &RegistersReadWriteInputClaims<Vec<F>>,
+        output_points: &RegistersReadWriteOutputClaims<Vec<F>>,
+        _challenges: &RegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltPublicId::RegistersReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimPublic { id: *id });
+        let JoltDerivedId::RegistersReadWrite(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
             RegistersReadWritePublic::EqCycle => {
-                let fixed_cycle = inputs.rd_write_value.point();
-                let registers_cycle = &outputs.registers_val.point()[REGISTER_ADDRESS_BITS..];
+                let fixed_cycle = input_points.rd_write_value();
+                let registers_cycle = &output_points.registers_val()[REGISTER_ADDRESS_BITS..];
                 try_eq_mle(fixed_cycle, registers_cycle).map_err(public_input_failed)
             }
         }

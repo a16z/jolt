@@ -400,8 +400,12 @@ fn collect_dory_opening_statistics(proof: &jolt_dory::DoryProof, tracker: &mut B
         tracker.record_canonical(format!("{prefix}.e2_plus"), &message.e2_plus);
         tracker.record_canonical(format!("{prefix}.e2_minus"), &message.e2_minus);
     }
-    tracker.record_canonical("dory.final.e1", &proof.final_message.e1);
-    tracker.record_canonical("dory.final.e2", &proof.final_message.e2);
+    // A ZK proof carries no clear final message (it would reveal the folded
+    // witness); the hiding scalar-product Σ-proof recorded below replaces it.
+    assert!(
+        proof.final_message.is_none(),
+        "ZK proof must not carry a clear final message"
+    );
 
     if let Some(sigma1) = &proof.sigma1_proof {
         tracker.record_canonical("dory.sigma1.a1", &sigma1.a1);

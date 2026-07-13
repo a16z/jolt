@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::formulas::dimensions::FieldRegistersReadWriteDimensions;
+use super::geometry::dimensions::FieldRegistersReadWriteDimensions;
 
 pub const FIELD_REGISTERS_LOG_K: usize = 4;
 
@@ -20,14 +20,6 @@ impl FieldInlineConfig {
     pub const fn disabled() -> Self {
         Self {
             enabled: false,
-            field_register_log_k: FIELD_REGISTERS_LOG_K,
-            representation: FieldInlineRepresentation::NativeFieldElement,
-        }
-    }
-
-    pub const fn native_v1() -> Self {
-        Self {
-            enabled: true,
             field_register_log_k: FIELD_REGISTERS_LOG_K,
             representation: FieldInlineRepresentation::NativeFieldElement,
         }

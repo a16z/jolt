@@ -80,9 +80,7 @@ impl StreamingCommitment for crate::DoryScheme {
         let (tier_2, _) = commit_rows_tier_2::<dory::Transparent>(&ark_rows, setup);
         DoryCommitment(ark_to_jolt_gt(&tier_2))
     }
-}
 
-impl ZkStreamingCommitment for crate::DoryScheme {
     type OneHotChunkCommitment = Vec<Bn254G1>;
     type OneHotStreamContext = Vec<ark_bn254::G1Affine>;
 
@@ -255,7 +253,9 @@ impl ZkStreamingCommitment for crate::DoryScheme {
     ) -> (Self::Output, Self::OpeningHint) {
         finish_one_hot_column_major_chunks::<dory::Transparent>(setup, one_hot_k, chunks)
     }
+}
 
+impl ZkStreamingCommitment for crate::DoryScheme {
     fn finish_zk_with_hint(
         partial: Self::PartialCommitment,
         setup: &Self::ProverSetup,
@@ -350,6 +350,8 @@ fn scalar_affine_bases<'a>(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
+
     use jolt_field::FromPrimitiveInt;
     use jolt_field::RandomSampling;
     use jolt_openings::{
@@ -378,7 +380,7 @@ mod tests {
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
-        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let mut partial = DoryScheme::begin(&prover_setup);
         for row in evals.chunks(num_cols) {
@@ -403,7 +405,8 @@ mod tests {
             &prover_setup,
             Some(hint),
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
         let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"stream-open");
         let result = DoryScheme::verify(
@@ -434,7 +437,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
-        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let mut partial = DoryScheme::begin(&prover_setup);
         for row in evals_u64.chunks(num_cols) {
@@ -459,7 +462,8 @@ mod tests {
             &prover_setup,
             Some(hint),
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
         let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"u64-stream-open");
         let result = DoryScheme::verify(
@@ -523,7 +527,8 @@ mod tests {
             &prover_setup,
             hint,
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
         let result = DoryScheme::verify_zk(
             &commitment,
@@ -562,7 +567,7 @@ mod tests {
                 .collect(),
             OneHotIndexOrder::ColumnMajor,
         );
-        let (direct, direct_hint) = DoryScheme::commit(&poly, &prover_setup);
+        let (direct, direct_hint) = DoryScheme::commit(&poly, &prover_setup).unwrap();
 
         let mut context = DoryScheme::begin_one_hot_column_major_stream(&prover_setup, chunk_width);
         let chunks = indices
@@ -622,14 +627,15 @@ mod tests {
             .collect::<Vec<_>>();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"one-hot-zk-open");
-        let (proof, _, _) = DoryScheme::open_zk_poly(
+        let (proof, _, _) = DoryScheme::open_zk(
             &poly,
             &point,
             eval,
             &prover_setup,
             hint,
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"one-hot-zk-open");
         let result = DoryScheme::verify_zk(
             &commitment,
@@ -666,7 +672,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
-        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let mut partial = DoryScheme::begin(&prover_setup);
         for row in evals_i128.chunks(num_cols) {
@@ -691,7 +697,8 @@ mod tests {
             &prover_setup,
             Some(hint),
             &mut prove_transcript,
-        );
+        )
+        .unwrap();
         let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"i128-stream-open");
         let result = DoryScheme::verify(
