@@ -45,7 +45,7 @@ Jolt guests have heap allocation, so `Vec`, `String`, and other allocation-backe
 For `no_std` guests:
 
 - Prefer fixed-width integers such as `u32`, `u64`, and `u128`.
-- Replace `usize` with a fixed-width integer. The guest target is 32-bit.
+- Replace `usize` with a fixed-width integer so host and guest agree on layout. The guest target is 64-bit RISC-V (RV64IMAC).
 - Replace `Vec<T>` parameters with `[T; N]` plus a length, or switch to std mode.
 - Keep array parameters at 32 elements or fewer when using serde_core.
 - Rewrite floating-point logic as fixed-point integer arithmetic.
