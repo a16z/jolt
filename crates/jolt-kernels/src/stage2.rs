@@ -1887,7 +1887,7 @@ impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
                 claim, inputs, store,
             )?)),
             Stage2Relation::ProductVirtualRemainder => Ok(Self::ProductVirtualRemainder(
-                product_remainder_state(claim, inputs, store)?,
+                product_remainder_state(claim, inputs, store, backend)?,
             )),
             Stage2Relation::InstructionLookupClaimReduction => {
                 Ok(Self::InstructionLookupClaimReduction(
@@ -1984,15 +1984,38 @@ struct ProductRemainderState<'a, F: Field> {
     right_scratch: Vec<F>,
     split_eq: SplitEqState<F>,
     point: Vec<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<crate::stage3::cuda::CudaSumOfProductsState>>,
 }
 
 impl<F: Field> ProductRemainderState<'_, F> {
     fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok((q_constant, q_quadratic)) = cuda.q_coefficients() {
+                if let (Some(target), Some(q_constant), Some(q_quadratic)) = (
+                    crate::cuda::fr_into::<F>(cuda.current_target()),
+                    crate::cuda::fr_into::<F>(q_constant),
+                    crate::cuda::fr_into::<F>(q_quadratic),
+                ) {
+                    return gruen_cubic_poly(target, q_constant, q_quadratic, previous_claim);
+                }
+            }
+        }
         product_remainder_split_round_poly(&self.left, &self.right, &self.split_eq, previous_claim)
     }
 
     #[tracing::instrument(skip_all, name = "ProductRemainderState::bind")]
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.point.push(challenge);
+                    return;
+                }
+            }
+        }
         let left = &mut self.left;
         let left_scratch = &mut self.left_scratch;
         let right = &mut self.right;
@@ -2527,6 +2550,7 @@ fn product_remainder_state<'a, F: Field>(
     _claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<ProductRemainderState<'a, F>, Stage2KernelError> {
     let cycles = inputs
         .product_virtual_cycles
@@ -2593,6 +2617,26 @@ fn product_remainder_state<'a, F: Field>(
                     F::zero()
                 };
         });
+    #[cfg(feature = "cuda")]
+    let cuda = if backend == "cuda" {
+        crate::cuda::as_fr_slice(&left).and_then(|left_fr| {
+            let right_fr = crate::cuda::as_fr_slice(&right)?;
+            let tau_low_fr = crate::cuda::as_fr_slice(tau_low)?;
+            let scaling = crate::cuda::into_fr(lagrange_tau_r0)?;
+            crate::stage3::cuda::CudaSumOfProductsState::new(
+                crate::stage3::cuda::CudaGruenKind::Product,
+                &[left_fr, right_fr],
+                tau_low_fr,
+                Some(scaling),
+            )
+            .map(Box::new)
+        })
+    } else {
+        None
+    };
+    #[cfg(not(feature = "cuda"))]
+    let _ = backend;
+
     Ok(ProductRemainderState {
         cycles,
         left,
@@ -2601,6 +2645,8 @@ fn product_remainder_state<'a, F: Field>(
         right_scratch: Vec::new(),
         split_eq: SplitEqState::new_low_to_high(tau_low, Some(lagrange_tau_r0)),
         point: Vec::new(),
+        #[cfg(feature = "cuda")]
+        cuda,
     })
 }
 

@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 #[cfg(feature = "cuda")]
-mod cuda;
+pub(crate) mod cuda;
 #[cfg(feature = "cuda")]
 use jolt_field::Fr;
 
@@ -1844,7 +1844,7 @@ fn cuda_sum_of_products_state<F: Field>(
             gamma2: crate::cuda::into_fr(terms[2].coefficient)?,
         },
     };
-    cuda::CudaSumOfProductsState::new(cuda_kind, &fr_factors, fr_point)
+    cuda::CudaSumOfProductsState::new(cuda_kind, &fr_factors, fr_point, None)
 }
 
 #[cfg(feature = "cuda")]

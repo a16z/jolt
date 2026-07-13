@@ -7,6 +7,7 @@ use crate::split_eq::CudaSplitEqState;
 pub(crate) enum CudaGruenKind {
     InstructionInput { gamma: Fr },
     Registers { gamma: Fr, gamma2: Fr },
+    Product,
 }
 
 fn term_coeffs_for(kind: CudaGruenKind) -> Vec<Fr> {
@@ -15,6 +16,7 @@ fn term_coeffs_for(kind: CudaGruenKind) -> Vec<Fr> {
             vec![Fr::from(1u64), Fr::from(1u64), gamma, gamma]
         }
         CudaGruenKind::Registers { gamma, gamma2 } => vec![Fr::from(1u64), gamma, gamma2],
+        CudaGruenKind::Product => vec![Fr::from(1u64)],
     }
 }
 
@@ -31,13 +33,14 @@ impl CudaSumOfProductsState {
         kind: CudaGruenKind,
         factors: &[&[Fr]],
         split_point: &[Fr],
+        split_scaling: Option<Fr>,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let device_factors = ctx.upload_many(factors).ok()?;
         let scratch = (0..factors.len())
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
-        let split_eq = CudaSplitEqState::new_low_to_high(ctx, split_point, None).ok()?;
+        let split_eq = CudaSplitEqState::new_low_to_high(ctx, split_point, split_scaling).ok()?;
         let term_coeffs = ctx.upload(&term_coeffs_for(kind)).ok()?;
         Some(Self {
             factors: device_factors,
@@ -58,6 +61,7 @@ impl CudaSumOfProductsState {
                 (vec![0u32, 2, 4, 6, 8], vec![0u32, 1, 2, 3, 4, 5, 6, 7], 2)
             }
             CudaGruenKind::Registers { .. } => (vec![0u32, 1, 2, 3], vec![0u32, 1, 2], 1),
+            CudaGruenKind::Product => (vec![0u32, 2], vec![0u32, 1], 2),
         }
     }
 
