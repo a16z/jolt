@@ -111,3 +111,19 @@ extern "C" __global__ void ram_rw_cycle_round_pairs(
         for (int k = 0; k < 8; k++) out[blockIdx.x * 8 + k] = acc[k];
     }
 }
+
+extern "C" __global__ void ram_rw_cycle_bind(
+    u64 *__restrict__ val_out,
+    u64 *__restrict__ ra_out,
+    u64 *__restrict__ prev_out,
+    u64 *__restrict__ next_out,
+    const u64 *__restrict__ val_coeff,
+    const u64 *__restrict__ ra_coeff,
+    const u64 *__restrict__ prev_val,
+    const u64 *__restrict__ next_val,
+    const int *__restrict__ even_idx,
+    const int *__restrict__ odd_idx,
+    const u64 *__restrict__ challenge,
+    unsigned long items
+) {
+}

@@ -100,6 +100,8 @@ pub struct CudaKernelContext {
     suffix_mle_probe: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
+    #[expect(dead_code, reason = "used once the ram_rw_cycle_bind body + wiring land")]
+    ram_rw_cycle_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -577,6 +579,24 @@ pub struct RamRwCycleRoundInputs<'a> {
     pub items: usize,
 }
 
+pub struct RamRwCycleBindInputs<'a> {
+    pub val_coeff: &'a DeviceFrVec,
+    pub ra_coeff: &'a DeviceFrVec,
+    pub prev_val: &'a DeviceFrVec,
+    pub next_val: &'a DeviceFrVec,
+    pub even_idx: &'a CudaSlice<i32>,
+    pub odd_idx: &'a CudaSlice<i32>,
+    pub challenge: Fr,
+    pub items: usize,
+}
+
+pub struct RamRwCycleEntries {
+    pub val_coeff: DeviceFrVec,
+    pub ra_coeff: DeviceFrVec,
+    pub prev_val: DeviceFrVec,
+    pub next_val: DeviceFrVec,
+}
+
 pub struct GruenRoundPolyInputs<'a> {
     pub factors: &'a [&'a DeviceFrVec],
     pub term_coeffs: &'a DeviceFrVec,
@@ -769,6 +789,7 @@ impl CudaKernelContext {
             suffix_mle_probe: module.load_function("suffix_mle_probe")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
+            ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -3597,6 +3618,22 @@ impl CudaKernelContext {
             let _ = unsafe { launch.launch(cfg) }?;
             buf = out;
             len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok((
+            limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]),
+            limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]),
+        ))
+    }
+
+    pub fn ram_rw_cycle_bind(
+        &self,
+        inputs: RamRwCycleBindInputs<'_>,
+    ) -> Result<RamRwCycleEntries, CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
     }
 
     pub fn raf_q_scatter(
@@ -4169,6 +4206,117 @@ mod tests {
             })
             .unwrap();
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn ram_rw_cycle_bind_matches_cpu() {
+        use crate::stage2::{bind_cycle_entries_parallel, RamCycleEntry};
+        use jolt_field::Field;
+
+        let challenge = Fr::from_u64(7);
+        let raw: [(usize, usize); 12] = [
+            (0, 3),
+            (1, 3),
+            (2, 1),
+            (3, 4),
+            (4, 2),
+            (4, 9),
+            (5, 2),
+            (6, 5),
+            (7, 8),
+            (10, 0),
+            (10, 6),
+            (11, 6),
+        ];
+        let entries: Vec<RamCycleEntry<Fr>> = raw
+            .iter()
+            .enumerate()
+            .map(|(g, &(row, col))| RamCycleEntry {
+                row,
+                col,
+                prev_val: (g % 5) as u64,
+                next_val: (g % 7) as u64,
+                val_coeff: Fr::from_u64((g + 1) as u64),
+                ra_coeff: Fr::from_u64((g + 100) as u64),
+            })
+            .collect();
+        let expected = bind_cycle_entries_parallel(&entries, challenge);
+
+        let val_coeff: Vec<Fr> = entries.iter().map(|e| e.val_coeff).collect();
+        let ra_coeff: Vec<Fr> = entries.iter().map(|e| e.ra_coeff).collect();
+        let prev_val: Vec<Fr> = entries.iter().map(|e| Fr::from_u64(e.prev_val)).collect();
+        let next_val: Vec<Fr> = entries.iter().map(|e| Fr::from_u64(e.next_val)).collect();
+
+        let mut even_idx = Vec::new();
+        let mut odd_idx = Vec::new();
+        let mut start = 0;
+        while start < entries.len() {
+            let p = entries[start].row / 2;
+            let mut end = start;
+            while end < entries.len() && entries[end].row / 2 == p {
+                end += 1;
+            }
+            let group = &entries[start..end];
+            let odd_start = group.partition_point(|e| e.row % 2 == 0);
+            let evens: Vec<usize> = (start..start + odd_start).collect();
+            let odds: Vec<usize> = (start + odd_start..end).collect();
+            let mut push = |ei: i32, oi: i32| {
+                even_idx.push(ei);
+                odd_idx.push(oi);
+            };
+            let (mut i, mut j) = (0, 0);
+            while i < evens.len() && j < odds.len() {
+                match entries[evens[i]].col.cmp(&entries[odds[j]].col) {
+                    std::cmp::Ordering::Equal => {
+                        push(evens[i] as i32, odds[j] as i32);
+                        i += 1;
+                        j += 1;
+                    }
+                    std::cmp::Ordering::Less => {
+                        push(evens[i] as i32, -1);
+                        i += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        push(-1, odds[j] as i32);
+                        j += 1;
+                    }
+                }
+            }
+            for &e in &evens[i..] {
+                push(e as i32, -1);
+            }
+            for &o in &odds[j..] {
+                push(-1, o as i32);
+            }
+            start = end;
+        }
+        let items = even_idx.len();
+        assert_eq!(items, expected.len());
+
+        let c = ctx();
+        let got = c
+            .ram_rw_cycle_bind(RamRwCycleBindInputs {
+                val_coeff: &c.upload(&val_coeff).unwrap(),
+                ra_coeff: &c.upload(&ra_coeff).unwrap(),
+                prev_val: &c.upload(&prev_val).unwrap(),
+                next_val: &c.upload(&next_val).unwrap(),
+                even_idx: &c.upload_i32_slice(&even_idx).unwrap(),
+                odd_idx: &c.upload_i32_slice(&odd_idx).unwrap(),
+                challenge,
+                items,
+            })
+            .unwrap();
+
+        let got_val = got.val_coeff.to_host().unwrap();
+        let got_ra = got.ra_coeff.to_host().unwrap();
+        let got_prev = got.prev_val.to_host().unwrap();
+        let got_next = got.next_val.to_host().unwrap();
+        for (slot, e) in expected.iter().enumerate() {
+            assert_eq!(got_val[slot], e.val_coeff, "val_coeff slot {slot}");
+            assert_eq!(got_ra[slot], e.ra_coeff, "ra_coeff slot {slot}");
+            assert_eq!(got_prev[slot], Fr::from_u64(e.prev_val), "prev_val slot {slot}");
+            assert_eq!(got_next[slot], Fr::from_u64(e.next_val), "next_val slot {slot}");
+        }
     }
 
     proptest! {

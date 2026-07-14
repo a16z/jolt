@@ -3422,7 +3422,7 @@ fn address_entry_eval<F: Field>(
     weights.eq * ra * (val + weights.gamma * (val + weights.inc))
 }
 
-fn bind_cycle_entries_parallel<F: Field>(
+pub(crate) fn bind_cycle_entries_parallel<F: Field>(
     entries: &[RamCycleEntry<F>],
     challenge: F,
 ) -> Vec<RamCycleEntry<F>> {
