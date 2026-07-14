@@ -1,5 +1,8 @@
 //! High-level Blake2b hashing API for host and guest modes.
-use crate::{BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, STATE_VECTOR_LEN};
+use crate::{
+    BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, PERSONA_SIZE_IN_BYTES, SALT_SIZE_IN_BYTES,
+    STATE_VECTOR_LEN,
+};
 const OUTPUT_SIZE: usize = 64;
 
 pub struct Blake2b {
@@ -21,6 +24,23 @@ impl Blake2b {
 
         Self {
             h,
+            buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
+            buffer_len: 0,
+            counter: 0,
+        }
+    }
+
+    /// Creates a new hasher with the given salt and personalization,
+    /// matching the `blake2` crate's `new_with_params` semantics.
+    ///
+    /// Shorter values are zero-padded per the BLAKE2b specification.
+    ///
+    /// # Panics
+    /// Panics if `salt` or `persona` is longer than 16 bytes.
+    #[inline(always)]
+    pub fn new_with_params(salt: &[u8], persona: &[u8]) -> Self {
+        Self {
+            h: initial_state_with_params(salt, persona),
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
@@ -134,7 +154,22 @@ impl Blake2b {
     pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
         let mut h = IV;
         h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
+        Self::digest_from_state(h, input)
+    }
 
+    /// Computes BLAKE2b hash with the given salt and personalization in one call.
+    ///
+    /// Shorter values are zero-padded per the BLAKE2b specification.
+    ///
+    /// # Panics
+    /// Panics if `salt` or `persona` is longer than 16 bytes.
+    #[inline(always)]
+    pub fn digest_with_params(salt: &[u8], persona: &[u8], input: &[u8]) -> [u8; OUTPUT_SIZE] {
+        Self::digest_from_state(initial_state_with_params(salt, persona), input)
+    }
+
+    #[inline(always)]
+    fn digest_from_state(mut h: [u64; STATE_VECTOR_LEN], input: &[u8]) -> [u8; OUTPUT_SIZE] {
         let len = input.len();
 
         // Empty input: direct compression
@@ -184,6 +219,32 @@ impl Blake2b {
 
         to_bytes(h)
     }
+}
+
+/// Initial state with the salt and personalization words of the BLAKE2b
+/// parameter block XORed into the IV (RFC 7693, section 2.5).
+#[inline(always)]
+#[expect(clippy::unwrap_used)]
+fn initial_state_with_params(salt: &[u8], persona: &[u8]) -> [u64; STATE_VECTOR_LEN] {
+    assert!(
+        salt.len() <= SALT_SIZE_IN_BYTES,
+        "salt must be at most 16 bytes"
+    );
+    assert!(
+        persona.len() <= PERSONA_SIZE_IN_BYTES,
+        "persona must be at most 16 bytes"
+    );
+
+    let mut params = [0u8; SALT_SIZE_IN_BYTES + PERSONA_SIZE_IN_BYTES];
+    params[..salt.len()].copy_from_slice(salt);
+    params[SALT_SIZE_IN_BYTES..SALT_SIZE_IN_BYTES + persona.len()].copy_from_slice(persona);
+
+    let mut h = IV;
+    h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
+    for (word, chunk) in h[4..].iter_mut().zip(params.chunks_exact(8)) {
+        *word ^= u64::from_le_bytes(chunk.try_into().unwrap());
+    }
+    h
 }
 
 /// Convert hash state to output bytes.
@@ -552,6 +613,99 @@ mod digest_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "host"))]
+#[expect(clippy::unwrap_used)]
+mod params_tests {
+    use super::*;
+
+    fn reference_with_params(salt: &[u8], persona: &[u8], input: &[u8]) -> [u8; OUTPUT_SIZE] {
+        use blake2::digest::Mac;
+        let mut mac =
+            blake2::Blake2bMac512::new_with_salt_and_personal(None, salt, persona).unwrap();
+        mac.update(input);
+        mac.finalize().into_bytes().into()
+    }
+
+    #[test]
+    fn test_blake2b_params_against_reference() {
+        let params: [(&[u8], &[u8]); 6] = [
+            (b"", b"ZcashPrevoutHash"),
+            (b"0123456789abcdef", b""),
+            (b"0123456789abcdef", b"fedcba9876543210"),
+            (b"salt", b"persona"),
+            (b"s", b"p"),
+            (b"", b""),
+        ];
+        let input_buffer: [u8; 1200] = std::array::from_fn(|i| ((i * 213 + 17) % 256) as u8);
+        let lengths = [0, 1, 8, 64, 127, 128, 129, 255, 256, 257, 512, 1199, 1200];
+
+        for (salt, persona) in params {
+            for length in lengths {
+                let input = &input_buffer[..length];
+                let expected = reference_with_params(salt, persona, input);
+
+                assert_eq!(
+                    Blake2b::digest_with_params(salt, persona, input),
+                    expected,
+                    "digest_with_params mismatch: salt={salt:?}, persona={persona:?}, length={length}"
+                );
+
+                let mut hasher = Blake2b::new_with_params(salt, persona);
+                hasher.update(input);
+                assert_eq!(
+                    hasher.finalize(),
+                    expected,
+                    "new_with_params streaming mismatch: salt={salt:?}, persona={persona:?}, length={length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_blake2b_params_incremental_updates() {
+        let salt = b"0123456789abcdef";
+        let persona = b"ZcashPrevoutHash";
+        let input_buffer: [u8; 512] = std::array::from_fn(|i| ((i * 137 + 42) % 256) as u8);
+
+        for chunk_size in [1, 7, 64, 65, 128, 129] {
+            let mut hasher = Blake2b::new_with_params(salt, persona);
+            for chunk in input_buffer.chunks(chunk_size) {
+                hasher.update(chunk);
+            }
+            assert_eq!(
+                hasher.finalize(),
+                reference_with_params(salt, persona, &input_buffer),
+                "incremental params mismatch at chunk_size={chunk_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_blake2b_empty_params_match_unparametrized() {
+        let input = b"Some test data for parameter block testing";
+        assert_eq!(
+            Blake2b::digest_with_params(b"", b"", input),
+            Blake2b::digest(input)
+        );
+
+        let mut hasher = Blake2b::new_with_params(b"", b"");
+        hasher.update(input);
+        assert_eq!(hasher.finalize(), Blake2b::digest(input));
+    }
+
+    #[test]
+    #[should_panic(expected = "salt must be at most 16 bytes")]
+    fn test_blake2b_oversized_salt_panics() {
+        let _ = Blake2b::new_with_params(b"01234567890123456", b"");
+    }
+
+    #[test]
+    #[should_panic(expected = "persona must be at most 16 bytes")]
+    fn test_blake2b_oversized_persona_panics() {
+        let _ = Blake2b::digest_with_params(b"", b"01234567890123456", b"");
     }
 }
 

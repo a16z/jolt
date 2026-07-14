@@ -56,3 +56,5 @@ pub const STATE_SIZE_IN_BYTES: usize = 64;
 pub const MSG_BLOCK_LEN: usize = 16;
 pub const BLOCK_INPUT_SIZE_IN_BYTES: usize = 128;
 pub const OUTPUT_SIZE_IN_BYTES: usize = 64;
+pub const SALT_SIZE_IN_BYTES: usize = 16;
+pub const PERSONA_SIZE_IN_BYTES: usize = 16;
