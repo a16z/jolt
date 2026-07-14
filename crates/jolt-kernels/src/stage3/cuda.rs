@@ -152,7 +152,6 @@ impl CudaSpartanShiftState {
         Ok(())
     }
 
-    #[expect(dead_code, reason = "used by SpartanShift Phase2 finals (next step)")]
     pub(crate) fn factor_eval(&self, index: usize) -> Result<Fr, CudaError> {
         self.factors[index].first()
     }

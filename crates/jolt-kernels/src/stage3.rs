@@ -1621,6 +1621,7 @@ struct SpartanShiftState<F: Field> {
     gamma3: F,
     gamma4: F,
     point: Vec<F>,
+    backend: &'static str,
 }
 
 enum SpartanShiftPhase<F: Field> {
@@ -1637,7 +1638,6 @@ struct SpartanShiftPhase1<F: Field> {
     cuda: Option<cuda::CudaSpartanShiftState>,
 }
 
-#[derive(Clone)]
 struct SpartanShiftPhase2<F: Field> {
     eq_outer: Vec<F>,
     eq_product: Vec<F>,
@@ -1649,6 +1649,8 @@ struct SpartanShiftPhase2<F: Field> {
     is_first_in_sequence: Vec<F>,
     is_noop: Vec<F>,
     scratch: Vec<Vec<F>>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaSpartanShiftState>,
 }
 
 struct SumOfProductsState<F: Field> {
@@ -1880,6 +1882,24 @@ fn build_cuda_spartan_shift_phase1<F: Field>(
 }
 
 #[cfg(feature = "cuda")]
+fn build_cuda_spartan_shift_phase2<F: Field>(
+    factors: &[&[F]],
+) -> Option<cuda::CudaSpartanShiftState> {
+    let fr_factors: Vec<&[Fr]> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect::<Option<Vec<_>>>()?;
+    cuda::CudaSpartanShiftState::new(
+        &fr_factors,
+        &[Fr::from(1u64), Fr::from(1u64)],
+        vec![0u32, 2, 4],
+        vec![0u32, 2, 1, 3],
+        4,
+        2,
+    )
+}
+
+#[cfg(feature = "cuda")]
 fn cuda_round_poly<F: Field>(
     cuda: &cuda::CudaSumOfProductsState,
     kind: SumOfProductsKind,
@@ -1921,6 +1941,7 @@ impl<F: Field> SpartanShiftState<F> {
             gamma3,
             gamma4,
             point: Vec::new(),
+            backend,
         }
     }
 
@@ -1960,6 +1981,7 @@ impl<F: Field> SpartanShiftState<F> {
                 self.gamma2,
                 self.gamma3,
                 self.gamma4,
+                self.backend,
             );
             self.phase = SpartanShiftPhase::Phase2(phase2);
         }
@@ -2086,6 +2108,8 @@ impl<F: Field> SpartanShiftPhase1<F> {
 }
 
 impl<F: Field> SpartanShiftPhase2<F> {
+    #[cfg_attr(not(feature = "cuda"), expect(unused_variables))]
+    #[expect(clippy::too_many_arguments)]
     fn new(
         cycles: &[Stage3Cycle],
         low_challenges: &[F],
@@ -2095,6 +2119,7 @@ impl<F: Field> SpartanShiftPhase2<F> {
         gamma2: F,
         gamma3: F,
         gamma4: F,
+        backend: &'static str,
     ) -> Self {
         let low_point = reverse_slice(low_challenges);
         let low_eq = EqPolynomial::<F>::evals(&low_point, None);
@@ -2113,6 +2138,22 @@ impl<F: Field> SpartanShiftPhase2<F> {
             .iter()
             .map(|&value| gamma4 * value)
             .collect::<Vec<_>>();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_spartan_shift_phase2(&[
+                &eq_outer,
+                &eq_product,
+                &weighted_next_values,
+                &not_noop,
+                &unexpanded_pc,
+                &pc,
+                &is_virtual,
+                &is_first_in_sequence,
+                &is_noop,
+            ])
+        } else {
+            None
+        };
         Self {
             eq_outer,
             eq_product,
@@ -2124,10 +2165,22 @@ impl<F: Field> SpartanShiftPhase2<F> {
             is_first_in_sequence,
             is_noop,
             scratch: (0..9).map(|_| Vec::new()).collect(),
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(poly) = cuda
+                .round_poly()
+                .ok()
+                .and_then(|poly| fr_poly_into::<F>(poly))
+            {
+                return poly;
+            }
+        }
         round_poly_from_stage3_coefficients(self.eq_outer.len() / 2, 2, |row, acc| {
             let (eq_outer_0, eq_outer_delta) = linear_pair(&self.eq_outer, row);
             let (eq_product_0, eq_product_delta) = linear_pair(&self.eq_product, row);
@@ -2153,6 +2206,14 @@ impl<F: Field> SpartanShiftPhase2<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         bind_dense_evals_reuse_serial(&mut self.eq_outer, &mut self.scratch[0], challenge);
         bind_dense_evals_reuse_serial(&mut self.eq_product, &mut self.scratch[1], challenge);
         bind_dense_evals_reuse_serial(
@@ -2176,9 +2237,17 @@ impl<F: Field> SpartanShiftPhase2<F> {
         &self,
         relation: Stage3Relation,
     ) -> Result<Vec<Stage3NamedEval<F>>, Stage3KernelError> {
-        let value = |values: &[F]| {
-            values
-                .first()
+        #[cfg(feature = "cuda")]
+        let cuda_value = |index: usize| -> Option<F> {
+            let cuda = self.cuda.as_ref()?;
+            crate::cuda::fr_into::<F>(cuda.factor_eval(index).ok()?)
+        };
+        let value = |host: &[F], _index: usize| -> Result<F, Stage3KernelError> {
+            #[cfg(feature = "cuda")]
+            if let Some(value) = cuda_value(_index) {
+                return Ok(value);
+            }
+            host.first()
                 .copied()
                 .ok_or(Stage3KernelError::InvalidProof {
                     driver: relation.symbol(),
@@ -2189,23 +2258,23 @@ impl<F: Field> SpartanShiftPhase2<F> {
             named_eval(
                 "stage3.spartan_shift.eval.UnexpandedPC",
                 "UnexpandedPC",
-                value(&self.unexpanded_pc)?,
+                value(&self.unexpanded_pc, 4)?,
             ),
-            named_eval("stage3.spartan_shift.eval.PC", "PC", value(&self.pc)?),
+            named_eval("stage3.spartan_shift.eval.PC", "PC", value(&self.pc, 5)?),
             named_eval(
                 "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
                 "OpFlagVirtualInstruction",
-                value(&self.is_virtual)?,
+                value(&self.is_virtual, 6)?,
             ),
             named_eval(
                 "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
                 "OpFlagIsFirstInSequence",
-                value(&self.is_first_in_sequence)?,
+                value(&self.is_first_in_sequence, 7)?,
             ),
             named_eval(
                 "stage3.spartan_shift.eval.InstructionFlagIsNoop",
                 "InstructionFlagIsNoop",
-                value(&self.is_noop)?,
+                value(&self.is_noop, 8)?,
             ),
         ])
     }
