@@ -99,7 +99,6 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     suffix_mle_probe: CudaFunction,
     read_suffix_scatter: CudaFunction,
-    #[expect(dead_code, reason = "used once the ram_rw_cycle body + wiring land")]
     ram_rw_cycle_round_pairs: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
@@ -3531,8 +3530,73 @@ impl CudaKernelContext {
         &self,
         inputs: RamRwCycleRoundInputs<'_>,
     ) -> Result<(Fr, Fr), CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        use num_traits::{One, Zero};
+        let items = inputs.items;
+        if items == 0 {
+            return Ok((Fr::zero(), Fr::zero()));
+        }
+
+        let gamma_dev = self.stream.clone_htod(&fr_to_limbs(inputs.gamma))?;
+        let one_plus_gamma_dev =
+            self.stream.clone_htod(&fr_to_limbs(Fr::one() + inputs.gamma))?;
+
+        const WIDTH: usize = 2;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (items as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let in_pairs_arg = inputs.in_pairs;
+        let items_arg = items as u64;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.ram_rw_cycle_round_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.val_coeff.buf)
+            .arg(&inputs.ra_coeff.buf)
+            .arg(&inputs.prev_val.buf)
+            .arg(&inputs.next_val.buf)
+            .arg(inputs.even_idx)
+            .arg(inputs.odd_idx)
+            .arg(inputs.pair)
+            .arg(&inputs.inc.buf)
+            .arg(&inputs.e_in.buf)
+            .arg(&inputs.e_out.buf)
+            .arg(&gamma_dev)
+            .arg(&one_plus_gamma_dev)
+            .arg(&in_pairs_arg)
+            .arg(&items_arg);
+        // SAFETY: one thread per merged-column work-item reads its even/odd entry (or -1
+        // for absent) from the entry SoA, the per-pair inc[2*pair]/[2*pair+1] and the
+        // e_in/e_out weight, writing one 2-lane tuple per block; shared memory holds
+        // `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block` blocks;
+            // shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
     }
 
     pub fn raf_q_scatter(
@@ -4002,14 +4066,30 @@ mod tests {
         let gamma = Fr::from_u64(9);
         let r_cycle: Vec<Fr> = (0..log_t).map(|i| Fr::from_u64((i + 3) as u64)).collect();
 
-        let entries: Vec<RamCycleEntry<Fr>> = (0..t)
-            .map(|row| RamCycleEntry {
+        let raw: [(usize, usize); 12] = [
+            (0, 3),
+            (1, 3),
+            (2, 1),
+            (3, 4),
+            (4, 2),
+            (4, 9),
+            (5, 2),
+            (6, 5),
+            (7, 8),
+            (10, 0),
+            (10, 6),
+            (11, 6),
+        ];
+        let entries: Vec<RamCycleEntry<Fr>> = raw
+            .iter()
+            .enumerate()
+            .map(|(g, &(row, col))| RamCycleEntry {
                 row,
-                col: row,
-                prev_val: (row % 5) as u64,
-                next_val: (row % 7) as u64,
-                val_coeff: Fr::from_u64((row + 1) as u64),
-                ra_coeff: Fr::from_u64((row + 100) as u64),
+                col,
+                prev_val: (g % 5) as u64,
+                next_val: (g % 7) as u64,
+                val_coeff: Fr::from_u64((g + 1) as u64),
+                ra_coeff: Fr::from_u64((g + 100) as u64),
             })
             .collect();
         let inc: Vec<Fr> = (0..t).map(|row| Fr::from_u64((row + 33) as u64)).collect();
@@ -4022,16 +4102,51 @@ mod tests {
         let prev_val: Vec<Fr> = entries.iter().map(|e| Fr::from_u64(e.prev_val)).collect();
         let next_val: Vec<Fr> = entries.iter().map(|e| Fr::from_u64(e.next_val)).collect();
         let in_pairs = cycle_eq.e_in().len() / 2;
+
         let mut even_idx = Vec::new();
         let mut odd_idx = Vec::new();
         let mut pair = Vec::new();
-        for p in 0..(t / 2) {
-            even_idx.push((2 * p) as i32);
-            odd_idx.push(-1i32);
-            pair.push(p as u32);
-            even_idx.push(-1i32);
-            odd_idx.push((2 * p + 1) as i32);
-            pair.push(p as u32);
+        let mut start = 0;
+        while start < entries.len() {
+            let p = entries[start].row / 2;
+            let mut end = start;
+            while end < entries.len() && entries[end].row / 2 == p {
+                end += 1;
+            }
+            let group = &entries[start..end];
+            let odd_start = group.partition_point(|e| e.row % 2 == 0);
+            let evens: Vec<usize> = (start..start + odd_start).collect();
+            let odds: Vec<usize> = (start + odd_start..end).collect();
+            let mut push = |ei: i32, oi: i32| {
+                even_idx.push(ei);
+                odd_idx.push(oi);
+                pair.push(p as u32);
+            };
+            let (mut i, mut j) = (0, 0);
+            while i < evens.len() && j < odds.len() {
+                match entries[evens[i]].col.cmp(&entries[odds[j]].col) {
+                    std::cmp::Ordering::Equal => {
+                        push(evens[i] as i32, odds[j] as i32);
+                        i += 1;
+                        j += 1;
+                    }
+                    std::cmp::Ordering::Less => {
+                        push(evens[i] as i32, -1);
+                        i += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        push(-1, odds[j] as i32);
+                        j += 1;
+                    }
+                }
+            }
+            for &e in &evens[i..] {
+                push(e as i32, -1);
+            }
+            for &o in &odds[j..] {
+                push(-1, o as i32);
+            }
+            start = end;
         }
         let items = even_idx.len();
 
