@@ -1567,7 +1567,7 @@ impl<F: Field> Stage3ProverInstanceState<F> {
     ) -> Result<Self, Stage3KernelError> {
         match claim_relation(program, claim)? {
             Stage3Relation::SpartanShift => {
-                return spartan_shift_state(claim, inputs, store)
+                return spartan_shift_state(claim, inputs, store, backend)
                     .map(|state| Self::SpartanShift(Box::new(state)));
             }
             Stage3Relation::InstructionInput => {
@@ -1612,7 +1612,6 @@ impl<F: Field> Stage3ProverInstanceState<F> {
     }
 }
 
-#[derive(Clone)]
 struct SpartanShiftState<F: Field> {
     phase: SpartanShiftPhase<F>,
     r_outer: Vec<F>,
@@ -1624,17 +1623,18 @@ struct SpartanShiftState<F: Field> {
     point: Vec<F>,
 }
 
-#[derive(Clone)]
 enum SpartanShiftPhase<F: Field> {
     Phase1(SpartanShiftPhase1<F>),
     Phase2(SpartanShiftPhase2<F>),
 }
 
-#[derive(Clone)]
 struct SpartanShiftPhase1<F: Field> {
     prefix_suffix_pairs: Vec<(Vec<F>, Vec<F>)>,
     scratch: Vec<(Vec<F>, Vec<F>)>,
     cycles: Vec<Stage3Cycle>,
+    round_len: usize,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaSpartanShiftState>,
 }
 
 #[derive(Clone)]
@@ -1848,6 +1848,38 @@ fn cuda_sum_of_products_state<F: Field>(
 }
 
 #[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_spartan_shift_phase1<F: Field>(
+    prefix_suffix_pairs: &[(Vec<F>, Vec<F>)],
+) -> Option<cuda::CudaSpartanShiftState> {
+    let mut factors: Vec<&[Fr]> = Vec::with_capacity(prefix_suffix_pairs.len() * 2);
+    for (prefix, suffix) in prefix_suffix_pairs {
+        factors.push(crate::cuda::as_fr_slice(prefix)?);
+        factors.push(crate::cuda::as_fr_slice(suffix)?);
+    }
+    let num_terms = prefix_suffix_pairs.len();
+    let term_coeffs = vec![Fr::from(1u64); num_terms];
+    let term_factor_offsets: Vec<u32> = (0..=num_terms).map(|t| (t * 2) as u32).collect();
+    let term_factor_indices: Vec<u32> = (0..(num_terms * 2) as u32).collect();
+    let round_factors = factors.len();
+    cuda::CudaSpartanShiftState::new(
+        &factors,
+        &term_coeffs,
+        term_factor_offsets,
+        term_factor_indices,
+        round_factors,
+        2,
+    )
+}
+
+#[cfg(feature = "cuda")]
 fn cuda_round_poly<F: Field>(
     cuda: &cuda::CudaSumOfProductsState,
     kind: SumOfProductsKind,
@@ -1867,6 +1899,7 @@ fn cuda_round_poly<F: Field>(
 }
 
 impl<F: Field> SpartanShiftState<F> {
+    #[expect(clippy::too_many_arguments)]
     fn new(
         cycles: &[Stage3Cycle],
         r_outer: &[F],
@@ -1875,10 +1908,11 @@ impl<F: Field> SpartanShiftState<F> {
         gamma2: F,
         gamma3: F,
         gamma4: F,
+        backend: &'static str,
     ) -> Self {
         Self {
             phase: SpartanShiftPhase::Phase1(SpartanShiftPhase1::new(
-                cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4,
+                cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4, backend,
             )),
             r_outer: r_outer.to_vec(),
             r_product: r_product.to_vec(),
@@ -1946,6 +1980,7 @@ impl<F: Field> SpartanShiftState<F> {
 }
 
 impl<F: Field> SpartanShiftPhase1<F> {
+    #[cfg_attr(not(feature = "cuda"), expect(unused_variables))]
     fn new(
         cycles: &[Stage3Cycle],
         r_outer: &[F],
@@ -1954,6 +1989,7 @@ impl<F: Field> SpartanShiftPhase1<F> {
         gamma2: F,
         gamma3: F,
         gamma4: F,
+        backend: &'static str,
     ) -> Self {
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);
@@ -1979,14 +2015,34 @@ impl<F: Field> SpartanShiftPhase1<F> {
             .iter()
             .map(|_| (Vec::new(), Vec::new()))
             .collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_spartan_shift_phase1(&prefix_suffix_pairs)
+        } else {
+            None
+        };
+        let round_len = prefix_suffix_pairs[0].0.len();
         Self {
             prefix_suffix_pairs,
             scratch,
             cycles: cycles.to_vec(),
+            round_len,
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     fn round_poly(&self) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(poly) = cuda
+                .round_poly()
+                .ok()
+                .and_then(|poly| fr_poly_into::<F>(poly))
+            {
+                return poly;
+            }
+        }
         let half = self.prefix_suffix_pairs[0].0.len() / 2;
         round_poly_from_stage3_coefficients(half, 2, |row, acc| {
             for (prefix, suffix) in &self.prefix_suffix_pairs {
@@ -2005,6 +2061,15 @@ impl<F: Field> SpartanShiftPhase1<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        self.round_len /= 2;
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         for ((prefix, suffix), (prefix_scratch, suffix_scratch)) in self
             .prefix_suffix_pairs
             .iter_mut()
@@ -2016,7 +2081,7 @@ impl<F: Field> SpartanShiftPhase1<F> {
     }
 
     fn should_transition_to_phase2(&self) -> bool {
-        self.prefix_suffix_pairs[0].0.len() == 2
+        self.round_len == 2
     }
 }
 
@@ -2150,6 +2215,7 @@ fn spartan_shift_state<F: Field>(
     claim: &Stage3SumcheckClaimPlan,
     inputs: &Stage3ProverInputs<'_, F>,
     store: &Stage3ValueStore<F>,
+    backend: &'static str,
 ) -> Result<SpartanShiftState<F>, Stage3KernelError> {
     let cycles = stage3_cycles(inputs, claim.num_rounds)?;
     let r_outer = store.point("stage3.input.stage1.NextPC")?;
@@ -2159,7 +2225,7 @@ fn spartan_shift_state<F: Field>(
     let gamma3 = store.scalar("stage3.spartan_shift.gamma3")?;
     let gamma4 = store.scalar("stage3.spartan_shift.gamma4")?;
     Ok(SpartanShiftState::new(
-        cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4,
+        cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4, backend,
     ))
 }
 

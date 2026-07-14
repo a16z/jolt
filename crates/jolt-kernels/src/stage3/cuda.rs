@@ -1,6 +1,7 @@
 use jolt_field::Fr;
+use jolt_poly::UnivariatePoly;
 
-use crate::cuda::{CudaError, DeviceFrVec, GruenRoundPolyInputs};
+use crate::cuda::{CudaError, DeviceFrVec, GruenRoundPolyInputs, RoundPolyTerms};
 use crate::split_eq::CudaSplitEqState;
 
 #[derive(Clone, Copy)]
@@ -89,6 +90,69 @@ impl CudaSumOfProductsState {
         self.split_eq.bind(challenge)
     }
 
+    pub(crate) fn factor_eval(&self, index: usize) -> Result<Fr, CudaError> {
+        self.factors[index].first()
+    }
+}
+
+pub(crate) struct CudaSpartanShiftState {
+    factors: Vec<DeviceFrVec>,
+    scratch: Vec<DeviceFrVec>,
+    term_coeffs: DeviceFrVec,
+    term_factor_offsets: Vec<u32>,
+    term_factor_indices: Vec<u32>,
+    round_factors: usize,
+    degree: usize,
+}
+
+impl CudaSpartanShiftState {
+    pub(crate) fn new(
+        factors: &[&[Fr]],
+        term_coeffs: &[Fr],
+        term_factor_offsets: Vec<u32>,
+        term_factor_indices: Vec<u32>,
+        round_factors: usize,
+        degree: usize,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let device_factors = ctx.upload_many(factors).ok()?;
+        let scratch = (0..factors.len())
+            .map(|_| ctx.upload(&[]).ok())
+            .collect::<Option<Vec<DeviceFrVec>>>()?;
+        let term_coeffs = ctx.upload(term_coeffs).ok()?;
+        Some(Self {
+            factors: device_factors,
+            scratch,
+            term_coeffs,
+            term_factor_offsets,
+            term_factor_indices,
+            round_factors,
+            degree,
+        })
+    }
+
+    pub(crate) fn round_poly(&self) -> Result<UnivariatePoly<Fr>, CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        let factor_refs: Vec<&DeviceFrVec> = self.factors[..self.round_factors].iter().collect();
+        let coeffs = ctx.dense_product_round_poly(RoundPolyTerms {
+            factors: &factor_refs,
+            term_coeffs: &self.term_coeffs,
+            term_factor_offsets: &self.term_factor_offsets,
+            term_factor_indices: &self.term_factor_indices,
+            degree: self.degree,
+        })?;
+        Ok(UnivariatePoly::new(coeffs))
+    }
+
+    pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        for (factor, scratch) in self.factors.iter_mut().zip(&mut self.scratch) {
+            ctx.bind(factor, scratch, challenge)?;
+        }
+        Ok(())
+    }
+
+    #[expect(dead_code, reason = "used by SpartanShift Phase2 finals (next step)")]
     pub(crate) fn factor_eval(&self, index: usize) -> Result<Fr, CudaError> {
         self.factors[index].first()
     }
