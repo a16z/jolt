@@ -44,6 +44,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/ra_virtual_d4_sparse.cu"),
     include_str!("cuda/bytecode_cycle_sparse.cu"),
     include_str!("cuda/raf_q_scatter.cu"),
+    include_str!("cuda/ram_derive.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
@@ -102,6 +103,8 @@ pub struct CudaKernelContext {
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
+    #[expect(dead_code, reason = "used once the u64_to_mont body + stage2 rewiring land")]
+    u64_to_mont: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
@@ -900,6 +903,7 @@ impl CudaKernelContext {
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
+            u64_to_mont: module.load_function("u64_to_mont")?,
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
@@ -3008,6 +3012,11 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
 
         Ok(())
+    }
+
+    pub fn u64_to_mont(&self, values: &[u64]) -> Result<DeviceFrVec, CudaError> {
+        let _ = values;
+        Err(CudaError::Unsupported)
     }
 
     pub fn batched_bind(
@@ -5583,6 +5592,18 @@ mod tests {
             let mut dev = c.upload(&base).unwrap();
             c.add_scalar(&mut dev, scalar).unwrap();
             prop_assert_eq!(dev.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn u64_to_mont_matches_cpu(mut values in prop::collection::vec(any::<u64>(), 0..300)) {
+            values.push(0);
+            values.push(u64::MAX);
+            values.push(1);
+            let expected: Vec<Fr> = values.iter().map(|&v| Fr::from_u64(v)).collect();
+
+            let c = ctx();
+            let got = c.u64_to_mont(&values).unwrap();
+            prop_assert_eq!(got.to_host().unwrap(), expected);
         }
 
         #[test]
