@@ -2876,13 +2876,13 @@ fn ram_output_state<'a, F: Field>(
 }
 
 #[derive(Clone, Debug)]
-struct RamCycleEntry<F: Field> {
-    row: usize,
-    col: usize,
-    prev_val: u64,
-    next_val: u64,
-    val_coeff: F,
-    ra_coeff: F,
+pub(crate) struct RamCycleEntry<F: Field> {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) prev_val: u64,
+    pub(crate) next_val: u64,
+    pub(crate) val_coeff: F,
+    pub(crate) ra_coeff: F,
 }
 
 #[derive(Clone, Debug)]
@@ -3134,7 +3134,7 @@ impl<F: Field> RamReadWriteState<F> {
     }
 }
 
-fn cycle_low_round_coefficients<F: Field>(
+pub(crate) fn cycle_low_round_coefficients<F: Field>(
     entries: &[RamCycleEntry<F>],
     inc: &[F],
     e_in: &[F],

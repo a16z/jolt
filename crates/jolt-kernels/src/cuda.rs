@@ -47,6 +47,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
+    include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -98,6 +99,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     suffix_mle_probe: CudaFunction,
     read_suffix_scatter: CudaFunction,
+    #[expect(dead_code, reason = "used once the ram_rw_cycle body + wiring land")]
+    ram_rw_cycle_round_pairs: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -559,6 +562,22 @@ pub struct ReadSuffixScatterInputs<'a> {
     pub poly_len: usize,
 }
 
+pub struct RamRwCycleRoundInputs<'a> {
+    pub val_coeff: &'a DeviceFrVec,
+    pub ra_coeff: &'a DeviceFrVec,
+    pub prev_val: &'a DeviceFrVec,
+    pub next_val: &'a DeviceFrVec,
+    pub even_idx: &'a CudaSlice<i32>,
+    pub odd_idx: &'a CudaSlice<i32>,
+    pub pair: &'a CudaSlice<u32>,
+    pub inc: &'a DeviceFrVec,
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+    pub gamma: Fr,
+    pub in_pairs: u32,
+    pub items: usize,
+}
+
 pub struct GruenRoundPolyInputs<'a> {
     pub factors: &'a [&'a DeviceFrVec],
     pub term_coeffs: &'a DeviceFrVec,
@@ -750,6 +769,7 @@ impl CudaKernelContext {
             #[cfg(test)]
             suffix_mle_probe: module.load_function("suffix_mle_probe")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
+            ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -914,6 +934,10 @@ impl CudaKernelContext {
     }
 
     pub fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
+        self.clone_htod_tracked(values)
+    }
+
+    pub fn upload_i32_slice(&self, values: &[i32]) -> Result<CudaSlice<i32>, CudaError> {
         self.clone_htod_tracked(values)
     }
 
@@ -3503,6 +3527,14 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn ram_rw_cycle_round_coefficients(
+        &self,
+        inputs: RamRwCycleRoundInputs<'_>,
+    ) -> Result<(Fr, Fr), CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
+    }
+
     pub fn raf_q_scatter(
         &self,
         inputs: RafQScatterInputs<'_>,
@@ -3958,6 +3990,70 @@ mod tests {
 
     fn fr_vec_strategy(max: usize) -> impl Strategy<Value = Vec<Fr>> {
         prop::collection::vec(fr_strategy(), 0..max)
+    }
+
+    #[test]
+    fn ram_rw_cycle_round_coefficients_matches_cpu() {
+        use crate::split_eq::SplitEqState;
+        use crate::stage2::{cycle_low_round_coefficients, RamCycleEntry};
+
+        let log_t = 6usize;
+        let t = 1usize << log_t;
+        let gamma = Fr::from_u64(9);
+        let r_cycle: Vec<Fr> = (0..log_t).map(|i| Fr::from_u64((i + 3) as u64)).collect();
+
+        let entries: Vec<RamCycleEntry<Fr>> = (0..t)
+            .map(|row| RamCycleEntry {
+                row,
+                col: row,
+                prev_val: (row % 5) as u64,
+                next_val: (row % 7) as u64,
+                val_coeff: Fr::from_u64((row + 1) as u64),
+                ra_coeff: Fr::from_u64((row + 100) as u64),
+            })
+            .collect();
+        let inc: Vec<Fr> = (0..t).map(|row| Fr::from_u64((row + 33) as u64)).collect();
+        let cycle_eq = SplitEqState::new_low_to_high(&r_cycle, None);
+        let expected =
+            cycle_low_round_coefficients(&entries, &inc, cycle_eq.e_in(), cycle_eq.e_out(), gamma);
+
+        let val_coeff: Vec<Fr> = entries.iter().map(|e| e.val_coeff).collect();
+        let ra_coeff: Vec<Fr> = entries.iter().map(|e| e.ra_coeff).collect();
+        let prev_val: Vec<Fr> = entries.iter().map(|e| Fr::from_u64(e.prev_val)).collect();
+        let next_val: Vec<Fr> = entries.iter().map(|e| Fr::from_u64(e.next_val)).collect();
+        let in_pairs = cycle_eq.e_in().len() / 2;
+        let mut even_idx = Vec::new();
+        let mut odd_idx = Vec::new();
+        let mut pair = Vec::new();
+        for p in 0..(t / 2) {
+            even_idx.push((2 * p) as i32);
+            odd_idx.push(-1i32);
+            pair.push(p as u32);
+            even_idx.push(-1i32);
+            odd_idx.push((2 * p + 1) as i32);
+            pair.push(p as u32);
+        }
+        let items = even_idx.len();
+
+        let c = ctx();
+        let got = c
+            .ram_rw_cycle_round_coefficients(RamRwCycleRoundInputs {
+                val_coeff: &c.upload(&val_coeff).unwrap(),
+                ra_coeff: &c.upload(&ra_coeff).unwrap(),
+                prev_val: &c.upload(&prev_val).unwrap(),
+                next_val: &c.upload(&next_val).unwrap(),
+                even_idx: &c.upload_i32_slice(&even_idx).unwrap(),
+                odd_idx: &c.upload_i32_slice(&odd_idx).unwrap(),
+                pair: &c.upload_u32_slice(&pair).unwrap(),
+                inc: &c.upload(&inc).unwrap(),
+                e_in: &c.upload(cycle_eq.e_in()).unwrap(),
+                e_out: &c.upload(cycle_eq.e_out()).unwrap(),
+                gamma,
+                in_pairs: in_pairs as u32,
+                items,
+            })
+            .unwrap();
+        assert_eq!(got, expected);
     }
 
     proptest! {
