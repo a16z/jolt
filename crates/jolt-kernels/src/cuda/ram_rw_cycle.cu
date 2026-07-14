@@ -126,4 +126,51 @@ extern "C" __global__ void ram_rw_cycle_bind(
     const u64 *__restrict__ challenge,
     unsigned long items
 ) {
+    unsigned long item = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (item >= items) return;
+
+    u64 x[4];
+    load4(challenge, x);
+    int ei = even_idx[item];
+    int oi = odd_idx[item];
+
+    u64 v[4], r[4], pv[4], nv[4];
+    u64 zero4[4] = {0, 0, 0, 0};
+
+    if (ei >= 0 && oi >= 0) {
+        u64 ve[4], vo[4], re[4], ro[4];
+        load4(val_coeff + (unsigned long)ei * 4, ve);
+        load4(val_coeff + (unsigned long)oi * 4, vo);
+        load4(ra_coeff + (unsigned long)ei * 4, re);
+        load4(ra_coeff + (unsigned long)oi * 4, ro);
+        sparse_register_linear_eval(ve, vo, x, v);
+        sparse_register_linear_eval(re, ro, x, r);
+        load4(prev_val + (unsigned long)ei * 4, pv);
+        load4(next_val + (unsigned long)oi * 4, nv);
+    } else if (ei >= 0) {
+        u64 ve[4], ne[4], re[4];
+        load4(val_coeff + (unsigned long)ei * 4, ve);
+        load4(next_val + (unsigned long)ei * 4, ne);
+        load4(ra_coeff + (unsigned long)ei * 4, re);
+        sparse_register_linear_eval(ve, ne, x, v);
+        sparse_register_linear_eval(re, zero4, x, r);
+        load4(prev_val + (unsigned long)ei * 4, pv);
+        for (int k = 0; k < 4; k++) nv[k] = ne[k];
+    } else {
+        u64 po[4], vo[4], ro[4];
+        load4(prev_val + (unsigned long)oi * 4, po);
+        load4(val_coeff + (unsigned long)oi * 4, vo);
+        load4(ra_coeff + (unsigned long)oi * 4, ro);
+        sparse_register_linear_eval(po, vo, x, v);
+        sparse_register_linear_eval(zero4, ro, x, r);
+        for (int k = 0; k < 4; k++) pv[k] = po[k];
+        load4(next_val + (unsigned long)oi * 4, nv);
+    }
+
+    for (int k = 0; k < 4; k++) {
+        val_out[item * 4 + k] = v[k];
+        ra_out[item * 4 + k] = r[k];
+        prev_out[item * 4 + k] = pv[k];
+        next_out[item * 4 + k] = nv[k];
+    }
 }

@@ -100,7 +100,6 @@ pub struct CudaKernelContext {
     suffix_mle_probe: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
-    #[expect(dead_code, reason = "used once the ram_rw_cycle_bind body + wiring land")]
     ram_rw_cycle_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
@@ -3632,8 +3631,55 @@ impl CudaKernelContext {
         &self,
         inputs: RamRwCycleBindInputs<'_>,
     ) -> Result<RamRwCycleEntries, CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        let items = inputs.items;
+        let make = |len: usize| -> Result<DeviceFrVec, CudaError> {
+            Ok(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf: self.stream.alloc_zeros(len * LIMBS)?,
+                len,
+                staging: self.staging.clone(),
+            })
+        };
+        let mut val_coeff = make(items)?;
+        let mut ra_coeff = make(items)?;
+        let mut prev_val = make(items)?;
+        let mut next_val = make(items)?;
+        if items == 0 {
+            return Ok(RamRwCycleEntries { val_coeff, ra_coeff, prev_val, next_val });
+        }
+
+        let challenge_dev = self.stream.clone_htod(&fr_to_limbs(inputs.challenge))?;
+
+        let block = BLOCK;
+        let blocks = (items as u32).div_ceil(block);
+        let items_arg = items as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.ram_rw_cycle_bind.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut val_coeff.buf)
+            .arg(&mut ra_coeff.buf)
+            .arg(&mut prev_val.buf)
+            .arg(&mut next_val.buf)
+            .arg(&inputs.val_coeff.buf)
+            .arg(&inputs.ra_coeff.buf)
+            .arg(&inputs.prev_val.buf)
+            .arg(&inputs.next_val.buf)
+            .arg(inputs.even_idx)
+            .arg(inputs.odd_idx)
+            .arg(&challenge_dev)
+            .arg(&items_arg);
+        // SAFETY: one thread per output entry reads its even/odd source (or -1 for absent)
+        // from the input SoA and writes the linear-eval at `challenge` for val_coeff/ra_coeff
+        // plus the carried prev_val/next_val into the freshly allocated output SoA of length
+        // `items`; no shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(RamRwCycleEntries { val_coeff, ra_coeff, prev_val, next_val })
     }
 
     pub fn raf_q_scatter(
