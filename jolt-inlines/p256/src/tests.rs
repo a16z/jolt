@@ -1115,7 +1115,7 @@ mod p256_tests {
         let r = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
         let s = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
         let result = ecdsa_verify(zero, r, s, g);
-        assert!(matches!(result, Err(P256Error::ROrSZero)));
+        assert!(matches!(result, Err(P256Error::ZeroMessageHash)));
     }
 
     /// Verify that a cross-cancellation attack with correlated forged advice is

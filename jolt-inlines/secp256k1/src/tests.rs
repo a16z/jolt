@@ -495,6 +495,20 @@ mod sequence_tests {
         assert!(matches!(result, Err(Secp256k1Error::NotOnCurve)));
     }
 
+    #[test]
+    fn test_ecdsa_verify_rejects_zero_hash_forgery() {
+        use crate::sdk::{ecdsa_verify, Secp256k1Error};
+
+        let q = Secp256k1Point::generator();
+        let z = Secp256k1Fr::from_u64_arr(&[0; 4]).unwrap();
+        let r = Secp256k1Fr::from_u64_arr(&q.x().e()).unwrap();
+        let s = r.clone();
+
+        // With z=0 and r=s=x(Q), the verification equation collapses to R=Q.
+        let result = ecdsa_verify(z, r, s, q);
+        assert!(matches!(result, Err(Secp256k1Error::ZeroMessageHash)));
+    }
+
     /// Verify assumptions about Fq and Fr modulus limb structure used in
     /// `is_fq_non_canonical` and `is_fr_non_canonical`.
     #[test]
