@@ -2972,7 +2972,7 @@ impl<F: Field> RamReadWriteState<F> {
         })
     }
 
-    fn round_poly(
+    pub(crate) fn round_poly(
         &mut self,
         _round: usize,
         previous_claim: F,
@@ -2984,7 +2984,7 @@ impl<F: Field> RamReadWriteState<F> {
         }
     }
 
-    fn ingest_challenge(&mut self, challenge: F) -> Result<(), Stage2KernelError> {
+    pub(crate) fn ingest_challenge(&mut self, challenge: F) -> Result<(), Stage2KernelError> {
         if self.round < self.log_t {
             self.bind_cycle(challenge);
             if self.round + 1 == self.log_t {
@@ -3109,7 +3109,7 @@ impl<F: Field> RamReadWriteState<F> {
         bind_dense_evals_reuse(&mut self.val_init, &mut self.val_init_scratch, challenge);
     }
 
-    fn ra_eval(&self) -> Result<F, Stage2KernelError> {
+    pub(crate) fn ra_eval(&self) -> Result<F, Stage2KernelError> {
         Ok(self
             .address_entries
             .first()
@@ -3117,7 +3117,7 @@ impl<F: Field> RamReadWriteState<F> {
             .map_or(F::zero(), |entry| entry.ra_coeff))
     }
 
-    fn val_eval(&self) -> Result<F, Stage2KernelError> {
+    pub(crate) fn val_eval(&self) -> Result<F, Stage2KernelError> {
         Ok(self
             .address_entries
             .first()
@@ -3125,7 +3125,7 @@ impl<F: Field> RamReadWriteState<F> {
             .map_or(self.val_init[0], |entry| entry.val_coeff))
     }
 
-    fn inc_eval(&self) -> Result<F, Stage2KernelError> {
+    pub(crate) fn inc_eval(&self) -> Result<F, Stage2KernelError> {
         Ok(self.inc[0])
     }
 
