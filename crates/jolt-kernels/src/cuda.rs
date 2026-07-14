@@ -203,6 +203,81 @@ fn limbs_to_fr(limbs: [u64; LIMBS]) -> Fr {
     Fr::from_bigint_unchecked(jolt_field::Limbs(limbs))
 }
 
+pub(crate) struct RoundSchedule {
+    pub(crate) even_idx: Vec<i32>,
+    pub(crate) odd_idx: Vec<i32>,
+    pub(crate) pair: Vec<u32>,
+}
+
+pub(crate) fn build_schedules<C: Copy + Ord>(
+    rows: &[usize],
+    cols: &[C],
+    rounds: usize,
+) -> (Vec<RoundSchedule>, Vec<C>) {
+    let mut cur_rows: Vec<usize> = rows.to_vec();
+    let mut cur_cols: Vec<C> = cols.to_vec();
+    let mut schedules = Vec::with_capacity(rounds);
+
+    for _ in 0..rounds {
+        let mut even_idx = Vec::new();
+        let mut odd_idx = Vec::new();
+        let mut pair = Vec::new();
+        let mut next_rows = Vec::new();
+        let mut next_cols = Vec::new();
+
+        let mut cursor = 0usize;
+        while cursor < cur_rows.len() {
+            let p = cur_rows[cursor] / 2;
+            let even_row = 2 * p;
+            let odd_row = even_row + 1;
+            let even_start = cursor;
+            while cursor < cur_rows.len() && cur_rows[cursor] == even_row {
+                cursor += 1;
+            }
+            let even = even_start..cursor;
+            let odd_start = cursor;
+            while cursor < cur_rows.len() && cur_rows[cursor] == odd_row {
+                cursor += 1;
+            }
+            let odd = odd_start..cursor;
+
+            let mut i = even.start;
+            let mut j = odd.start;
+            while i < even.end || j < odd.end {
+                let (ei, oi, col) = if j >= odd.end || (i < even.end && cur_cols[i] < cur_cols[j]) {
+                    let out = (i as i32, -1i32, cur_cols[i]);
+                    i += 1;
+                    out
+                } else if i >= even.end || cur_cols[j] < cur_cols[i] {
+                    let out = (-1i32, j as i32, cur_cols[j]);
+                    j += 1;
+                    out
+                } else {
+                    let out = (i as i32, j as i32, cur_cols[i]);
+                    i += 1;
+                    j += 1;
+                    out
+                };
+                even_idx.push(ei);
+                odd_idx.push(oi);
+                pair.push(p as u32);
+                next_rows.push(p);
+                next_cols.push(col);
+            }
+        }
+
+        schedules.push(RoundSchedule {
+            even_idx,
+            odd_idx,
+            pair,
+        });
+        cur_rows = next_rows;
+        cur_cols = next_cols;
+    }
+
+    (schedules, cur_cols)
+}
+
 fn unflatten(raw: &[u64]) -> Vec<Fr> {
     raw.chunks_exact(LIMBS)
         .map(|c| limbs_to_fr([c[0], c[1], c[2], c[3]]))
