@@ -103,6 +103,8 @@ pub struct CudaKernelContext {
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
+    #[expect(dead_code, reason = "used once the ram_rw_address_bind body + wiring land")]
+    ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -611,6 +613,26 @@ pub struct RamRwAddressRoundInputs<'a> {
     pub num_groups: usize,
 }
 
+pub struct RamRwAddressBindInputs<'a> {
+    pub ra_coeff: &'a DeviceFrVec,
+    pub val_coeff: &'a DeviceFrVec,
+    pub prev_val: &'a DeviceFrVec,
+    pub next_val: &'a DeviceFrVec,
+    pub val_init: &'a DeviceFrVec,
+    pub even_idx: &'a CudaSlice<i32>,
+    pub odd_idx: &'a CudaSlice<i32>,
+    pub pair: &'a CudaSlice<u32>,
+    pub challenge: Fr,
+    pub num_groups: usize,
+}
+
+pub struct RamRwAddressEntries {
+    pub ra_coeff: DeviceFrVec,
+    pub val_coeff: DeviceFrVec,
+    pub prev_val: DeviceFrVec,
+    pub next_val: DeviceFrVec,
+}
+
 pub struct GruenRoundPolyInputs<'a> {
     pub factors: &'a [&'a DeviceFrVec],
     pub term_coeffs: &'a DeviceFrVec,
@@ -805,6 +827,7 @@ impl CudaKernelContext {
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
+            ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
@@ -3772,6 +3795,14 @@ impl CudaKernelContext {
         Ok((inputs.eq * q0, inputs.eq * q2))
     }
 
+    pub fn ram_rw_address_bind(
+        &self,
+        inputs: RamRwAddressBindInputs<'_>,
+    ) -> Result<RamRwAddressEntries, CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
+    }
+
     pub fn raf_q_scatter(
         &self,
         inputs: RafQScatterInputs<'_>,
@@ -4544,6 +4575,105 @@ mod tests {
             .unwrap();
         let got = UnivariatePoly::from_evals_and_hint(previous_claim, &[q0, q2]);
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn ram_rw_address_bind_matches_cpu() {
+        use crate::split_eq::SplitEqState;
+        use crate::stage2::{RamAddressEntry, RamReadWriteState};
+        use jolt_field::Field;
+
+        let gamma = Fr::from_u64(9);
+        let challenge = Fr::from_u64(7);
+        let cols: [usize; 7] = [0, 1, 2, 5, 6, 7, 11];
+        let entries: Vec<RamAddressEntry<Fr>> = cols
+            .iter()
+            .enumerate()
+            .map(|(g, &col)| RamAddressEntry {
+                row: 0,
+                col,
+                prev_val: Fr::from_u64((g + 1) as u64),
+                next_val: Fr::from_u64((g + 20) as u64),
+                val_coeff: Fr::from_u64((g + 40) as u64),
+                ra_coeff: Fr::from_u64((g + 60) as u64),
+            })
+            .collect();
+        let val_init: Vec<Fr> = (0..16).map(|i| Fr::from_u64((i + 3) as u64)).collect();
+
+        let ra_coeff: Vec<Fr> = entries.iter().map(|e| e.ra_coeff).collect();
+        let val_coeff: Vec<Fr> = entries.iter().map(|e| e.val_coeff).collect();
+        let prev_val: Vec<Fr> = entries.iter().map(|e| e.prev_val).collect();
+        let next_val: Vec<Fr> = entries.iter().map(|e| e.next_val).collect();
+
+        let point: Vec<Fr> = (0..4).map(|i| Fr::from_u64((i + 2) as u64)).collect();
+        let mut state = RamReadWriteState {
+            gamma,
+            log_t: point.len(),
+            round: point.len(),
+            cycle_eq: SplitEqState::new_low_to_high(&point, None),
+            cycle_entries: Vec::new(),
+            address_entries: entries.clone(),
+            address_scratch: Vec::new(),
+            inc: vec![Fr::from_u64(17)],
+            inc_scratch: Vec::new(),
+            val_init: val_init.clone(),
+            val_init_scratch: Vec::new(),
+        };
+        state.bind_address(challenge);
+        let expected = &state.address_entries;
+
+        let mut even_idx = Vec::new();
+        let mut odd_idx = Vec::new();
+        let mut pair = Vec::new();
+        let mut start = 0;
+        while start < entries.len() {
+            let p = entries[start].col / 2;
+            let mut end = start;
+            while end < entries.len() && entries[end].col / 2 == p {
+                end += 1;
+            }
+            let group = &entries[start..end];
+            let odd_start = group.partition_point(|e| e.col % 2 == 0);
+            let ei = if odd_start > 0 { start as i32 } else { -1 };
+            let oi = if odd_start < group.len() {
+                (start + odd_start) as i32
+            } else {
+                -1
+            };
+            even_idx.push(ei);
+            odd_idx.push(oi);
+            pair.push(p as u32);
+            start = end;
+        }
+        let num_groups = pair.len();
+        assert_eq!(num_groups, expected.len());
+
+        let c = ctx();
+        let got = c
+            .ram_rw_address_bind(RamRwAddressBindInputs {
+                ra_coeff: &c.upload(&ra_coeff).unwrap(),
+                val_coeff: &c.upload(&val_coeff).unwrap(),
+                prev_val: &c.upload(&prev_val).unwrap(),
+                next_val: &c.upload(&next_val).unwrap(),
+                val_init: &c.upload(&val_init).unwrap(),
+                even_idx: &c.upload_i32_slice(&even_idx).unwrap(),
+                odd_idx: &c.upload_i32_slice(&odd_idx).unwrap(),
+                pair: &c.upload_u32_slice(&pair).unwrap(),
+                challenge,
+                num_groups,
+            })
+            .unwrap();
+
+        let got_ra = got.ra_coeff.to_host().unwrap();
+        let got_val = got.val_coeff.to_host().unwrap();
+        let got_prev = got.prev_val.to_host().unwrap();
+        let got_next = got.next_val.to_host().unwrap();
+        for (slot, e) in expected.iter().enumerate() {
+            assert_eq!(got_ra[slot], e.ra_coeff, "ra_coeff slot {slot}");
+            assert_eq!(got_val[slot], e.val_coeff, "val_coeff slot {slot}");
+            assert_eq!(got_prev[slot], e.prev_val, "prev_val slot {slot}");
+            assert_eq!(got_next[slot], e.next_val, "next_val slot {slot}");
+        }
     }
 
     proptest! {

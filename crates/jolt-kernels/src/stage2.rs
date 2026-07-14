@@ -3080,7 +3080,7 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::bind_address")]
-    fn bind_address(&mut self, challenge: F) {
+    pub(crate) fn bind_address(&mut self, challenge: F) {
         let mut bound = std::mem::take(&mut self.address_scratch);
         bound.clear();
         bound.reserve(self.address_entries.len());
