@@ -93,4 +93,60 @@ extern "C" __global__ void ram_rw_address_bind(
     const u64 *__restrict__ challenge,
     unsigned long num_groups
 ) {
+    unsigned long item = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (item >= num_groups) return;
+
+    u64 x[4];
+    load4(challenge, x);
+    int ei = even_idx[item];
+    int oi = odd_idx[item];
+    unsigned int p = pair[item];
+
+    u64 ra[4], v[4], pv[4], nv[4];
+    u64 zero4[4] = {0, 0, 0, 0};
+
+    if (ei >= 0 && oi >= 0) {
+        u64 rae[4], rao[4], ve[4], vo[4], pe[4], po[4], ne[4], no[4];
+        load4(ra_coeff + (unsigned long)ei * 4, rae);
+        load4(ra_coeff + (unsigned long)oi * 4, rao);
+        load4(val_coeff + (unsigned long)ei * 4, ve);
+        load4(val_coeff + (unsigned long)oi * 4, vo);
+        load4(prev_val + (unsigned long)ei * 4, pe);
+        load4(prev_val + (unsigned long)oi * 4, po);
+        load4(next_val + (unsigned long)ei * 4, ne);
+        load4(next_val + (unsigned long)oi * 4, no);
+        sparse_register_linear_eval(rae, rao, x, ra);
+        sparse_register_linear_eval(ve, vo, x, v);
+        sparse_register_linear_eval(pe, po, x, pv);
+        sparse_register_linear_eval(ne, no, x, nv);
+    } else if (ei >= 0) {
+        u64 rae[4], ve[4], pe[4], ne[4], ck[4];
+        load4(ra_coeff + (unsigned long)ei * 4, rae);
+        load4(val_coeff + (unsigned long)ei * 4, ve);
+        load4(prev_val + (unsigned long)ei * 4, pe);
+        load4(next_val + (unsigned long)ei * 4, ne);
+        load4(val_init + (unsigned long)(2 * p + 1) * 4, ck);
+        sparse_register_linear_eval(rae, zero4, x, ra);
+        sparse_register_linear_eval(ve, ck, x, v);
+        sparse_register_linear_eval(pe, ck, x, pv);
+        sparse_register_linear_eval(ne, ck, x, nv);
+    } else {
+        u64 rao[4], vo[4], po[4], no[4], ck[4];
+        load4(ra_coeff + (unsigned long)oi * 4, rao);
+        load4(val_coeff + (unsigned long)oi * 4, vo);
+        load4(prev_val + (unsigned long)oi * 4, po);
+        load4(next_val + (unsigned long)oi * 4, no);
+        load4(val_init + (unsigned long)(2 * p) * 4, ck);
+        sparse_register_linear_eval(zero4, rao, x, ra);
+        sparse_register_linear_eval(ck, vo, x, v);
+        sparse_register_linear_eval(ck, po, x, pv);
+        sparse_register_linear_eval(ck, no, x, nv);
+    }
+
+    for (int k = 0; k < 4; k++) {
+        ra_out[item * 4 + k] = ra[k];
+        val_out[item * 4 + k] = v[k];
+        prev_out[item * 4 + k] = pv[k];
+        next_out[item * 4 + k] = nv[k];
+    }
 }

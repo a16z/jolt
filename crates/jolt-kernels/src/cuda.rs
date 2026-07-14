@@ -103,7 +103,6 @@ pub struct CudaKernelContext {
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
-    #[expect(dead_code, reason = "used once the ram_rw_address_bind body + wiring land")]
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
@@ -3799,8 +3798,57 @@ impl CudaKernelContext {
         &self,
         inputs: RamRwAddressBindInputs<'_>,
     ) -> Result<RamRwAddressEntries, CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        let num_groups = inputs.num_groups;
+        let make = |len: usize| -> Result<DeviceFrVec, CudaError> {
+            Ok(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf: self.stream.alloc_zeros(len * LIMBS)?,
+                len,
+                staging: self.staging.clone(),
+            })
+        };
+        let mut ra_coeff = make(num_groups)?;
+        let mut val_coeff = make(num_groups)?;
+        let mut prev_val = make(num_groups)?;
+        let mut next_val = make(num_groups)?;
+        if num_groups == 0 {
+            return Ok(RamRwAddressEntries { ra_coeff, val_coeff, prev_val, next_val });
+        }
+
+        let challenge_dev = self.stream.clone_htod(&fr_to_limbs(inputs.challenge))?;
+
+        let block = BLOCK;
+        let blocks = (num_groups as u32).div_ceil(block);
+        let num_groups_arg = num_groups as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.ram_rw_address_bind.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut ra_coeff.buf)
+            .arg(&mut val_coeff.buf)
+            .arg(&mut prev_val.buf)
+            .arg(&mut next_val.buf)
+            .arg(&inputs.ra_coeff.buf)
+            .arg(&inputs.val_coeff.buf)
+            .arg(&inputs.prev_val.buf)
+            .arg(&inputs.next_val.buf)
+            .arg(&inputs.val_init.buf)
+            .arg(inputs.even_idx)
+            .arg(inputs.odd_idx)
+            .arg(inputs.pair)
+            .arg(&challenge_dev)
+            .arg(&num_groups_arg);
+        // SAFETY: one thread per output col-pair group reads its even/odd source (or -1 for
+        // absent, filling the missing side from val_init[2p]/[2p+1]) and writes the linear-eval
+        // at `challenge` of ra_coeff/val_coeff/prev_val/next_val into the freshly allocated
+        // output SoA of length `num_groups`; no shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(RamRwAddressEntries { ra_coeff, val_coeff, prev_val, next_val })
     }
 
     pub fn raf_q_scatter(
