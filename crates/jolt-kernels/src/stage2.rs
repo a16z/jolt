@@ -2886,28 +2886,28 @@ pub(crate) struct RamCycleEntry<F: Field> {
 }
 
 #[derive(Clone, Debug)]
-struct RamAddressEntry<F: Field> {
-    row: usize,
-    col: usize,
-    prev_val: F,
-    next_val: F,
-    val_coeff: F,
-    ra_coeff: F,
+pub(crate) struct RamAddressEntry<F: Field> {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) prev_val: F,
+    pub(crate) next_val: F,
+    pub(crate) val_coeff: F,
+    pub(crate) ra_coeff: F,
 }
 
 #[derive(Clone)]
-struct RamReadWriteState<F: Field> {
-    gamma: F,
-    log_t: usize,
-    round: usize,
-    cycle_eq: SplitEqState<F>,
-    cycle_entries: Vec<RamCycleEntry<F>>,
-    address_entries: Vec<RamAddressEntry<F>>,
-    address_scratch: Vec<RamAddressEntry<F>>,
-    inc: Vec<F>,
-    inc_scratch: Vec<F>,
-    val_init: Vec<F>,
-    val_init_scratch: Vec<F>,
+pub(crate) struct RamReadWriteState<F: Field> {
+    pub(crate) gamma: F,
+    pub(crate) log_t: usize,
+    pub(crate) round: usize,
+    pub(crate) cycle_eq: SplitEqState<F>,
+    pub(crate) cycle_entries: Vec<RamCycleEntry<F>>,
+    pub(crate) address_entries: Vec<RamAddressEntry<F>>,
+    pub(crate) address_scratch: Vec<RamAddressEntry<F>>,
+    pub(crate) inc: Vec<F>,
+    pub(crate) inc_scratch: Vec<F>,
+    pub(crate) val_init: Vec<F>,
+    pub(crate) val_init_scratch: Vec<F>,
 }
 
 impl<F: Field> RamReadWriteState<F> {
@@ -3034,7 +3034,7 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::address_round_poly")]
-    fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+    pub(crate) fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
         let mut evals = [F::zero(); 2];
         let cycle_eq = self.cycle_eq_eval();
         let mut cursor = 0;
