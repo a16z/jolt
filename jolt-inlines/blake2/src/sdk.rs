@@ -4,6 +4,11 @@ use crate::{
     STATE_VECTOR_LEN,
 };
 const OUTPUT_SIZE: usize = 64;
+const INITIAL_STATE: [u64; STATE_VECTOR_LEN] = {
+    let mut h = IV;
+    h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
+    h
+};
 
 pub struct Blake2b {
     /// Hash state (8 x 64-bit words)
@@ -19,11 +24,8 @@ pub struct Blake2b {
 impl Blake2b {
     #[inline(always)]
     pub fn new() -> Self {
-        let mut h = IV;
-        h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
-
         Self {
-            h,
+            h: INITIAL_STATE,
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
@@ -152,9 +154,7 @@ impl Blake2b {
     /// Optimized for virtual cycles by avoiding intermediate buffers for small inputs.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
-        let mut h = IV;
-        h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
-        Self::digest_from_state(h, input)
+        Self::digest_from_state(INITIAL_STATE, input)
     }
 
     /// Computes BLAKE2b hash with the given salt and personalization in one call.
@@ -221,8 +221,9 @@ impl Blake2b {
     }
 }
 
-/// Initial state with the salt and personalization words of the BLAKE2b
-/// parameter block XORed into the IV (RFC 7693, section 2.5).
+/// Initial state with the salt and personalization words of the BLAKE2b parameter block XORed
+/// into the IV, as defined by section 2.8 of the
+/// [BLAKE2 specification](https://www.blake2.net/blake2.pdf).
 #[inline(always)]
 #[expect(clippy::unwrap_used)]
 fn initial_state_with_params(salt: &[u8], persona: &[u8]) -> [u64; STATE_VECTOR_LEN] {
@@ -239,8 +240,7 @@ fn initial_state_with_params(salt: &[u8], persona: &[u8]) -> [u64; STATE_VECTOR_
     params[..salt.len()].copy_from_slice(salt);
     params[SALT_SIZE_IN_BYTES..SALT_SIZE_IN_BYTES + persona.len()].copy_from_slice(persona);
 
-    let mut h = IV;
-    h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
+    let mut h = INITIAL_STATE;
     for (word, chunk) in h[4..].iter_mut().zip(params.chunks_exact(8)) {
         *word ^= u64::from_le_bytes(chunk.try_into().unwrap());
     }
