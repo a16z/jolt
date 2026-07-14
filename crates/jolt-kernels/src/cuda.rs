@@ -102,7 +102,6 @@ pub struct CudaKernelContext {
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
-    #[expect(dead_code, reason = "used once the ram_rw_address_round body + wiring land")]
     ram_rw_address_round_pairs: CudaFunction,
     rd_wa_gather: CudaFunction,
     add_scalar: CudaFunction,
@@ -3703,8 +3702,74 @@ impl CudaKernelContext {
         &self,
         inputs: RamRwAddressRoundInputs<'_>,
     ) -> Result<(Fr, Fr), CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        use num_traits::{One, Zero};
+        let num_groups = inputs.num_groups;
+        if num_groups == 0 {
+            return Ok((Fr::zero(), Fr::zero()));
+        }
+
+        let one_plus_gamma_dev =
+            self.stream.clone_htod(&fr_to_limbs(Fr::one() + inputs.gamma))?;
+        let gc_dev = self.stream.clone_htod(&fr_to_limbs(inputs.gamma * inputs.inc0))?;
+
+        const WIDTH: usize = 2;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (num_groups as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let num_groups_arg = num_groups as u64;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.ram_rw_address_round_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.ra_coeff.buf)
+            .arg(&inputs.val_coeff.buf)
+            .arg(&inputs.val_init.buf)
+            .arg(inputs.even_idx)
+            .arg(inputs.odd_idx)
+            .arg(inputs.pair)
+            .arg(&one_plus_gamma_dev)
+            .arg(&gc_dev)
+            .arg(&num_groups_arg);
+        // SAFETY: one thread per col-pair group reads its even/odd entry (or -1 for absent,
+        // filling the missing side from val_init[2p]/[2p+1]) from the entry SoA, builds the
+        // two x in {0,2} evals of ra*((1+gamma)*val + gamma*inc0) in shared memory, and
+        // width-2 block-reduces to one tuple per block.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block` blocks;
+            // shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        let q0 = limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]);
+        let q2 = limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]);
+        Ok((inputs.eq * q0, inputs.eq * q2))
     }
 
     pub fn raf_q_scatter(
