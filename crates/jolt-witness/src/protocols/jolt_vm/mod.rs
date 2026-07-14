@@ -10,7 +10,6 @@ use jolt_field::{
     Field,
 };
 use jolt_lookup_tables::{InstructionLookupTable, JoltLookupQuery, LookupQuery, LookupTableKind};
-use jolt_poly::{eq_index_msb, EqPolynomial};
 use jolt_program::{
     execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
     preprocess::JoltProgramPreprocessing,
@@ -21,15 +20,13 @@ use jolt_riscv::{
     CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction,
     JoltInstructionKind,
 };
-use rayon::prelude::*;
 
 use crate::{
-    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef, PolynomialBatchChunk,
-    PolynomialBatchStream, PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView,
-    RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace,
+    NamespaceId, OracleDescriptor, OracleRef, PolynomialBatchChunk, PolynomialBatchStream,
+    PolynomialChunk, PolynomialEncoding, PolynomialStream, WitnessDimensions, WitnessError,
+    WitnessNamespace,
 };
 
-pub mod rv64;
 pub mod stage5;
 
 #[cfg(feature = "field-inline")]
@@ -43,36 +40,17 @@ mod provider;
 mod ra;
 mod ram;
 mod registers;
-mod spartan_outer;
-mod stage2;
-mod stage3;
 mod stage6;
 mod streams;
 mod trace;
 
-pub use ra::{
-    RaFamilyCycleIndexSource, RaFamilyCycleIndices, RA_FAMILY_MAX_BYTECODE_CHUNKS,
-    RA_FAMILY_MAX_INSTRUCTION_CHUNKS, RA_FAMILY_MAX_RAM_CHUNKS,
-};
-pub use registers::{
-    JoltVmRegisterRead, JoltVmRegisterReadWriteRow, JoltVmRegisterReadWriteRows,
-    JoltVmRegisterWrite,
-};
-pub use spartan_outer::{JoltVmSpartanOuterRow, JoltVmSpartanOuterRows};
-pub use stage2::{JoltVmStage2Rows, JoltVmStage2TraceRow};
-pub use stage3::{
-    JoltVmStage3InstructionRegisterRow, JoltVmStage3InstructionRegisterRows, JoltVmStage3ShiftRow,
-    JoltVmStage3ShiftRows,
-};
 pub use stage6::{JoltVmStage6Row, JoltVmStage6Rows};
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
 pub(crate) use ra::RaChunkSelector;
 pub(crate) use ram::ram_access_address;
-pub(crate) use streams::{JoltVmCommittedStreamKind, JoltVmIncrementStreamKind};
-pub(crate) use trace::{
-    missing_pc_mapping, row_instruction_flags, row_is_noop, supported_trace_virtual, PcLookupCache,
-};
+pub(crate) use streams::JoltVmIncrementStreamKind;
+pub(crate) use trace::{supported_trace_virtual, PcLookupCache};
 
 pub const JOLT_VM_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm");
 pub const RV64_XLEN: usize = 64;
@@ -363,11 +341,6 @@ fn require_index(index: usize, len: usize) -> Result<(), WitnessError> {
             namespace: JOLT_VM_NAMESPACE.name,
         })
     }
-}
-
-fn eq_evals_msb<F: Field>(point: &[F]) -> Result<Vec<F>, WitnessError> {
-    let _ = checked_pow2(point.len())?;
-    Ok(EqPolynomial::evals(point, None))
 }
 
 #[cfg(test)]

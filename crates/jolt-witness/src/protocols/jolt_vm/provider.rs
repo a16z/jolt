@@ -102,117 +102,27 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
         ))
     }
 
-    fn view_requirements(
-        &self,
-        oracle: OracleRef<JoltVmNamespace>,
-    ) -> Result<Vec<ViewRequirement<JoltVmNamespace>>, WitnessError> {
-        let descriptor =
+    fn oracle_table(&self, oracle: OracleRef<JoltVmNamespace>) -> Result<Vec<F>, WitnessError> {
+        let _ =
             <Self as crate::WitnessProvider<F, JoltVmNamespace>>::describe_oracle(self, oracle)?;
-        let retention = match oracle {
-            OracleRef::Committed(
-                JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice,
-            ) => RetentionHint::ThroughBlindFold,
-            _ => RetentionHint::ThroughStage8,
-        };
-        Ok(vec![ViewRequirement::new(
-            descriptor.reference,
-            descriptor.encoding,
-            MaterializationPolicy::BackendChoice,
-            retention,
-        )])
-    }
-
-    fn oracle_view(
-        &self,
-        requirement: ViewRequirement<JoltVmNamespace>,
-    ) -> Result<PolynomialView<'_, F, JoltVmNamespace>, WitnessError> {
-        let descriptor = <Self as crate::WitnessProvider<F, JoltVmNamespace>>::describe_oracle(
-            self,
-            requirement.oracle,
-        )?;
-        let values = match requirement.oracle {
-            OracleRef::Virtual(id)
-                if matches!(
-                    id,
-                    JoltVirtualPolynomial::RamVal | JoltVirtualPolynomial::RamRa
-                ) =>
-            {
-                self.materialize_ram_read_write_virtual(id)?
-            }
-            OracleRef::Virtual(id)
-                if matches!(
-                    id,
-                    JoltVirtualPolynomial::RegistersVal
-                        | JoltVirtualPolynomial::Rs1Ra
-                        | JoltVirtualPolynomial::Rs2Ra
-                        | JoltVirtualPolynomial::RdWa
-                ) =>
-            {
-                self.materialize_register_read_write_virtual(id)?
-            }
-            OracleRef::Virtual(JoltVirtualPolynomial::RamValFinal) => {
-                self.materialize_ram_val_final()?
-            }
-            OracleRef::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
-                self.materialize_instruction_ra(index)?
-            }
-            OracleRef::Virtual(id) => self.materialize_trace_virtual(id)?,
-            OracleRef::Committed(id) => self.materialize_compact_committed(id)?,
-        };
-        Ok(PolynomialView::owned(descriptor, values))
-    }
-
-    fn try_evaluate_oracle_view(
-        &self,
-        requirement: ViewRequirement<JoltVmNamespace>,
-        point: &[F],
-    ) -> Result<Option<F>, WitnessError> {
-        let directly_evaluates_committed = matches!(
-            requirement.oracle,
-            OracleRef::Committed(
-                JoltCommittedPolynomial::RdInc
-                    | JoltCommittedPolynomial::RamInc
-                    | JoltCommittedPolynomial::InstructionRa(_)
-                    | JoltCommittedPolynomial::BytecodeRa(_)
-                    | JoltCommittedPolynomial::RamRa(_)
-            )
-        );
-        if requirement.encoding != PolynomialEncoding::Dense && !directly_evaluates_committed {
-            return Ok(None);
-        }
-
-        match requirement.oracle {
-            OracleRef::Committed(
-                id @ (JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc),
-            ) => self.evaluate_committed_trace_dense(id, point).map(Some),
-            OracleRef::Committed(
-                id @ (JoltCommittedPolynomial::InstructionRa(_)
-                | JoltCommittedPolynomial::BytecodeRa(_)
-                | JoltCommittedPolynomial::RamRa(_)),
-            ) => self.evaluate_committed_ra(id, point).map(Some),
-            OracleRef::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
-                self.evaluate_instruction_ra(index, point).map(Some)
-            }
+        match oracle {
             OracleRef::Virtual(
                 id @ (JoltVirtualPolynomial::RamVal | JoltVirtualPolynomial::RamRa),
-            ) => self.evaluate_ram_read_write_virtual(id, point).map(Some),
-            OracleRef::Virtual(JoltVirtualPolynomial::RamValFinal) => {
-                self.evaluate_ram_val_final(point).map(Some)
-            }
+            ) => self.materialize_ram_read_write_virtual(id),
             OracleRef::Virtual(
                 id @ (JoltVirtualPolynomial::RegistersVal
                 | JoltVirtualPolynomial::Rs1Ra
                 | JoltVirtualPolynomial::Rs2Ra
                 | JoltVirtualPolynomial::RdWa),
-            ) => self
-                .evaluate_register_read_write_virtual(id, point)
-                .map(Some),
-            OracleRef::Virtual(
-                id @ (JoltVirtualPolynomial::InstructionRafFlag
-                | JoltVirtualPolynomial::LookupTableFlag(_)
-                | JoltVirtualPolynomial::RamHammingWeight),
-            ) => self.evaluate_trace_virtual(id, point).map(Some),
-            _ => Ok(None),
+            ) => self.materialize_register_read_write_virtual(id),
+            OracleRef::Virtual(JoltVirtualPolynomial::RamValFinal) => {
+                self.materialize_ram_val_final()
+            }
+            OracleRef::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
+                self.materialize_instruction_ra(index)
+            }
+            OracleRef::Virtual(id) => self.materialize_trace_virtual(id),
+            OracleRef::Committed(id) => self.materialize_compact_committed(id),
         }
     }
 

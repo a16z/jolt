@@ -27,129 +27,6 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
         }
         Ok(values)
     }
-
-    pub(crate) fn evaluate_committed_trace_dense<F: Field>(
-        &self,
-        id: JoltCommittedPolynomial,
-        point: &[F],
-    ) -> Result<F, WitnessError> {
-        if point.len() != self.config.log_t {
-            return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
-                reason: format!(
-                    "committed dense trace point has {} variables, expected {}",
-                    point.len(),
-                    self.config.log_t
-                ),
-            });
-        }
-
-        let rows = checked_pow2(self.config.log_t)?;
-        let eq = eq_evals_msb(point)?;
-        let mut stream = self.committed_stream(id, rows.max(1))?;
-        let mut index = 0usize;
-        let mut result = F::zero();
-        loop {
-            let next: Option<PolynomialChunk<F>> = stream.next_chunk()?;
-            let Some(chunk) = next else {
-                break;
-            };
-            match chunk {
-                PolynomialChunk::I128(values) => {
-                    for value in values {
-                        if index >= rows {
-                            return Err(WitnessError::InvalidWitnessData {
-                                namespace: JOLT_VM_NAMESPACE.name,
-                                reason: format!(
-                                    "committed dense stream for {id:?} exceeded {rows} rows"
-                                ),
-                            });
-                        }
-                        result += eq[index] * F::from_i128(value);
-                        index += 1;
-                    }
-                }
-                PolynomialChunk::Dense(values) => {
-                    for value in values {
-                        if index >= rows {
-                            return Err(WitnessError::InvalidWitnessData {
-                                namespace: JOLT_VM_NAMESPACE.name,
-                                reason: format!(
-                                    "committed dense stream for {id:?} exceeded {rows} rows"
-                                ),
-                            });
-                        }
-                        result += eq[index] * value;
-                        index += 1;
-                    }
-                }
-                PolynomialChunk::Zeros(count) => {
-                    index = index.checked_add(count).ok_or_else(|| {
-                        WitnessError::InvalidWitnessData {
-                            namespace: JOLT_VM_NAMESPACE.name,
-                            reason: format!(
-                                "committed dense stream for {id:?} zero chunk overflowed row count"
-                            ),
-                        }
-                    })?;
-                    if index > rows {
-                        return Err(WitnessError::InvalidWitnessData {
-                            namespace: JOLT_VM_NAMESPACE.name,
-                            reason: format!(
-                                "committed dense stream for {id:?} exceeded {rows} rows"
-                            ),
-                        });
-                    }
-                }
-                _ => {
-                    return Err(WitnessError::InvalidWitnessData {
-                        namespace: JOLT_VM_NAMESPACE.name,
-                        reason: format!("committed dense stream for {id:?} used non-dense chunks"),
-                    });
-                }
-            }
-        }
-        if index != rows {
-            return Err(WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
-                reason: format!(
-                    "committed dense stream for {id:?} produced {index} rows, expected {rows}"
-                ),
-            });
-        }
-        Ok(result)
-    }
-
-    pub(crate) fn evaluate_trace_virtual<F: Field>(
-        &self,
-        id: JoltVirtualPolynomial,
-        point: &[F],
-    ) -> Result<F, WitnessError> {
-        if point.len() != self.config.log_t {
-            return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
-                reason: format!(
-                    "trace virtual point has {} variables, expected {}",
-                    point.len(),
-                    self.config.log_t
-                ),
-            });
-        }
-
-        let cycles = checked_pow2(self.config.log_t)?;
-        let mut trace = self.trace.trace.clone();
-        let mut current = trace.next_row().unwrap_or_default();
-        let mut result = F::zero();
-        for index in 0..cycles {
-            let next = (index + 1 < cycles).then(|| trace.next_row().unwrap_or_default());
-            let value = trace_virtual_value::<F>(&current, next.as_ref(), id, self.preprocessing)?;
-            result += value * eq_index_msb(point, index as u128);
-            if let Some(row) = next {
-                current = row;
-            }
-        }
-        Ok(result)
-    }
 }
 
 pub(crate) const fn supported_trace_virtual(id: JoltVirtualPolynomial) -> bool {
@@ -324,17 +201,6 @@ pub(crate) fn row_circuit_flags(
         .circuit_flags())
 }
 
-pub(crate) fn row_instruction_flags(
-    row: &TraceRow,
-) -> Result<jolt_riscv::InstructionFlagSet, WitnessError> {
-    Ok(JoltInstruction::try_from(row.instruction)
-        .map_err(|kind| WitnessError::InvalidWitnessData {
-            namespace: JOLT_VM_NAMESPACE.name,
-            reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
-        })?
-        .instruction_flags())
-}
-
 pub(crate) fn row_is_noop(row: &TraceRow) -> bool {
     row.instruction.instruction_kind == JoltInstructionKind::NoOp
 }
@@ -345,15 +211,6 @@ pub(crate) struct PcLookupCache {
 }
 
 impl PcLookupCache {
-    pub(crate) fn pc_for_row(
-        &mut self,
-        row: &TraceRow,
-        preprocessing: &JoltProgramPreprocessing,
-    ) -> Result<usize, WitnessError> {
-        self.pc_for_row_optional(row, preprocessing)
-            .ok_or_else(|| missing_pc_mapping(row))
-    }
-
     pub(crate) fn pc_for_row_optional(
         &mut self,
         row: &TraceRow,

@@ -4,9 +4,7 @@ use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
 use jolt_witness::protocols::jolt_vm::{jolt_opening_oracle_ref, JoltVmNamespace};
-use jolt_witness::{
-    MaterializationPolicy, PolynomialEncoding, RetentionHint, ViewRequirement, WitnessProvider,
-};
+use jolt_witness::WitnessProvider;
 
 use crate::KernelError;
 
@@ -16,18 +14,7 @@ pub(crate) fn dense_view<F: Field>(
     opening: JoltOpeningId,
 ) -> Result<Vec<F>, KernelError<F>> {
     let oracle = jolt_opening_oracle_ref(opening)?;
-    let view = witness.oracle_view(ViewRequirement {
-        oracle,
-        encoding: PolynomialEncoding::Dense,
-        materialization: MaterializationPolicy::BackendChoice,
-        retention: RetentionHint::Ephemeral,
-    })?;
-    Ok(view
-        .as_slice()
-        .ok_or(KernelError::InvariantViolation {
-            reason: "oracle view was not materialized as a dense slice",
-        })?
-        .to_vec())
+    Ok(witness.oracle_table(oracle)?)
 }
 
 /// `eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index MSB).

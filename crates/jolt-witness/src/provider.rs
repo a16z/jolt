@@ -1,6 +1,6 @@
 use crate::{
     OracleDescriptor, OracleRef, PolynomialBatchChunk, PolynomialBatchStream, PolynomialStream,
-    PolynomialView, ViewRequirement, WitnessError, WitnessNamespace,
+    WitnessError, WitnessNamespace,
 };
 
 pub trait WitnessProvider<F, N: WitnessNamespace> {
@@ -10,29 +10,9 @@ pub trait WitnessProvider<F, N: WitnessNamespace> {
 
     fn describe_oracle(&self, oracle: OracleRef<N>) -> Result<OracleDescriptor<N>, WitnessError>;
 
-    fn view_requirements(
-        &self,
-        oracle: OracleRef<N>,
-    ) -> Result<Vec<ViewRequirement<N>>, WitnessError>;
-
-    fn oracle_view(
-        &self,
-        requirement: ViewRequirement<N>,
-    ) -> Result<PolynomialView<'_, F, N>, WitnessError>;
-
-    /// Optionally evaluates a requested oracle view without materializing it.
-    ///
-    /// Providers should return `Ok(None)` when they do not have a direct path
-    /// for the requested view, leaving callers to fall back to `oracle_view`.
-    fn try_evaluate_oracle_view(
-        &self,
-        requirement: ViewRequirement<N>,
-        point: &[F],
-    ) -> Result<Option<F>, WitnessError> {
-        let _ = requirement;
-        let _ = point;
-        Ok(None)
-    }
+    /// Materializes the oracle's dense field-element evaluations, row-major
+    /// over the domain declared by [`describe_oracle`](Self::describe_oracle).
+    fn oracle_table(&self, oracle: OracleRef<N>) -> Result<Vec<F>, WitnessError>;
 
     fn committed_stream<'a>(
         &'a self,

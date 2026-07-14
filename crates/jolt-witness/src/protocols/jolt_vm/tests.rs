@@ -349,22 +349,6 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
         &[1, 0, 0, 0],
     )?;
-    let spartan_rows = witness
-        .spartan_outer_rows()
-        .map_err(|error| error.to_string())?;
-    assert_eq!(spartan_rows.len(), 4);
-    assert_eq!(spartan_rows[0].left_instruction_input, 5);
-    assert_eq!(spartan_rows[0].right_instruction_input, 3);
-    assert_eq!(spartan_rows[0].product_magnitude, 15);
-    assert!(spartan_rows[0].product_is_positive);
-    assert_eq!(spartan_rows[0].lookup_output, 8);
-    assert_eq!(spartan_rows[0].pc, 1);
-    assert_eq!(spartan_rows[0].next_pc, 0);
-    assert_eq!(spartan_rows[0].ram_address, RAM_START_ADDRESS);
-    assert_eq!(spartan_rows[0].ram_read_value, 7);
-    assert_eq!(spartan_rows[0].ram_write_value, 7);
-    assert!(spartan_rows[0].flag_add_operands);
-    assert!(!spartan_rows[3].next_is_virtual);
     Ok(())
 }
 
@@ -539,55 +523,10 @@ fn materialized_virtual_view(
     id: JoltVirtualPolynomial,
 ) -> Result<Vec<Fr>, String> {
     let oracle = OracleRef::virtual_polynomial(id);
-    let mut requirements = <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<
-        Fr,
-        JoltVmNamespace,
-    >>::view_requirements(witness, oracle)
-    .map_err(|error| error.to_string())?;
-    let requirement = requirements
-        .pop()
-        .ok_or_else(|| format!("missing view requirement for {id:?}"))?;
-    let view = <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<
-            Fr,
-            JoltVmNamespace,
-        >>::oracle_view(witness, requirement)
-        .map_err(|error| error.to_string())?;
-    let actual = view
-        .as_slice()
-        .ok_or_else(|| format!("virtual view for {id:?} was not materialized"))?;
-    Ok(actual.to_vec())
-}
-
-fn assert_direct_eval_matches_dense(
-    witness: &TraceBackedJoltVmWitness<'_, OwnedTrace>,
-    id: JoltVirtualPolynomial,
-    point: &[u64],
-) -> Result<(), String> {
-    let oracle = OracleRef::virtual_polynomial(id);
-    let mut requirements = <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<
-        Fr,
-        JoltVmNamespace,
-    >>::view_requirements(witness, oracle)
-    .map_err(|error| error.to_string())?;
-    let requirement = requirements
-        .pop()
-        .ok_or_else(|| format!("missing view requirement for {id:?}"))?;
-    let point = point.iter().copied().map(Fr::from_u64).collect::<Vec<_>>();
-    let direct = <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<
-        Fr,
-        JoltVmNamespace,
-    >>::try_evaluate_oracle_view(witness, requirement, &point)
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| format!("no direct evaluation for {id:?}"))?;
-    let dense = materialized_virtual_view(witness, id)?;
-    let expected = dense
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, value)| value * eq_index_msb(&point, index as u128))
-        .sum::<Fr>();
-    assert_eq!(direct, expected);
-    Ok(())
+    <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<Fr, JoltVmNamespace>>::oracle_table(
+        witness, oracle,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[test]
@@ -846,52 +785,6 @@ fn instruction_ra_streams_lookup_index_chunks_and_noop_padding() {
         ])))
     );
     assert_eq!(stream.next_chunk(), Ok(None::<PolynomialChunk<i128>>));
-}
-
-#[test]
-fn virtual_instruction_ra_and_flags_evaluate_without_dense_materialization() -> Result<(), String> {
-    let program = JoltProgram::default();
-    let preprocessing = preprocessing();
-    let mut instruction_row = instruction(RAM_START_ADDRESS as usize);
-    instruction_row.operands.imm = -1;
-    let rows = vec![TraceRow {
-        instruction: instruction_row,
-        registers: RegisterState {
-            rs1: Some(RegisterRead {
-                register: 2,
-                value: 10,
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }];
-    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let config = JoltVmWitnessConfig::new(
-        2,
-        64,
-        JoltOneHotConfig {
-            log_k_chunk: 4,
-            lookups_ra_virtual_log_k_chunk: 4,
-        },
-    );
-    let witness = TraceBackedJoltVmWitness::new(config, inputs);
-
-    assert_direct_eval_matches_dense(
-        &witness,
-        JoltVirtualPolynomial::InstructionRa(31),
-        &[2, 3, 5, 7, 11, 13],
-    )?;
-    assert_direct_eval_matches_dense(
-        &witness,
-        JoltVirtualPolynomial::InstructionRafFlag,
-        &[17, 19],
-    )?;
-    assert_direct_eval_matches_dense(
-        &witness,
-        JoltVirtualPolynomial::LookupTableFlag(0),
-        &[23, 29],
-    )?;
-    Ok(())
 }
 
 #[test]

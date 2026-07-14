@@ -18,11 +18,10 @@ use jolt_riscv::{
 };
 use rayon::prelude::*;
 
-use super::{checked_pow2, eq_evals_msb, TraceBackedJoltVmWitness};
+use super::{checked_pow2, TraceBackedJoltVmWitness};
 use crate::{
-    CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef,
-    PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView, RetentionHint,
-    ViewRequirement, WitnessError, WitnessNamespace, WitnessProvider,
+    CommittedWitnessProvider, NamespaceId, OracleDescriptor, OracleRef, PolynomialChunk,
+    PolynomialEncoding, PolynomialStream, WitnessError, WitnessNamespace, WitnessProvider,
 };
 
 pub const FIELD_INLINE_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm.field_inline");
@@ -275,104 +274,6 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
         Ok(values)
     }
 
-    fn evaluate_field_rd_inc<F: Field>(&self, point: &[F]) -> Result<F, WitnessError> {
-        if point.len() != self.log_t {
-            return Err(WitnessError::InvalidDimensions {
-                namespace: FIELD_INLINE_NAMESPACE.name,
-                reason: format!(
-                    "field-inline rd_inc point has {} variables, expected {}",
-                    point.len(),
-                    self.log_t
-                ),
-            });
-        }
-        let eq = eq_evals_msb(point)?;
-        Ok((0..self.rows)
-            .map(|cycle| {
-                eq[cycle]
-                    * self
-                        .trace_rows
-                        .get(cycle)
-                        .map_or_else(F::zero, field_rd_inc)
-            })
-            .sum())
-    }
-
-    fn evaluate_register_virtual<F: Field>(
-        &self,
-        id: FieldInlineVirtualPolynomial,
-        point: &[F],
-    ) -> Result<F, WitnessError> {
-        if !is_register_domain_virtual(id) {
-            return Err(WitnessError::UnknownOracle {
-                namespace: FIELD_INLINE_NAMESPACE.name,
-            });
-        }
-        let expected_vars = FIELD_REGISTERS_LOG_K
-            .checked_add(self.log_t)
-            .ok_or_else(|| WitnessError::InvalidDimensions {
-                namespace: FIELD_INLINE_NAMESPACE.name,
-                reason: "field-register point length overflow".to_owned(),
-            })?;
-        if point.len() != expected_vars {
-            return Err(WitnessError::InvalidDimensions {
-                namespace: FIELD_INLINE_NAMESPACE.name,
-                reason: format!(
-                    "field-register point has {} variables, expected {expected_vars}",
-                    point.len()
-                ),
-            });
-        }
-
-        let (register_point, cycle_point) = point.split_at(FIELD_REGISTERS_LOG_K);
-        let register_eq = eq_evals_msb(register_point)?;
-        let cycle_eq = eq_evals_msb(cycle_point)?;
-        let register_count = field_register_count();
-
-        if id == FieldInlineVirtualPolynomial::FieldRegistersVal {
-            let mut state = vec![F::zero(); register_count];
-            let mut state_eval = F::zero();
-            let mut result = F::zero();
-            for (cycle, cycle_weight) in cycle_eq.iter().copied().enumerate().take(self.rows) {
-                result += cycle_weight * state_eval;
-                let Some(row) = self.trace_rows.get(cycle) else {
-                    continue;
-                };
-                if let Some(write) = row.field_inline.as_deref().and_then(|data| data.rd) {
-                    let register = usize::from(write.register);
-                    if register >= register_count {
-                        return Err(invalid_row(cycle, "field register index is out of bounds"));
-                    }
-                    let next = decode_value(write.post_value);
-                    state_eval += register_eq[register] * (next - state[register]);
-                    state[register] = next;
-                }
-            }
-            return Ok(result);
-        }
-
-        let mut result = F::zero();
-        for (cycle, row) in self.trace_rows.iter().enumerate() {
-            let Some(data) = row.field_inline.as_deref() else {
-                continue;
-            };
-            let register = match id {
-                FieldInlineVirtualPolynomial::FieldRs1Ra => data.rs1.map(|read| read.register),
-                FieldInlineVirtualPolynomial::FieldRs2Ra => data.rs2.map(|read| read.register),
-                FieldInlineVirtualPolynomial::FieldRdWa => data.rd.map(|write| write.register),
-                _ => None,
-            };
-            if let Some(register) = register {
-                let register = usize::from(register);
-                if register >= register_count {
-                    return Err(invalid_row(cycle, "field register index is out of bounds"));
-                }
-                result += cycle_eq[cycle] * register_eq[register];
-            }
-        }
-        Ok(result)
-    }
-
     fn describe_virtual(
         &self,
         id: FieldInlineVirtualPolynomial,
@@ -403,56 +304,19 @@ impl<F: Field> WitnessProvider<F, FieldInlineNamespace> for TraceBackedFieldInli
         }
     }
 
-    fn view_requirements(
+    fn oracle_table(
         &self,
         oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<Vec<ViewRequirement<FieldInlineNamespace>>, WitnessError> {
-        let descriptor =
-            <Self as WitnessProvider<F, FieldInlineNamespace>>::describe_oracle(self, oracle)?;
-        Ok(vec![ViewRequirement::new(
-            descriptor.reference,
-            descriptor.encoding,
-            MaterializationPolicy::BackendChoice,
-            RetentionHint::ThroughBlindFold,
-        )])
-    }
-
-    fn oracle_view(
-        &self,
-        requirement: ViewRequirement<FieldInlineNamespace>,
-    ) -> Result<PolynomialView<'_, F, FieldInlineNamespace>, WitnessError> {
-        let descriptor = <Self as WitnessProvider<F, FieldInlineNamespace>>::describe_oracle(
-            self,
-            requirement.oracle,
-        )?;
-        let values = match requirement.oracle {
+    ) -> Result<Vec<F>, WitnessError> {
+        let _ = <Self as WitnessProvider<F, FieldInlineNamespace>>::describe_oracle(self, oracle)?;
+        match oracle {
             OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
-                materialize_field_rd_inc::<F>(&self.trace_rows, self.rows)
+                Ok(materialize_field_rd_inc::<F>(&self.trace_rows, self.rows))
             }
             OracleRef::Virtual(id) if is_register_domain_virtual(id) => {
-                self.materialize_register_virtual(id)?
+                self.materialize_register_virtual(id)
             }
-            OracleRef::Virtual(id) => self.materialize_trace_virtual(id)?,
-        };
-        Ok(PolynomialView::owned(descriptor, values))
-    }
-
-    fn try_evaluate_oracle_view(
-        &self,
-        requirement: ViewRequirement<FieldInlineNamespace>,
-        point: &[F],
-    ) -> Result<Option<F>, WitnessError> {
-        if requirement.encoding != PolynomialEncoding::Dense {
-            return Ok(None);
-        }
-        match requirement.oracle {
-            OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
-                self.evaluate_field_rd_inc(point).map(Some)
-            }
-            OracleRef::Virtual(id) if is_register_domain_virtual(id) => {
-                self.evaluate_register_virtual(id, point).map(Some)
-            }
-            OracleRef::Virtual(_) => Ok(None),
+            OracleRef::Virtual(id) => self.materialize_trace_virtual(id),
         }
     }
 
@@ -555,30 +419,11 @@ impl<F: Field, T: TraceSource> WitnessProvider<F, FieldInlineNamespace>
         )
     }
 
-    fn view_requirements(
+    fn oracle_table(
         &self,
         oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<Vec<ViewRequirement<FieldInlineNamespace>>, WitnessError> {
-        WitnessProvider::<F, FieldInlineNamespace>::view_requirements(
-            self.field_inline_view()?,
-            oracle,
-        )
-    }
-
-    fn oracle_view(
-        &self,
-        requirement: ViewRequirement<FieldInlineNamespace>,
-    ) -> Result<PolynomialView<'_, F, FieldInlineNamespace>, WitnessError> {
-        self.field_inline_view()?.oracle_view(requirement)
-    }
-
-    fn try_evaluate_oracle_view(
-        &self,
-        requirement: ViewRequirement<FieldInlineNamespace>,
-        point: &[F],
-    ) -> Result<Option<F>, WitnessError> {
-        self.field_inline_view()?
-            .try_evaluate_oracle_view(requirement, point)
+    ) -> Result<Vec<F>, WitnessError> {
+        WitnessProvider::<F, FieldInlineNamespace>::oracle_table(self.field_inline_view()?, oracle)
     }
 
     fn committed_stream<'b>(
@@ -1190,23 +1035,11 @@ mod tests {
         provider: &TraceBackedFieldInlineWitness<'_>,
         oracle: OracleRef<FieldInlineNamespace>,
     ) -> Vec<Fr> {
-        let requirement = <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
+        <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
             Fr,
             FieldInlineNamespace,
-        >>::view_requirements(provider, oracle)
+        >>::oracle_table(provider, oracle)
         .unwrap()
-        .remove(0);
-        let view: PolynomialView<'_, Fr, FieldInlineNamespace> =
-            <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
-                Fr,
-                FieldInlineNamespace,
-            >>::oracle_view(provider, requirement)
-            .unwrap();
-        match view {
-            PolynomialView::Owned { values, .. } => values,
-            PolynomialView::Borrowed { values, .. } => values.to_vec(),
-            PolynomialView::Deferred { .. } => Vec::new(),
-        }
     }
 
     #[test]
@@ -1296,18 +1129,6 @@ mod tests {
             .unwrap();
         assert_eq!(descriptor.dimensions.rows(), 8);
         assert_eq!(descriptor.encoding, PolynomialEncoding::Dense);
-
-        let requirements: Vec<ViewRequirement<FieldInlineNamespace>> =
-            <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
-                Fr,
-                FieldInlineNamespace,
-            >>::view_requirements(&provider, oracle)
-            .unwrap();
-        assert_eq!(requirements[0].retention, RetentionHint::ThroughBlindFold);
-        assert_eq!(
-            requirements[0].materialization,
-            MaterializationPolicy::BackendChoice
-        );
     }
 
     #[test]
@@ -1539,7 +1360,7 @@ mod tests {
     }
 
     #[test]
-    fn field_inline_virtual_requirements_cover_blindfold_case() {
+    fn field_inline_virtual_oracles_describe_dense_views() {
         let (bytecode, rows) = arithmetic_fixture();
         let provider = build_field_provider(bytecode, rows, 3);
 
@@ -1550,14 +1371,13 @@ mod tests {
                 FieldInlineOpFlag::LoadImm,
             )),
         ] {
-            let requirements: Vec<ViewRequirement<FieldInlineNamespace>> =
+            let descriptor: OracleDescriptor<FieldInlineNamespace> =
                 <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
                     Fr,
                     FieldInlineNamespace,
-                >>::view_requirements(&provider, oracle)
+                >>::describe_oracle(&provider, oracle)
                 .unwrap();
-            assert_eq!(requirements[0].retention, RetentionHint::ThroughBlindFold);
-            assert_eq!(requirements[0].encoding, PolynomialEncoding::Dense);
+            assert_eq!(descriptor.encoding, PolynomialEncoding::Dense);
         }
     }
 
