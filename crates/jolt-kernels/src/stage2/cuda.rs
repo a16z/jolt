@@ -84,7 +84,6 @@ pub(crate) struct CudaRamReadWriteState {
     round: usize,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "wired into RamReadWriteState in step 4c"))]
 impl CudaRamReadWriteState {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new<F: jolt_field::Field>(
@@ -374,6 +373,7 @@ mod tests {
             inc_scratch: Vec::new(),
             val_init: val_init.clone(),
             val_init_scratch: Vec::new(),
+            cuda: None,
         };
         let mut device = CudaRamReadWriteState::new(
             &rows, &cols, &val_coeff, &ra_coeff, &prev_val, &next_val, &inc, &val_init, &r_cycle,

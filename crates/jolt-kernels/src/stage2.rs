@@ -1884,7 +1884,7 @@ impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
     ) -> Result<Self, Stage2KernelError> {
         match claim_relation(program, claim)? {
             Stage2Relation::RamReadWrite => Ok(Self::RamReadWrite(RamReadWriteState::new(
-                claim, inputs, store,
+                claim, inputs, store, backend,
             )?)),
             Stage2Relation::ProductVirtualRemainder => Ok(Self::ProductVirtualRemainder(
                 product_remainder_state(claim, inputs, store, backend)?,
@@ -2603,6 +2603,37 @@ fn build_cuda_dense<F: Field>(
 }
 
 #[cfg(feature = "cuda")]
+fn build_cuda_ram_read_write<F: Field>(
+    cycle_entries: &[RamCycleEntry<F>],
+    inc: &[F],
+    val_init: &[F],
+    r_cycle: &[F],
+    gamma: F,
+) -> Option<cuda::CudaRamReadWriteState> {
+    let rows: Vec<usize> = cycle_entries.iter().map(|entry| entry.row).collect();
+    let cols: Vec<usize> = cycle_entries.iter().map(|entry| entry.col).collect();
+    let val_coeff: Vec<F> = cycle_entries.iter().map(|entry| entry.val_coeff).collect();
+    let ra_coeff: Vec<F> = cycle_entries.iter().map(|entry| entry.ra_coeff).collect();
+    let prev_val: Vec<u64> = cycle_entries.iter().map(|entry| entry.prev_val).collect();
+    let next_val: Vec<u64> = cycle_entries.iter().map(|entry| entry.next_val).collect();
+    cuda::CudaRamReadWriteState::new(
+        &rows, &cols, &val_coeff, &ra_coeff, &prev_val, &next_val, inc, val_init, r_cycle, gamma,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_final<F: Field>(
+    value: Result<Fr, crate::cuda::CudaError>,
+) -> Result<F, Stage2KernelError> {
+    let value = value.map_err(|_| Stage2KernelError::KernelNotImplemented {
+        abi: "jolt_stage2_ram_read_write",
+    })?;
+    crate::cuda::fr_into::<F>(value).ok_or(Stage2KernelError::KernelNotImplemented {
+        abi: "jolt_stage2_ram_read_write",
+    })
+}
+
+#[cfg(feature = "cuda")]
 fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
     (Box::new(poly) as Box<dyn std::any::Any>)
         .downcast::<UnivariatePoly<F>>()
@@ -2895,7 +2926,6 @@ pub(crate) struct RamAddressEntry<F: Field> {
     pub(crate) ra_coeff: F,
 }
 
-#[derive(Clone)]
 pub(crate) struct RamReadWriteState<F: Field> {
     pub(crate) gamma: F,
     pub(crate) log_t: usize,
@@ -2908,6 +2938,8 @@ pub(crate) struct RamReadWriteState<F: Field> {
     pub(crate) inc_scratch: Vec<F>,
     pub(crate) val_init: Vec<F>,
     pub(crate) val_init_scratch: Vec<F>,
+    #[cfg(feature = "cuda")]
+    pub(crate) cuda: Option<Box<cuda::CudaRamReadWriteState>>,
 }
 
 impl<F: Field> RamReadWriteState<F> {
@@ -2916,6 +2948,7 @@ impl<F: Field> RamReadWriteState<F> {
         _claim: &Stage2SumcheckClaimPlan,
         inputs: &Stage2ProverInputs<'_, F>,
         store: &Stage2ValueStore<F>,
+        backend: &'static str,
     ) -> Result<Self, Stage2KernelError> {
         let ram = inputs.ram.ok_or(Stage2KernelError::MissingKernelInput {
             kernel: "jolt_stage2_ram_read_write",
@@ -2947,6 +2980,25 @@ impl<F: Field> RamReadWriteState<F> {
                 });
             }
         }
+        let val_init: Vec<F> = ram
+            .initial_ram
+            .iter()
+            .map(|&value| {
+                if value == 0 {
+                    F::zero()
+                } else {
+                    F::from_u64(value)
+                }
+            })
+            .collect();
+        let _ = backend;
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_ram_read_write(&cycle_entries, &inc, &val_init, r_cycle, gamma)
+                .map(Box::new)
+        } else {
+            None
+        };
         Ok(Self {
             gamma,
             log_t,
@@ -2957,18 +3009,10 @@ impl<F: Field> RamReadWriteState<F> {
             address_scratch: Vec::new(),
             inc,
             inc_scratch: Vec::new(),
-            val_init: ram
-                .initial_ram
-                .iter()
-                .map(|&value| {
-                    if value == 0 {
-                        F::zero()
-                    } else {
-                        F::from_u64(value)
-                    }
-                })
-                .collect(),
+            val_init,
             val_init_scratch: Vec::new(),
+            #[cfg(feature = "cuda")]
+            cuda,
         })
     }
 
@@ -2977,6 +3021,16 @@ impl<F: Field> RamReadWriteState<F> {
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if self.cuda.is_some() {
+            return self
+                .cuda
+                .as_ref()
+                .and_then(|cuda| cuda.round_poly::<F>(previous_claim))
+                .ok_or(Stage2KernelError::KernelNotImplemented {
+                    abi: "jolt_stage2_ram_read_write",
+                });
+        }
         if self.round < self.log_t {
             Ok(self.cycle_round_poly(previous_claim))
         } else {
@@ -2985,6 +3039,18 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     pub(crate) fn ingest_challenge(&mut self, challenge: F) -> Result<(), Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            let challenge_fr =
+                crate::cuda::into_fr(challenge).ok_or(Stage2KernelError::KernelNotImplemented {
+                    abi: "jolt_stage2_ram_read_write",
+                })?;
+            cuda.bind(challenge_fr).map_err(|_| Stage2KernelError::KernelNotImplemented {
+                abi: "jolt_stage2_ram_read_write",
+            })?;
+            self.round += 1;
+            return Ok(());
+        }
         if self.round < self.log_t {
             self.bind_cycle(challenge);
             if self.round + 1 == self.log_t {
@@ -3110,6 +3176,10 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     pub(crate) fn ra_eval(&self) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            return cuda_final(cuda.ra_eval());
+        }
         Ok(self
             .address_entries
             .first()
@@ -3118,6 +3188,10 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     pub(crate) fn val_eval(&self) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            return cuda_final(cuda.val_eval());
+        }
         Ok(self
             .address_entries
             .first()
@@ -3126,6 +3200,10 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     pub(crate) fn inc_eval(&self) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            return cuda_final(cuda.inc_eval());
+        }
         Ok(self.inc[0])
     }
 

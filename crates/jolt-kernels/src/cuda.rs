@@ -4650,6 +4650,7 @@ mod tests {
             inc_scratch: Vec::new(),
             val_init: val_init.clone(),
             val_init_scratch: Vec::new(),
+            cuda: None,
         };
         let expected = state.address_round_poly(previous_claim);
 
@@ -4741,6 +4742,7 @@ mod tests {
             inc_scratch: Vec::new(),
             val_init: val_init.clone(),
             val_init_scratch: Vec::new(),
+            cuda: None,
         };
         state.bind_address(challenge);
         let expected = &state.address_entries;
