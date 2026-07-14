@@ -103,7 +103,6 @@ pub struct CudaKernelContext {
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
-    #[expect(dead_code, reason = "used once the u64_to_mont body + stage2 rewiring land")]
     u64_to_mont: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
@@ -3015,8 +3014,32 @@ impl CudaKernelContext {
     }
 
     pub fn u64_to_mont(&self, values: &[u64]) -> Result<DeviceFrVec, CudaError> {
-        let _ = values;
-        Err(CudaError::Unsupported)
+        let n = values.len();
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(n * LIMBS)?,
+            len: n,
+            staging: self.staging.clone(),
+        };
+        if n == 0 {
+            return Ok(out);
+        }
+        let in_dev = self.upload_u64_slice(values)?;
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.u64_to_mont.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch.arg(&mut out.buf).arg(&in_dev).arg(&n_arg);
+        // SAFETY: each thread i reads in[i] and writes the Montgomery form (raw limbs
+        // [in[i],0,0,0] times R2) to out[i*LIMBS..]; out holds n * LIMBS u64s, in holds n.
+        // No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
     }
 
     pub fn batched_bind(
