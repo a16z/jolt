@@ -74,7 +74,7 @@ fn verify(bytes: &[u8]) -> u32 {
             jolt::VerifierPCS,
             jolt::VerifierVC,
             jolt::VerifierTranscript,
-        >(&verifier_preprocessing, &device, &proof, None, proof.claims.is_zk())
+        >(&verifier_preprocessing, &device, &proof, None)
         .is_ok();
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;

@@ -16,6 +16,16 @@ use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
+/// Bytecode read-raf staged-val count in committed-program mode: the base
+/// five stages, plus (akita) the `OpFlags(Store)` stage consumed by the
+/// `IncVirtualization` phase.
+#[cfg(not(feature = "akita"))]
+pub(crate) const BYTECODE_VAL_STAGES: usize =
+    jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+#[cfg(feature = "akita")]
+pub(crate) const BYTECODE_VAL_STAGES: usize =
+    jolt_claims::protocols::jolt::lattice::LATTICE_BYTECODE_VAL_STAGES;
+
 pub mod relations;
 pub mod stage1;
 pub mod stage2;

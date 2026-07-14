@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -116,18 +116,18 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-field",
  "akita-transcript",
- "sha3 0.10.9",
+ "sha3 0.10.8",
  "tracing",
 ]
 
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -141,7 +141,7 @@ dependencies = [
 [[package]]
 name = "akita-field"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-serialization",
  "num-traits",
@@ -153,7 +153,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -173,7 +173,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -183,7 +183,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -197,14 +197,14 @@ dependencies = [
  "ctr",
  "rand_core 0.6.4",
  "rayon",
- "sha3 0.10.9",
+ "sha3 0.10.8",
  "tracing",
 ]
 
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-planner",
 ]
@@ -212,7 +212,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -220,7 +220,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -234,7 +234,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-algebra",
  "akita-field",
@@ -246,7 +246,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -257,7 +257,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -269,14 +269,14 @@ dependencies = [
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
- "sha3 0.10.9",
+ "sha3 0.10.8",
  "tracing",
 ]
 
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=c82909227371b94cc2877f7ad9acfa58007d5887#c82909227371b94cc2877f7ad9acfa58007d5887"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=33169b8d5c922d644393871cbb80da84826ac4cd#33169b8d5c922d644393871cbb80da84826ac4cd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -522,9 +522,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
-version = "1.6.0"
+version = "1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4885c1409b6936c4898e646ef58baf6ec54edaf6d8179f79df805a7b85b7cf3e"
+checksum = "de3b431b4e72cd8bd0ec7a50b4be18e73dab74de0dba180eef171055e5d5926e"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -532,7 +532,7 @@ dependencies = [
  "const-hex",
  "derive_more",
  "foldhash",
- "hashbrown 0.17.0",
+ "hashbrown 0.16.1",
  "indexmap 2.14.0",
  "itoa",
  "k256",
@@ -543,9 +543,8 @@ dependencies = [
  "rapidhash",
  "ruint",
  "rustc-hash",
- "secp256k1 0.31.1",
  "serde",
- "sha3 0.11.0",
+ "sha3 0.10.8",
 ]
 
 [[package]]
@@ -584,7 +583,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -629,7 +628,7 @@ dependencies = [
  "proc-macro-error2",
  "proc-macro2",
  "quote",
- "sha3 0.10.9",
+ "sha3 0.10.8",
  "syn 2.0.118",
  "syn-solidity",
 ]
@@ -2410,7 +2409,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2744,13 +2743,22 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "foldhash",
+ "serde",
+ "serde_core",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 dependencies = [
  "foldhash",
- "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -2991,7 +2999,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3455,8 +3463,10 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -5040,7 +5050,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -5389,9 +5399,9 @@ dependencies = [
 
 [[package]]
 name = "reth-codecs"
-version = "0.5.2"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb43f4858fef4e3b42b80954d2edf1ff67c8ad7498347083cdc7d0f6eff2f081"
+checksum = "f9c37bb4d1bac98661bf9128e1141b969034640d68697b22f70377e492fd332c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -5399,7 +5409,7 @@ dependencies = [
  "alloy-trie",
  "bytes",
  "modular-bitfield",
- "reth-codecs-derive 0.5.2",
+ "reth-codecs-derive 0.4.2",
  "serde",
 ]
 
@@ -5416,9 +5426,9 @@ dependencies = [
 
 [[package]]
 name = "reth-codecs-derive"
-version = "0.5.2"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5798ae4d6b264764bc0d742468bd32c7fb515e774645d4930f95ff6311f3ae14"
+checksum = "ceeb8dab90194305d3f7e3f043a22d2db1fb54b6dcf5d8e75c5a4fa8540e1f57"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5468,9 +5478,9 @@ dependencies = [
 
 [[package]]
 name = "reth-primitives-traits"
-version = "0.5.2"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f59c928b2865af5bcdbce94800270b7f7798f27a22ca0aabdd2b7d3e6587c9ce"
+checksum = "9102518f0bbf99bc8f0e656a56fb2a7513248630275b608d3706076a82fde42b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -5485,10 +5495,10 @@ dependencies = [
  "once_cell",
  "quanta",
  "rayon",
- "reth-codecs 0.5.2",
- "revm-bytecode 41.0.0",
- "revm-primitives 41.0.0",
- "revm-state 41.0.0",
+ "reth-codecs 0.4.2",
+ "revm-bytecode 11.0.1",
+ "revm-primitives 24.0.1",
+ "revm-state 12.0.1",
  "secp256k1 0.30.0",
  "serde",
  "thiserror 2.0.18",
@@ -5517,13 +5527,13 @@ dependencies = [
 
 [[package]]
 name = "revm-bytecode"
-version = "41.0.0"
+version = "11.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e33493cf6d996e9242db4f2002caef48ec9aa8c4f3fff3b18aed10ef3942eec7"
+checksum = "d8b378c2653331fe60969d9745e802cd773d82a20d8aaced914dfcf26ab8f0d9"
 dependencies = [
  "bitvec",
  "phf",
- "revm-primitives 41.0.0",
+ "revm-primitives 24.0.1",
  "serde",
 ]
 
@@ -5541,9 +5551,9 @@ dependencies = [
 
 [[package]]
 name = "revm-primitives"
-version = "41.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66f39151a31afe93d97f7ac894dd9dcc989368d5ccba19ce079bfc1d73b77452"
+checksum = "fe5102d804892908d4ebf68da29b8562895922dffa26c230ff2c4dadcf93916f"
 dependencies = [
  "alloy-primitives",
  "once_cell",
@@ -5565,15 +5575,15 @@ dependencies = [
 
 [[package]]
 name = "revm-state"
-version = "41.0.0"
+version = "12.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73ef2fffc28acc41e8ef7525f2b1d16288a10f80579a1b33e7e62abc9892314a"
+checksum = "40eff6067185cf80932e06f6a9c8045b012ecb6f99a8d6edc618ec2792373e14"
 dependencies = [
  "alloy-eip7928 0.4.1",
  "bitflags 2.11.0",
  "nonmax",
- "revm-bytecode 41.0.0",
- "revm-primitives 41.0.0",
+ "revm-bytecode 11.0.1",
+ "revm-primitives 24.0.1",
  "serde",
 ]
 
@@ -5747,7 +5757,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6139,9 +6149,9 @@ dependencies = [
 
 [[package]]
 name = "sha3"
-version = "0.10.9"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
+checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
  "digest 0.10.7",
  "keccak 0.1.6",
@@ -6248,7 +6258,7 @@ dependencies = [
  "jolt-sdk",
  "postcard",
  "reth-ethereum-primitives",
- "reth-primitives-traits 0.5.2",
+ "reth-primitives-traits 0.4.2",
  "serde",
 ]
 
@@ -6535,7 +6545,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7129,7 +7139,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7431,9 +7441,9 @@ dependencies = [
 
 [[package]]
 name = "z3"
-version = "0.20.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80c4de445f5c9e3013703a6b8a40c80b4a64c925f0a19e7d0a23a7a9b70e854d"
+checksum = "c9fc44c9d6bb9fe84c03dfff211cf4c9c8cfefa2de8b803facf7305067d21a23"
 dependencies = [
  "log",
  "z3-sys",

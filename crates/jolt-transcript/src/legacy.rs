@@ -129,6 +129,23 @@ impl<F: CanonicalBytes> AppendToTranscript for F {
     }
 }
 
+/// Absorbs `label` (with the payload's transcript length when it exposes
+/// one) followed by the payload itself. The single home of the labeled-append
+/// convention shared by the prover's and verifier's commitment absorption —
+/// order and labels are consensus-critical.
+pub fn append_labeled<T, A>(transcript: &mut T, label: &'static [u8], payload: &A)
+where
+    T: Transcript,
+    A: AppendToTranscript,
+{
+    if let Some(len) = payload.transcript_payload_len() {
+        transcript.append(&LabelWithCount(label, len));
+    } else {
+        transcript.append(&Label(label));
+    }
+    transcript.append(payload);
+}
+
 /// 32-byte zero-padded label word (matches jolt-prover-legacy's `raw_append_label`).
 pub struct Label(pub &'static [u8]);
 

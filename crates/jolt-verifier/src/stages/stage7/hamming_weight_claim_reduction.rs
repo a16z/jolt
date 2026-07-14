@@ -19,7 +19,7 @@ use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage6b::outputs::{Stage6bOutputClaims, Stage6bOutputPoints};
+use crate::stages::stage6b::outputs::Stage6bOutputClaims;
 use crate::VerifierError;
 
 /// The hamming reduction's consumed opening *values*, wired from the stage-6b
@@ -48,13 +48,10 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
 /// virtualization opening point.
 pub fn stage7_hamming_virtualization_address_points<F: Field>(
     dimensions: HammingWeightClaimReductionDimensions,
-    stage6_points: &Stage6bOutputPoints<F>,
+    instruction_ra_points: &[Vec<F>],
+    bytecode_ra_points: &[Vec<F>],
+    ram_ra_points: &[Vec<F>],
 ) -> Result<Vec<Vec<F>>, VerifierError> {
-    let instruction_ra_points = stage6_points
-        .instruction_ra_virtualization
-        .committed_instruction_ra();
-    let bytecode_ra_points = stage6_points.bytecode_read_raf.bytecode_ra();
-    let ram_ra_points = stage6_points.ram_ra_virtualization.ram_ra();
     if instruction_ra_points.len() != dimensions.layout.instruction()
         || bytecode_ra_points.len() != dimensions.layout.bytecode()
         || ram_ra_points.len() != dimensions.layout.ram()

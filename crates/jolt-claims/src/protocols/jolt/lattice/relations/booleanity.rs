@@ -7,10 +7,14 @@
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
+use crate::opening;
 use crate::protocols::jolt::geometry::booleanity::{
-    booleanity_output, booleanity_output_openings, BooleanityDimensions,
+    booleanity_address_phase_opening, booleanity_output, booleanity_output_openings,
+    BooleanityDimensions,
 };
-use crate::protocols::jolt::relations::booleanity::BooleanityChallenges;
+use crate::protocols::jolt::relations::booleanity::{
+    BooleanityChallenges, BooleanityCyclePhaseChallenges, BooleanityInputClaims,
+};
 use crate::protocols::jolt::{JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId};
 use crate::{OutputClaims, SymbolicSumcheck};
 
@@ -96,6 +100,50 @@ impl SymbolicSumcheck for LatticeBooleanity {
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
+    }
+
+    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        booleanity_output(lattice_booleanity_output_openings(self.shape))
+    }
+}
+
+/// The cycle-phase split of the lattice booleanity sumcheck, mirroring the
+/// base `BooleanityCyclePhase`: same `BooleanityAddrClaim` intermediate input
+/// (the address phase is column-agnostic, so the base `BooleanityAddressPhase`
+/// serves both modes), with the output fold extended over the unsigned-inc
+/// chunk and msb polynomials.
+pub struct LatticeBooleanityCyclePhase {
+    shape: LatticeBooleanityDimensions,
+}
+
+impl SymbolicSumcheck for LatticeBooleanityCyclePhase {
+    type RelationId = JoltRelationId;
+    type OpeningId = JoltOpeningId;
+    type DerivedId = crate::protocols::jolt::JoltDerivedId;
+    type ChallengeId = crate::protocols::jolt::JoltChallengeId;
+    type Shape = LatticeBooleanityDimensions;
+    type Challenges<F> = BooleanityCyclePhaseChallenges<F>;
+    type Inputs<C> = BooleanityInputClaims<C>;
+    type Outputs<C> = LatticeBooleanityOutputClaims<C>;
+
+    fn new(shape: LatticeBooleanityDimensions) -> Self {
+        Self { shape }
+    }
+
+    fn id() -> JoltRelationId {
+        JoltRelationId::Booleanity
+    }
+
+    fn rounds(&self) -> usize {
+        self.shape.base.log_t
+    }
+
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        opening(booleanity_address_phase_opening())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -235,6 +283,39 @@ mod tests {
                 booleanity_unsigned_inc_chunk_opening(1),
                 booleanity_unsigned_inc_msb_opening(),
             ]
+        );
+    }
+
+    /// The cycle phase consumes the address-phase intermediate and produces
+    /// the same extended opening set as the monolith (whose fold formula the
+    /// evaluate test above pins — both variants share `booleanity_output`).
+    #[test]
+    fn lattice_cycle_phase_matches_monolith_dependencies() {
+        let relation = LatticeBooleanityCyclePhase::new(dimensions());
+        assert_eq!(
+            LatticeBooleanityCyclePhase::id(),
+            JoltRelationId::Booleanity
+        );
+        assert_eq!(relation.rounds(), 5);
+        assert_eq!(relation.degree(), 3);
+
+        let address_claim = Fr::from_u64(7);
+        let zero = Fr::from_u64(0);
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == booleanity_address_phase_opening() => address_claim,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+        assert_eq!(input, address_claim);
+
+        assert_eq!(
+            relation.expected_output_openings::<Fr>(),
+            lattice_booleanity_output_openings(dimensions())
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
         );
     }
 }

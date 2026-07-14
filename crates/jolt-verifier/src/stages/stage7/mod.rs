@@ -1,6 +1,9 @@
 //! Stage 7 verifier entry point.
 
 pub mod advice_address_phase;
+/// The packed-mode unsigned-inc chunk reconstruction member.
+#[cfg(feature = "akita")]
+pub mod chunk_reconstruction;
 pub mod committed_reduction_address_phase;
 pub mod hamming_weight_claim_reduction;
 pub mod outputs;

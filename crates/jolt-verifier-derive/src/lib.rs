@@ -279,11 +279,22 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     });
     // The representative relation id used in a batch-level sumcheck error: the first
     // non-`Option` member (the batch's leading instance), matching the hand-written
-    // stages' choice. Falls back to the first member if every member is optional.
-    let stage_id_ident = plans
-        .iter()
-        .find(|plan| !plan.is_option)
-        .map_or(&plans[0].ident, |plan| &plan.ident);
+    // stages' choice. An all-optional batch has no member to project through, so it
+    // must name its label explicitly via `#[sumcheck_batch(stage_id = ..)]`.
+    let stage_id_expr = if let Some(plan) = plans.iter().find(|plan| !plan.is_option) {
+        let id = &plan.ident;
+        quote!(self.#id.id())
+    } else {
+        let Some(stage_id) = &options.stage_id else {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "a batch whose members are all `Option` needs \
+                 `#[sumcheck_batch(stage_id = <JoltRelationId variant>)]` for its \
+                 batch-level error label",
+            ));
+        };
+        quote!(::jolt_claims::protocols::jolt::JoltRelationId::#stage_id)
+    };
 
     // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
     // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
@@ -427,7 +438,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
             ) -> ::core::result::Result<#clear_batch_name<#f>, crate::VerifierError>
             where
-                __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
                 __T: ::jolt_transcript::Transcript<Challenge = #f>,
             {
                 use #relations::ConcreteSumcheck as _;
@@ -453,7 +463,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let __reduction = proof
                     .verify_compressed_boolean(__max_num_vars, __max_degree, __claimed_sum, transcript)
                     .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
-                        stage: self.#stage_id_ident.id(),
+                        stage: #stage_id_expr,
                         reason: error.to_string(),
                     })?;
 
@@ -462,6 +472,53 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     coefficients: __coefficients,
                 })
             }
+        }
+    };
+
+    // The composed clear-path driver: batched-verify, derive the produced
+    // opening points, and check the reduced claim against the expected
+    // final-claim fold — the tail every stage repeats verbatim. Validation
+    // (`validate_output_claims`, member-presence guards) and the canonical
+    // opening absorb stay with the caller: their position and form are
+    // stage-specific.
+    let run_clear_method = quote! {
+        /// Run the clear-path tail in one call: [`Self::verify_clear`], then
+        /// [`Self::derive_opening_points`] at the reduced point, then the
+        /// [`Self::expected_final_claim`] equality check (attributed to
+        /// `stage` on mismatch). Returns the produced opening points.
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "the composed tail threads every per-stage aggregate once"
+        )]
+        pub fn run_clear<__C, __T>(
+            &self,
+            inputs: &#input_claims_name<#f>,
+            input_points: &#input_points_name<#f>,
+            challenges: &#challenges_name<#f>,
+            claims: &#output_claims_name<#f>,
+            proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
+            transcript: &mut __T,
+            stage: usize,
+        ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError>
+        where
+            __T: ::jolt_transcript::Transcript<Challenge = #f>,
+        {
+            let __batch = self.verify_clear(inputs, challenges, proof, transcript)?;
+            let __output_points =
+                self.derive_opening_points(__batch.reduction.point.as_slice(), input_points)?;
+            let __expected_final_claim = self.expected_final_claim(
+                &__batch.coefficients,
+                input_points,
+                claims,
+                &__output_points,
+                challenges,
+            )?;
+            if __batch.reduction.value != __expected_final_claim {
+                return ::core::result::Result::Err(
+                    crate::VerifierError::StageClaimOutputMismatch { stage },
+                );
+            }
+            ::core::result::Result::Ok(__output_points)
         }
     };
 
@@ -519,7 +576,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let __consistency = proof
                     .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
                     .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
-                        stage: self.#stage_id_ident.id(),
+                        stage: #stage_id_expr,
                         reason: error.to_string(),
                     })?;
 
@@ -895,6 +952,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #draw_challenges_method
 
             #verify_clear_method
+            #run_clear_method
             #verify_zk_method
             #derive_points_method
             #validate_aliases_method
@@ -984,6 +1042,10 @@ struct StageOptions {
     /// per-member draw there would squeeze at the wrong transcript position, so
     /// the method must not exist to be miscalled.
     no_draw_challenges: bool,
+    /// `#[sumcheck_batch(stage_id = <JoltRelationId variant>)]`: the batch-level
+    /// error label for a batch whose members are all `Option` (no leading
+    /// instance to project the label through). Required exactly then.
+    stage_id: Option<Ident>,
 }
 
 impl StageOptions {
@@ -994,12 +1056,35 @@ impl StageOptions {
                 continue;
             }
             // `#[sumcheck_batch(flag, flag, ...)]` — a comma-separated list of
-            // bare-word flags (`Meta::Path`). Reject any non-flag form or unknown
-            // flag with a span-pointed error.
+            // bare-word flags (`Meta::Path`) plus the `stage_id = ..` name-value
+            // option. Reject any other form or unknown flag with a span-pointed
+            // error.
             let flags = attr.parse_args_with(
                 syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated,
             )?;
             for flag in flags {
+                if let Meta::NameValue(name_value) = &flag {
+                    if !name_value.path.is_ident("stage_id") {
+                        return Err(syn::Error::new_spanned(
+                            &name_value.path,
+                            "unknown `sumcheck_batch` option (supported: `stage_id = ..`)",
+                        ));
+                    }
+                    let syn::Expr::Path(variant) = &name_value.value else {
+                        return Err(syn::Error::new_spanned(
+                            &name_value.value,
+                            "`stage_id` expects a bare `JoltRelationId` variant name",
+                        ));
+                    };
+                    options.stage_id = variant.path.get_ident().cloned();
+                    if options.stage_id.is_none() {
+                        return Err(syn::Error::new_spanned(
+                            variant,
+                            "`stage_id` expects a bare `JoltRelationId` variant name",
+                        ));
+                    }
+                    continue;
+                }
                 let Meta::Path(path) = &flag else {
                     return Err(syn::Error::new_spanned(
                         &flag,
@@ -1016,7 +1101,7 @@ impl StageOptions {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `no_opening_values`, \
-                         `no_output_shape`, `no_draw_challenges`)",
+                         `no_output_shape`, `no_draw_challenges`, `stage_id = ..`)",
                     ));
                 }
             }

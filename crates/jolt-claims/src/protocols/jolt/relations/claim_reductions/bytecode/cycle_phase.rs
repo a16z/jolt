@@ -3,7 +3,7 @@
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
-use super::BytecodeReductionShape;
+use super::BytecodeReductionCycleShape;
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     assert_valid_chunk_count, bytecode_val_stage_opening, cycle_phase_intermediate_opening,
     final_output_expr, NUM_BYTECODE_VAL_STAGES,
@@ -45,12 +45,12 @@ pub struct BytecodeReductionCyclePhaseChallenges<F> {
     pub eta: F,
 }
 
-/// Cycle phase of the committed-bytecode reduction: batches the five staged
+/// Cycle phase of the committed-bytecode reduction: batches the staged
 /// `BytecodeValStage(i)` openings by powers of `eta` and reduces them to either
 /// the cycle-phase intermediate opening (when an address phase follows) or the
 /// committed `BytecodeChunk(i)` openings weighted by `ChunkOutputWeight`.
 pub struct CyclePhase {
-    shape: BytecodeReductionShape,
+    shape: BytecodeReductionCycleShape,
 }
 
 impl SymbolicSumcheck for CyclePhase {
@@ -58,13 +58,17 @@ impl SymbolicSumcheck for CyclePhase {
     type OpeningId = JoltOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
-    type Shape = BytecodeReductionShape;
+    type Shape = BytecodeReductionCycleShape;
     type Challenges<F> = BytecodeReductionCyclePhaseChallenges<F>;
     type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 
-    fn new(shape: BytecodeReductionShape) -> Self {
+    fn new(shape: BytecodeReductionCycleShape) -> Self {
         assert_valid_chunk_count(shape.1);
+        assert!(
+            shape.2 == NUM_BYTECODE_VAL_STAGES || shape.2 == NUM_BYTECODE_VAL_STAGES + 1,
+            "bytecode reduction folds five (base) or six (lattice) staged vals"
+        );
         Self { shape }
     }
 
@@ -83,14 +87,14 @@ impl SymbolicSumcheck for CyclePhase {
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let eta = challenge(BytecodeClaimReductionChallenge::Eta);
         let mut input = JoltExpr::zero();
-        for stage in 0..NUM_BYTECODE_VAL_STAGES {
+        for stage in 0..self.shape.2 {
             input = input + eta.clone().pow(stage) * opening(bytecode_val_stage_opening(stage));
         }
         input
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let (dimensions, chunk_count) = self.shape;
+        let (dimensions, chunk_count, _) = self.shape;
         if dimensions.has_address_phase() {
             opening(cycle_phase_intermediate_opening())
         } else {
@@ -117,7 +121,7 @@ mod tests {
         let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13)];
         let zero = fr(0);
 
-        let cycle = CyclePhase::new((dimensions, 2));
+        let cycle = CyclePhase::new((dimensions, 2, NUM_BYTECODE_VAL_STAGES));
         let input = cycle.input_expression::<Fr>().evaluate(
             |id| {
                 (0..NUM_BYTECODE_VAL_STAGES)
@@ -144,7 +148,7 @@ mod tests {
     #[test]
     fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
         let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let relation = CyclePhase::new((dimensions, 2));
+        let relation = CyclePhase::new((dimensions, 2, NUM_BYTECODE_VAL_STAGES));
 
         assert_eq!(
             CyclePhase::id(),

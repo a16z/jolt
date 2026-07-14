@@ -10,7 +10,7 @@
 mod support;
 
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaBatchProof, AkitaField, AkitaNativeBatchStatement,
+    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaNativeBatchStatement,
     AkitaNativeBatching, AkitaScheme,
 };
 use jolt_field::Field;
@@ -166,7 +166,7 @@ fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
 
 #[test]
 fn akita_proof_payloads_reject_unknown_serialized_fields() {
-    let (_, _, proof) = native_proof_fixture(b"akita-payload-unknown-fields");
+    let (_, statement, proof) = native_proof_fixture(b"akita-payload-unknown-fields");
 
     let mut top_level = serde_json::to_value(&proof).expect("proof should serialize");
     let _ = top_level
@@ -175,14 +175,13 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
         .insert("unexpected".to_owned(), json!(true));
     assert!(serde_json::from_value::<AkitaBatchProof>(top_level).is_err());
 
-    let mut nested = serde_json::to_value(&proof).expect("proof should serialize");
-    let _ = nested
-        .get_mut("commitment")
-        .expect("proof should contain commitment")
+    let commitment = &statement[0].commitment;
+    let mut tampered = serde_json::to_value(commitment).expect("commitment should serialize");
+    let _ = tampered
         .as_object_mut()
         .expect("commitment should serialize as object")
         .insert("unexpected".to_owned(), json!(true));
-    assert!(serde_json::from_value::<AkitaBatchProof>(nested).is_err());
+    assert!(serde_json::from_value::<AkitaCommitment>(tampered).is_err());
 }
 
 #[test]
@@ -199,7 +198,7 @@ fn akita_native_batching_rejects_corrupted_proof_payloads() {
         assert!(
             <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
                 &verifier_setup,
-                statement.clone(),
+                &statement.clone(),
                 &tampered,
                 &mut transcript,
             )

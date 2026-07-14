@@ -8,7 +8,9 @@ use jolt_poly::math::Math;
 use jolt_poly::{eq_index_msb, IdentityPolynomial, MultilinearEvaluation};
 use thiserror::Error;
 
+use super::super::geometry::bytecode::BytecodeReadRafPublicValues;
 use super::super::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use super::super::BytecodeReadRafPublic;
 
 /// Bit width of the unsigned fused increment (`FusedInc + 2^64` fits in 65
 /// bits: the chunk polynomials carry the low 64,
@@ -155,6 +157,26 @@ pub fn selector_block_weight<F: Field>(
                 * eq_index_msb::<F>(value_point, value as u128)
         })
         .sum()
+}
+
+/// The six-stage public values of the lattice read-raf cycle output: the
+/// five base stage values plus the store-flag val bound to the
+/// `IncVirtualization` cycle point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LatticeBytecodeReadRafPublicValues<F: Field> {
+    pub base: BytecodeReadRafPublicValues<F>,
+    pub store_value: F,
+}
+
+impl<F: Field> LatticeBytecodeReadRafPublicValues<F> {
+    pub fn value(&self, id: BytecodeReadRafPublic) -> Option<F> {
+        match id {
+            BytecodeReadRafPublic::StageValue(stage) if stage == NUM_BYTECODE_VAL_STAGES => {
+                Some(self.store_value)
+            }
+            other => self.base.value(other),
+        }
+    }
 }
 
 #[cfg(test)]

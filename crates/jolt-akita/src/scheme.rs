@@ -1,11 +1,11 @@
-use akita_pcs::{CommitmentProver, ComputeBackendSetup, CpuBackend, RootPolyShape};
+use akita_pcs::{ComputeBackendSetup, CpuBackend};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, VerifierOpeningClaim,
     ZkBatchOpeningScheme, ZkOpeningScheme,
 };
-use jolt_poly::{MultilinearPoly, Polynomial};
+use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +53,50 @@ impl AkitaScheme {
         Self::commit_dense_backend(setup, layout_digest, num_vars, dense)
     }
 
+    /// Commits a group of row-major `K = 256` one-hot polynomials through the
+    /// backend's one-hot flavor as one commitment object whose members are
+    /// opened together at a shared point.
+    pub fn commit_one_hot_group(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        polynomials: &[OneHotPolynomial],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let first = polynomials
+            .first()
+            .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
+        let num_vars = first.num_vars();
+        Self::validate_commit_shape(setup, num_vars, polynomials.len())?;
+        let backend_polynomials = polynomials
+            .iter()
+            .map(|polynomial| {
+                if polynomial.num_vars() != num_vars {
+                    return Err(invalid_batch(format!(
+                        "Akita commitment group mixes {}-variable and {num_vars}-variable polynomials",
+                        polynomial.num_vars()
+                    )));
+                }
+                one_hot_polynomial(polynomial)?.ok_or_else(|| {
+                    invalid_batch(
+                        "Akita one-hot commitment group requires row-major K=256 one-hot \
+                         polynomials",
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let (backend_commitment, backend_hint) =
+            AkitaOneHotBackendScheme::commit(backend_prover_setup, &backend_polynomials, &stack)
+                .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::OneHot(backend_polynomials.into()),
+        )
+    }
+
     /// Validates the commitment shape before handing values to Akita.
     fn validate_commit_shape(
         setup: &AkitaProverSetup,
@@ -89,6 +133,7 @@ impl AkitaScheme {
             layout_digest,
             num_vars,
             poly_count: polynomials.len(),
+            backend_coeff_len: backend_commitment.0.coeff_len(),
             serialized_backend_bytes: serialize_akita(&backend_commitment)?,
         };
         Ok((
@@ -107,9 +152,10 @@ impl AkitaScheme {
         num_vars: usize,
         dense: Vec<AkitaBackendDensePoly>,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let stack = backend_stack(&setup.backend_prover_setup, &setup.prepared_backend_setup)?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.full_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let (backend_commitment, backend_hint) =
-            AkitaBackendScheme::commit(&setup.backend_prover_setup, dense.as_slice(), &stack)
+            AkitaBackendScheme::commit(backend_prover_setup, dense.as_slice(), &stack)
                 .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
@@ -138,44 +184,56 @@ impl CommitmentScheme for AkitaScheme {
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
         let invalid_setup =
             |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
-        let backend_prover_setup = AkitaBackendScheme::setup_prover(
-            params.max_num_vars,
-            params.max_num_polys_per_commitment_group,
-        )
-        .map_err(|err| invalid_setup(&err))?;
-        let prepared_backend_setup = CpuBackend
-            .prepare_setup(&backend_prover_setup)
+        let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) = if params
+            .one_hot_only
+        {
+            (None, None, None)
+        } else {
+            let backend_prover_setup = AkitaBackendScheme::setup_prover(
+                params.max_num_vars,
+                params.max_num_polys_per_commitment_group,
+            )
             .map_err(|err| invalid_setup(&err))?;
-        let backend_verifier_setup = AkitaBackendScheme::setup_verifier(&backend_prover_setup);
-        let (one_hot_backend_prover_setup, prepared_one_hot_backend_setup, one_hot_verifier_bytes) =
-            if params.max_num_vars >= AKITA_ONE_HOT_LOG_K {
-                let backend_prover_setup = AkitaOneHotBackendScheme::setup_prover(
-                    params.max_num_vars,
-                    params.max_num_polys_per_commitment_group,
-                )
+            let prepared_backend_setup = CpuBackend
+                .prepare_setup(&backend_prover_setup)
                 .map_err(|err| invalid_setup(&err))?;
-                let prepared_backend_setup = CpuBackend
-                    .prepare_setup(&backend_prover_setup)
-                    .map_err(|err| invalid_setup(&err))?;
-                let backend_verifier_setup =
-                    AkitaOneHotBackendScheme::setup_verifier(&backend_prover_setup);
-                let verifier_bytes = serialize_akita(&backend_verifier_setup)?;
-                (
-                    Some(backend_prover_setup),
-                    Some(prepared_backend_setup),
-                    Some(verifier_bytes),
-                )
-            } else {
-                (None, None, None)
-            };
+            let backend_verifier_setup = AkitaBackendScheme::setup_verifier(&backend_prover_setup);
+            (
+                Some(std::sync::Arc::new(backend_prover_setup)),
+                Some(std::sync::Arc::new(prepared_backend_setup)),
+                Some(backend_verifier_setup),
+            )
+        };
+        let (
+            one_hot_backend_prover_setup,
+            prepared_one_hot_backend_setup,
+            one_hot_backend_verifier_setup,
+        ) = if params.max_num_vars >= AKITA_ONE_HOT_LOG_K {
+            let backend_prover_setup = AkitaOneHotBackendScheme::setup_prover(
+                params.max_num_vars,
+                params.max_num_polys_per_commitment_group,
+            )
+            .map_err(|err| invalid_setup(&err))?;
+            let prepared_backend_setup = CpuBackend
+                .prepare_setup(&backend_prover_setup)
+                .map_err(|err| invalid_setup(&err))?;
+            let backend_verifier_setup =
+                AkitaOneHotBackendScheme::setup_verifier(&backend_prover_setup);
+            (
+                Some(std::sync::Arc::new(backend_prover_setup)),
+                Some(std::sync::Arc::new(prepared_backend_setup)),
+                Some(backend_verifier_setup),
+            )
+        } else {
+            (None, None, None)
+        };
         let verifier = AkitaVerifierSetup {
             max_num_vars: params.max_num_vars,
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
-            serialized_backend_bytes: serialize_akita(&backend_verifier_setup)?,
-            serialized_one_hot_backend_bytes: one_hot_verifier_bytes,
             backend_cache: Default::default(),
         };
+        verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
         let prover = AkitaProverSetup {
             backend_prover_setup,
             prepared_backend_setup,
@@ -195,7 +253,7 @@ impl CommitmentScheme for AkitaScheme {
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
         if let Some(one_hot) = one_hot_polynomial(poly)? {
-            let num_vars = one_hot.num_vars();
+            let num_vars = akita_prover::RootPolyMeta::num_vars(&one_hot);
             Self::validate_commit_shape(setup, num_vars, 1)?;
             let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
             let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
@@ -220,9 +278,10 @@ impl CommitmentScheme for AkitaScheme {
             let sparse = sparse_unit_polynomial(poly.num_vars(), indices)?;
             let num_vars = sparse.num_vars();
             Self::validate_commit_shape(setup, num_vars, 1)?;
-            let stack = backend_stack(&setup.backend_prover_setup, &setup.prepared_backend_setup)?;
+            let (backend_prover_setup, prepared_backend_setup) = setup.full_backend()?;
+            let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
             let (backend_commitment, backend_hint) = AkitaBackendScheme::commit(
-                &setup.backend_prover_setup,
+                backend_prover_setup,
                 std::slice::from_ref(&sparse),
                 &stack,
             )
@@ -239,8 +298,10 @@ impl CommitmentScheme for AkitaScheme {
         let num_vars = poly.num_vars();
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let evals = akita_ordered_evaluations(poly)?;
-        let dense =
-            vec![AkitaBackendDensePoly::from_field_evals(num_vars, &evals).map_err(akita_error)?];
+        let dense = vec![
+            AkitaBackendDensePoly::from_field_evals(num_vars, AKITA_D, &evals)
+                .map_err(akita_error)?,
+        ];
         Self::commit_dense_backend(setup, setup.default_layout_digest(), num_vars, dense)
     }
 
@@ -284,7 +345,58 @@ impl CommitmentScheme for AkitaScheme {
             evaluation: EvaluationClaim::new(point.to_vec(), eval),
         }];
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-            setup, statement, proof, transcript,
+            setup, &statement, proof, transcript,
+        )
+    }
+
+    fn open_batch(
+        polynomials: &[&dyn MultilinearPoly<Self::Field>],
+        point: &[Self::Field],
+        evaluations: &[Self::Field],
+        setup: &Self::ProverSetup,
+        hint: Self::OpeningHint,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<Self::Proof, OpeningsError> {
+        if polynomials.len() != evaluations.len() {
+            return Err(invalid_batch(format!(
+                "Akita batch opening has {} polynomials but {} evaluations",
+                polynomials.len(),
+                evaluations.len()
+            )));
+        }
+        let statement = evaluations
+            .iter()
+            .map(|evaluation| VerifierOpeningClaim {
+                commitment: hint.commitment.clone(),
+                evaluation: EvaluationClaim::new(point.to_vec(), *evaluation),
+            })
+            .collect();
+        <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            setup,
+            statement,
+            polynomials.to_vec(),
+            hint,
+            transcript,
+        )
+    }
+
+    fn verify_batch(
+        commitment: &Self::Output,
+        point: &[Self::Field],
+        evaluations: &[Self::Field],
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError> {
+        let statement: Vec<_> = evaluations
+            .iter()
+            .map(|evaluation| VerifierOpeningClaim {
+                commitment: commitment.clone(),
+                evaluation: EvaluationClaim::new(point.to_vec(), *evaluation),
+            })
+            .collect();
+        <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            setup, &statement, proof, transcript,
         )
     }
 }
@@ -372,13 +484,11 @@ mod tests {
     use jolt_transcript::Blake2bTranscript;
 
     #[test]
-    fn setup_key_transcript_binds_backend_shape_and_bytes() {
+    fn setup_key_transcript_binds_backend_shape() {
         let setup = AkitaVerifierSetup {
             max_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
             default_layout_digest: [7; 32],
-            serialized_backend_bytes: vec![1, 2, 3],
-            serialized_one_hot_backend_bytes: None,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -391,6 +501,10 @@ mod tests {
         append_verifier_setup(&mut same, &setup, AkitaBackendFlavor::Full);
         assert_eq!(baseline.state(), same.state());
 
+        let mut flavor_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
+        append_verifier_setup(&mut flavor_transcript, &setup, AkitaBackendFlavor::OneHot);
+        assert_ne!(baseline.state(), flavor_transcript.state());
+
         let mut changed_shape = setup.clone();
         changed_shape.max_num_vars = 5;
         let mut shape_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -401,15 +515,36 @@ mod tests {
         );
         assert_ne!(baseline.state(), shape_transcript.state());
 
-        let mut changed_backend_bytes = setup;
-        changed_backend_bytes.serialized_backend_bytes.push(4);
-        let mut backend_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
+        let mut changed_digest = setup;
+        changed_digest.default_layout_digest = [8; 32];
+        let mut digest_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         append_verifier_setup(
-            &mut backend_transcript,
-            &changed_backend_bytes,
+            &mut digest_transcript,
+            &changed_digest,
             AkitaBackendFlavor::Full,
         );
-        assert_ne!(baseline.state(), backend_transcript.state());
+        assert_ne!(baseline.state(), digest_transcript.state());
+    }
+
+    /// A serde roundtrip drops the primed key cache; the transported setup
+    /// must re-derive the same backend key from its shape.
+    #[test]
+    fn serde_transported_setup_rederives_the_backend_key() {
+        let (_, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::new(2, 1, [3; 32])).unwrap();
+        let json = serde_json::to_string(&verifier_setup).unwrap();
+        let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
+        assert_eq!(transported, verifier_setup);
+        let rederived = transported
+            .backend_verifier(AkitaBackendFlavor::Full)
+            .expect("shape-only setup re-derives its backend key");
+        let primed = verifier_setup
+            .backend_verifier(AkitaBackendFlavor::Full)
+            .expect("primed cache returns the built key");
+        assert_eq!(
+            serialize_akita(rederived).unwrap(),
+            serialize_akita(primed).unwrap(),
+            "re-derived backend key must match the primed one"
+        );
     }
 
     #[test]
@@ -446,7 +581,7 @@ mod tests {
         let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-direct-layout");
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
-            statement.clone(),
+            &statement,
             &proof,
             &mut verifier_transcript,
         )
@@ -458,7 +593,7 @@ mod tests {
         let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-direct-layout");
         let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
-            changed_commitment_statement,
+            &changed_commitment_statement,
             &proof,
             &mut verifier_transcript,
         )
@@ -469,10 +604,314 @@ mod tests {
         let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-direct-layout");
         let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &changed_setup,
-            statement,
+            &statement,
             &proof,
             &mut verifier_transcript,
         )
         .expect_err("direct commitment layout must not be accepted through setup default");
+    }
+}
+
+/// Timed comparison of the two W_jolt commitment formats at production shape:
+/// one sparse-unit union polynomial (`slots` slots × `2^(8+log_t)` cells)
+/// versus one batched one-hot group (`slots` polynomials of `8+log_t`
+/// variables each) — commit + batched open + verify for both.
+#[cfg(test)]
+mod flavor_bench {
+    #![expect(
+        clippy::unwrap_used,
+        reason = "bench unwraps successful PCS operations"
+    )]
+    #![expect(clippy::print_stderr, reason = "bench reports timings to stderr")]
+    #![expect(
+        clippy::unimplemented,
+        reason = "the bench stand-in exposes only the one-hot polynomial interface"
+    )]
+
+    use super::*;
+    use jolt_transcript::Blake2bTranscript;
+    use std::time::Instant;
+
+    const LOG_K: usize = 8;
+    const K: usize = 1 << LOG_K;
+
+    fn splitmix(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// Big-endian eq table: index bit of weight `2^(len-1-j)` pairs with
+    /// `point[j]`.
+    fn eq_table(point: &[AkitaField]) -> Vec<AkitaField> {
+        let one = AkitaField::from_u64(1);
+        let mut table = vec![one];
+        for &p in point {
+            let one_minus = one - p;
+            let mut next = Vec::with_capacity(table.len() * 2);
+            for &w in &table {
+                next.push(w * one_minus);
+                next.push(w * p);
+            }
+            table = next;
+        }
+        table
+    }
+
+    struct EqSplit {
+        hi: Vec<AkitaField>,
+        lo: Vec<AkitaField>,
+        low_bits: usize,
+        mask: usize,
+    }
+
+    impl EqSplit {
+        fn new(point: &[AkitaField]) -> Self {
+            let n = point.len();
+            let low_bits = n / 2;
+            Self {
+                hi: eq_table(&point[..n - low_bits]),
+                lo: eq_table(&point[n - low_bits..]),
+                low_bits,
+                mask: (1 << low_bits) - 1,
+            }
+        }
+
+        fn weight(&self, index: usize) -> AkitaField {
+            self.hi[index >> self.low_bits] * self.lo[index & self.mask]
+        }
+    }
+
+    fn sparse_eval(poly: &dyn MultilinearPoly<AkitaField>, tables: &EqSplit) -> AkitaField {
+        let mut acc = AkitaField::from_u64(0);
+        poly.for_each_one(&mut |index| acc += tables.weight(index));
+        acc
+    }
+
+    /// Bench stand-in for the packed union polynomial: unit-sparse over the
+    /// slot-prefixed cell domain, exposing only the one-hot interface the
+    /// sparse-unit commit path consumes.
+    struct UnionSparse {
+        num_vars: usize,
+        ones: Vec<usize>,
+    }
+
+    impl MultilinearPoly<AkitaField> for UnionSparse {
+        fn num_vars(&self) -> usize {
+            self.num_vars
+        }
+
+        fn evaluate(&self, point: &[AkitaField]) -> AkitaField {
+            let tables = EqSplit::new(point);
+            let mut acc = AkitaField::from_u64(0);
+            for &one in &self.ones {
+                acc += tables.weight(one);
+            }
+            acc
+        }
+
+        fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[AkitaField])) {
+            unimplemented!("bench union polynomial exposes only the one-hot interface")
+        }
+
+        fn is_one_hot(&self) -> bool {
+            true
+        }
+
+        fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
+            for &one in &self.ones {
+                f(one);
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_eval_matches_the_trait_evaluation_convention() {
+        let mut state = 7;
+        let indices: Vec<Option<u8>> = (0..16)
+            .map(|_| Some((splitmix(&mut state) % 4) as u8))
+            .collect();
+        let poly = OneHotPolynomial::new(4, indices);
+        let point: Vec<AkitaField> = (0..poly.num_vars())
+            .map(|_| AkitaField::from_u64(splitmix(&mut state)))
+            .collect();
+        let expected = MultilinearPoly::<AkitaField>::evaluate(&poly, &point);
+        assert_eq!(sparse_eval(&poly, &EqSplit::new(&point)), expected);
+    }
+
+    #[test]
+    #[ignore = "release-only setup-split probe, run explicitly"]
+    fn setup_cost_split_by_flavor() {
+        use crate::adapters::{AkitaBackendScheme, AkitaOneHotBackendScheme};
+        let num_vars: usize = std::env::var("BENCH_VARS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(28);
+        let polys: usize = std::env::var("BENCH_SLOTS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
+        let start = Instant::now();
+        let full = AkitaBackendScheme::setup_prover(num_vars, polys).unwrap();
+        eprintln!("full setup ({num_vars},{polys}): {:.2?}", start.elapsed());
+        drop(full);
+        let start = Instant::now();
+        let one_hot = AkitaOneHotBackendScheme::setup_prover(num_vars, polys).unwrap();
+        eprintln!(
+            "one-hot setup ({num_vars},{polys}): {:.2?}",
+            start.elapsed()
+        );
+        drop(one_hot);
+    }
+
+    #[test]
+    #[ignore = "release-only flavor bench, run explicitly"]
+    fn flavor_bench_sparse_union_vs_batched_one_hot() {
+        let log_t: usize = std::env::var("BENCH_LOG_T")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(20);
+        let slots: usize = std::env::var("BENCH_SLOTS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(16);
+        let t = 1usize << log_t;
+        let cell_vars = LOG_K + log_t;
+        let union_vars = cell_vars + slots.next_power_of_two().ilog2() as usize;
+        let mut state = 0x1234_5678;
+
+        // Per-slot hot lanes; the last slot mimics the msb column (lanes {0, 1}).
+        let slot_indices: Vec<Vec<Option<u8>>> = (0..slots)
+            .map(|slot| {
+                (0..t)
+                    .map(|_| {
+                        let r = splitmix(&mut state);
+                        if slot == slots - 1 {
+                            Some((r & 1) as u8)
+                        } else {
+                            Some((r & 0xFF) as u8)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Batched one-hot group.
+        let skip_one_hot = std::env::var("BENCH_SKIP_ONEHOT").is_ok();
+        if !skip_one_hot {
+            let start = Instant::now();
+            let (prover_setup, verifier_setup) =
+                AkitaScheme::setup(AkitaSetupParams::one_hot_only(cell_vars, slots, [1; 32]))
+                    .unwrap();
+            eprintln!(
+                "one-hot setup ({cell_vars} vars, {slots} polys): {:.2?}",
+                start.elapsed()
+            );
+            let polys: Vec<OneHotPolynomial> = slot_indices
+                .iter()
+                .map(|indices| OneHotPolynomial::new(K, indices.clone()))
+                .collect();
+            let start = Instant::now();
+            let (commitment, hint) =
+                AkitaScheme::commit_one_hot_group(&prover_setup, [2; 32], &polys).unwrap();
+            eprintln!("one-hot commit: {:.2?}", start.elapsed());
+
+            let point: Vec<AkitaField> = (0..cell_vars)
+                .map(|_| AkitaField::from_u64(splitmix(&mut state)))
+                .collect();
+            let tables = EqSplit::new(&point);
+            let statement: Vec<VerifierOpeningClaim<AkitaField, AkitaCommitment>> = polys
+                .iter()
+                .map(|poly| VerifierOpeningClaim {
+                    commitment: commitment.clone(),
+                    evaluation: EvaluationClaim::new(point.clone(), sparse_eval(poly, &tables)),
+                })
+                .collect();
+            let poly_refs: AkitaNativeBatchPolynomials<'_> = polys
+                .iter()
+                .map(|poly| poly as &dyn MultilinearPoly<AkitaField>)
+                .collect();
+            let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
+            let start = Instant::now();
+            let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+                &prover_setup,
+                statement.clone(),
+                poly_refs,
+                hint,
+                &mut prover_transcript,
+            )
+            .unwrap();
+            eprintln!("one-hot batched open: {:.2?}", start.elapsed());
+            let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
+            let start = Instant::now();
+            <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+                &verifier_setup,
+                &statement,
+                &proof,
+                &mut verifier_transcript,
+            )
+            .unwrap();
+            eprintln!("one-hot verify: {:.2?}", start.elapsed());
+            assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        }
+
+        if std::env::var("BENCH_SKIP_UNION").is_ok() {
+            return;
+        }
+
+        // Sparse-unit union of the same content.
+        let start = Instant::now();
+        let (prover_setup, verifier_setup) =
+            AkitaScheme::setup(AkitaSetupParams::new(union_vars, 1, [1; 32])).unwrap();
+        eprintln!("union setup ({union_vars} vars): {:.2?}", start.elapsed());
+        let mut ones = Vec::with_capacity(slots * t);
+        for (slot, indices) in slot_indices.iter().enumerate() {
+            for (cycle, &lane) in indices.iter().enumerate() {
+                let lane = lane.unwrap() as usize;
+                ones.push((slot << cell_vars) | (lane << log_t) | cycle);
+            }
+        }
+        ones.sort_unstable();
+        let union = UnionSparse {
+            num_vars: union_vars,
+            ones,
+        };
+        let start = Instant::now();
+        let (commitment, hint) =
+            <AkitaScheme as CommitmentScheme>::commit(&union, &prover_setup).unwrap();
+        eprintln!("union commit: {:.2?}", start.elapsed());
+
+        let point: Vec<AkitaField> = (0..union_vars)
+            .map(|_| AkitaField::from_u64(splitmix(&mut state)))
+            .collect();
+        let value = union.evaluate(&point);
+        let statement = vec![VerifierOpeningClaim {
+            commitment: commitment.clone(),
+            evaluation: EvaluationClaim::new(point.clone(), value),
+        }];
+        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
+        let start = Instant::now();
+        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            statement.clone(),
+            vec![&union as &dyn MultilinearPoly<AkitaField>],
+            hint,
+            &mut prover_transcript,
+        )
+        .unwrap();
+        eprintln!("union open: {:.2?}", start.elapsed());
+        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
+        let start = Instant::now();
+        <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &statement,
+            &proof,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+        eprintln!("union verify: {:.2?}", start.elapsed());
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
 }

@@ -13,7 +13,4 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-pub use verifier::{
-    absorb_transcript_commitments, absorb_transcript_preamble, validate_inputs_from_parts, verify,
-    verify_until_stage1, CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,
-};
+pub use verifier::{validate_and_seed_transcript, verify, CheckedInputs};

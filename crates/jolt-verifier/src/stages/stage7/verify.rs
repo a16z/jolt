@@ -48,6 +48,10 @@ pub fn verify<PCS, VC, T, ZkProof>(
     transcript: &mut T,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
     stage6: &Stage6bOutput<PCS::Field, VC::Output>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::stage6a::inc_virtualization::IncVirtualizationOutput<
+        PCS::Field,
+    >,
 ) -> Result<Stage7Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -75,11 +79,22 @@ where
     // address phase from its layout + `has_address_phase` presence flag + stage-6b
     // cycle-phase variables + clear-only reference aux. All point/challenge data is
     // read mode-agnostically off `stage6.output_points()`.
+    #[cfg(not(feature = "akita"))]
     let sumchecks = build_stage7_sumchecks(
         hamming_dimensions,
         &checked.precommitted,
         stage6.output_points(),
         clear,
+    )?;
+    #[cfg(feature = "akita")]
+    let sumchecks = build_stage7_sumchecks(
+        hamming_dimensions,
+        &checked.precommitted,
+        stage6.output_points(),
+        clear,
+        proof.one_hot_config.committed_chunk_bits(),
+        formula_dimensions,
+        inc_virtualization,
     )?;
 
     // Draw the hamming-weight reduction's batching gamma (a single `challenge_scalar`,
@@ -123,29 +138,21 @@ where
     // derived from the supplied claims' canonical order).
     sumchecks.validate_output_claims(claims)?;
 
+    #[cfg(not(feature = "akita"))]
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
+    #[cfg(feature = "akita")]
+    let input_values = stage7_input_values_from_upstream(&sumchecks, stage6, inc_virtualization)?;
     let input_points = sumchecks.empty_input_points();
 
-    let batch = sumchecks.verify_clear(
+    let output_points = sumchecks.run_clear(
         &input_values,
+        &input_points,
         &challenges,
+        claims,
         &proof.stages.stage7_sumcheck_proof,
         transcript,
+        7,
     )?;
-
-    let output_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        claims,
-        &output_points,
-        &challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 7 });
-    }
 
     sumchecks.append_output_claims(transcript, claims);
 
@@ -167,6 +174,10 @@ fn build_stage7_sumchecks<F: Field>(
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
     clear: Option<(&Stage4ClearOutput<F>, &Stage6bClearOutput<F>)>,
+    #[cfg(feature = "akita")] committed_chunk_bits: usize,
+    #[cfg(feature = "akita")] formula_dimensions: &JoltFormulaDimensions,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::stage6a::inc_virtualization::IncVirtualizationOutput<F>,
 ) -> Result<Stage7Sumchecks<F>, VerifierError> {
     let booleanity_opening = stage6_points.booleanity_opening_point().ok_or(
         VerifierError::StageClaimPublicInputFailed {
@@ -180,7 +191,14 @@ fn build_stage7_sumchecks<F: Field>(
         hamming_dimensions,
         booleanity_r_cycle.to_vec(),
         booleanity_r_address.to_vec(),
-        stage7_hamming_virtualization_address_points(hamming_dimensions, stage6_points)?,
+        stage7_hamming_virtualization_address_points(
+            hamming_dimensions,
+            stage6_points
+                .instruction_ra_virtualization
+                .committed_instruction_ra(),
+            stage6_points.bytecode_read_raf.bytecode_ra(),
+            stage6_points.ram_ra_virtualization.ram_ra(),
+        )?,
     );
 
     // The staged advice RAM address point from stage 4's RAM value-check (`None`
@@ -196,6 +214,19 @@ fn build_stage7_sumchecks<F: Field>(
 
     Ok(Stage7Sumchecks {
         hamming_weight_claim_reduction: hamming,
+        #[cfg(feature = "akita")]
+        chunk_reconstruction: super::chunk_reconstruction::ChunkReconstruction::new(
+            jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionDimensions::new(
+                committed_chunk_bits,
+                formula_dimensions.trace,
+            )
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::UnsignedIncChunkReconstruction,
+                reason: error.to_string(),
+            })?,
+            booleanity_opening.to_vec(),
+            inc_virtualization.output_points.fused_inc().to_vec(),
+        ),
         trusted_advice: address_phase_member(
             schedule.trusted_advice.as_ref(),
             stage6_points.advice_cycle_phase_variables(JoltAdviceKind::Trusted),
@@ -281,10 +312,19 @@ fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
 fn stage7_input_values_from_upstream<F: Field>(
     sumchecks: &Stage7Sumchecks<F>,
     stage6: &Stage6bClearOutput<F>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::stage6a::inc_virtualization::IncVirtualizationOutput<F>,
 ) -> Result<Stage7InputClaims<F>, VerifierError> {
     let cycle_phase = &stage6.output_values;
     Ok(Stage7InputClaims {
         hamming_weight_claim_reduction: hamming_weight_input_values_from_upstream(cycle_phase),
+        #[cfg(feature = "akita")]
+        chunk_reconstruction:
+            jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionInputClaims {
+                chunks: cycle_phase.booleanity.unsigned_inc_chunks.clone(),
+                msb: cycle_phase.booleanity.unsigned_inc_msb,
+                fused_inc: inc_virtualization.output_values.fused_inc,
+            },
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()

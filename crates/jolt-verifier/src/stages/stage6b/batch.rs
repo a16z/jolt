@@ -32,6 +32,7 @@ use super::committed_reduction_cycle_phase::{
     bytecode_reduction_weights, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::outputs::Stage6bSumchecks;
@@ -45,6 +46,7 @@ use crate::stages::stage3::Stage3Output;
 use crate::stages::stage4::Stage4Output;
 use crate::stages::stage5::Stage5Output;
 use crate::stages::stage6a::Stage6aOutput;
+use crate::stages::BYTECODE_VAL_STAGES;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
@@ -65,6 +67,8 @@ impl<F: Field> Stage6bSumchecks<F> {
         stage5: &Stage5Output<F, VC::Output>,
         stage6a: &Stage6aOutput<F, VC::Output>,
         eta: Option<F>,
+        #[cfg(feature = "akita")]
+        inc_virtualization: &crate::stages::stage6a::inc_virtualization::IncVirtualizationOutput<F>,
     ) -> Result<Self, VerifierError>
     where
         PCS: CommitmentScheme<Field = F>,
@@ -129,13 +133,18 @@ impl<F: Field> Stage6bSumchecks<F> {
                 REGISTER_ADDRESS_BITS,
                 JoltRelationId::BytecodeReadRaf,
             )?;
-        let stage_cycle_points = [
+        #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
+        let mut stage_cycle_points = vec![
             stage1_cycle_binding.iter().rev().copied().collect(),
             stage2_points.product_remainder_point().to_vec(),
             stage3_points.shift_opening_point().to_vec(),
             register_read_write_cycle.to_vec(),
             register_val_evaluation_cycle.to_vec(),
         ];
+        // The packed sixth cycle point: the `IncVirtualization` phase's bound
+        // point, anchoring the store stage.
+        #[cfg(feature = "akita")]
+        stage_cycle_points.push(inc_virtualization.output_points.store().to_vec());
         let ram_reduced = stage5_points.ram_reduced_opening_point();
         if ram_reduced.len() != log_k + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
@@ -148,6 +157,7 @@ impl<F: Field> Stage6bSumchecks<F> {
             });
         }
         let (ram_reduced_address, ram_reduced_cycle) = ram_reduced.split_at(log_k);
+        #[cfg(not(feature = "akita"))]
         let (_, ram_read_write_cycle) = stage6_checked_split(
             "Stage 6 RAM read-write opening",
             stage2_points.ram_read_write_point(),
@@ -160,12 +170,15 @@ impl<F: Field> Stage6bSumchecks<F> {
             log_k,
             JoltRelationId::IncClaimReduction,
         )?;
+        #[cfg(not(feature = "akita"))]
         let inc_cycle_points = [
             ram_read_write_cycle.to_vec(),
             ram_val_check_cycle.to_vec(),
             register_read_write_cycle.to_vec(),
             register_val_evaluation_cycle.to_vec(),
         ];
+        #[cfg(feature = "akita")]
+        let _ = ram_val_check_cycle;
         let entry_bytecode_index =
             preprocessing
                 .program
@@ -205,6 +218,7 @@ impl<F: Field> Stage6bSumchecks<F> {
                     layout,
                     BytecodeLaneWeightInputs {
                         eta,
+                        num_val_stages: BYTECODE_VAL_STAGES,
                         stage1_gammas: &stage_gamma_powers[0],
                         stage2_gammas: &stage_gamma_powers[1],
                         stage3_gammas: &stage_gamma_powers[2],
@@ -258,6 +272,15 @@ impl<F: Field> Stage6bSumchecks<F> {
             })?
         };
 
+        #[cfg(feature = "akita")]
+        let booleanity_dimensions =
+            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
+                booleanity_dimensions,
+            )
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?;
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,
@@ -278,15 +301,18 @@ impl<F: Field> Stage6bSumchecks<F> {
             stage5_instruction_cycle.to_vec(),
             proof.one_hot_config.committed_chunk_bits(),
         );
-        let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
-            inc_cycle_points;
-        let inc_claim_reduction = IncClaimReduction::new(
-            trace_dimensions,
-            ram_read_write_cycle,
-            ram_val_check_cycle,
-            registers_read_write_cycle,
-            registers_val_evaluation_cycle,
-        );
+        #[cfg(not(feature = "akita"))]
+        let inc_claim_reduction = {
+            let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
+                inc_cycle_points;
+            IncClaimReduction::new(
+                trace_dimensions,
+                ram_read_write_cycle,
+                ram_val_check_cycle,
+                registers_read_write_cycle,
+                registers_val_evaluation_cycle,
+            )
+        };
 
         let trusted_advice = trusted_advice_layout
             .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
@@ -294,9 +320,11 @@ impl<F: Field> Stage6bSumchecks<F> {
             .map(|layout| UntrustedAdviceCyclePhase::new(layout, untrusted_advice_reference_point));
         let bytecode_reduction = match (bytecode_reduction_layout, cycle_bytecode_reduction_weights)
         {
-            (Some(layout), Some(weights)) => {
-                Some(BytecodeReductionCyclePhase::new(layout, weights))
-            }
+            (Some(layout), Some(weights)) => Some(BytecodeReductionCyclePhase::new(
+                layout,
+                weights,
+                BYTECODE_VAL_STAGES,
+            )),
             _ => None,
         };
         let program_image_reduction = program_image_reduction_layout.map(|layout| {
@@ -309,6 +337,7 @@ impl<F: Field> Stage6bSumchecks<F> {
             ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
+            #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
             trusted_advice,
             untrusted_advice,
@@ -318,7 +347,7 @@ impl<F: Field> Stage6bSumchecks<F> {
     }
 }
 
-fn stage6_checked_split<'a, F: Field>(
+pub(super) fn stage6_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],
     split_at: usize,

@@ -1,8 +1,5 @@
 use jolt_claims::protocols::jolt::{
-    geometry::{
-        booleanity::BooleanityDimensions, claim_reductions::bytecode as bytecode_reduction,
-        dimensions::JoltFormulaDimensions,
-    },
+    geometry::{booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions},
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
@@ -43,6 +40,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
     stage3: &Stage3Output<PCS::Field, VC::Output>,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
     stage5: &Stage5Output<PCS::Field, VC::Output>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &super::inc_virtualization::IncVirtualizationOutput<PCS::Field>,
 ) -> Result<Stage6aOutput<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -51,10 +50,9 @@ where
 {
     let log_t = formula_dimensions.trace.log_t();
 
-    let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
-    let committed_program = bytecode_reduction_layout.is_some();
+    let committed_program = checked.precommitted.bytecode.is_some();
     let num_bytecode_val_stages = if committed_program {
-        bytecode_reduction::NUM_BYTECODE_VAL_STAGES
+        crate::stages::BYTECODE_VAL_STAGES
     } else {
         0
     };
@@ -144,37 +142,37 @@ where
     address_sumchecks.validate_output_claims(claims)?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
-    // prior clear stage opening; the relation evaluates it through its input
-    // `Expr` from these wired openings + the per-stage folding gammas.
+    // prior clear stage opening (plus, under akita, the `IncVirtualization`
+    // store selector claim at the sixth stage slot); the relation evaluates it
+    // through its input `Expr` from these wired openings + the per-stage
+    // folding gammas.
+    let base_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
+        &stage1.clear()?.output_values,
+        &stage2.clear()?.output_values,
+        &stage3.clear()?.output_values,
+        &stage4.clear()?.output_values,
+        &stage5.clear()?.output_values,
+    );
+    #[cfg(feature = "akita")]
+    let base_input_values =
+        jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+            base: base_input_values,
+            store: inc_virtualization.output_values.store,
+        };
     let address_input_values = Stage6aInputClaims {
-        bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.clear()?.output_values,
-            &stage2.clear()?.output_values,
-            &stage3.clear()?.output_values,
-            &stage4.clear()?.output_values,
-            &stage5.clear()?.output_values,
-        ),
+        bytecode_read_raf: base_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
-    let batch = address_sumchecks.verify_clear(
+    let output_points = address_sumchecks.run_clear(
         &address_input_values,
+        &address_input_points,
         &address_challenges,
+        claims,
         &proof.stages.stage6a_sumcheck_proof,
         transcript,
+        6,
     )?;
-    let output_points = address_sumchecks
-        .derive_opening_points(batch.reduction.point.as_slice(), &address_input_points)?;
-    let expected_final_claim = address_sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &address_input_points,
-        claims,
-        &output_points,
-        &address_challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 6 });
-    }
 
     // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
     // then booleanity `intermediate`) is single-sourced from the generated

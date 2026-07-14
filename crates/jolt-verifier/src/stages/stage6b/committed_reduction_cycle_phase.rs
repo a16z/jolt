@@ -335,11 +335,13 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
     pub fn new(
         layout: &BytecodeClaimReductionLayout,
         weights: BytecodeReductionWeights<F>,
+        num_val_stages: usize,
     ) -> Self {
         Self {
             symbolic: relations::claim_reductions::bytecode::CyclePhase::new((
                 layout.dimensions(),
                 layout.chunk_count(),
+                num_val_stages,
             )),
             layout: layout.clone(),
             weights,

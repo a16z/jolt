@@ -29,7 +29,8 @@ mod verifier;
 pub use codec::BytesMsg;
 pub use digest::DigestTranscript;
 pub use legacy::{
-    AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word, MAX_LABEL_LEN,
+    append_labeled, AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript,
+    U64Word, MAX_LABEL_LEN,
 };
 pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
 

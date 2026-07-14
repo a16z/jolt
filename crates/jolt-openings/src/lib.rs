@@ -11,10 +11,12 @@
 //! - **Batch openings are an extension trait.** [`BatchOpeningScheme`] lets a
 //!   protocol adapter own its batching strategy while preserving the ordinary
 //!   single-opening API for the underlying PCS.
-//! - **Statement shape is scheme-specific.** [`HomomorphicBatch`] uses
-//!   `Vec<VerifierOpeningClaim<_, _>>`, because each logical polynomial has its
-//!   own commitment. [`PackedBatch`] uses [`PrefixPackedStatement`], which
-//!   carries one packed commitment and logical `(id, evaluation)` claims.
+//! - **Two batching protocols.** [`HomomorphicBatch`] settles same-point
+//!   claims by RLC-combining per-polynomial commitments (requires
+//!   [`AdditivelyHomomorphic`]). [`prove_packed_openings`] /
+//!   [`verify_packed_openings`] settle claims at mutually independent points
+//!   on prefix-packed commitments through one joint reduction sumcheck plus
+//!   one native opening per commitment object — no homomorphism required.
 //!
 //! # Trait Hierarchy
 //!
@@ -27,14 +29,14 @@
 //! Homomorphic  Commitment            │
 //!       │                       ZkStreamingCommitment
 //!       │
-//! HomomorphicBatch<PCS>        PackedBatch<PCS, Id>
-//!   Statement = Vec<...>       Statement = PrefixPackedStatement<...>
-//!        ╲                         ╱
-//!             BatchOpeningScheme
-//!
-//! Batching is selected explicitly through [`HomomorphicBatch`] or
-//! [`PackedBatch`].
+//! HomomorphicBatch<PCS>: BatchOpeningScheme
+//!   Statement = Vec<VerifierOpeningClaim<...>>
 //! ```
+//!
+//! The packed opening is a pair of free functions rather than a
+//! [`BatchOpeningScheme`] impl: its statement spans several commitment
+//! objects, each opening against its own borrowed setup, which does not fit
+//! the trait's single owned setup.
 
 mod claims;
 mod error;
@@ -44,11 +46,12 @@ mod schemes;
 pub use claims::{EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim};
 pub use error::OpeningsError;
 pub use packing::{
-    PackedBatchProof, PackedPolynomial, PrefixPackedProverSetup, PrefixPackedStatement,
-    PrefixPackedVerifierSetup, PrefixPacking, PrefixSlot,
+    prove_packed_openings, verify_packed_openings, PackedObjectGroup, PackedOpeningProof,
+    PackedPolynomial, PackedProverGroup, PackedProverObject, PackedVerifierObject,
+    PrefixPackedStatement, PrefixPacking, PrefixSlot,
 };
 
 pub use schemes::{
-    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, HomomorphicBatch, PackedBatch,
+    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, HomomorphicBatch,
     StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
 };

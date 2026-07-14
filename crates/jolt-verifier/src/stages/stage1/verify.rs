@@ -27,12 +27,69 @@ where
     T: Transcript<Challenge = PCS::Field>,
 {
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
-
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = transcript.challenge_vector(log_t + 2);
 
-    if checked.zk {
+    if !checked.zk {
+        let claims = &proof.clear_claims()?.stage1;
+        let uni_skip_first_round_proof = &proof.stages.stage1_uni_skip_first_round_proof;
+        let sumcheck_proof = &proof.stages.stage1_sumcheck_proof;
+
+        // The uni-skip first round consumes no openings: its symbolic `input_expression`
+        // is `zero` (jolt-claims `spartan/outer_uniskip.rs`), so the input claim is the
+        // constant zero. BlindFold still single-sources this claim from that same symbolic
+        // Expr, and muldiv (host) catches any drift between the two.
+        let uniskip_input_claim = PCS::Field::from_u64(0);
+        let uniskip_output_claim = claims.uniskip_output_claim;
+        let uniskip_challenge = uniskip::verify_clear(
+            uni_skip_first_round_proof,
+            &uniskip_params,
+            uniskip_input_claim,
+            uniskip_output_claim,
+            transcript,
+        )?;
+
+        // Built after the uni-skip step so the relation carries `tau` and the
+        // uni-skip reduction challenge; the coefficient table completes itself from
+        // the bound point captured by `derive_opening_points`. Construction and the
+        // (no-op) member draw are transcript-neutral, so their position relative to
+        // the uni-skip is immaterial.
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
+        };
+        let batch_challenges = sumchecks.draw_challenges(transcript)?;
+        let input_points = sumchecks.empty_input_points();
+
+        sumchecks.validate_output_claims(&claims.outer)?;
+
+        // The remainder consumes the uni-skip's reduced opening as its input claim
+        // (the relation's `input_claim` is the bare consumed opening).
+        let input_values = Stage1BatchInputClaims {
+            outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip_output_claim),
+        };
+
+        let output_points = sumchecks.run_clear(
+            &input_values,
+            &input_points,
+            &batch_challenges,
+            &claims.outer,
+            sumcheck_proof,
+            transcript,
+            1,
+        )?;
+
+        // Append the 35 produced openings in canonical (declaration) order, matching
+        // the prover's commitment order.
+        sumchecks.append_output_claims(transcript, &claims.outer);
+
+        return Ok(Stage1Output::Clear(Stage1ClearOutput {
+            output_values: claims.outer.clone(),
+            output_points,
+        }));
+    }
+
+    {
         let uniskip = uniskip::verify_zk(
             checked,
             &proof.stages.stage1_uni_skip_first_round_proof,
@@ -62,7 +119,7 @@ where
         let output_points =
             sumchecks.derive_opening_points(&remainder_consistency.challenges(), &input_points)?;
 
-        return Ok(Stage1Output::Zk(Stage1ZkOutput {
+        Ok(Stage1Output::Zk(Stage1ZkOutput {
             challenges: Stage1Challenges {
                 tau,
                 uniskip_challenge,
@@ -72,70 +129,6 @@ where
             remainder_consistency,
             remainder_output_claims,
             output_points,
-        }));
+        }))
     }
-
-    let claims = &proof.clear_claims()?.stage1;
-    // The uni-skip first round consumes no openings: its symbolic `input_expression`
-    // is `zero` (jolt-claims `spartan/outer_uniskip.rs`), so the input claim is the
-    // constant zero. BlindFold still single-sources this claim from that same symbolic
-    // Expr, and muldiv (host) catches any drift between the two.
-    let uniskip_input_claim = PCS::Field::from_u64(0);
-    let uniskip_output_claim = claims.uniskip_output_claim;
-    let uniskip_challenge = uniskip::verify_clear(
-        &proof.stages.stage1_uni_skip_first_round_proof,
-        &uniskip_params,
-        uniskip_input_claim,
-        uniskip_output_claim,
-        transcript,
-    )?;
-
-    // Built after the uni-skip step so the relation carries `tau` and the
-    // uni-skip reduction challenge; the coefficient table completes itself from
-    // the bound point captured by `derive_opening_points`. Construction and the
-    // (no-op) member draw are transcript-neutral, so their position relative to
-    // the uni-skip is immaterial.
-    let sumchecks = Stage1BatchSumchecks {
-        outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
-    };
-    let batch_challenges = sumchecks.draw_challenges(transcript)?;
-    let input_points = sumchecks.empty_input_points();
-
-    sumchecks.validate_output_claims(&claims.outer)?;
-
-    // The remainder consumes the uni-skip's reduced opening as its input claim
-    // (the relation's `input_claim` is the bare consumed opening).
-    let input_values = Stage1BatchInputClaims {
-        outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip_output_claim),
-    };
-
-    let batch = sumchecks.verify_clear(
-        &input_values,
-        &batch_challenges,
-        &proof.stages.stage1_sumcheck_proof,
-        transcript,
-    )?;
-
-    let output_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        &claims.outer,
-        &output_points,
-        &batch_challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 1 });
-    }
-
-    // Append the 35 produced openings in canonical (declaration) order, matching
-    // the prover's commitment order.
-    sumchecks.append_output_claims(transcript, &claims.outer);
-
-    Ok(Stage1Output::Clear(Stage1ClearOutput {
-        output_values: claims.outer.clone(),
-        output_points,
-    }))
 }

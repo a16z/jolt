@@ -664,10 +664,10 @@ where
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
+                stage_cycle_points: vec![
+                    stage1_cycle.as_slice(),
+                    stage2_cycle.as_slice(),
+                    stage3_cycle.as_slice(),
                     stage4_cycle,
                     stage5_cycle,
                 ],
@@ -881,6 +881,7 @@ where
         layout,
         bytecode_reduction::BytecodeLaneWeightInputs {
             eta,
+            num_val_stages: bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
             stage1_gammas: &stage_gamma_powers[0],
             stage2_gammas: &stage_gamma_powers[1],
             stage3_gammas: &stage_gamma_powers[2],

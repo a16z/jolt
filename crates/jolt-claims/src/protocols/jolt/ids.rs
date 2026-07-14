@@ -38,8 +38,6 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
-    // Lattice-mode relations (see protocols/jolt/lattice). Appended so
-    // index-based codecs of base-mode proofs stay stable.
     IncVirtualization,
     UnsignedIncChunkReconstruction,
     UntrustedAdviceReconstruction,
@@ -306,10 +304,18 @@ pub enum UnsignedIncChunkReconstructionChallenge {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UnsignedIncChunkReconstructionPublic {
-    /// `eq(r_booleanity_address, r_address)` — reduces the chunk openings
-    /// produced at the booleanity address point to this relation's bound
-    /// address point.
+    /// `eq(r_booleanity_address, r_address)` — the address half of reducing
+    /// the chunk/msb openings produced at the booleanity point to this
+    /// relation's bound point (also the normalizing address kernel of the msb
+    /// legs, whose polynomial has no address variables).
     EqBooleanityAddress,
+    /// `eq(r_booleanity_cycle, r_cycle)` — the cycle half of the booleanity
+    /// reduction legs.
+    EqBooleanityCycle,
+    /// `eq(r_inc_virtualization, r_cycle)` — anchors the hamming and
+    /// shifted-decode legs at the `IncVirtualization` cycle point, where the
+    /// consumed `FusedInc` claim lives.
+    EqIncCycle,
     /// The identity MLE `Σ_bit 2^bit · r_address[bit]` at the bound address
     /// point — decodes a one-hot chunk opening into its address value.
     IdentityAtAddress,

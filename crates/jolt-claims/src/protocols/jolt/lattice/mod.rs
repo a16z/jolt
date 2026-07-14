@@ -26,10 +26,9 @@
 //! - **final claim** — claims flow through the relation DAG until, per
 //!   polynomial, one claim remains that no relation consumes. In base mode
 //!   the stage-8 RLC batch settles it; in lattice mode it is a packed slot's
-//!   single `EvaluationClaim` ([`LatticeFinalOpening::Packed`] names its
-//!   producing relation output), unless the polynomial is `Virtualized` —
-//!   every claim on it consumed by a lattice relation — in which case it has
-//!   none.
+//!   single `EvaluationClaim`, produced by the polynomial's reconstruction /
+//!   reduction relation — unless the polynomial is virtualized (every claim
+//!   on it consumed by a lattice relation), in which case it has none.
 
 pub mod geometry;
 pub mod packing;
@@ -38,7 +37,9 @@ pub mod relations;
 pub use geometry::{
     LatticeGeometryError, UnsignedIncChunking, LATTICE_BYTECODE_VAL_STAGES, UNSIGNED_INC_BITS,
 };
+pub mod strategy;
 pub use packing::{
-    final_opening, precommitted_packing, proof_packing, LatticeFinalOpening,
-    PrecommittedPackingShape, ProofPackingShape,
+    advice_bytes_packing, precommitted_packing, proof_packing, PrecommittedPackingShape,
+    ProofPackingShape,
 };
+pub use strategy::{WJoltPlan, WJoltSetupShape, WJoltStrategy, W_JOLT_STRATEGY};

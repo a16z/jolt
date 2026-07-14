@@ -132,4 +132,36 @@ mod tests {
             ra_virtualization_dimensions(3).num_committed_ra_polys() + 1
         );
     }
+
+    /// With zero committed `ra` polynomials the output product is the bare
+    /// cycle-`eq` public; the relation stays well-formed.
+    #[test]
+    fn ra_virtualization_supports_empty_ra_product() {
+        let relation = RaVirtualization::new(ra_virtualization_dimensions(0));
+        assert_eq!(relation.degree(), 1);
+
+        let reduced = Fr::from_u64(3);
+        let eq_cycle = Fr::from_u64(13);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_ra_claim_reduction() => reduced,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+        assert_eq!(input, reduced);
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |_| zero,
+            |_| zero,
+            |id| match *id {
+                JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) => eq_cycle,
+                _ => zero,
+            },
+        );
+        assert_eq!(output, eq_cycle);
+    }
 }

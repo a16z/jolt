@@ -9,6 +9,7 @@ description = "Shared claim and expression types for Jolt protocols"
 workspace = true
 
 [features]
+packed = []
 default = []
 field-inline = []
 

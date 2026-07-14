@@ -78,6 +78,15 @@ impl TranscriptChallenge for AkitaField {
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         <Self as ReducingBytes>::from_le_bytes_mod_order(bytes)
     }
+
+    #[inline]
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        // Scalar challenges match the legacy transcript convention: digest bytes
+        // are interpreted as a big-endian integer before reduction.
+        let mut buf = bytes.to_vec();
+        buf.reverse();
+        <Self as ReducingBytes>::from_le_bytes_mod_order(&buf)
+    }
 }
 
 impl FixedBytes<16> for AkitaField {}

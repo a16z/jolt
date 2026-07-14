@@ -8,8 +8,7 @@ use jolt_akita::{
     AkitaScheme, AkitaSetupParams,
 };
 use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, OpeningsError, PrefixPackedProverSetup,
-    PrefixPackedVerifierSetup, PrefixPacking, VerifierOpeningClaim,
+    CommitmentScheme, EvaluationClaim, OpeningsError, PrefixPacking, VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 
@@ -59,24 +58,15 @@ pub fn native_setup() -> (
     setup_for(4, 2, layout(7))
 }
 
-pub fn packed_setup<Id: Clone>(
-    packing: PrefixPacking<Id>,
+/// PCS setup pair sized for one packed commitment object.
+pub fn packed_setup(
+    packed_num_vars: usize,
     layout_digest: [u8; 32],
 ) -> (
-    PrefixPackedProverSetup<AkitaScheme, Id>,
-    PrefixPackedVerifierSetup<AkitaScheme, Id>,
+    <AkitaScheme as CommitmentScheme>::ProverSetup,
+    <AkitaScheme as CommitmentScheme>::VerifierSetup,
 ) {
-    let (prover_pcs, verifier_pcs) = setup_for(packing.packed_num_vars, 1, layout_digest);
-    (
-        PrefixPackedProverSetup {
-            pcs: prover_pcs,
-            packing: packing.clone(),
-        },
-        PrefixPackedVerifierSetup {
-            pcs: verifier_pcs,
-            packing,
-        },
-    )
+    setup_for(packed_num_vars, 1, layout_digest)
 }
 
 pub fn native_statement(

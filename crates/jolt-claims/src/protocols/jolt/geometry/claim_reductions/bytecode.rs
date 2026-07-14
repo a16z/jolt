@@ -376,6 +376,9 @@ pub struct BytecodeOutputWeightInputs<'a, F> {
 /// whose same-named fields take the address components alone).
 pub struct BytecodeLaneWeightInputs<'a, F> {
     pub eta: F,
+    /// The staged-val count folded: five in base mode, six in lattice mode
+    /// (the sixth is the raw store circuit-flag lane, no gamma fold).
+    pub num_val_stages: usize,
     pub stage1_gammas: &'a [F],
     pub stage2_gammas: &'a [F],
     pub stage3_gammas: &'a [F],
@@ -399,8 +402,13 @@ pub fn lane_weights<F: Field>(
     require_opening_point_len(inputs.register_read_write_point, REGISTER_ADDRESS_BITS)?;
     require_opening_point_len(inputs.register_val_evaluation_point, REGISTER_ADDRESS_BITS)?;
 
-    let mut eta_powers = [F::one(); NUM_BYTECODE_VAL_STAGES];
-    for stage in 1..NUM_BYTECODE_VAL_STAGES {
+    assert!(
+        inputs.num_val_stages == NUM_BYTECODE_VAL_STAGES
+            || inputs.num_val_stages == NUM_BYTECODE_VAL_STAGES + 1,
+        "bytecode reduction folds five (base) or six (lattice) staged vals"
+    );
+    let mut eta_powers = vec![F::one(); inputs.num_val_stages];
+    for stage in 1..inputs.num_val_stages {
         eta_powers[stage] = eta_powers[stage - 1] * inputs.eta;
     }
 
@@ -471,6 +479,13 @@ pub fn lane_weights<F: Field>(
         for i in 0..LookupTableKind::<XLEN>::COUNT {
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
+    }
+    if inputs.num_val_stages > NUM_BYTECODE_VAL_STAGES {
+        // The lattice store stage: one raw circuit-flag lane, no gamma fold
+        // (mirrors the read-raf sixth staged val, which consumes the
+        // `IncVirtualization` store selector claim directly).
+        weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
+            eta_powers[NUM_BYTECODE_VAL_STAGES];
     }
 
     Ok(weights)
@@ -729,6 +744,7 @@ mod tests {
 
         let weights = lane_weights::<Fr>(BytecodeLaneWeightInputs {
             eta,
+            num_val_stages: NUM_BYTECODE_VAL_STAGES,
             stage1_gammas: &stage1_gammas,
             stage2_gammas: &stage2_gammas,
             stage3_gammas: &stage3_gammas,
@@ -754,6 +770,50 @@ mod tests {
         assert_eq!(weighted_rows, expected);
     }
 
+    /// The six-stage fold differs from the five-stage fold in exactly one
+    /// lane: `eta^5` added at the `Store` circuit flag, with no gamma fold.
+    #[test]
+    fn lattice_lane_weights_add_the_raw_store_lane() {
+        let eta = fr(31);
+        let stage1_gammas = gamma_powers(3, 2 + NUM_CIRCUIT_FLAGS);
+        let stage2_gammas = gamma_powers(5, 4);
+        let stage3_gammas = gamma_powers(7, 9);
+        let stage4_gammas = gamma_powers(11, 3);
+        let stage5_gammas = gamma_powers(13, 2 + LookupTableKind::<XLEN>::COUNT);
+        let register_point: Vec<Fr> = (1..=REGISTER_ADDRESS_BITS as u64).map(fr).collect();
+
+        let weights = |num_val_stages: usize| {
+            lane_weights::<Fr>(BytecodeLaneWeightInputs {
+                eta,
+                num_val_stages,
+                stage1_gammas: &stage1_gammas,
+                stage2_gammas: &stage2_gammas,
+                stage3_gammas: &stage3_gammas,
+                stage4_gammas: &stage4_gammas,
+                stage5_gammas: &stage5_gammas,
+                register_read_write_point: &register_point,
+                register_val_evaluation_point: &register_point,
+            })
+            .unwrap_or_else(|error| panic!("lane weights should evaluate: {error}"))
+        };
+        let base = weights(NUM_BYTECODE_VAL_STAGES);
+        let lattice = weights(NUM_BYTECODE_VAL_STAGES + 1);
+
+        let layout = BYTECODE_LANE_LAYOUT;
+        let store_lane = layout.circuit_start + (CircuitFlags::Store as usize);
+        let mut eta_power = fr(1);
+        for _ in 0..NUM_BYTECODE_VAL_STAGES {
+            eta_power *= eta;
+        }
+        for (lane, (base_weight, lattice_weight)) in base.iter().zip(&lattice).enumerate() {
+            if lane == store_lane {
+                assert_eq!(*lattice_weight, *base_weight + eta_power);
+            } else {
+                assert_eq!(lattice_weight, base_weight);
+            }
+        }
+    }
+
     #[test]
     fn lane_weights_reject_short_inputs() {
         let stage1_gammas = gamma_powers(3, 2 + NUM_CIRCUIT_FLAGS);
@@ -762,6 +822,7 @@ mod tests {
 
         let result = lane_weights::<Fr>(BytecodeLaneWeightInputs {
             eta: fr(31),
+            num_val_stages: NUM_BYTECODE_VAL_STAGES,
             stage1_gammas: &stage1_gammas,
             stage2_gammas: &[fr(1); 4],
             stage3_gammas: &[fr(1); 9],

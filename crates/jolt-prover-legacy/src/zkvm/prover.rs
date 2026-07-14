@@ -2720,7 +2720,6 @@ mod tests {
             &public_io,
             &proof,
             trusted_advice_commitment.as_ref(),
-            cfg!(feature = "zk"),
         )
     }
 

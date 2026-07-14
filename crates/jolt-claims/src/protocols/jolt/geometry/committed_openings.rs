@@ -75,14 +75,10 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         }
         JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
-        // Lattice-mode polynomials: `lattice::packing` derives its final
-        // claims from this map, so it is the single owner. Every packed
-        // polynomial's claim is produced by a relation (one claim per packed
-        // slot).
-        JoltCommittedPolynomial::UnsignedIncChunk(_) => {
+
+        JoltCommittedPolynomial::UnsignedIncChunk(_) | JoltCommittedPolynomial::UnsignedIncMsb => {
             JoltRelationId::UnsignedIncChunkReconstruction
         }
-        JoltCommittedPolynomial::UnsignedIncMsb => JoltRelationId::Booleanity,
         JoltCommittedPolynomial::UntrustedAdviceBytes => {
             JoltRelationId::UntrustedAdviceReconstruction
         }

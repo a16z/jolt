@@ -1,45 +1,39 @@
 //! Top-level verifier entry point.
 
 use common::jolt_device::JoltDevice;
-use jolt_claims::protocols::jolt::{
-    JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
-};
-use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{Field, RingAccumulator, WithAccumulator};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use jolt_claims::protocols::jolt::JoltRelationId;
+#[cfg(not(feature = "akita"))]
+use jolt_crypto::HomomorphicCommitment;
+use jolt_crypto::VectorCommitment;
+use jolt_field::Field;
+#[cfg(not(feature = "akita"))]
+use jolt_field::{RingAccumulator, WithAccumulator};
+use jolt_openings::CommitmentScheme;
+#[cfg(not(feature = "akita"))]
+use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{
+    append_labeled, AppendToTranscript, Label, LabelWithCount, Transcript, U64Word,
+};
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig},
+    config::{validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG},
     preprocessing::JoltVerifierPreprocessing,
-    proof::{JoltCommitments, JoltProof},
+    proof::JoltProof,
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
-        zk::{blindfold, inputs::BlindFoldInputs},
         CommittedProgramSchedule, PrecommittedSchedule,
     },
     VerifierError,
 };
 
-/// Proof-derived configuration that participates in the Fiat-Shamir preamble.
-/// Bundles the parameters [`absorb_transcript_preamble`] reads from the proof so
-/// the modular prover can seed an identical transcript before it has a finished
-/// [`JoltProof`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProofTranscriptConfig {
-    pub rw_config: JoltReadWriteConfig,
-    pub one_hot_config: JoltOneHotConfig,
-    pub trace_polynomial_order: TracePolynomialOrder,
-}
-
+#[cfg(not(feature = "akita"))]
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    zk: bool,
 ) -> Result<(), VerifierError>
 where
     F: Field + AppendToTranscript,
@@ -52,19 +46,17 @@ where
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    let PreStage1VerifierState {
-        checked,
-        mut transcript,
-    } = verify_until_stage1::<PCS, VC, T, _>(
+    use crate::stages::zk::{blindfold, inputs::BlindFoldInputs};
+
+    let (checked, mut transcript) = validate_and_seed_transcript::<PCS, VC, T, _>(
         preprocessing,
         public_io,
         proof,
         trusted_advice_commitment,
-        zk,
     )?;
 
-    // Built once for the whole verification and shared by the stages that read the
-    // RA layout (5–8), instead of each rebuilding the same dimensions.
+    // Built once for the whole verification and shared by the stages that read
+    // the RA layout (5-8), instead of each rebuilding the same dimensions.
     let formula_dimensions = crate::stages::build_formula_dimensions(
         proof,
         preprocessing,
@@ -163,34 +155,142 @@ where
         return Ok(());
     }
 
-    let stage8::Stage8Output::Clear(_stage8) = stage8 else {
+    let stage8::Stage8Output::Clear = stage8 else {
         return Err(VerifierError::ExpectedClearProof { field: "stage8" });
     };
 
     Ok(())
 }
 
-/// Verifier state captured immediately before stage 1, after input validation
-/// and the preamble/commitment absorption. The modular prover drives the staged
-/// verification itself, so it reuses this entry point to obtain the checked
-/// inputs and a transcript seeded identically to [`verify`].
-#[derive(Debug)]
-pub struct PreStage1VerifierState<T> {
-    pub checked: CheckedInputs,
-    pub transcript: T,
+/// The packed (akita) verification path: the same stage spine, with the
+/// inc-virtualization phase opening the stage-6 region, the reconstruction
+/// phase opening the stage-8 region, and the joint packed opening (one
+/// cross-object reduction sumcheck, then one PCS opening per commitment
+/// object) in place of the homomorphic RLC batch. No homomorphism bounds —
+/// and no zk tail, since no zk protocol exists over the packed axis.
+#[cfg(feature = "akita")]
+pub fn verify<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+) -> Result<(), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + AppendToTranscript,
+    T: Transcript<Challenge = F>,
+{
+    let (checked, mut transcript) = validate_and_seed_transcript::<PCS, VC, T, _>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+    )?;
+
+    // Built once for the whole verification and shared by the stages that read
+    // the RA layout (5-8), instead of each rebuilding the same dimensions.
+    let formula_dimensions = crate::stages::build_formula_dimensions(
+        proof,
+        preprocessing,
+        &checked,
+        checked.trace_length.ilog2() as usize,
+        JoltRelationId::InstructionReadRaf,
+    )?;
+
+    let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
+    let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
+    let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
+    let stage4 = stage4::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        &stage2,
+        &stage3,
+    )?;
+    let stage5 = stage5::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage2,
+        &stage4,
+    )?;
+    let inc_virtualization = stage6a::inc_virtualization::verify(
+        &checked,
+        &proof.stages.inc_virtualization_sumcheck_proof,
+        &proof.clear_claims()?.inc_virtualization,
+        &mut transcript,
+        stage2.clear()?,
+        stage4.clear()?,
+        stage5.clear()?,
+    )?;
+    let stage6a = stage6a::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+        &inc_virtualization,
+    )?;
+    let stage6b = stage6b::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+        &stage6a,
+        &inc_virtualization,
+    )?;
+    let stage7 = stage7::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage4,
+        &stage6b,
+        &inc_virtualization,
+    )?;
+    let stage8 = stage8::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &formula_dimensions,
+        trusted_advice_commitment,
+        &mut transcript,
+        &stage6b,
+        &stage7,
+    )?;
+
+    let stage8::Stage8Output::Clear = stage8 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
+    };
+
+    Ok(())
 }
 
-/// Runs the [`verify`] preamble — input validation, proof-consistency and
-/// config checks, then preamble + commitment absorption — and returns the
-/// pre-stage-1 state. [`verify`] delegates to this function, so both paths share
-/// one absorption order and cannot diverge.
-pub fn verify_until_stage1<PCS, VC, T, ZkProof>(
+/// Validates the inputs and proof shape, then seeds the Fiat-Shamir transcript
+/// with the preamble and commitment absorptions. Every consumer of the staged
+/// verification — [`verify`] on both builds, and the zk audit harness — starts
+/// here, so there is exactly one absorption order.
+pub fn validate_and_seed_transcript<PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    zk: bool,
-) -> Result<PreStage1VerifierState<T>, VerifierError>
+) -> Result<(CheckedInputs, T), VerifierError>
 where
     PCS: CommitmentScheme,
     PCS::Output: AppendToTranscript,
@@ -203,10 +303,9 @@ where
         public_io,
         proof,
         trusted_advice_commitment.is_some(),
-        zk,
     )?;
     validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+    validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -217,10 +316,7 @@ where
         &mut transcript,
     );
 
-    Ok(PreStage1VerifierState {
-        checked,
-        transcript,
-    })
+    Ok((checked, transcript))
 }
 
 #[expect(
@@ -245,54 +341,27 @@ pub fn validate_inputs<PCS, VC, ZkProof>(
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment_present: bool,
-    zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    validate_inputs_from_parts(
-        preprocessing,
-        public_io,
-        proof.trace_length,
-        proof.ram_K,
-        proof.trace_polynomial_order,
-        proof.one_hot_config,
-        trusted_advice_commitment_present,
-        proof.untrusted_advice_commitment.is_some(),
-        zk,
-    )
-}
-
-/// Validates the verifier inputs from the individual proof-derived parameters,
-/// rather than a finished [`JoltProof`]. The modular prover calls this before it
-/// has assembled a proof, so it must supply `trace_length`, `ram_k`,
-/// `trace_polynomial_order`, and `one_hot_config` directly, along with whether
-/// the trusted/untrusted advice commitments are present.
-///
-/// [`validate_inputs`] delegates here, so the two paths produce identical
-/// [`CheckedInputs`] — including the [`PrecommittedSchedule`] — given matching
-/// parameters.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Mirrors the proof-derived inputs validate_inputs threads through; bundling them would obscure the FS-critical parameter set."
-)]
-pub fn validate_inputs_from_parts<PCS, VC>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    public_io: &JoltDevice,
-    trace_length: usize,
-    ram_k: usize,
-    trace_polynomial_order: TracePolynomialOrder,
-    one_hot_config: JoltOneHotConfig,
-    trusted_advice_commitment_present: bool,
-    untrusted_advice_commitment_present: bool,
-    zk: bool,
-) -> Result<CheckedInputs, VerifierError>
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let memory_layout = preprocessing.program.memory_layout();
+    let trace_length = proof.trace_length;
+    let ram_k = proof.ram_K;
+    let trace_polynomial_order = proof.trace_polynomial_order;
+    let one_hot_config = proof.one_hot_config;
+    let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
+    // The zk axis is fixed at compile time; every branch below const-folds.
+    let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
+    let vc_capacity = if zk {
+        Some(validate_zk_vector_commitment_setup::<PCS, VC>(
+            preprocessing,
+        )?)
+    } else {
+        None
+    };
+    let program = &preprocessing.program;
+    let memory_layout = program.memory_layout();
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
     }
@@ -313,18 +382,16 @@ where
         });
     }
 
-    if !trace_length.is_power_of_two()
-        || trace_length > preprocessing.program.max_padded_trace_length()
-    {
+    if !trace_length.is_power_of_two() || trace_length > program.max_padded_trace_length() {
         return Err(VerifierError::InvalidTraceLength {
             got: trace_length,
-            max: preprocessing.program.max_padded_trace_length(),
+            max: program.max_padded_trace_length(),
         });
     }
 
     let min_ram_k = compute_min_ram_k(
-        preprocessing.program.min_bytecode_address(),
-        preprocessing.program.program_image_len_words(),
+        program.min_bytecode_address(),
+        program.program_image_len_words(),
         memory_layout,
     )
     .map_err(|error| VerifierError::InvalidMemoryLayout {
@@ -342,14 +409,6 @@ where
         });
     }
 
-    let vc_capacity = if zk {
-        Some(validate_zk_vector_commitment_setup::<PCS, VC>(
-            preprocessing,
-        )?)
-    } else {
-        None
-    };
-
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(
         normalized_public_io
@@ -359,27 +418,27 @@ where
             .map_or(0, |position| position + 1),
     );
 
-    let committed_program = preprocessing
-        .program
+    let committed_program = program
         .committed()
         .map(|committed| {
+            let meta = &committed.meta;
             let program_image_start_index = memory_layout
-                .remapped_word_address(committed.meta.min_bytecode_address)
+                .remapped_word_address(meta.min_bytecode_address)
                 .map_err(|error| VerifierError::InvalidCommittedProgram {
                     reason: error.to_string(),
                 })?;
-            if committed.meta.entry_bytecode_index >= committed.meta.bytecode_len {
+            if meta.entry_bytecode_index >= meta.bytecode_len {
                 return Err(VerifierError::InvalidCommittedProgram {
                     reason: format!(
                         "entry bytecode index {} is out of range for bytecode length {}",
-                        committed.meta.entry_bytecode_index, committed.meta.bytecode_len
+                        meta.entry_bytecode_index, meta.bytecode_len
                     ),
                 });
             }
             Ok(CommittedProgramSchedule {
-                bytecode_len: committed.meta.bytecode_len,
+                bytecode_len: meta.bytecode_len,
                 bytecode_chunk_count: committed.bytecode_chunk_count(),
-                program_image_len_words: committed.meta.program_image_len_words,
+                program_image_len_words: meta.program_image_len_words,
                 program_image_start_index: program_image_start_index as usize,
             })
         })
@@ -402,7 +461,7 @@ where
         zk,
         trace_length,
         ram_K: ram_k,
-        entry_address: preprocessing.program.entry_address(),
+        entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -430,6 +489,87 @@ where
     Ok(got)
 }
 
+pub fn validate_proof_consistency<PCS, VC, ZkProof>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    zk: bool,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let stage_proofs = [
+        (
+            &proof.stages.stage1_uni_skip_first_round_proof,
+            "stage1_uni_skip_first_round_proof",
+        ),
+        (&proof.stages.stage1_sumcheck_proof, "stage1_sumcheck_proof"),
+        (
+            &proof.stages.stage2_uni_skip_first_round_proof,
+            "stage2_uni_skip_first_round_proof",
+        ),
+        (&proof.stages.stage2_sumcheck_proof, "stage2_sumcheck_proof"),
+        (&proof.stages.stage3_sumcheck_proof, "stage3_sumcheck_proof"),
+        (&proof.stages.stage4_sumcheck_proof, "stage4_sumcheck_proof"),
+        (&proof.stages.stage5_sumcheck_proof, "stage5_sumcheck_proof"),
+        #[cfg(feature = "akita")]
+        (
+            &proof.stages.inc_virtualization_sumcheck_proof,
+            "inc_virtualization_sumcheck_proof",
+        ),
+        (
+            &proof.stages.stage6a_sumcheck_proof,
+            "stage6a_sumcheck_proof",
+        ),
+        (
+            &proof.stages.stage6b_sumcheck_proof,
+            "stage6b_sumcheck_proof",
+        ),
+        (&proof.stages.stage7_sumcheck_proof, "stage7_sumcheck_proof"),
+    ];
+    for (stage_proof, field) in stage_proofs {
+        validate_sumcheck_representation(stage_proof, field, zk)?;
+    }
+    #[cfg(feature = "akita")]
+    if let Some(reconstruction) = proof.stages.reconstruction_sumcheck_proof.as_ref() {
+        validate_sumcheck_representation(reconstruction, "reconstruction_sumcheck_proof", zk)?;
+    }
+
+    match (&proof.claims, zk) {
+        (crate::proof::JoltProofClaims::Clear(_), false)
+        | (crate::proof::JoltProofClaims::Zk { .. }, true) => {}
+        (crate::proof::JoltProofClaims::Clear(_), true) => {
+            return Err(VerifierError::UnexpectedOpeningClaims);
+        }
+        (crate::proof::JoltProofClaims::Zk { .. }, false) => {
+            return Err(VerifierError::UnexpectedBlindFoldProof);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_sumcheck_representation<F, RoundCommitment>(
+    proof: &SumcheckProof<F, RoundCommitment>,
+    field: &'static str,
+    zk: bool,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+{
+    if proof.is_committed() == zk {
+        return Ok(());
+    }
+
+    if zk {
+        Err(VerifierError::ExpectedCommittedProof { field })
+    } else {
+        Err(VerifierError::ExpectedClearProof { field })
+    }
+}
+
+/// Absorbs the Jolt Fiat-Shamir preamble: the preprocessing digest, public I/O
+/// metadata, and the proof-derived structural parameters. WARNING: the byte
+/// order here is consensus-critical — the prover's preamble must absorb
+/// identically or the transcripts diverge.
 pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -438,29 +578,6 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
-{
-    absorb_transcript_preamble(
-        checked,
-        ProofTranscriptConfig {
-            rw_config: proof.rw_config,
-            one_hot_config: proof.one_hot_config,
-            trace_polynomial_order: proof.trace_polynomial_order,
-        },
-        transcript,
-    );
-}
-
-/// Absorbs the Jolt Fiat-Shamir preamble: the preprocessing digest, public I/O
-/// metadata, and the proof-derived structural parameters carried by
-/// [`ProofTranscriptConfig`]. WARNING: the byte order here is consensus-critical
-/// — it must stay identical to the order [`verify`] uses (via [`absorb_preamble`])
-/// or prover and verifier transcripts diverge.
-pub fn absorb_transcript_preamble<T>(
-    checked: &CheckedInputs,
-    config: ProofTranscriptConfig,
-    transcript: &mut T,
-) where
-    T: Transcript,
 {
     let public_io = &checked.public_io;
     absorb_labeled_bytes(
@@ -488,40 +605,46 @@ pub fn absorb_transcript_preamble<T>(
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase1_num_rounds",
-        config.rw_config.ram_rw_phase1_num_rounds as u64,
+        proof.rw_config.ram_rw_phase1_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase2_num_rounds",
-        config.rw_config.ram_rw_phase2_num_rounds as u64,
+        proof.rw_config.ram_rw_phase2_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase1_num_rounds",
-        config.rw_config.registers_rw_phase1_num_rounds as u64,
+        proof.rw_config.registers_rw_phase1_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase2_num_rounds",
-        config.rw_config.registers_rw_phase2_num_rounds as u64,
+        proof.rw_config.registers_rw_phase2_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"log_k_chunk",
-        config.one_hot_config.log_k_chunk as u64,
+        proof.one_hot_config.log_k_chunk as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"lookups_ra_virtual_log_k_chunk",
-        config.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
+        proof.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"dory_layout",
-        config.trace_polynomial_order.transcript_scalar(),
+        proof.trace_polynomial_order.transcript_scalar(),
     );
 }
 
+/// Absorbs the commitments in the consensus-critical order — the proof-carried
+/// polynomial commitments, the optional advice commitments, then the committed
+/// program's preprocessing-held commitments. WARNING: the prover must absorb
+/// identically or the transcripts diverge. On the `akita` build the order is
+/// the canonical commitment-object order: `W_jolt`, untrusted advice, trusted
+/// advice, `W_prog`.
 pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -533,74 +656,52 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    absorb_transcript_commitments(
-        &proof.commitments,
-        proof.untrusted_advice_commitment.as_ref(),
-        trusted_advice_commitment,
-        transcript,
-    );
-    if let Some(committed) = preprocessing.program.committed() {
-        for commitment in &committed.bytecode_chunk_commitments {
-            append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-            transcript.append(commitment);
+    #[cfg(not(feature = "akita"))]
+    {
+        let mut absorb_commitment = |commitment: &PCS::Output| {
+            append_labeled(transcript, b"commitment", commitment);
+        };
+        absorb_commitment(&proof.commitments.rd_inc);
+        absorb_commitment(&proof.commitments.ram_inc);
+        for commitment in &proof.commitments.ra.instruction {
+            absorb_commitment(commitment);
         }
-        append_payload_label(
-            transcript,
-            b"program_image_commitment",
-            &committed.program_image_commitment,
-        );
-        transcript.append(&committed.program_image_commitment);
+        for commitment in &proof.commitments.ra.ram {
+            absorb_commitment(commitment);
+        }
+        for commitment in &proof.commitments.ra.bytecode {
+            absorb_commitment(commitment);
+        }
+        if let Some(commitment) = proof.untrusted_advice_commitment.as_ref() {
+            append_labeled(transcript, b"untrusted_advice", commitment);
+        }
+        if let Some(commitment) = trusted_advice_commitment {
+            append_labeled(transcript, b"trusted_advice", commitment);
+        }
+        if let Some(committed) = preprocessing.program.committed() {
+            for commitment in &committed.bytecode_chunk_commitments {
+                append_labeled(transcript, b"bytecode_chunk_commit", commitment);
+            }
+            append_labeled(
+                transcript,
+                b"program_image_commitment",
+                &committed.program_image_commitment,
+            );
+        }
     }
-}
-
-/// Absorbs the proof-derived polynomial commitments (increment, one-hot `ra`,
-/// and optional advice commitments) in the consensus-critical order. WARNING:
-/// this covers only the commitments carried by the proof itself; committed
-/// program-image commitments live in the preprocessing and are absorbed
-/// separately by [`absorb_commitments`] immediately after this call.
-pub fn absorb_transcript_commitments<C, T>(
-    commitments: &JoltCommitments<C>,
-    untrusted_advice_commitment: Option<&C>,
-    trusted_advice_commitment: Option<&C>,
-    transcript: &mut T,
-) where
-    C: AppendToTranscript,
-    T: Transcript,
-{
-    let mut absorb_commitment = |commitment: &C| {
-        append_payload_label(transcript, b"commitment", commitment);
-        transcript.append(commitment);
-    };
-    absorb_commitment(&commitments.rd_inc);
-    absorb_commitment(&commitments.ram_inc);
-    for commitment in &commitments.ra.instruction {
-        absorb_commitment(commitment);
-    }
-    for commitment in &commitments.ra.ram {
-        absorb_commitment(commitment);
-    }
-    for commitment in &commitments.ra.bytecode {
-        absorb_commitment(commitment);
-    }
-    if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
-        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
-        transcript.append(untrusted_advice_commitment);
-    }
-    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
-        transcript.append(trusted_advice_commitment);
-    }
-}
-
-fn append_payload_label<T, A>(transcript: &mut T, label: &'static [u8], payload: &A)
-where
-    T: Transcript,
-    A: AppendToTranscript,
-{
-    if let Some(len) = payload.transcript_payload_len() {
-        transcript.append(&LabelWithCount(label, len));
-    } else {
-        transcript.append(&Label(label));
+    #[cfg(feature = "akita")]
+    {
+        append_labeled(transcript, b"commitment", &proof.commitments);
+        if let Some(commitment) = proof.untrusted_advice_commitment.as_ref() {
+            append_labeled(transcript, b"untrusted_advice", commitment);
+        }
+        if let Some(commitment) = trusted_advice_commitment {
+            append_labeled(transcript, b"trusted_advice", commitment);
+        }
+        if let Some(committed) = preprocessing.program.committed() {
+            let commitment = &committed.w_prog_commitment;
+            append_labeled(transcript, b"w_prog_commitment", commitment);
+        }
     }
 }
 
@@ -614,81 +715,15 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     transcript.append(&U64Word(value));
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    zk: bool,
-) -> Result<(), VerifierError>
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let stage_proofs = [
-        (
-            &proof.stages.stage1_uni_skip_first_round_proof,
-            "stage1_uni_skip_first_round_proof",
-        ),
-        (&proof.stages.stage1_sumcheck_proof, "stage1_sumcheck_proof"),
-        (
-            &proof.stages.stage2_uni_skip_first_round_proof,
-            "stage2_uni_skip_first_round_proof",
-        ),
-        (&proof.stages.stage2_sumcheck_proof, "stage2_sumcheck_proof"),
-        (&proof.stages.stage3_sumcheck_proof, "stage3_sumcheck_proof"),
-        (&proof.stages.stage4_sumcheck_proof, "stage4_sumcheck_proof"),
-        (&proof.stages.stage5_sumcheck_proof, "stage5_sumcheck_proof"),
-        (
-            &proof.stages.stage6a_sumcheck_proof,
-            "stage6a_sumcheck_proof",
-        ),
-        (
-            &proof.stages.stage6b_sumcheck_proof,
-            "stage6b_sumcheck_proof",
-        ),
-        (&proof.stages.stage7_sumcheck_proof, "stage7_sumcheck_proof"),
-    ];
-    for (stage_proof, field) in stage_proofs {
-        validate_sumcheck_representation(stage_proof, field, zk)?;
-    }
-
-    match (&proof.claims, zk) {
-        (crate::proof::JoltProofClaims::Clear(_), false)
-        | (crate::proof::JoltProofClaims::Zk { .. }, true) => {}
-        (crate::proof::JoltProofClaims::Clear(_), true) => {
-            return Err(VerifierError::UnexpectedOpeningClaims);
-        }
-        (crate::proof::JoltProofClaims::Zk { .. }, false) => {
-            return Err(VerifierError::UnexpectedBlindFoldProof);
-        }
-    }
-    Ok(())
-}
-
-fn validate_sumcheck_representation<F, RoundCommitment>(
-    proof: &SumcheckProof<F, RoundCommitment>,
-    field: &'static str,
-    zk: bool,
-) -> Result<(), VerifierError>
-where
-    F: Field,
-{
-    if proof.is_committed() == zk {
-        return Ok(());
-    }
-
-    if zk {
-        Err(VerifierError::ExpectedCommittedProof { field })
-    } else {
-        Err(VerifierError::ExpectedClearProof { field })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
+    #[cfg(feature = "zk")]
+    use jolt_crypto::PedersenSetup;
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen, VectorCommitmentOpening};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::MultilinearPoly;
@@ -790,6 +825,10 @@ mod tests {
         assert!(validate_proof_consistency(&proof, false).is_ok());
     }
 
+    /// A zk proof cannot exist on the akita build (`zk` and `akita` are
+    /// mutually exclusive), so the accept case is base-only; the reject cases
+    /// below run on both builds.
+    #[cfg(not(feature = "akita"))]
     #[test]
     fn accepts_zk_proof_consistency() {
         let proof = proof_with_zk(true, zk_claims());
@@ -847,7 +886,7 @@ mod tests {
         };
         let proof = proof_with_zk(false, clear_claims());
 
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false).unwrap();
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
 
         assert_eq!(checked.public_io.inputs, vec![1, 2]);
         assert_eq!(checked.public_io.outputs, vec![3]);
@@ -855,7 +894,7 @@ mod tests {
         assert_eq!(checked.ram_K, proof.ram_K);
 
         public_io.outputs = vec![0, 0];
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false).unwrap();
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
         assert!(checked.public_io.outputs.is_empty());
     }
 
@@ -866,7 +905,7 @@ mod tests {
         let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::MemoryLayoutMismatch)
         ));
     }
@@ -882,7 +921,7 @@ mod tests {
         proof.ram_K = 2;
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::InvalidRamK { got: 2, min: 4, .. })
         ));
     }
@@ -898,7 +937,7 @@ mod tests {
         proof.ram_K = 1 << 20;
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::InvalidRamK {
                 got,
                 min: 4,
@@ -907,6 +946,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "zk")]
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let preprocessing = test_preprocessing();
@@ -917,11 +957,12 @@ mod tests {
         let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, true),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::MissingVectorCommitmentSetup)
         ));
     }
 
+    #[cfg(feature = "zk")]
     #[test]
     fn validate_inputs_rejects_small_zk_vector_commitment_setup() {
         let mut preprocessing = test_preprocessing();
@@ -936,17 +977,27 @@ mod tests {
         let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false, true),
+            validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::InvalidVectorCommitmentCapacity { got: 1, .. })
         ));
     }
 
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof {
-            protocol: JoltProtocolConfig::for_zk(claims.is_zk()),
+            protocol: crate::config::JoltProtocolConfig::for_zk(claims.is_zk()),
+            #[cfg(not(feature = "akita"))]
             commitments: test_commitments(),
+            #[cfg(feature = "akita")]
+            commitments: TestCommitment,
             stages: stage_proofs(is_zk),
+            #[cfg(not(feature = "akita"))]
             joint_opening_proof: (),
+            #[cfg(feature = "akita")]
+            joint_opening_proof: jolt_openings::PackedOpeningProof {
+                round_polynomials: Vec::new(),
+                evaluations: Vec::new(),
+                openings: Vec::new(),
+            },
             untrusted_advice_commitment: None,
             claims,
             trace_length: 1,
@@ -965,6 +1016,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "akita"))]
     fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
         crate::proof::JoltCommitments::new(
             TestCommitment,
@@ -984,6 +1036,21 @@ mod tests {
             stage1: stage1::outputs::Stage1OutputClaims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
+            },
+            #[cfg(feature = "akita")]
+            inc_virtualization: stage6a::inc_virtualization::IncVirtualizationPhaseOutputClaims {
+                inc_virtualization:
+                    jolt_claims::protocols::jolt::lattice::relations::inc_virtualization::IncVirtualizationOutputClaims {
+                        fused_inc: zero,
+                        store: zero,
+                    },
+            },
+            #[cfg(feature = "akita")]
+            reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims {
+                untrusted_advice: None,
+                trusted_advice: None,
+                bytecode: None,
+                program_image: None,
             },
             stage2: stage2::outputs::Stage2OutputClaims {
                 product_uniskip_output_claim: zero,
@@ -1084,11 +1151,21 @@ mod tests {
                 bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
                     bytecode_ra: Vec::new(),
                 },
+                #[cfg(not(feature = "akita"))]
                 booleanity: stage6b::outputs::BooleanityOutputClaims {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
+                #[cfg(feature = "akita")]
+                booleanity:
+                    jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
+                        instruction_ra: Vec::new(),
+                        bytecode_ra: Vec::new(),
+                        ram_ra: Vec::new(),
+                        unsigned_inc_chunks: Vec::new(),
+                        unsigned_inc_msb: zero,
+                    },
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
                 },
@@ -1099,6 +1176,7 @@ mod tests {
                     stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                         committed_instruction_ra: Vec::new(),
                     },
+                #[cfg(not(feature = "akita"))]
                 inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                     ram_inc: zero,
                     rd_inc: zero,
@@ -1114,6 +1192,12 @@ mod tests {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
+                    },
+                #[cfg(feature = "akita")]
+                chunk_reconstruction:
+                    jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionOutputClaims {
+                        chunks: Vec::new(),
+                        msb: zero,
                     },
                 trusted_advice: None,
                 untrusted_advice: None,
@@ -1212,9 +1296,13 @@ mod tests {
             stage3_sumcheck_proof: sumcheck_proof(is_zk),
             stage4_sumcheck_proof: sumcheck_proof(is_zk),
             stage5_sumcheck_proof: sumcheck_proof(is_zk),
+            #[cfg(feature = "akita")]
+            inc_virtualization_sumcheck_proof: sumcheck_proof(is_zk),
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
+            #[cfg(feature = "akita")]
+            reconstruction_sumcheck_proof: None,
         }
     }
 

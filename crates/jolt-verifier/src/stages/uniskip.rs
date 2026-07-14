@@ -91,7 +91,6 @@ pub(crate) fn verify_clear<F, C, T>(
 ) -> Result<F, VerifierError>
 where
     F: Field,
-    C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let reduction = proof

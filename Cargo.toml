@@ -274,12 +274,12 @@ dory = { package = "dory-pcs", version = "0.4.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "33169b8d5c922d644393871cbb80da84826ac4cd", default-features = false }
+akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "33169b8d5c922d644393871cbb80da84826ac4cd", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "33169b8d5c922d644393871cbb80da84826ac4cd", default-features = false }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "33169b8d5c922d644393871cbb80da84826ac4cd", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "33169b8d5c922d644393871cbb80da84826ac4cd", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "33169b8d5c922d644393871cbb80da84826ac4cd", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -385,7 +385,7 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.5", features = ["rayon", "serde"] }
+reth-primitives-traits = { version = "0.4", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }

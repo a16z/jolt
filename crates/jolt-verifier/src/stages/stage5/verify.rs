@@ -89,7 +89,43 @@ where
     // claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if checked.zk {
+    if !checked.zk {
+        let claims = &proof.clear_claims()?.stage5;
+        let stage2 = stage2.clear()?;
+        let stage4 = stage4.clear()?;
+        sumchecks.validate_output_claims(claims)?;
+
+        // The reduced lookup output aliases the product remainder's lookup output
+        // (same opening point and value); stage 2's generated `validate_aliases`
+        // enforced that equality, so the instruction read-RAF wiring reads the
+        // reduced wire cell directly.
+        let input_values =
+            stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
+        let input_points =
+            stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
+
+        let output_points = sumchecks.run_clear(
+            &input_values,
+            &input_points,
+            &challenges,
+            claims,
+            &proof.stages.stage5_sumcheck_proof,
+            transcript,
+            5,
+        )?;
+
+        sumchecks.append_output_claims(transcript, claims);
+
+        let instruction_r_address = output_points.instruction_r_address();
+        return Ok(Stage5Output::Clear(Stage5ClearOutput {
+            challenges,
+            output_values: claims.clone(),
+            output_points,
+            instruction_r_address,
+        }));
+    }
+
+    {
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
         let consistency = sumchecks.verify_zk(&proof.stages.stage5_sumcheck_proof, transcript)?;
@@ -110,57 +146,12 @@ where
             sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
         let instruction_r_address = output_points.instruction_r_address();
 
-        return Ok(Stage5Output::Zk(Stage5ZkOutput {
+        Ok(Stage5Output::Zk(Stage5ZkOutput {
             challenges,
             batch_consistency: consistency,
             batch_output_claims,
             output_points,
             instruction_r_address,
-        }));
+        }))
     }
-
-    let stage2 = stage2.clear()?;
-    let stage4 = stage4.clear()?;
-    let claims = &proof.clear_claims()?.stage5;
-    sumchecks.validate_output_claims(claims)?;
-
-    // The reduced lookup output aliases the product remainder's lookup output
-    // (same opening point and value); stage 2's generated `validate_aliases`
-    // enforced that equality, so the instruction read-RAF wiring reads the
-    // reduced wire cell directly.
-    let input_values =
-        stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
-    let input_points =
-        stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
-
-    let batch = sumchecks.verify_clear(
-        &input_values,
-        &challenges,
-        &proof.stages.stage5_sumcheck_proof,
-        transcript,
-    )?;
-
-    let output_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        claims,
-        &output_points,
-        &challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 5 });
-    }
-
-    sumchecks.append_output_claims(transcript, claims);
-
-    let instruction_r_address = output_points.instruction_r_address();
-    Ok(Stage5Output::Clear(Stage5ClearOutput {
-        challenges,
-        output_values: claims.clone(),
-        output_points,
-        instruction_r_address,
-    }))
 }

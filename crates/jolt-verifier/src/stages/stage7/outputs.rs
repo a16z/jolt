@@ -8,6 +8,8 @@ use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 use super::advice_address_phase::{TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase};
+#[cfg(feature = "akita")]
+use super::chunk_reconstruction::ChunkReconstruction;
 use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
@@ -34,6 +36,11 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 #[derive(SumcheckBatch)]
 pub struct Stage7Sumchecks<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
+    /// Packed path: the unsigned-inc chunk reconstruction, producing the
+    /// chunk/msb final claims (both draw one instance gamma, in declaration
+    /// order).
+    #[cfg(feature = "akita")]
+    pub chunk_reconstruction: ChunkReconstruction<F>,
     /// Final `TrustedAdvice` claim from the trusted advice reduction's address
     /// phase; present only when that phase runs.
     pub trusted_advice: Option<TrustedAdviceAddressPhase<F>>,
@@ -62,6 +69,13 @@ impl<F: Field> Stage7OutputPoints<F> {
             .or_else(|| self.hamming_weight_claim_reduction.bytecode_ra.first())
             .or_else(|| self.hamming_weight_claim_reduction.ram_ra.first())
             .map(Vec::as_slice)
+    }
+
+    /// The chunk reconstruction's shared `(address ‖ cycle)` opening point —
+    /// the packed final point of the `UnsignedIncChunk` slots.
+    #[cfg(feature = "akita")]
+    pub fn chunk_reconstruction_opening_point(&self) -> Option<&[F]> {
+        self.chunk_reconstruction.chunks.first().map(Vec::as_slice)
     }
 
     /// The advice address-phase final opening point for `kind`, present only when
@@ -131,6 +145,13 @@ pub enum Stage7Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage7Output<F, C> {
+    pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage7" }),
+        }
+    }
+
     pub fn zk(&self) -> Result<&Stage7ZkOutput<F, C>, crate::VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
@@ -210,16 +231,49 @@ mod tests {
             )
         };
 
+        // Sentinels are sequential in the canonical append order. Under akita
+        // the chunk-reconstruction member's cells (its chunks then the msb)
+        // follow the hamming openings, shifting the later sentinels by two.
+        #[cfg(not(feature = "akita"))]
+        let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
+            (5, 6, 7, 8, 9, 6, 9);
+        #[cfg(feature = "akita")]
+        let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
+            (7, 8, 9, 10, 11, 8, 11);
+        #[cfg(feature = "akita")]
+        let chunk_reconstruction_instance = || {
+            use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+            use jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionDimensions;
+            super::super::chunk_reconstruction::ChunkReconstruction::new(
+                ChunkReconstructionDimensions::new(16, TraceDimensions::new(4)).unwrap(),
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+        #[cfg(feature = "akita")]
+        let chunk_reconstruction_claims = || {
+            jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionOutputClaims {
+                chunks: vec![fr(5)],
+                msb: fr(6),
+            }
+        };
+
         let hamming = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![fr(1), fr(2)],
             bytecode_ra: vec![fr(3)],
             ram_ra: vec![fr(4)],
         };
-        let trusted_advice = TrustedAdviceAddressPhaseOutputClaims { trusted: fr(5) };
-        let untrusted_advice = UntrustedAdviceAddressPhaseOutputClaims { untrusted: fr(6) };
+        let trusted_advice = TrustedAdviceAddressPhaseOutputClaims {
+            trusted: fr(trusted),
+        };
+        let untrusted_advice = UntrustedAdviceAddressPhaseOutputClaims {
+            untrusted: fr(untrusted),
+        };
 
         let without_committed_sumchecks = Stage7Sumchecks::<Fr> {
             hamming_weight_claim_reduction: hamming_instance(),
+            #[cfg(feature = "akita")]
+            chunk_reconstruction: chunk_reconstruction_instance(),
             trusted_advice: Some(trusted_instance()),
             untrusted_advice: Some(untrusted_instance()),
             bytecode_address_phase: None,
@@ -227,6 +281,8 @@ mod tests {
         };
         let without_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming.clone(),
+            #[cfg(feature = "akita")]
+            chunk_reconstruction: chunk_reconstruction_claims(),
             trusted_advice: Some(trusted_advice.clone()),
             untrusted_advice: Some(untrusted_advice.clone()),
             bytecode_address_phase: None,
@@ -234,11 +290,13 @@ mod tests {
         };
         assert_eq!(
             without_committed_sumchecks.opening_values(&without_committed),
-            (1..=6).map(fr).collect::<Vec<_>>()
+            (1..=plain_last).map(fr).collect::<Vec<_>>()
         );
 
         let with_committed_sumchecks = Stage7Sumchecks::<Fr> {
             hamming_weight_claim_reduction: hamming_instance(),
+            #[cfg(feature = "akita")]
+            chunk_reconstruction: chunk_reconstruction_instance(),
             trusted_advice: Some(trusted_instance()),
             untrusted_advice: Some(untrusted_instance()),
             bytecode_address_phase: Some(BytecodeReductionAddressPhase::new(
@@ -254,18 +312,20 @@ mod tests {
         };
         let with_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming,
+            #[cfg(feature = "akita")]
+            chunk_reconstruction: chunk_reconstruction_claims(),
             trusted_advice: Some(trusted_advice),
             untrusted_advice: Some(untrusted_advice),
             bytecode_address_phase: Some(BytecodeReductionAddressPhaseOutputClaims {
-                chunks: vec![fr(7), fr(8)],
+                chunks: vec![fr(chunk1), fr(chunk2)],
             }),
             program_image_address_phase: Some(ProgramImageReductionAddressPhaseOutputClaims {
-                program_image: fr(9),
+                program_image: fr(image),
             }),
         };
         assert_eq!(
             with_committed_sumchecks.opening_values(&with_committed),
-            (1..=9).map(fr).collect::<Vec<_>>()
+            (1..=committed_last).map(fr).collect::<Vec<_>>()
         );
     }
 

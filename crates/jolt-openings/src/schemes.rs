@@ -16,10 +16,6 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::claims::{EvaluationClaim, VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
-use crate::packing::{
-    prove_reduction_sumcheck, verify_reduction_sumcheck, PackedBatchProof, PrefixPackedProverSetup,
-    PrefixPackedStatement, PrefixPackedVerifierSetup,
-};
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
 pub trait CommitmentScheme: Commitment {
@@ -61,6 +57,38 @@ pub trait CommitmentScheme: Commitment {
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
+
+    /// Opens every member of one commitment group at a shared point in a
+    /// single proof. Only schemes with a native same-point batch (e.g. Akita)
+    /// support this; the hint must be the group commit's hint covering all
+    /// members.
+    fn open_batch(
+        _polynomials: &[&dyn MultilinearPoly<Self::Field>],
+        _point: &[Self::Field],
+        _evaluations: &[Self::Field],
+        _setup: &Self::ProverSetup,
+        _hint: Self::OpeningHint,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<Self::Proof, OpeningsError> {
+        Err(OpeningsError::InvalidBatch(
+            "this commitment scheme has no native same-point batch opening".to_owned(),
+        ))
+    }
+
+    /// Verifies a single proof opening every member of one commitment group
+    /// at a shared point.
+    fn verify_batch(
+        _commitment: &Self::Output,
+        _point: &[Self::Field],
+        _evaluations: &[Self::Field],
+        _proof: &Self::Proof,
+        _setup: &Self::VerifierSetup,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError> {
+        Err(OpeningsError::InvalidBatch(
+            "this commitment scheme has no native same-point batch opening".to_owned(),
+        ))
+    }
 }
 
 /// C = Σ s_i · C_i.
@@ -235,8 +263,7 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// - [`Statement`](Self::Statement) is the public input both sides agree on
 ///   and bind to the transcript: the opening claims plus the commitments they
 ///   refer to. Its shape is scheme-specific — [`HomomorphicBatch`] carries
-///   one commitment per claim, [`PackedBatch`] one packed commitment for all
-///   claims.
+///   one commitment per claim.
 /// - [`Polynomials`](Self::Polynomials) are the borrowed prover-side
 ///   polynomial sources backing the statement; the verifier never sees them.
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
@@ -268,7 +295,7 @@ pub trait BatchOpeningScheme {
 
     fn verify_batch<T>(
         setup: &Self::VerifierSetup,
-        statement: Self::Statement,
+        statement: &Self::Statement,
         proof: &Self::Proof,
         transcript: &mut T,
     ) -> Result<(), OpeningsError>
@@ -316,14 +343,10 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
 }
 
 // Batching strategies are zero-sized marker types rather than impls on the
-// PCS itself: one PCS can support several strategies (a homomorphic scheme
-// can also be prefix-packed), and Rust cannot disambiguate two blanket
-// `impl BatchOpeningScheme for PCS` impls.
+// PCS itself: one PCS can support several strategies, and Rust cannot
+// disambiguate two blanket `impl BatchOpeningScheme for PCS` impls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HomomorphicBatch<PCS>(PhantomData<PCS>);
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PackedBatch<PCS, Id = u64>(PhantomData<(PCS, Id)>);
 
 type HomomorphicRlcSource<'a, F> = RlcSource<F, &'a (dyn MultilinearPoly<F> + 'a)>;
 
@@ -384,14 +407,14 @@ where
 
     fn verify_batch<T>(
         setup: &Self::VerifierSetup,
-        claims: Self::Statement,
+        claims: &Self::Statement,
         proof: &Self::Proof,
         transcript: &mut T,
     ) -> Result<(), OpeningsError>
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        let statement = HomomorphicBatchStatement::new(&claims)?;
+        let statement = HomomorphicBatchStatement::new(claims)?;
         statement.append_to_transcript(transcript);
         let scalars = transcript.challenge_scalar_powers(statement.claims.len());
         let joint_eval = statement.joint_eval(&scalars);
@@ -481,102 +504,6 @@ where
 {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         VerifierRlcClaims(self.claims).append_to_transcript(transcript);
-    }
-}
-
-impl<PCS, Id> BatchOpeningScheme for PackedBatch<PCS, Id>
-where
-    PCS: CommitmentScheme,
-    PCS::Output: AppendToTranscript,
-    Id: Clone + Debug + Eq + Ord + Send + Sync + 'static,
-{
-    type Field = PCS::Field;
-    type ProverSetup = PrefixPackedProverSetup<PCS, Id>;
-    type VerifierSetup = PrefixPackedVerifierSetup<PCS, Id>;
-    type Statement = PrefixPackedStatement<PCS::Field, Id, PCS::Output>;
-    /// The single packed polynomial backing every logical claim.
-    type Polynomials<'a>
-        = &'a (dyn MultilinearPoly<PCS::Field> + 'a)
-    where
-        Self: 'a;
-    type Hints = PCS::OpeningHint;
-    type Proof = PackedBatchProof<PCS::Field, PCS::Proof>;
-
-    fn prove_batch<'a, T>(
-        setup: &Self::ProverSetup,
-        statement: Self::Statement,
-        polynomial: Self::Polynomials<'a>,
-        hint: Self::Hints,
-        transcript: &mut T,
-    ) -> Result<Self::Proof, OpeningsError>
-    where
-        Self: 'a,
-        T: Transcript<Challenge = Self::Field>,
-    {
-        let packing = &setup.packing;
-        let statement = packing.prepare_statement(&statement)?;
-        if polynomial.num_vars() != packing.packed_num_vars {
-            return Err(OpeningsError::InvalidBatch(format!(
-                "packing polynomial has {} variables but prefix packing has {}",
-                polynomial.num_vars(),
-                packing.packed_num_vars
-            )));
-        }
-        statement.append_to_transcript(transcript);
-        let alpha = transcript.challenge_scalar_powers(statement.num_claims());
-        let selector = statement.selector_table(&alpha);
-        let packed_evaluations = polynomial.to_dense().into_owned();
-        let (round_polynomials, opening_point, opening_eval) =
-            prove_reduction_sumcheck(selector, packed_evaluations, transcript);
-        EvaluationClaim::new(opening_point.clone(), opening_eval).append_to_transcript(transcript);
-        let pcs_proof = PCS::open(
-            polynomial,
-            &opening_point,
-            opening_eval,
-            &setup.pcs,
-            Some(hint),
-            transcript,
-        )?;
-        Ok(PackedBatchProof {
-            round_polynomials,
-            opening_eval,
-            pcs_proof,
-        })
-    }
-
-    fn verify_batch<T>(
-        setup: &Self::VerifierSetup,
-        statement: Self::Statement,
-        proof: &Self::Proof,
-        transcript: &mut T,
-    ) -> Result<(), OpeningsError>
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-        let packing = &setup.packing;
-        let statement = packing.prepare_statement(&statement)?;
-        statement.append_to_transcript(transcript);
-        let alpha = transcript.challenge_scalar_powers(statement.num_claims());
-        let input_claim = statement.batched_claim(&alpha);
-        let (opening_point, final_claim) = verify_reduction_sumcheck(
-            &proof.round_polynomials,
-            packing.packed_num_vars,
-            input_claim,
-            transcript,
-        )?;
-        if final_claim != statement.selector_eval(&alpha, &opening_point) * proof.opening_eval {
-            return Err(OpeningsError::VerificationFailed);
-        }
-        EvaluationClaim::new(opening_point.clone(), proof.opening_eval)
-            .append_to_transcript(transcript);
-        PCS::verify(
-            statement.commitment,
-            &opening_point,
-            proof.opening_eval,
-            &proof.pcs_proof,
-            &setup.pcs,
-            transcript,
-        )
     }
 }
 
