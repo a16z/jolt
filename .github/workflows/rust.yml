@@ -67,6 +67,10 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita
       - name: cargo clippy -p jolt-verifier --features akita,packed
         run: cargo clippy -p jolt-verifier --all-targets --features akita,packed
+      - name: cargo clippy -p jolt-prover-legacy --features host,akita
+        run: cargo clippy -p jolt-prover-legacy --all-targets --features host,akita
+      - name: cargo clippy -p jolt-prover-legacy --features host,akita,packed
+        run: cargo clippy -p jolt-prover-legacy --all-targets --features host,akita,packed
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -172,6 +176,36 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests with zk feature
         run: cargo nextest run --release -p jolt-prover-legacy --features zk
+
+  test-prover-akita:
+    runs-on: ubuntu-latest
+    name: Test jolt-prover-legacy (akita)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run jolt-prover-legacy tests with akita feature
+        run: cargo nextest run --release -p jolt-prover-legacy --features akita
+      - name: Run akita e2e tests with the packed W_jolt strategy
+        run: cargo nextest run --release -p jolt-prover-legacy --features akita,packed -E 'test(_e2e_akita)'
 
   typos:
     runs-on: ubuntu-latest

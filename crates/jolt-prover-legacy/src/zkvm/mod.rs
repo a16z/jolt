@@ -69,13 +69,38 @@ pub mod config;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
+#[cfg(all(feature = "prover", feature = "akita", not(feature = "zk")))]
+pub mod packed;
+#[cfg(feature = "prover")]
+pub mod packed_witness;
 pub mod preprocessing;
 pub mod program;
 #[cfg(feature = "prover")]
+#[cfg_attr(
+    feature = "akita",
+    expect(
+        dead_code,
+        reason = "proof-conversion helpers are consumed again once the akita prove path lands"
+    )
+)]
 pub mod proof;
 #[cfg(feature = "prover")]
+#[cfg_attr(
+    feature = "akita",
+    expect(
+        dead_code,
+        reason = "proof-parts containers are consumed again once the akita prove path lands"
+    )
+)]
 pub(crate) mod proof_parts;
 #[cfg(feature = "prover")]
+#[cfg_attr(
+    feature = "akita",
+    expect(
+        dead_code,
+        reason = "the base prove pipeline is rewired by the akita prove path"
+    )
+)]
 pub mod prover;
 pub mod r1cs;
 pub mod ram;

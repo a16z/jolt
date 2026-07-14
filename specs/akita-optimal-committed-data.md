@@ -276,8 +276,8 @@ in a single sumcheck, after which groups open natively.
 
 | piece | where |
 |---|---|
-| member assembly (`assemble_one_hot_members`) | `jolt-prover-legacy/src/zkvm/lattice.rs` |
-| prove pipeline (`prove_packed`, member statements, groups) | `jolt-prover-legacy/src/zkvm/akita.rs` |
+| member assembly (`assemble_one_hot_members`) | `jolt-prover-legacy/src/zkvm/packed_witness.rs` |
+| prove pipeline (`prove_packed`, member statements, groups) | `jolt-prover-legacy/src/zkvm/packed.rs` |
 | leaf-point mapping (`one_hot_member_point`, symbol‖cycle → cycle‖lane; msb as lanes {0,1}) | `jolt-claims/src/protocols/jolt/lattice/packing.rs` |
 | reduction sumcheck + grouped native tail (`prove/verify_packed_openings`, `PackedObjectGroup`, `open_batch`) | `jolt-openings/src/packing.rs` |
 | backend adapter (`commit_one_hot_group`, `open_batch`/`verify_batch`, one-hot-only setups) | `jolt-akita/src/{scheme,native_batching,adapters}.rs` |

@@ -39,7 +39,9 @@ const NUM_VAL_STAGES: usize = 5;
 pub struct BytecodeClaimReductionParams<F: JoltField> {
     pub precommitted: PrecommittedClaimReduction<F>,
     pub eta: F,
-    pub eta_powers: [F; NUM_VAL_STAGES],
+    /// One power per staged val: five base, six lattice committed (the
+    /// store stage).
+    pub eta_powers: Vec<F>,
     /// Eq weights over high bytecode address bits (one per committed chunk).
     pub chunk_rbc_weights: Vec<F>,
     pub log_bytecode_chunk_size: usize,
@@ -52,7 +54,7 @@ pub struct BytecodeClaimReductionParams<F: JoltField> {
 
 impl<F: JoltField> BytecodeClaimReductionParams<F> {
     pub fn new(
-        bytecode_read_raf_gammas: [&[F]; NUM_VAL_STAGES],
+        bytecode_read_raf_gammas: &[&[F]],
         bytecode_len: usize,
         bytecode_chunk_count: usize,
         scheduling_reference: PrecommittedSchedulingReference,
@@ -66,9 +68,14 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         let log_bytecode_chunk_size = (bytecode_len / bytecode_chunk_count).log_2();
         let log_bytecode_len = bytecode_len.log_2();
 
+        assert!(
+            bytecode_read_raf_gammas.len() == NUM_VAL_STAGES
+                || bytecode_read_raf_gammas.len() == NUM_VAL_STAGES + 1,
+            "bytecode reduction folds five (base) or six (lattice) staged vals"
+        );
         let eta: F = transcript.challenge_scalar();
-        let mut eta_powers = [F::one(); NUM_VAL_STAGES];
-        for i in 1..NUM_VAL_STAGES {
+        let mut eta_powers = vec![F::one(); bytecode_read_raf_gammas.len()];
+        for i in 1..eta_powers.len() {
             eta_powers[i] = eta_powers[i - 1] * eta;
         }
 
@@ -124,7 +131,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
 impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
         match self.precommitted.phase {
-            PrecommittedPhase::CycleVariables => (0..NUM_VAL_STAGES)
+            PrecommittedPhase::CycleVariables => (0..self.eta_powers.len())
                 .map(|stage| {
                     let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::BytecodeValStage(stage),
@@ -160,7 +167,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         match self.precommitted.phase {
             PrecommittedPhase::CycleVariables => {
-                let openings: Vec<OpeningId> = (0..NUM_VAL_STAGES)
+                let openings: Vec<OpeningId> = (0..self.eta_powers.len())
                     .map(|stage| {
                         OpeningId::virt(
                             VirtualPolynomial::BytecodeValStage(stage),
@@ -180,7 +187,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
     #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
         match self.precommitted.phase {
-            PrecommittedPhase::CycleVariables => self.eta_powers.to_vec(),
+            PrecommittedPhase::CycleVariables => self.eta_powers.clone(),
             PrecommittedPhase::AddressVariables => Vec::new(),
         }
     }
@@ -287,6 +294,13 @@ pub struct BytecodeClaimReductionProver<F: JoltField> {
 impl<F: JoltField> BytecodeClaimReductionProver<F> {
     pub fn params(&self) -> &BytecodeClaimReductionParams<F> {
         self.core.params()
+    }
+
+    /// See `PrecommittedProver::boost_scale_pow_2`: compensates a batch
+    /// wider than this phase's alignment window (the packed stage-7 batch is
+    /// chunk-reconstruction-sized).
+    pub fn boost_scale_pow_2(&mut self, exponent: usize) {
+        self.core.boost_scale_pow_2(exponent);
     }
 
     pub fn transition_to_address_phase(&mut self) {
@@ -522,9 +536,9 @@ fn native_index_to_lane_cycle<F: JoltField>(
 }
 
 fn compute_lane_weights<F: JoltField>(
-    bytecode_read_raf_gammas: [&[F]; NUM_VAL_STAGES],
+    bytecode_read_raf_gammas: &[&[F]],
     accumulator: &dyn OpeningAccumulator<F>,
-    eta_powers: &[F; NUM_VAL_STAGES],
+    eta_powers: &[F],
 ) -> Vec<F> {
     let reg_count = REGISTER_COUNT as usize;
     let layout = BYTECODE_LANE_LAYOUT;
@@ -601,6 +615,13 @@ fn compute_lane_weights<F: JoltField>(
         for i in 0..LookupTables::<XLEN>::COUNT {
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
+    }
+    if eta_powers.len() > NUM_VAL_STAGES {
+        // The lattice store stage: one raw circuit-flag lane, no gamma fold
+        // (the S=6 read-raf rv claim consumes the IncVirtualization store
+        // selector directly). Must mirror jolt-claims `lane_weights`.
+        weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
+            eta_powers[NUM_VAL_STAGES];
     }
 
     weights

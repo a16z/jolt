@@ -171,17 +171,14 @@ pub struct OneHotConfig {
 
 impl OneHotConfig {
     /// Create a OneHotConfig with default values based on trace length.
+    ///
+    /// Packed (Akita) builds always pick `log_k_chunk = 8`: the backend's
+    /// one-hot commitment preset bakes a K = 256 column width, so the packed
+    /// witness columns must match it at every trace length.
     pub fn new(log_T: usize) -> Self {
-        let log_k_chunk = if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-            4
-        } else {
-            8
-        };
-        let lookups_ra_virtual_log_k_chunk = if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-            LOG_K / 8
-        } else {
-            LOG_K / 4
-        };
+        let large = cfg!(feature = "akita") || log_T >= ONEHOT_CHUNK_THRESHOLD_LOG_T;
+        let log_k_chunk = if large { 8 } else { 4 };
+        let lookups_ra_virtual_log_k_chunk = if large { LOG_K / 4 } else { LOG_K / 8 };
 
         Self {
             log_k_chunk: log_k_chunk as u8,

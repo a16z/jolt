@@ -369,6 +369,8 @@ where
     }
 }
 
+#[cfg(feature = "akita")]
+pub mod akita;
 pub mod ark;
 pub mod challenge;
 pub mod folded_accum;

@@ -245,11 +245,14 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_t_any = self.max_padded_trace_length.next_power_of_two();
         let max_log_t = max_t_any.log_2();
-        let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-            4
-        } else {
-            8
-        };
+        // Must mirror `OneHotConfig::new`: packed (Akita) builds always use
+        // `log_k_chunk = 8` to match the backend's K = 256 one-hot preset.
+        let max_log_k_chunk =
+            if cfg!(feature = "akita") || max_log_t >= ONEHOT_CHUNK_THRESHOLD_LOG_T {
+                8
+            } else {
+                4
+            };
 
         let max_total_vars = Self::max_total_vars_from_candidates(
             max_log_k_chunk + max_log_t,
