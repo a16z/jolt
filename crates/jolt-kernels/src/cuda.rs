@@ -143,6 +143,7 @@ pub struct CudaKernelContext {
     one_dev: CudaSlice<u64>,
     staging: PinnedStaging,
     resident_witness: ResidentCache,
+    resident_committed: CommittedCache,
 }
 
 pub struct DeviceFrVec {
@@ -595,6 +596,14 @@ fn lock_resident(cache: &ResidentCache) -> MutexGuard<'_, Option<ResidentWitness
     cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+type CommittedCache = Arc<Mutex<Vec<ResidentWitness>>>;
+
+const COMMITTED_CACHE_CAP: usize = 8;
+
+fn lock_committed(cache: &CommittedCache) -> MutexGuard<'_, Vec<ResidentWitness>> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -954,6 +963,7 @@ impl CudaKernelContext {
             one_dev,
             staging: Arc::new(Mutex::new(PinnedPool::default())),
             resident_witness: Arc::new(Mutex::new(None)),
+            resident_committed: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -1123,6 +1133,21 @@ impl CudaKernelContext {
             buf: buf.clone(),
         });
         Ok(buf)
+    }
+
+    pub fn resident_committed_clone(&self, poly: &[Fr]) -> Result<DeviceFrVec, CudaError> {
+        let key = WitnessKey::of(poly);
+        let mut cache = lock_committed(&self.resident_committed);
+        if let Some(resident) = cache.iter().find(|entry| entry.key == key) {
+            return resident.buf.try_clone();
+        }
+        let buf = Arc::new(self.upload(poly)?);
+        let clone = buf.try_clone()?;
+        if cache.len() >= COMMITTED_CACHE_CAP {
+            let _ = cache.remove(0);
+        }
+        cache.push(ResidentWitness { key, buf });
+        Ok(clone)
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -7427,6 +7452,30 @@ mod tests {
             "cache holds one entry; a different witness evicts the prior one"
         );
         assert_eq!(again.to_host().unwrap(), witness);
+    }
+
+    #[test]
+    fn resident_committed_clone_dedups_and_is_independent() {
+        let c = ctx();
+        let poly_a: Vec<Fr> = (0..512u64).map(Fr::from_u64).collect();
+        let poly_b: Vec<Fr> = (0..512u64).map(|v| Fr::from_u64(v) + Fr::one()).collect();
+
+        let first = c.resident_committed_clone(&poly_a).unwrap();
+        let second = c.resident_committed_clone(&poly_a).unwrap();
+        assert_eq!(first.to_host().unwrap(), poly_a);
+        assert_eq!(second.to_host().unwrap(), poly_a);
+
+        let mut scratch = c.upload(&[]).unwrap();
+        let mut bound = first;
+        c.bind(&mut bound, &mut scratch, Fr::from_u64(9)).unwrap();
+        assert_eq!(bound.len(), poly_a.len() / 2);
+        assert_eq!(second.to_host().unwrap(), poly_a, "sibling clone unaffected by bind");
+
+        let other = c.resident_committed_clone(&poly_b).unwrap();
+        assert_eq!(other.to_host().unwrap(), poly_b);
+
+        let again = c.resident_committed_clone(&poly_a).unwrap();
+        assert_eq!(again.to_host().unwrap(), poly_a);
     }
 
     #[test]

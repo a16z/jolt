@@ -1787,7 +1787,7 @@ fn build_cuda_ram_val_check_state<F: Field>(
     let mut lt_plus_gamma = ctx.lt_evals(cycle_point_fr).ok()?;
     ctx.add_scalar(&mut lt_plus_gamma, crate::cuda::into_fr(gamma)?).ok()?;
     let ram_ra_dev = ctx.upload(crate::cuda::as_fr_slice(ram_ra_at_address)?).ok()?;
-    let ram_inc_dev = ctx.upload(crate::cuda::as_fr_slice(ram_inc)?).ok()?;
+    let ram_inc_dev = ctx.resident_committed_clone(crate::cuda::as_fr_slice(ram_inc)?).ok()?;
     cuda::CudaDenseState::from_device_factors(
         vec![lt_plus_gamma, ram_ra_dev, ram_inc_dev],
         vec![crate::cuda::into_fr(F::one())?],

@@ -1539,7 +1539,7 @@ fn build_cuda_registers_val_state<F: Field>(
     let rd_wa_dev = ctx.rd_wa_gather(address_eq_fr, &addresses).ok()?;
     let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
     let lt = ctx.lt_evals(cycle_point_fr).ok()?;
-    let rd_inc_dev = ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?;
+    let rd_inc_dev = ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?;
     cuda::CudaDenseState::from_device_factors(
         vec![rd_inc_dev, rd_wa_dev, lt],
         vec![crate::cuda::into_fr(F::one())?],

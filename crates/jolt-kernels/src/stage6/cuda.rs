@@ -775,9 +775,9 @@ impl CudaIncState {
         let gamma2 = crate::cuda::into_fr(gamma2)?;
         Some(Self {
             eq_ram,
-            ram_inc: ctx.upload(crate::cuda::as_fr_slice(ram_inc)?).ok()?,
+            ram_inc: ctx.resident_committed_clone(crate::cuda::as_fr_slice(ram_inc)?).ok()?,
             eq_rd,
-            rd_inc: ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
+            rd_inc: ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
             scratch: ctx.upload(&[]).ok()?,
             term_coeffs: ctx.upload(&[Fr::from(1u64), gamma2]).ok()?,
             gamma2,

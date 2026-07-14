@@ -135,7 +135,7 @@ impl CudaSparseRegistersState {
         let (schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
         Some(Self {
             entries,
-            rd_inc: ctx.upload(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
+            rd_inc: ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
             rd_inc_scratch: ctx.upload(&[]).ok()?,
             eq_cycle,
             schedules,
