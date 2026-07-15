@@ -110,7 +110,6 @@ pub struct CudaKernelContext {
     read_table_round_pairs: CudaFunction,
     prefix_suffix_round_pairs: CudaFunction,
     bind_high_to_low_kernel: CudaFunction,
-    #[expect(dead_code, reason = "used once the batched_bind_high_to_low body + wiring land")]
     batched_bind_high_to_low_kernel: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
@@ -3251,8 +3250,52 @@ impl CudaKernelContext {
         num_polys: usize,
         challenge: Fr,
     ) -> Result<(), CudaError> {
-        let _ = (&values, &scratch, num_polys, challenge);
-        Err(CudaError::Unsupported)
+        assert!(num_polys > 0, "num_polys must be > 0");
+        assert_eq!(
+            values.len % num_polys,
+            0,
+            "packed buffer length must split evenly across num_polys"
+        );
+        let poly_len = values.len / num_polys;
+        assert_eq!(poly_len % 2, 0, "each poly must have even length");
+        let half = poly_len / 2;
+        let out_len = num_polys * half;
+        if scratch.buf.len() < out_len * LIMBS {
+            scratch.buf = self.stream.alloc_zeros(out_len * LIMBS)?;
+        }
+        scratch.len = out_len;
+        if out_len == 0 {
+            std::mem::swap(values, scratch);
+            return Ok(());
+        }
+
+        let challenge_dev = self.stream.clone_htod(&fr_to_limbs(challenge))?;
+        let cfg = LaunchConfig {
+            grid_dim: ((out_len as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let half_arg = half as u64;
+        let num_polys_arg = num_polys as u64;
+        let f = self.batched_bind_high_to_low_kernel.clone();
+        xfer_stats::timed(xfer_stats::Phase::Bind, || {
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut scratch.buf)
+                .arg(&values.buf)
+                .arg(&challenge_dev)
+                .arg(&half_arg)
+                .arg(&num_polys_arg);
+            // SAFETY: each thread t handles (poly = t/half, i = t%half): reads values[poly*len+i]
+            // and values[poly*len+i+half] (len = 2*half) and the single challenge, writing
+            // scratch[poly*half+i] = lo + challenge*(hi - lo). Binding each poly high-to-low keeps
+            // the packed output contiguous. scratch holds >= num_polys*half elements.
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()
+        })?;
+
+        std::mem::swap(values, scratch);
+        Ok(())
     }
 
     pub fn cubic_accumulate(
