@@ -21,7 +21,7 @@ use crate::witnesses::{
     OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value,
     ShouldJump, ToField, UnexpandedPc, WitnessEnv,
 };
-use crate::{JoltWitnessOracle, PolynomialChunk, PolynomialEncoding, PolynomialStream, Shape};
+use crate::{CommittedChunk, JoltWitnessOracle, PolynomialEncoding, Shape};
 
 fn preprocessing() -> JoltProgramPreprocessing {
     let bytecode = BytecodePreprocessing {
@@ -116,6 +116,36 @@ fn shape(
     id: impl Into<JoltPolynomialId>,
 ) -> Result<Shape, WitnessError> {
     witness.shape_of(id.into())
+}
+
+/// Owned mirror of [`CommittedChunk`] for chunk-boundary assertions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Chunk {
+    Words(Vec<u64>),
+    Increments(Vec<i128>),
+    HotAddresses(Vec<Option<usize>>),
+}
+
+fn collect_column(
+    witness: &TraceBackend<'_, OwnedTrace>,
+    id: JoltCommittedPolynomial,
+    chunk_size: usize,
+) -> Result<Vec<Chunk>, WitnessError> {
+    let mut chunks = Vec::new();
+    JoltWitnessOracle::<Fr>::visit_committed_column(witness, id, chunk_size, &mut |chunk| {
+        chunks.push(match chunk {
+            CommittedChunk::Words(values) => Chunk::Words(values.to_vec()),
+            CommittedChunk::Increments(values) => Chunk::Increments(values.to_vec()),
+            CommittedChunk::HotAddresses(values) => Chunk::HotAddresses(values.to_vec()),
+            CommittedChunk::Dense(_) | CommittedChunk::Zeros(_) => {
+                return Err(WitnessError::UnsupportedView {
+                    view: "unexpected dense chunk from the trace backend",
+                });
+            }
+        });
+        Ok(())
+    })?;
+    Ok(chunks)
 }
 
 #[test]
@@ -628,29 +658,13 @@ fn rd_inc_streams_register_write_deltas_and_padding() {
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
-    let stream_result = witness.committed_stream(JoltCommittedPolynomial::RdInc, 3);
-    let mut stream = match stream_result {
-        Ok(stream) => stream,
-        Err(error) => {
-            assert_eq!(
-                error,
-                WitnessError::UnsupportedView {
-                    view: "stream should be supported",
-                }
-            );
-            return;
-        }
-    };
-
     assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::I128(vec![-6, 9, 0])))
+        collect_column(&witness, JoltCommittedPolynomial::RdInc, 3),
+        Ok(vec![
+            Chunk::Increments(vec![-6, 9, 0]),
+            Chunk::Increments(vec![0]),
+        ])
     );
-    assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::I128(vec![0])))
-    );
-    assert_eq!(stream.next_chunk(), Ok(None::<PolynomialChunk<i128>>));
 }
 
 #[test]
@@ -676,29 +690,13 @@ fn ram_inc_streams_write_deltas_only() {
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
-    let stream_result = witness.committed_stream(JoltCommittedPolynomial::RamInc, 2);
-    let mut stream = match stream_result {
-        Ok(stream) => stream,
-        Err(error) => {
-            assert_eq!(
-                error,
-                WitnessError::UnsupportedView {
-                    view: "stream should be supported",
-                }
-            );
-            return;
-        }
-    };
-
     assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::I128(vec![7, 0])))
+        collect_column(&witness, JoltCommittedPolynomial::RamInc, 2),
+        Ok(vec![
+            Chunk::Increments(vec![7, 0]),
+            Chunk::Increments(vec![0, 0]),
+        ])
     );
-    assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::I128(vec![0, 0])))
-    );
-    assert_eq!(stream.next_chunk(), Ok(None::<PolynomialChunk<i128>>));
 }
 
 #[test]
@@ -728,33 +726,13 @@ fn bytecode_ra_streams_pc_chunks_and_noop_padding() {
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
-    let stream_result = witness.committed_stream(JoltCommittedPolynomial::BytecodeRa(0), 3);
-    let mut stream = match stream_result {
-        Ok(stream) => stream,
-        Err(error) => {
-            assert_eq!(
-                error,
-                WitnessError::UnsupportedView {
-                    view: "stream should be supported",
-                }
-            );
-            return;
-        }
-    };
-
     assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::OneHot(vec![
-            Some(1),
-            Some(2),
-            Some(0)
-        ])))
+        collect_column(&witness, JoltCommittedPolynomial::BytecodeRa(0), 3),
+        Ok(vec![
+            Chunk::HotAddresses(vec![Some(1), Some(2), Some(0)]),
+            Chunk::HotAddresses(vec![Some(0)]),
+        ])
     );
-    assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::OneHot(vec![Some(0)])))
-    );
-    assert_eq!(stream.next_chunk(), Ok(None::<PolynomialChunk<i128>>));
 }
 
 #[test]
@@ -780,30 +758,10 @@ fn ram_ra_streams_remapped_address_chunks_and_noop_padding() {
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
-    let stream_result = witness.committed_stream(JoltCommittedPolynomial::RamRa(1), 4);
-    let mut stream = match stream_result {
-        Ok(stream) => stream,
-        Err(error) => {
-            assert_eq!(
-                error,
-                WitnessError::UnsupportedView {
-                    view: "stream should be supported",
-                }
-            );
-            return;
-        }
-    };
-
     assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::OneHot(vec![
-            Some(10),
-            None,
-            None,
-            None
-        ])))
+        collect_column(&witness, JoltCommittedPolynomial::RamRa(1), 4),
+        Ok(vec![Chunk::HotAddresses(vec![Some(10), None, None, None])])
     );
-    assert_eq!(stream.next_chunk(), Ok(None::<PolynomialChunk<i128>>));
 }
 
 #[test]
@@ -825,175 +783,13 @@ fn instruction_ra_streams_lookup_index_chunks_and_noop_padding() {
     }];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
-    let stream_result = witness.committed_stream(JoltCommittedPolynomial::InstructionRa(15), 2);
-    let mut stream = match stream_result {
-        Ok(stream) => stream,
-        Err(error) => {
-            assert_eq!(
-                error,
-                WitnessError::UnsupportedView {
-                    view: "stream should be supported",
-                }
-            );
-            return;
-        }
-    };
-
     assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::OneHot(vec![
-            Some(1),
-            Some(0)
-        ])))
+        collect_column(&witness, JoltCommittedPolynomial::InstructionRa(15), 2),
+        Ok(vec![
+            Chunk::HotAddresses(vec![Some(1), Some(0)]),
+            Chunk::HotAddresses(vec![Some(0), Some(0)]),
+        ])
     );
-    assert_eq!(
-        stream.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::OneHot(vec![
-            Some(0),
-            Some(0)
-        ])))
-    );
-    assert_eq!(stream.next_chunk(), Ok(None::<PolynomialChunk<i128>>));
-}
-
-#[test]
-fn committed_batch_stream_preserves_single_pass_core_shape() {
-    let program = JoltProgram::default();
-    let instruction_row = instruction(RAM_START_ADDRESS as usize);
-    let bytecode_result =
-        BytecodePreprocessing::preprocess(vec![instruction_row], RAM_START_ADDRESS, RV64IMAC_JOLT);
-    assert!(
-        bytecode_result.is_ok(),
-        "bytecode preprocessing failed: {bytecode_result:?}"
-    );
-    let Ok(bytecode) = bytecode_result else {
-        return;
-    };
-    let memory_layout = compact_memory_layout();
-    let access_address = memory_layout.stack_end;
-    let mut preprocessing = preprocessing_with_bytecode(bytecode);
-    preprocessing.memory_layout = memory_layout;
-    let rows = vec![
-        TraceRow {
-            instruction: instruction_row,
-            registers: RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 2,
-                    value: 10,
-                }),
-                rd: Some(RegisterWrite {
-                    register: 1,
-                    pre_value: 4,
-                    post_value: 9,
-                }),
-                ..Default::default()
-            },
-            ram_access: RamAccess::Write(RamWrite {
-                address: access_address,
-                pre_value: 7,
-                post_value: 11,
-            }),
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        },
-        TraceRow {
-            instruction: instruction_row,
-            ram_access: RamAccess::NoOp,
-            ..Default::default()
-        },
-    ];
-    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackend::new(config().with_log_t(2), inputs);
-    let ids = [
-        JoltCommittedPolynomial::RdInc,
-        JoltCommittedPolynomial::RamInc,
-        JoltCommittedPolynomial::InstructionRa(15),
-        JoltCommittedPolynomial::BytecodeRa(0),
-        JoltCommittedPolynomial::RamRa(1),
-    ];
-    let stream_result =
-        <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::committed_batch_stream(
-            &witness, &ids, 3,
-        );
-    let mut stream = match stream_result {
-        Ok(stream) => stream,
-        Err(error) => {
-            assert_eq!(
-                error,
-                WitnessError::UnsupportedView {
-                    view: "stream should be supported",
-                }
-            );
-            return;
-        }
-    };
-
-    let first_result = stream.next_batch();
-    assert!(first_result.is_ok(), "first batch failed: {first_result:?}");
-    let Ok(Some(first)) = first_result else {
-        return;
-    };
-    assert_eq!(first.len(), 3);
-    assert_eq!(
-        first.chunks,
-        vec![
-            (
-                JoltCommittedPolynomial::RdInc,
-                PolynomialChunk::I128(vec![5, 0, 0])
-            ),
-            (
-                JoltCommittedPolynomial::RamInc,
-                PolynomialChunk::I128(vec![4, 0, 0])
-            ),
-            (
-                JoltCommittedPolynomial::InstructionRa(15),
-                PolynomialChunk::OneHot(vec![Some(0), Some(0), Some(0)])
-            ),
-            (
-                JoltCommittedPolynomial::BytecodeRa(0),
-                PolynomialChunk::OneHot(vec![Some(1), Some(1), Some(0)])
-            ),
-            (
-                JoltCommittedPolynomial::RamRa(1),
-                PolynomialChunk::OneHot(vec![Some(10), None, None])
-            ),
-        ]
-    );
-
-    let second_result = stream.next_batch();
-    assert!(
-        second_result.is_ok(),
-        "second batch failed: {second_result:?}"
-    );
-    let Ok(Some(second)) = second_result else {
-        return;
-    };
-    assert_eq!(
-        second.chunks,
-        vec![
-            (
-                JoltCommittedPolynomial::RdInc,
-                PolynomialChunk::I128(vec![0])
-            ),
-            (
-                JoltCommittedPolynomial::RamInc,
-                PolynomialChunk::I128(vec![0])
-            ),
-            (
-                JoltCommittedPolynomial::InstructionRa(15),
-                PolynomialChunk::OneHot(vec![Some(0)])
-            ),
-            (
-                JoltCommittedPolynomial::BytecodeRa(0),
-                PolynomialChunk::OneHot(vec![Some(0)])
-            ),
-            (
-                JoltCommittedPolynomial::RamRa(1),
-                PolynomialChunk::OneHot(vec![None])
-            ),
-        ]
-    );
-    assert_eq!(stream.next_batch(), Ok(None));
 }
 
 #[test]
@@ -1014,43 +810,19 @@ fn advice_streams_pack_device_bytes_as_little_endian_words() {
         inputs,
     );
 
-    let trusted_result = witness.committed_stream(JoltCommittedPolynomial::TrustedAdvice, 3);
-    assert!(
-        trusted_result.is_ok(),
-        "trusted advice stream failed: {trusted_result:?}"
-    );
-    let Ok(mut trusted) = trusted_result else {
-        return;
-    };
     assert_eq!(
-        trusted.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::U64(vec![
-            0x0807_0605_0403_0201,
-            0x0a09,
-            0,
-        ])))
+        collect_column(&witness, JoltCommittedPolynomial::TrustedAdvice, 3),
+        Ok(vec![
+            Chunk::Words(vec![0x0807_0605_0403_0201, 0x0a09, 0]),
+            Chunk::Words(vec![0, 0, 0]),
+            Chunk::Words(vec![0, 0]),
+        ])
     );
-    assert_eq!(
-        trusted.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::U64(vec![0, 0, 0])))
-    );
-    assert_eq!(
-        trusted.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::U64(vec![0, 0])))
-    );
-    assert_eq!(trusted.next_chunk(), Ok(None::<PolynomialChunk<i128>>));
 
-    let untrusted_result = witness.committed_stream(JoltCommittedPolynomial::UntrustedAdvice, 5);
-    assert!(
-        untrusted_result.is_ok(),
-        "untrusted advice stream failed: {untrusted_result:?}"
-    );
-    let Ok(mut untrusted) = untrusted_result else {
-        return;
-    };
+    let untrusted = collect_column(&witness, JoltCommittedPolynomial::UntrustedAdvice, 5);
     assert_eq!(
-        untrusted.next_chunk(),
-        Ok(Some(PolynomialChunk::<i128>::U64(vec![0xbbaa, 0, 0, 0, 0])))
+        untrusted.map(|chunks| chunks.first().cloned()),
+        Ok(Some(Chunk::Words(vec![0xbbaa, 0, 0, 0, 0])))
     );
 }
 
@@ -1067,7 +839,7 @@ fn advice_streams_reject_disabled_and_oversized_advice() {
     let witness = TraceBackend::new(config().include_trusted_advice(true), inputs);
 
     assert!(matches!(
-        witness.committed_stream(JoltCommittedPolynomial::TrustedAdvice, 1),
+        collect_column(&witness, JoltCommittedPolynomial::TrustedAdvice, 1),
         Err(WitnessError::InvalidWitnessData {
             label: "jolt_vm",
             ..
@@ -1081,39 +853,24 @@ fn advice_streams_reject_disabled_and_oversized_advice() {
     );
     let disabled = TraceBackend::new(config(), inputs);
     assert!(matches!(
-        disabled.committed_stream(JoltCommittedPolynomial::TrustedAdvice, 1),
+        collect_column(&disabled, JoltCommittedPolynomial::TrustedAdvice, 1),
         Err(WitnessError::UnknownOracle { label: "jolt_vm" })
     ));
 }
 
 #[test]
-fn committed_batch_stream_rejects_advice_until_variable_length_batches_land() {
-    let program = JoltProgram::default();
-    let preprocessing = preprocessing();
-    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackend::new(config().include_trusted_advice(true), inputs);
-
-    assert!(matches!(
-        witness.committed_batch_stream(&[JoltCommittedPolynomial::TrustedAdvice], 1),
-        Err(WitnessError::UnsupportedView {
-            view: "batched Jolt VM advice streams",
-        })
-    ));
-}
-
-#[test]
-fn committed_stream_rejects_unsupported_oracles_and_empty_chunks() {
+fn committed_columns_reject_unsupported_oracles_and_empty_chunks() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
     let witness = TraceBackend::new(config(), inputs);
 
     assert!(matches!(
-        witness.committed_stream(JoltCommittedPolynomial::TrustedAdvice, 1),
+        collect_column(&witness, JoltCommittedPolynomial::TrustedAdvice, 1),
         Err(WitnessError::UnknownOracle { label: "jolt_vm" })
     ));
     assert!(matches!(
-        witness.committed_stream(JoltCommittedPolynomial::RdInc, 0),
+        collect_column(&witness, JoltCommittedPolynomial::RdInc, 0),
         Err(WitnessError::InvalidDimensions { .. })
     ));
 }

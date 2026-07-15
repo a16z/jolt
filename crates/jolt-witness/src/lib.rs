@@ -37,16 +37,10 @@ mod shape;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use backend::fixed::FixedBackend;
-pub use backend::trace::{
-    JoltVmCommittedBatchStream, JoltVmCommittedStream, JoltVmWitnessConfig, JoltVmWitnessInputs,
-    TraceBackend,
-};
+pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 pub use backend::{validate_servable, BundleSource, JoltWitnessOracle};
 pub use bundle::WitnessBundle;
-pub use chunk::{
-    PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialChunkKind,
-    PolynomialStream,
-};
+pub use chunk::{ColumnVisitor, CommittedChunk};
 pub use consumer::{stream_witnesses, CollectBundles, ConsumerSet, RowSource, StreamConsumer};
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};

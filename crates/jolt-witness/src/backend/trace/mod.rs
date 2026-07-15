@@ -14,19 +14,14 @@ use jolt_program::{
 };
 
 use crate::witnesses::ram_access_address;
-use crate::{
-    PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialStream, WitnessError,
-    JOLT_VM_LABEL, RV64_XLEN,
-};
+use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
+mod committed;
 mod cycle;
 mod oracle;
 mod ra;
 mod ram;
 mod registers;
-mod streams;
-
-pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
 pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
 

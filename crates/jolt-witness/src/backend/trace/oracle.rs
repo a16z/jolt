@@ -17,9 +17,7 @@ use crate::witnesses::{
     RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
     ShouldBranch, ShouldJump, UnexpandedPc,
 };
-use crate::{
-    JoltWitnessOracle, PolynomialBatchStream, PolynomialEncoding, PolynomialStream, Shape,
-};
+use crate::{ColumnVisitor, JoltWitnessOracle, PolynomialEncoding, Shape};
 
 /// Base-mode committed-program polynomials: precommitted from preprocessing,
 /// never derived from the execution trace.
@@ -251,29 +249,12 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
         self.committed_polynomial_order()
     }
 
-    fn committed_stream<'a>(
-        &'a self,
+    fn visit_committed_column(
+        &self,
         id: JoltCommittedPolynomial,
         chunk_size: usize,
-    ) -> Result<Box<dyn PolynomialStream<F> + 'a>, WitnessError>
-    where
-        F: 'a,
-    {
-        Ok(Box::new(TraceBackend::committed_stream(
-            self, id, chunk_size,
-        )?))
-    }
-
-    fn committed_batch_stream<'a>(
-        &'a self,
-        ids: &'a [JoltCommittedPolynomial],
-        chunk_size: usize,
-    ) -> Result<Box<dyn PolynomialBatchStream<F, JoltCommittedPolynomial> + 'a>, WitnessError>
-    where
-        F: 'a,
-    {
-        Ok(Box::new(TraceBackend::committed_batch_stream(
-            self, ids, chunk_size,
-        )?))
+        visitor: &mut ColumnVisitor<'_, F>,
+    ) -> Result<(), WitnessError> {
+        self.visit_committed_column_impl(id, chunk_size, visitor)
     }
 }

@@ -6,10 +6,7 @@ use std::collections::HashMap;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
 
-use crate::{
-    JoltWitnessOracle, PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk,
-    PolynomialStream, Shape, WitnessError,
-};
+use crate::{ColumnVisitor, CommittedChunk, JoltWitnessOracle, Shape, WitnessError};
 
 pub(crate) const FIXED_LABEL: &str = "fixed";
 
@@ -74,91 +71,23 @@ impl<F: Field> JoltWitnessOracle<F> for FixedBackend<F> {
         Ok(self.committed_order.clone())
     }
 
-    fn committed_stream<'a>(
-        &'a self,
+    fn visit_committed_column(
+        &self,
         id: JoltCommittedPolynomial,
         chunk_size: usize,
-    ) -> Result<Box<dyn PolynomialStream<F> + 'a>, WitnessError>
-    where
-        F: 'a,
-    {
+        visitor: &mut ColumnVisitor<'_, F>,
+    ) -> Result<(), WitnessError> {
         if chunk_size == 0 {
             return Err(WitnessError::InvalidDimensions {
                 label: FIXED_LABEL,
-                reason: "stream chunk size must be nonzero".to_owned(),
+                reason: "column chunk size must be nonzero".to_owned(),
             });
         }
         let (_, values) = self.column(JoltPolynomialId::Committed(id))?;
-        Ok(Box::new(FixedColumnStream {
-            values,
-            position: 0,
-            chunk_size,
-        }))
-    }
-
-    fn committed_batch_stream<'a>(
-        &'a self,
-        ids: &'a [JoltCommittedPolynomial],
-        chunk_size: usize,
-    ) -> Result<Box<dyn PolynomialBatchStream<F, JoltCommittedPolynomial> + 'a>, WitnessError>
-    where
-        F: 'a,
-    {
-        let streams = ids
-            .iter()
-            .map(|&id| {
-                let (_, values) = self.column(JoltPolynomialId::Committed(id))?;
-                Ok((
-                    id,
-                    FixedColumnStream {
-                        values,
-                        position: 0,
-                        chunk_size,
-                    },
-                ))
-            })
-            .collect::<Result<Vec<_>, WitnessError>>()?;
-        Ok(Box::new(FixedColumnBatchStream { streams }))
-    }
-}
-
-struct FixedColumnStream<'a, F> {
-    values: &'a [F],
-    position: usize,
-    chunk_size: usize,
-}
-
-impl<F: Field> PolynomialStream<F> for FixedColumnStream<'_, F> {
-    fn next_chunk(&mut self) -> Result<Option<PolynomialChunk<F>>, WitnessError> {
-        if self.position >= self.values.len() {
-            return Ok(None);
+        for chunk in values.chunks(chunk_size) {
+            visitor(CommittedChunk::Dense(chunk))?;
         }
-        let end = (self.position + self.chunk_size).min(self.values.len());
-        let chunk = self.values[self.position..end].to_vec();
-        self.position = end;
-        Ok(Some(PolynomialChunk::Dense(chunk)))
-    }
-}
-
-struct FixedColumnBatchStream<'a, F> {
-    streams: Vec<(JoltCommittedPolynomial, FixedColumnStream<'a, F>)>,
-}
-
-impl<F: Field> PolynomialBatchStream<F, JoltCommittedPolynomial> for FixedColumnBatchStream<'_, F> {
-    fn next_batch(
-        &mut self,
-    ) -> Result<Option<PolynomialBatchChunk<JoltCommittedPolynomial, F>>, WitnessError> {
-        let mut chunks = Vec::with_capacity(self.streams.len());
-        for (id, stream) in &mut self.streams {
-            match stream.next_chunk()? {
-                Some(chunk) => chunks.push((*id, chunk)),
-                None => return Ok(None),
-            }
-        }
-        if chunks.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(PolynomialBatchChunk::new(chunks)))
+        Ok(())
     }
 }
 

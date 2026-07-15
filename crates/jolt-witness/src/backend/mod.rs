@@ -3,7 +3,7 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
 
-use crate::{PolynomialBatchStream, PolynomialStream, Shape, WitnessBundle, WitnessError};
+use crate::{ColumnVisitor, Shape, WitnessBundle, WitnessError};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod fixed;
@@ -55,19 +55,13 @@ pub trait JoltWitnessOracle<F: Field> {
     /// serves.
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError>;
 
-    fn committed_stream<'a>(
-        &'a self,
+    /// Walks the committed polynomial's coefficients in order as chunks of
+    /// at most `chunk_size` values — the committed analog of the bundle
+    /// pass: push-based and sequential-only.
+    fn visit_committed_column(
+        &self,
         id: JoltCommittedPolynomial,
         chunk_size: usize,
-    ) -> Result<Box<dyn PolynomialStream<F> + 'a>, WitnessError>
-    where
-        F: 'a;
-
-    fn committed_batch_stream<'a>(
-        &'a self,
-        ids: &'a [JoltCommittedPolynomial],
-        chunk_size: usize,
-    ) -> Result<Box<dyn PolynomialBatchStream<F, JoltCommittedPolynomial> + 'a>, WitnessError>
-    where
-        F: 'a;
+        visitor: &mut ColumnVisitor<'_, F>,
+    ) -> Result<(), WitnessError>;
 }
