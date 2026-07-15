@@ -1,33 +1,13 @@
 //! The fused trace→bundles pass: one row walk drives a statically-known set
 //! of consumers.
 
+use std::ops::Range;
+
 use jolt_program::execution::TraceRow;
 
 use crate::bundle::WitnessBundle;
 use crate::witnesses::WitnessEnv;
 use crate::WitnessError;
-
-/// Half-open range of cycles walked by one pass; `[0, T)` today, segments
-/// later.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CycleRange {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl CycleRange {
-    pub const fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-
-    pub const fn len(&self) -> usize {
-        self.end.saturating_sub(self.start)
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
 
 /// One consumer of a bundle stream. `Option<C>` is also a consumer:
 /// membership in a set is static, presence is runtime.
@@ -107,10 +87,11 @@ pub type ChunkVisitor<'a> =
 /// Sequential row access for the pass: trace-backed today, segment-backed
 /// later. Random access is deliberately inexpressible.
 pub trait RowSource {
-    /// Visits `range` in order as buffers of at most `chunk_size` rows.
+    /// Visits the half-open cycle `range` in order as buffers of at most
+    /// `chunk_size` rows; `[0, T)` today, segments later.
     fn visit_chunks(
         &self,
-        range: CycleRange,
+        range: Range<usize>,
         chunk_size: usize,
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
@@ -120,7 +101,7 @@ pub trait RowSource {
 /// consumer in the set.
 pub fn stream_witnesses<S: RowSource + ?Sized, C: ConsumerSet>(
     source: &S,
-    range: CycleRange,
+    range: Range<usize>,
     chunk_size: usize,
     consumers: &mut C,
 ) -> Result<(), WitnessError> {
@@ -201,7 +182,7 @@ mod tests {
     fn collect_with_chunk_size(chunk_size: usize) -> Vec<WindowBundle> {
         with_sample_backend(|backend| {
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
-            stream_witnesses(backend, CycleRange::new(0, 4), chunk_size, &mut consumers).unwrap();
+            stream_witnesses(backend, 0..4, chunk_size, &mut consumers).unwrap();
             consumers.0.into_rows()
         })
     }
@@ -227,7 +208,7 @@ mod tests {
                 Some(CollectBundles::<WindowBundle>::default()),
                 None::<CollectBundles<WindowBundle>>,
             );
-            stream_witnesses(backend, CycleRange::new(0, 4), 2, &mut consumers).unwrap();
+            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
             let first = consumers.0.into_rows();
             assert_eq!(first.len(), 4);
             assert_eq!(consumers.1.unwrap().into_rows(), first);

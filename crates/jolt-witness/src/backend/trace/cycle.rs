@@ -4,7 +4,9 @@
 use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{row_is_noop, Extract, ExtractIndexed, ToField, WitnessEnv};
-use crate::{stream_witnesses, BundleSource, CollectBundles, CycleRange, RowSource, WitnessBundle};
+use std::ops::Range;
+
+use crate::{stream_witnesses, BundleSource, CollectBundles, RowSource, WitnessBundle};
 
 /// Chunk size of backend-internal passes; a buffering detail, invisible in
 /// the materialized values.
@@ -57,7 +59,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
 impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
     fn visit_chunks(
         &self,
-        range: CycleRange,
+        range: Range<usize>,
         chunk_size: usize,
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError> {
@@ -105,12 +107,7 @@ impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
     fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         let total = checked_pow2(self.config.log_t)?;
         let mut consumers = (CollectBundles::<B>::default(),);
-        stream_witnesses(
-            self,
-            CycleRange::new(0, total),
-            BUNDLE_PASS_CHUNK,
-            &mut consumers,
-        )?;
+        stream_witnesses(self, 0..total, BUNDLE_PASS_CHUNK, &mut consumers)?;
         Ok(consumers.0.into_rows())
     }
 }

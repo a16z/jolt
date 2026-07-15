@@ -45,9 +45,7 @@ pub use chunk::{
     PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialChunkKind,
     PolynomialStream,
 };
-pub use consumer::{
-    stream_witnesses, CollectBundles, ConsumerSet, CycleRange, RowSource, StreamConsumer,
-};
+pub use consumer::{stream_witnesses, CollectBundles, ConsumerSet, RowSource, StreamConsumer};
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};
 
