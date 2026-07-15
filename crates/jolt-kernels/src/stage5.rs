@@ -34,7 +34,7 @@ use jolt_transcript::{Label, LabelWithCount, Transcript};
 use jolt_witness::Stage45SparseTraceWitness;
 use rayon::prelude::*;
 
-type PrefixPairEvals<F> = ([PrefixEval<F>; NUM_PREFIXES], [PrefixEval<F>; NUM_PREFIXES]);
+pub(crate) type PrefixPairEvals<F> = ([PrefixEval<F>; NUM_PREFIXES], [PrefixEval<F>; NUM_PREFIXES]);
 
 fn trace_stage5_inner_spans() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1649,9 +1649,9 @@ struct InstructionReadRafAddressPhase<F: Field> {
     read_suffix_polys: Vec<InstructionReadRafReadTablePhase<F>>,
 }
 
-struct InstructionReadRafReadTablePhase<F: Field> {
-    table: LookupTableKind<64>,
-    suffix_polys: Vec<Vec<F>>,
+pub(crate) struct InstructionReadRafReadTablePhase<F: Field> {
+    pub(crate) table: LookupTableKind<64>,
+    pub(crate) suffix_polys: Vec<Vec<F>>,
 }
 
 struct InstructionReadRafCycleState<F: Field> {
@@ -2705,7 +2705,7 @@ impl<F: Field> InstructionReadRafAddressPhase<F> {
     }
 }
 
-fn read_table_component_eval<F: Field>(
+pub(crate) fn read_table_component_eval<F: Field>(
     read_table: &InstructionReadRafReadTablePhase<F>,
     half: usize,
     prefix_evals: &[PrefixPairEvals<F>],

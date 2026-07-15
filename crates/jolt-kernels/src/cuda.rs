@@ -48,6 +48,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/prefix_combine.cu"),
+    include_str!("cuda/read_table_round.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
@@ -103,6 +104,8 @@ pub struct CudaKernelContext {
     suffix_mle_probe: CudaFunction,
     #[cfg(test)]
     prefix_combine_probe: CudaFunction,
+    #[expect(dead_code, reason = "used once the read_table_round body + wiring land")]
+    read_table_round_pairs: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
@@ -654,6 +657,18 @@ pub struct ReadSuffixScatterInputs<'a> {
     pub poly_len: usize,
 }
 
+pub struct ReadTableRoundInputs<'a> {
+    pub prefix_polys: &'a DeviceFrVec,
+    pub suffix_blob: &'a DeviceFrVec,
+    pub table_variant: &'a CudaSlice<u32>,
+    pub table_suffix_offset: &'a CudaSlice<u32>,
+    pub table_suffix_count: &'a CudaSlice<u32>,
+    pub item_table: &'a CudaSlice<u32>,
+    pub item_row: &'a CudaSlice<u32>,
+    pub len: usize,
+    pub items: usize,
+}
+
 pub struct RamRwCycleRoundInputs<'a> {
     pub val_coeff: &'a DeviceFrVec,
     pub ra_coeff: &'a DeviceFrVec,
@@ -913,6 +928,7 @@ impl CudaKernelContext {
             suffix_mle_probe: module.load_function("suffix_mle_probe")?,
             #[cfg(test)]
             prefix_combine_probe: module.load_function("prefix_combine_probe")?,
+            read_table_round_pairs: module.load_function("read_table_round_pairs")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
@@ -4298,6 +4314,14 @@ impl CudaKernelContext {
         out.to_host()
     }
 
+    pub fn read_table_round_evals(
+        &self,
+        inputs: ReadTableRoundInputs<'_>,
+    ) -> Result<[Fr; 2], CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
+    }
+
     pub fn rd_wa_gather(
         &self,
         address_eq: &[Fr],
@@ -7483,6 +7507,94 @@ mod tests {
                 got.iter().map(|chunk| chunk.to_host().unwrap()).collect();
             prop_assert_eq!(got_host, expected);
         }
+    }
+
+    #[test]
+    fn read_table_round_evals_matches_cpu() {
+        use crate::stage5::{read_table_component_eval, InstructionReadRafReadTablePhase};
+        use jolt_lookup_tables::tables::{LookupTableKind, PrefixEval};
+
+        let all_tables = LookupTableKind::<64>::all();
+        let table_codes = [0usize, 6, 10, 27];
+        let len = 16usize;
+        let half = len / 2;
+
+        let seed = Fr::from_u64(12345);
+        let read_prefix_polys: Vec<Vec<Fr>> = (0..46)
+            .map(|p| (0..len).map(|j| seed + Fr::from_u64((p * len + j + 1) as u64)).collect())
+            .collect();
+
+        let read_tables: Vec<InstructionReadRafReadTablePhase<Fr>> = table_codes
+            .iter()
+            .map(|&code| {
+                let table = all_tables[code];
+                let count = table.suffixes().len();
+                let suffix_polys: Vec<Vec<Fr>> = (0..count)
+                    .map(|s| {
+                        (0..len)
+                            .map(|j| seed + Fr::from_u64((code * 1000 + s * len + j + 7) as u64))
+                            .collect()
+                    })
+                    .collect();
+                InstructionReadRafReadTablePhase { table, suffix_polys }
+            })
+            .collect();
+
+        let prefix_evals: Vec<crate::stage5::PrefixPairEvals<Fr>> = (0..half)
+            .map(|row| {
+                let mut at0 = [PrefixEval::from(Fr::zero()); 46];
+                let mut at2 = [PrefixEval::from(Fr::zero()); 46];
+                for (p, poly) in read_prefix_polys.iter().enumerate() {
+                    let low = poly[row];
+                    let high = poly[row + half];
+                    at0[p] = PrefixEval::from(low);
+                    at2[p] = PrefixEval::from(high + high - low);
+                }
+                (at0, at2)
+            })
+            .collect();
+        let expected = read_tables.iter().fold([Fr::zero(), Fr::zero()], |mut total, rt| {
+            let eval = read_table_component_eval(rt, half, &prefix_evals);
+            total[0] += eval[0];
+            total[1] += eval[1];
+            total
+        });
+
+        let c = ctx();
+        let prefix_flat: Vec<Fr> = read_prefix_polys.iter().flatten().copied().collect();
+        let mut suffix_flat: Vec<Fr> = Vec::new();
+        let mut table_variant: Vec<u32> = Vec::new();
+        let mut table_suffix_offset: Vec<u32> = Vec::new();
+        let mut table_suffix_count: Vec<u32> = Vec::new();
+        let mut item_table: Vec<u32> = Vec::new();
+        let mut item_row: Vec<u32> = Vec::new();
+        for (t, (&code, rt)) in table_codes.iter().zip(&read_tables).enumerate() {
+            table_variant.push(code as u32);
+            table_suffix_offset.push((suffix_flat.len() / len) as u32);
+            table_suffix_count.push(rt.suffix_polys.len() as u32);
+            for poly in &rt.suffix_polys {
+                suffix_flat.extend_from_slice(poly);
+            }
+            for row in 0..half {
+                item_table.push(t as u32);
+                item_row.push(row as u32);
+            }
+        }
+
+        let got = c
+            .read_table_round_evals(ReadTableRoundInputs {
+                prefix_polys: &c.upload(&prefix_flat).unwrap(),
+                suffix_blob: &c.upload(&suffix_flat).unwrap(),
+                table_variant: &c.upload_u32_slice(&table_variant).unwrap(),
+                table_suffix_offset: &c.upload_u32_slice(&table_suffix_offset).unwrap(),
+                table_suffix_count: &c.upload_u32_slice(&table_suffix_count).unwrap(),
+                item_table: &c.upload_u32_slice(&item_table).unwrap(),
+                item_row: &c.upload_u32_slice(&item_row).unwrap(),
+                len,
+                items: item_table.len(),
+            })
+            .unwrap();
+        assert_eq!(got.to_vec(), expected.to_vec());
     }
 
     #[test]
