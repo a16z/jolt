@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = []
+test-utils = []
 field-inline = [
   "jolt-claims/field-inline",
   "jolt-lookup-tables/field-inline",
@@ -22,6 +23,7 @@ field-inline = [
 
 [dependencies]
 jolt-claims.workspace = true
+jolt-witness-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-poly.workspace = true

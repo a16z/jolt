@@ -10,7 +10,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
-use jolt_witness::{JoltVmStage5InstructionReadRafRows, JoltVmStage6Rows, JoltWitnessOracle};
+use jolt_witness::{BundleSource, JoltWitnessOracle};
 
 use crate::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
 use crate::stages::stage1::prove_stage1;
@@ -59,7 +59,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessOracle<F> + JoltVmStage5InstructionReadRafRows + JoltVmStage6Rows,
+    W: JoltWitnessOracle<F> + BundleSource,
 {
     let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T>(

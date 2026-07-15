@@ -1,7 +1,14 @@
-//! The sequential cycle walk driving the atomic extractors.
+//! The sequential cycle walk driving the atomic extractors, and the
+//! trace-backed implementation of the streaming pass.
 
 use super::*;
+use crate::consumer::ChunkVisitor;
 use crate::witnesses::{row_is_noop, Extract, ExtractIndexed, ToField, WitnessEnv};
+use crate::{stream_witnesses, BundleSource, CollectBundles, CycleRange, RowSource, WitnessBundle};
+
+/// Chunk size of backend-internal passes; a buffering detail, invisible in
+/// the materialized values.
+const BUNDLE_PASS_CHUNK: usize = 1 << 12;
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     /// Materializes one cycle-domain witness column by walking the trace
@@ -44,6 +51,67 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             }
         }
         Ok(values)
+    }
+}
+
+impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
+    fn visit_chunks(
+        &self,
+        range: CycleRange,
+        chunk_size: usize,
+        visitor: &mut ChunkVisitor<'_>,
+    ) -> Result<(), WitnessError> {
+        let total = checked_pow2(self.config.log_t)?;
+        if range.start > range.end || range.end > total {
+            return Err(WitnessError::InvalidDimensions {
+                label: JOLT_VM_LABEL,
+                reason: format!(
+                    "cycle range [{}, {}) exceeds the domain of {total} cycles",
+                    range.start, range.end
+                ),
+            });
+        }
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
+        let mut trace = self.trace.trace.clone();
+        for _ in 0..range.start {
+            let _ = trace.next_row();
+        }
+        // Rows beyond the physical trace are padding (default) rows; the
+        // lookahead row after each buffer doubles as the first row of the
+        // next one.
+        let mut position = range.start;
+        let mut carried: Option<TraceRow> = None;
+        while position < range.end {
+            let chunk_end = (position + chunk_size).min(range.end);
+            let mut rows = Vec::with_capacity(chunk_end - position);
+            if let Some(row) = carried.take() {
+                rows.push(row);
+            }
+            while position + rows.len() < chunk_end {
+                rows.push(trace.next_row().unwrap_or_default());
+            }
+            position = chunk_end;
+            // The lookahead row doubles as the first row of the next buffer.
+            carried = (position < total).then(|| trace.next_row().unwrap_or_default());
+            visitor(&rows, carried.as_ref(), &env)?;
+        }
+        Ok(())
+    }
+}
+
+impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
+    fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
+        let total = checked_pow2(self.config.log_t)?;
+        let mut consumers = (CollectBundles::<B>::default(),);
+        stream_witnesses(
+            self,
+            CycleRange::new(0, total),
+            BUNDLE_PASS_CHUNK,
+            &mut consumers,
+        )?;
+        Ok(consumers.0.into_rows())
     }
 }
 

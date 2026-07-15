@@ -3,9 +3,17 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
 
-use crate::{PolynomialBatchStream, PolynomialStream, Shape, WitnessError};
+use crate::{PolynomialBatchStream, PolynomialStream, Shape, WitnessBundle, WitnessError};
 
 pub mod trace;
+
+/// The typed witness surface of a backend: materialize one bundle type over
+/// the full cycle domain. Implemented via the streaming pass
+/// ([`crate::stream_witnesses`] with a collecting consumer), so backends and
+/// the future streaming engine share the same walk.
+pub trait BundleSource {
+    fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError>;
+}
 
 /// The object-safe id-indexed witness surface of the Jolt VM protocol — what
 /// `&dyn` consumers (the naive interpreter's kernels, the commitment slot)

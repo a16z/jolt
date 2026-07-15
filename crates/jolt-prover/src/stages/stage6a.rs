@@ -23,6 +23,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_kernels::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
@@ -46,7 +47,7 @@ use jolt_verifier::stages::stage6a::outputs::{
     Stage6aSumchecks,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::JoltVmStage6Rows;
+use jolt_witness::BundleSource;
 use jolt_witness::JoltWitnessOracle;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
@@ -81,7 +82,7 @@ where
     VC: VectorCommitment<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessOracle<F> + JoltVmStage6Rows,
+    W: JoltWitnessOracle<F> + BundleSource,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     // Committed-program mode stages the five raw bound `Val_s` values as
@@ -187,12 +188,8 @@ where
         .ok_or(ProverError::InvariantViolation {
             reason: "entry address was not found in bytecode preprocessing",
         })?;
-    let bytecode_indices: Vec<usize> = witness
-        .stage6_rows()
-        .map_err(jolt_kernels::KernelError::from)?
-        .iter()
-        .map(|row| row.bytecode_index)
-        .collect();
+    let bytecode_rows: Vec<BytecodeReadRafWitness> =
+        witness.bundles().map_err(jolt_kernels::KernelError::from)?;
 
     let mut bytecode_read_raf = backend.bytecode_read_raf_address.prepare(
         session,
@@ -200,7 +197,7 @@ where
         committed_program,
         stage_values,
         &stage_cycle_points,
-        bytecode_indices,
+        bytecode_rows,
         entry_bytecode_index,
         &carried.bytecode_read_raf,
     )?;

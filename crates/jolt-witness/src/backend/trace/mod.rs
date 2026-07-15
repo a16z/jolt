@@ -30,16 +30,10 @@ mod ram;
 mod registers;
 mod streams;
 
-pub mod stage5;
-pub mod stage6;
-
-pub use stage5::{JoltVmStage5InstructionReadRafRows, Stage5InstructionReadRafRow};
-pub use stage6::{JoltVmStage6Row, JoltVmStage6Rows};
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
 pub(crate) use cycle::PcLookupCache;
 pub(crate) use ra::RaChunkSelector;
-pub(crate) use streams::JoltVmIncrementStreamKind;
 
 pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
 

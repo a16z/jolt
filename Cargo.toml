@@ -38,6 +38,7 @@ members = [
   "crates/jolt-verifier",
   "crates/jolt-verifier-derive",
   "crates/jolt-witness",
+  "crates/jolt-witness-derive",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
@@ -411,6 +412,7 @@ jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
 jolt-kernels = { path = "./crates/jolt-kernels" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-witness = { path = "./crates/jolt-witness" }
+jolt-witness-derive = { path = "./crates/jolt-witness-derive" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }

@@ -33,20 +33,20 @@ pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
     NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
 };
-pub use lookups::LookupOutput;
+pub use lookups::{LookupIndex, LookupOutput, TableIndex};
 pub use operands::{
     Imm, LeftInstructionInput, LeftLookupOperand, Product, RightInstructionInput,
     RightLookupOperand,
 };
-pub use pc::{NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
+pub use pc::{BytecodePc, NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
 pub use ram::{RamAddress, RamHammingWeight, RamReadValue, RamWriteValue};
 pub use registers::{RdWriteValue, Rs1Value, Rs2Value};
 
 pub(crate) use ram::ram_access_address;
 
 /// Non-row inputs of witness extraction: the preprocessing (bytecode PC
-/// mapping, memory layout).
-pub(crate) struct WitnessEnv<'a> {
+/// mapping, memory layout). Constructed by backends; opaque to consumers.
+pub struct WitnessEnv<'a> {
     pub(crate) preprocessing: &'a JoltProgramPreprocessing,
 }
 
@@ -56,7 +56,7 @@ pub trait ToField {
 }
 
 /// The single-sourced derivation of one atomic witness from a trace row.
-pub(crate) trait Extract: Sized {
+pub trait Extract: Sized {
     fn extract(
         row: &TraceRow,
         next: Option<&TraceRow>,
@@ -66,7 +66,7 @@ pub(crate) trait Extract: Sized {
 
 /// [`Extract`] for indexed witness families ([`OpFlag`], [`InstructionFlag`],
 /// [`LookupTableFlag`]): which member is extracted is bound at the use site.
-pub(crate) trait ExtractIndexed<I>: Sized {
+pub trait ExtractIndexed<I>: Sized {
     fn extract_indexed(
         index: I,
         row: &TraceRow,

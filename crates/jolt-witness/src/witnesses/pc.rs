@@ -1,8 +1,32 @@
 use jolt_field::Field;
 use jolt_program::execution::TraceRow;
 
-use super::{pc_for_row, Extract, ToField, WitnessEnv};
+use super::{pc_for_row, row_is_noop, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
+
+/// Bytecode PC with the read-RAF pushforward convention: no-op rows and rows
+/// without a bytecode mapping land on slot 0 (unlike [`Pc`], which requires
+/// the mapping).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BytecodePc(pub usize);
+
+impl Extract for BytecodePc {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        if row_is_noop(row) {
+            return Ok(Self(0));
+        }
+        Ok(Self(
+            env.preprocessing
+                .bytecode
+                .get_pc(&row.instruction)
+                .unwrap_or(0),
+        ))
+    }
+}
 
 /// Bytecode-expanded program counter (the preprocessing PC index, not the
 /// instruction's memory address).

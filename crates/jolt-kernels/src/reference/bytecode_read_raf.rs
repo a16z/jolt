@@ -47,7 +47,9 @@ use jolt_verifier::stages::stage6b::bytecode_read_raf::{
 use jolt_witness::JoltWitnessOracle;
 
 use super::views::{address_fold, eq_table};
-use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
+use crate::bytecode_read_raf::{
+    BytecodeReadRafAddressProver, BytecodeReadRafCycleProver, BytecodeReadRafWitness,
+};
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
 impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
@@ -58,11 +60,12 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
         committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
-        bytecode_indices: Vec<usize>,
+        rows: Vec<BytecodeReadRafWitness>,
         entry_bytecode_index: usize,
         challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
+        let bytecode_indices = rows.iter().map(|row| row.bytecode_pc.0).collect();
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
             dimensions,
             committed_program,
