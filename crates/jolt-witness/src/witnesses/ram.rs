@@ -30,6 +30,12 @@ pub struct RamWriteValue(pub u64);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RamHammingWeight(pub bool);
 
+/// The cycle's RAM access address remapped to a word index; `None` for
+/// no-ops and — the committed streams' convention — for unremappable
+/// addresses (the grid materializers bound-check instead).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RemappedRamAddress(pub Option<u64>);
+
 impl ToField for RamAddress {
     fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
@@ -100,6 +106,25 @@ impl Extract for RamHammingWeight {
     ) -> Result<Self, WitnessError> {
         Ok(Self(
             ram_access_address(row.ram_access).is_some_and(|address| address != 0),
+        ))
+    }
+}
+
+impl Extract for RemappedRamAddress {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(
+            ram_access_address(row.ram_access)
+                .and_then(|address| {
+                    env.preprocessing
+                        .memory_layout
+                        .remap_word_address(address)
+                        .ok()
+                })
+                .flatten(),
         ))
     }
 }

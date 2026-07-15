@@ -10,6 +10,11 @@ use crate::WitnessError;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BytecodePc(pub usize);
 
+/// Bytecode PC if the row has a mapping (no-ops map to slot 0) — the
+/// committed one-hot convention, where unmapped rows are cold cycles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MappedPc(pub Option<usize>);
+
 impl Extract for BytecodePc {
     fn extract(
         row: &TraceRow,
@@ -25,6 +30,16 @@ impl Extract for BytecodePc {
                 .get_pc(&row.instruction)
                 .unwrap_or(0),
         ))
+    }
+}
+
+impl Extract for MappedPc {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(env.preprocessing.bytecode.get_pc(&row.instruction)))
     }
 }
 

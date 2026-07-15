@@ -1169,19 +1169,15 @@ mod tests {
         let provider = witness.field_inline_witness().unwrap();
 
         let mut ordinary = Vec::new();
-        crate::JoltWitnessOracle::<Fr>::visit_committed_column(
-            &witness,
-            JoltCommittedPolynomial::RdInc,
-            4,
-            &mut |chunk| {
+        witness
+            .visit_committed_column::<Fr>(JoltCommittedPolynomial::RdInc, 4, &mut |chunk| {
                 let CommittedChunk::Increments(values) = chunk else {
                     panic!("RdInc streams increments, got {chunk:?}");
                 };
                 ordinary.extend_from_slice(values);
                 Ok(())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         assert_eq!(ordinary, vec![0, 11, 0, 0]);
 
         assert_eq!(

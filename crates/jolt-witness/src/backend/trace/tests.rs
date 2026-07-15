@@ -132,7 +132,7 @@ fn collect_column(
     chunk_size: usize,
 ) -> Result<Vec<Chunk>, WitnessError> {
     let mut chunks = Vec::new();
-    JoltWitnessOracle::<Fr>::visit_committed_column(witness, id, chunk_size, &mut |chunk| {
+    witness.visit_committed_column::<Fr>(id, chunk_size, &mut |chunk| {
         chunks.push(match chunk {
             CommittedChunk::Words(values) => Chunk::Words(values.to_vec()),
             CommittedChunk::Increments(values) => Chunk::Increments(values.to_vec()),

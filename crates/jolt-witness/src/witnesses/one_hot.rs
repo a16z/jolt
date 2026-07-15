@@ -5,9 +5,8 @@
 
 use jolt_program::execution::TraceRow;
 
-use super::{lookup_query, ram_access_address, ExtractIndexed, WitnessEnv};
-use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
-use jolt_lookup_tables::LookupQuery;
+use super::{Extract, ExtractIndexed, LookupIndex, MappedPc, RemappedRamAddress, WitnessEnv};
+use crate::{WitnessError, JOLT_VM_LABEL};
 
 /// Selects one `chunk_bits`-wide chunk of a decomposed address, indexed from
 /// the most significant chunk.
@@ -72,10 +71,10 @@ impl ExtractIndexed<RaChunkSelector> for InstructionRaChunk {
     fn extract_indexed(
         selector: RaChunkSelector,
         row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
+        next: Option<&TraceRow>,
+        env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let index = LookupQuery::<RV64_XLEN>::to_lookup_index(&lookup_query(row));
+        let index = LookupIndex::extract(row, next, env)?.0;
         Ok(Self(selector.chunk_u128(index)))
     }
 }
@@ -84,13 +83,12 @@ impl ExtractIndexed<RaChunkSelector> for BytecodeRaChunk {
     fn extract_indexed(
         selector: RaChunkSelector,
         row: &TraceRow,
-        _next: Option<&TraceRow>,
+        next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(
-            env.preprocessing
-                .bytecode
-                .get_pc(&row.instruction)
+            MappedPc::extract(row, next, env)?
+                .0
                 .map(|pc| selector.chunk_usize(pc)),
         ))
     }
@@ -100,20 +98,12 @@ impl ExtractIndexed<RaChunkSelector> for RamRaChunk {
     fn extract_indexed(
         selector: RaChunkSelector,
         row: &TraceRow,
-        _next: Option<&TraceRow>,
+        next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        // Unremappable addresses are cold, not errors: this is the committed
-        // stream's convention (the grid materializers bound-check instead).
         Ok(Self(
-            ram_access_address(row.ram_access)
-                .and_then(|address| {
-                    env.preprocessing
-                        .memory_layout
-                        .remap_word_address(address)
-                        .ok()
-                })
-                .flatten()
+            RemappedRamAddress::extract(row, next, env)?
+                .0
                 .map(|address| selector.chunk_usize(address as usize)),
         ))
     }

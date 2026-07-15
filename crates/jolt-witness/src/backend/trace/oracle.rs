@@ -17,7 +17,7 @@ use crate::witnesses::{
     RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
     ShouldBranch, ShouldJump, UnexpandedPc,
 };
-use crate::{ColumnVisitor, JoltWitnessOracle, PolynomialEncoding, Shape};
+use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
 /// Base-mode committed-program polynomials: precommitted from preprocessing,
 /// never derived from the execution trace.
@@ -247,14 +247,5 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
 
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         self.committed_polynomial_order()
-    }
-
-    fn visit_committed_column(
-        &self,
-        id: JoltCommittedPolynomial,
-        chunk_size: usize,
-        visitor: &mut ColumnVisitor<'_, F>,
-    ) -> Result<(), WitnessError> {
-        self.visit_committed_column_impl(id, chunk_size, visitor)
     }
 }

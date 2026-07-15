@@ -277,17 +277,16 @@ mod support {
             // Advice grids always place cycle-major — see `CommitmentGrid`.
             order: TracePolynomialOrder::CycleMajor,
         };
-        let mut committed = backend
+        let entry = backend
             .commit
-            .commit_witness(
+            .commit_advice(
                 &mut session,
                 witness,
-                &[JoltCommittedPolynomial::TrustedAdvice],
+                JoltCommittedPolynomial::TrustedAdvice,
                 advice_grid,
                 setup,
             )
             .expect("trusted advice commit");
-        let entry = committed.pop().expect("one trusted-advice commitment");
         assert_eq!(
             &entry.commitment, expected,
             "new-side trusted-advice commitment diverged from legacy's",
@@ -531,7 +530,7 @@ mod muldiv {
         // test, against the legacy oracle computed above.
         let assert_backend_matches_legacy = |backend: &JoltBackend<Fr, DoryScheme>| {
             let mut session = backend.begin_proof();
-            let stage0 = prove_stage0::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage0 = prove_stage0::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                 backend,
                 &mut session,
                 &prover_preprocessing,

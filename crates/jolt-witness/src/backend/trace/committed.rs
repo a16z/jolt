@@ -15,7 +15,10 @@ use crate::witnesses::{
 use crate::{ColumnVisitor, CommittedChunk, RowSource};
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
-    pub(crate) fn visit_committed_column_impl<F: Field>(
+    /// Walks the committed polynomial's coefficients in order as chunks of
+    /// at most `chunk_size` values, over the same row walk as the bundle
+    /// pass.
+    pub fn visit_committed_column<F: Field>(
         &self,
         id: JoltCommittedPolynomial,
         chunk_size: usize,
@@ -290,7 +293,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
 
         let shape = self.shape_of(JoltPolynomialId::Committed(id))?;
         let mut values = Vec::with_capacity(shape.rows());
-        self.visit_committed_column_impl::<F>(id, shape.rows().max(1), &mut |chunk| {
+        self.visit_committed_column::<F>(id, shape.rows().max(1), &mut |chunk| {
             match chunk {
                 CommittedChunk::Dense(chunk) => values.extend_from_slice(chunk),
                 CommittedChunk::Zeros(rows) => {
@@ -341,7 +344,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         let addresses = shape.rows() / cycles;
         let mut values = vec![F::zero(); shape.rows()];
         let mut cycle = 0usize;
-        self.visit_committed_column_impl::<F>(id, cycles.max(1), &mut |chunk| {
+        self.visit_committed_column::<F>(id, cycles.max(1), &mut |chunk| {
             let CommittedChunk::HotAddresses(chunk) = chunk else {
                 return Err(WitnessError::InvalidWitnessData {
                     label: JOLT_VM_LABEL,

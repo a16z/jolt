@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
 
-use crate::{ColumnVisitor, CommittedChunk, JoltWitnessOracle, Shape, WitnessError};
+use crate::{JoltWitnessOracle, Shape, WitnessError};
 
 pub(crate) const FIXED_LABEL: &str = "fixed";
 
@@ -69,25 +69,6 @@ impl<F: Field> JoltWitnessOracle<F> for FixedBackend<F> {
 
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         Ok(self.committed_order.clone())
-    }
-
-    fn visit_committed_column(
-        &self,
-        id: JoltCommittedPolynomial,
-        chunk_size: usize,
-        visitor: &mut ColumnVisitor<'_, F>,
-    ) -> Result<(), WitnessError> {
-        if chunk_size == 0 {
-            return Err(WitnessError::InvalidDimensions {
-                label: FIXED_LABEL,
-                reason: "column chunk size must be nonzero".to_owned(),
-            });
-        }
-        let (_, values) = self.column(JoltPolynomialId::Committed(id))?;
-        for chunk in values.chunks(chunk_size) {
-            visitor(CommittedChunk::Dense(chunk))?;
-        }
-        Ok(())
     }
 }
 
