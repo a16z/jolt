@@ -5,21 +5,14 @@ use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltDerivedId, JoltFormulaDimensions, JoltOneHotConfig, JoltOpeningId,
     JoltPolynomialId, JoltVirtualPolynomial,
 };
-use jolt_field::{
-    signed::{S128, S64},
-    Field,
-};
-use jolt_lookup_tables::{InstructionLookupTable, JoltLookupQuery, LookupQuery, LookupTableKind};
+use jolt_field::Field;
+use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{
     execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
     preprocess::JoltProgramPreprocessing,
 };
 
 use self::lookup::instruction_lookup_index;
-use jolt_riscv::{
-    CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction,
-    JoltInstructionKind,
-};
 
 use crate::{
     NamespaceId, OracleDescriptor, OracleRef, PolynomialBatchChunk, PolynomialBatchStream,
@@ -36,6 +29,7 @@ mod lookup;
 
 pub use stage5::{JoltVmStage5InstructionReadRafRows, Stage5InstructionReadRafRow};
 
+mod extract;
 mod provider;
 mod ra;
 mod ram;
@@ -47,10 +41,11 @@ mod trace;
 pub use stage6::{JoltVmStage6Row, JoltVmStage6Rows};
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
+pub(crate) use extract::supported_trace_virtual;
 pub(crate) use ra::RaChunkSelector;
 pub(crate) use ram::ram_access_address;
 pub(crate) use streams::JoltVmIncrementStreamKind;
-pub(crate) use trace::{supported_trace_virtual, PcLookupCache};
+pub(crate) use trace::PcLookupCache;
 
 pub const JOLT_VM_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm");
 pub const RV64_XLEN: usize = 64;

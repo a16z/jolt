@@ -12,6 +12,7 @@ mod provider;
 mod streaming;
 
 pub mod protocols;
+pub mod witnesses;
 
 pub use descriptor::OracleDescriptor;
 pub use dimensions::WitnessDimensions;

@@ -10,9 +10,18 @@ use jolt_program::{
     },
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use jolt_riscv::{
+    CircuitFlags, InstructionFlags, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
+    RV64IMAC_JOLT,
+};
 
+use super::extract::{Extract, ExtractIndexed, WitnessEnv};
 use super::*;
+use crate::witnesses::{
+    Imm, InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, Pc, Product,
+    RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value, ShouldJump,
+    UnexpandedPc,
+};
 use crate::{PolynomialChunk, PolynomialStream, WitnessProvider};
 
 fn preprocessing() -> JoltProgramPreprocessing {
@@ -501,6 +510,128 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
     assert_eq!(val_final[5], Fr::from_u64(1));
     assert_eq!(val_final[16], Fr::from_u64(0x7766));
     Ok(())
+}
+
+#[test]
+fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
+    let instruction_row = instruction(0x8000_0000);
+    let bytecode = BytecodePreprocessing::preprocess(
+        vec![instruction_row],
+        instruction_row.address as u64,
+        RV64IMAC_JOLT,
+    )
+    .map_err(|error| error.to_string())?;
+    let preprocessing = preprocessing_with_bytecode(bytecode);
+    let row = TraceRow {
+        instruction: instruction_row,
+        registers: RegisterState {
+            rs1: Some(RegisterRead {
+                register: 2,
+                value: 5,
+            }),
+            rd: Some(RegisterWrite {
+                register: 1,
+                pre_value: 0,
+                post_value: 8,
+            }),
+            ..Default::default()
+        },
+        ram_access: RamAccess::Read(RamRead {
+            address: RAM_START_ADDRESS,
+            value: 7,
+        }),
+        #[cfg(feature = "field-inline")]
+        field_inline: None,
+    };
+    let next = TraceRow::default();
+    let env = WitnessEnv {
+        preprocessing: &preprocessing,
+    };
+
+    assert_eq!(
+        LeftInstructionInput::extract(&row, Some(&next), &env),
+        Ok(LeftInstructionInput(5))
+    );
+    assert_eq!(
+        RightInstructionInput::extract(&row, Some(&next), &env),
+        Ok(RightInstructionInput(3))
+    );
+    assert_eq!(
+        Product::extract(&row, Some(&next), &env).map(|product| product.to_field::<Fr>()),
+        Ok(Fr::from_u64(15))
+    );
+    assert_eq!(
+        LookupOutput::extract(&row, Some(&next), &env),
+        Ok(LookupOutput(8))
+    );
+    assert_eq!(Pc::extract(&row, Some(&next), &env), Ok(Pc(1)));
+    assert_eq!(
+        UnexpandedPc::extract(&row, Some(&next), &env),
+        Ok(UnexpandedPc(0x8000_0000))
+    );
+    assert_eq!(Imm::extract(&row, Some(&next), &env), Ok(Imm(3)));
+    assert_eq!(Rs1Value::extract(&row, Some(&next), &env), Ok(Rs1Value(5)));
+    assert_eq!(
+        RamAddress::extract(&row, Some(&next), &env),
+        Ok(RamAddress(RAM_START_ADDRESS))
+    );
+    assert_eq!(
+        RamReadValue::extract(&row, Some(&next), &env),
+        Ok(RamReadValue(7))
+    );
+    // Reads write back the read value.
+    assert_eq!(
+        RamWriteValue::extract(&row, Some(&next), &env),
+        Ok(RamWriteValue(7))
+    );
+    assert_eq!(
+        OpFlag::extract_indexed(CircuitFlags::AddOperands, &row, Some(&next), &env),
+        Ok(OpFlag(true))
+    );
+    assert_eq!(
+        InstructionFlag::extract_indexed(
+            InstructionFlags::RightOperandIsImm,
+            &row,
+            Some(&next),
+            &env
+        ),
+        Ok(InstructionFlag(true))
+    );
+    Ok(())
+}
+
+#[test]
+fn lookahead_witnesses_pad_the_final_cycle() {
+    let preprocessing = preprocessing();
+    let env = WitnessEnv {
+        preprocessing: &preprocessing,
+    };
+    let row = TraceRow {
+        instruction: instruction(0x8000_0000),
+        ..Default::default()
+    };
+    let noop_next = TraceRow::default();
+
+    // A missing successor counts as a no-op for the shift family, exactly
+    // like a present no-op successor.
+    assert_eq!(NextIsNoop::extract(&row, None, &env), Ok(NextIsNoop(true)));
+    assert_eq!(
+        NextIsNoop::extract(&row, Some(&noop_next), &env),
+        Ok(NextIsNoop(true))
+    );
+    assert_eq!(
+        crate::witnesses::NextPc::extract(&row, None, &env),
+        Ok(crate::witnesses::NextPc(0))
+    );
+    assert_eq!(
+        crate::witnesses::NextUnexpandedPc::extract(&row, None, &env),
+        Ok(crate::witnesses::NextUnexpandedPc(0))
+    );
+    // ShouldJump suppresses the jump only for a PRESENT no-op successor: a
+    // missing successor does not count as a no-op here (ADDI has no jump
+    // flag, so both are false; the semantics are pinned by the oracle-table
+    // assertions on real traces).
+    assert_eq!(ShouldJump::extract(&row, None, &env), Ok(ShouldJump(false)));
 }
 
 fn assert_virtual_values(
