@@ -50,6 +50,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/prefix_combine.cu"),
     include_str!("cuda/read_table_round.cu"),
     include_str!("cuda/prefix_suffix_round.cu"),
+    include_str!("cuda/bind_high_to_low.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
@@ -107,6 +108,8 @@ pub struct CudaKernelContext {
     prefix_combine_probe: CudaFunction,
     read_table_round_pairs: CudaFunction,
     prefix_suffix_round_pairs: CudaFunction,
+    #[expect(dead_code, reason = "used once the bind_high_to_low body + wiring land")]
+    bind_high_to_low_kernel: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
@@ -938,6 +941,7 @@ impl CudaKernelContext {
             prefix_combine_probe: module.load_function("prefix_combine_probe")?,
             read_table_round_pairs: module.load_function("read_table_round_pairs")?,
             prefix_suffix_round_pairs: module.load_function("prefix_suffix_round_pairs")?,
+            bind_high_to_low_kernel: module.load_function("bind_high_to_low_kernel")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
@@ -3192,6 +3196,16 @@ impl CudaKernelContext {
 
         std::mem::swap(values, scratch);
         Ok(())
+    }
+
+    pub fn bind_high_to_low(
+        &self,
+        values: &mut DeviceFrVec,
+        scratch: &mut DeviceFrVec,
+        challenge: Fr,
+    ) -> Result<(), CudaError> {
+        let _ = (&values, &scratch, challenge);
+        Err(CudaError::Unsupported)
     }
 
     pub fn cubic_accumulate(
@@ -6031,6 +6045,28 @@ mod tests {
             let mut values = c.upload(&packed).unwrap();
             let mut scratch = c.upload(&[]).unwrap();
             c.batched_bind(&mut values, &mut scratch, num_buffers, challenge).unwrap();
+            prop_assert_eq!(values.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn bind_high_to_low_matches_cpu(
+            log_half in 0usize..10,
+            challenge in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            let half = 1usize << log_half;
+            let buf_len = half * 2;
+            let buffer: Vec<Fr> = (0..buf_len)
+                .map(|i| seed + Fr::from_u64((i + 1) as u64))
+                .collect();
+
+            let mut expected = buffer.clone();
+            jolt_poly::bind_high_to_low(&mut expected, challenge);
+
+            let c = ctx();
+            let mut values = c.upload(&buffer).unwrap();
+            let mut scratch = c.upload(&[]).unwrap();
+            c.bind_high_to_low(&mut values, &mut scratch, challenge).unwrap();
             prop_assert_eq!(values.to_host().unwrap(), expected);
         }
 
