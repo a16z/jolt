@@ -1,6 +1,11 @@
-//! Chunked streaming and committed-polynomial materialization.
+//! Chunked streaming and committed-polynomial materialization over the
+//! atomic extractors.
 
 use super::*;
+use crate::witnesses::{
+    BytecodeRaChunk, Extract, ExtractIndexed, InstructionRaChunk, RaChunkSelector, RamInc,
+    RamRaChunk, RdInc, WitnessEnv,
+};
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub fn committed_stream(
@@ -59,11 +64,9 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             });
         }
         Ok(JoltVmCommittedBatchStream {
-            needs: JoltVmBatchNeeds::from_plan(&plan),
             plan,
             trace_rows: self.trace.trace.rows(),
             trace: self.trace.trace.clone(),
-            pc_cache: PcLookupCache::default(),
             emitted: 0,
             rows,
             chunk_size,
@@ -216,11 +219,9 @@ pub struct JoltVmCommittedStream<'a, T: TraceSource> {
 
 #[derive(Clone, Debug)]
 pub struct JoltVmCommittedBatchStream<'a, T: TraceSource> {
-    needs: JoltVmBatchNeeds,
     plan: Vec<(JoltCommittedPolynomial, JoltVmCommittedStreamKind)>,
     trace_rows: Option<&'a [TraceRow]>,
     trace: T,
-    pc_cache: PcLookupCache,
     emitted: usize,
     rows: usize,
     chunk_size: usize,
@@ -232,21 +233,6 @@ pub(crate) enum JoltVmBatchBuffer {
     OneHot(Vec<Option<usize>>),
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct JoltVmBatchNeeds {
-    instruction: bool,
-    bytecode: bool,
-    ram: bool,
-}
-
-pub(crate) struct JoltVmBatchRow {
-    rd_inc: i128,
-    ram_inc: i128,
-    lookup_index: u128,
-    bytecode_pc: Option<usize>,
-    ram_address: Option<usize>,
-}
-
 impl<F, T: TraceSource> PolynomialStream<F> for JoltVmCommittedStream<'_, T> {
     fn next_chunk(&mut self) -> Result<Option<PolynomialChunk<F>>, WitnessError> {
         if self.emitted >= self.rows {
@@ -254,23 +240,27 @@ impl<F, T: TraceSource> PolynomialStream<F> for JoltVmCommittedStream<'_, T> {
         }
         let end = self.emitted.saturating_add(self.chunk_size).min(self.rows);
 
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
         match self.kind {
             JoltVmCommittedStreamKind::Increment(kind) => {
                 let mut values = Vec::with_capacity(end - self.emitted);
                 if let Some(rows) = self.trace_rows {
                     while self.emitted < end {
-                        let value = rows
-                            .get(self.emitted)
-                            .map_or(0, |row| kind.value_from_row(row));
+                        let value = match rows.get(self.emitted) {
+                            Some(row) => kind.value(row, &env)?,
+                            None => 0,
+                        };
                         values.push(value);
                         self.emitted += 1;
                     }
                 } else {
                     while self.emitted < end {
-                        let value = self
-                            .trace
-                            .next_row()
-                            .map_or(0, |row| kind.value_from_row(&row));
+                        let value = match self.trace.next_row() {
+                            Some(row) => kind.value(&row, &env)?,
+                            None => 0,
+                        };
                         values.push(value);
                         self.emitted += 1;
                     }
@@ -281,19 +271,19 @@ impl<F, T: TraceSource> PolynomialStream<F> for JoltVmCommittedStream<'_, T> {
                 let mut values = Vec::with_capacity(end - self.emitted);
                 if let Some(rows) = self.trace_rows {
                     while self.emitted < end {
-                        let value = rows.get(self.emitted).map_or_else(
-                            || Ok(kind.padding_value()),
-                            |row| kind.value_from_row(row, self.preprocessing),
-                        )?;
+                        let value = match rows.get(self.emitted) {
+                            Some(row) => kind.value(row, &env)?,
+                            None => kind.padding_value(),
+                        };
                         values.push(value);
                         self.emitted += 1;
                     }
                 } else {
                     while self.emitted < end {
-                        let value = self.trace.next_row().map_or_else(
-                            || Ok(kind.padding_value()),
-                            |row| kind.value_from_row(&row, self.preprocessing),
-                        )?;
+                        let value = match self.trace.next_row() {
+                            Some(row) => kind.value(&row, &env)?,
+                            None => kind.padding_value(),
+                        };
                         values.push(value);
                         self.emitted += 1;
                     }
@@ -339,6 +329,9 @@ impl<F, T: TraceSource> PolynomialBatchStream<F, JoltCommittedPolynomial>
             })
             .collect::<Vec<_>>();
 
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
         while self.emitted < end {
             let owned_row;
             let row = if let Some(rows) = self.trace_rows {
@@ -347,32 +340,25 @@ impl<F, T: TraceSource> PolynomialBatchStream<F, JoltCommittedPolynomial>
                 owned_row = self.trace.next_row();
                 owned_row.as_ref()
             };
-            let facts = row
-                .map(|row| {
-                    JoltVmBatchRow::new(row, self.preprocessing, self.needs, &mut self.pc_cache)
-                })
-                .transpose()?;
             for ((_, kind), buffer) in self.plan.iter().zip(&mut buffers) {
                 match (kind, buffer) {
                     (
                         JoltVmCommittedStreamKind::Increment(kind),
                         JoltVmBatchBuffer::I128(values),
                     ) => {
-                        values.push(
-                            facts
-                                .as_ref()
-                                .map_or(0, |facts| kind.value_from_facts(facts)),
-                        );
+                        values.push(match row {
+                            Some(row) => kind.value(row, &env)?,
+                            None => 0,
+                        });
                     }
                     (
                         JoltVmCommittedStreamKind::OneHot(kind),
                         JoltVmBatchBuffer::OneHot(values),
                     ) => {
-                        let value = facts.as_ref().map_or_else(
-                            || Ok(kind.padding_value()),
-                            |facts| Ok(kind.value_from_facts(facts)),
-                        )?;
-                        values.push(value);
+                        values.push(match row {
+                            Some(row) => kind.value(row, &env)?,
+                            None => kind.padding_value(),
+                        });
                     }
                     (JoltVmCommittedStreamKind::Advice(_), _) => {
                         unreachable!("advice streams are rejected before batch construction")
@@ -400,85 +386,12 @@ impl<F, T: TraceSource> PolynomialBatchStream<F, JoltCommittedPolynomial>
     }
 }
 
-impl JoltVmBatchNeeds {
-    pub(crate) fn from_plan(plan: &[(JoltCommittedPolynomial, JoltVmCommittedStreamKind)]) -> Self {
-        let mut needs = Self::default();
-        for (_, kind) in plan {
-            match kind {
-                JoltVmCommittedStreamKind::OneHot(JoltVmOneHotStreamKind::Instruction(_)) => {
-                    needs.instruction = true;
-                }
-                JoltVmCommittedStreamKind::OneHot(JoltVmOneHotStreamKind::Bytecode(_)) => {
-                    needs.bytecode = true;
-                }
-                JoltVmCommittedStreamKind::OneHot(JoltVmOneHotStreamKind::Ram(_)) => {
-                    needs.ram = true;
-                }
-                JoltVmCommittedStreamKind::Increment(_) | JoltVmCommittedStreamKind::Advice(_) => {}
-            }
-        }
-        needs
-    }
-}
-
-impl JoltVmBatchRow {
-    pub(crate) fn new(
-        row: &TraceRow,
-        preprocessing: &JoltProgramPreprocessing,
-        needs: JoltVmBatchNeeds,
-        pc_cache: &mut PcLookupCache,
-    ) -> Result<Self, WitnessError> {
-        let lookup_index = if needs.instruction {
-            instruction_lookup_index::<RV64_XLEN>(row).map_err(|error| {
-                WitnessError::InvalidWitnessData {
-                    label: JOLT_VM_LABEL,
-                    reason: error.to_string(),
-                }
-            })?
-        } else {
-            0
-        };
-        let bytecode_pc = needs
-            .bytecode
-            .then(|| pc_cache.pc_for_row_optional(row, preprocessing))
-            .flatten();
-        let ram_address = if needs.ram {
-            ram_access_address(row.ram_access)
-                .and_then(|address| preprocessing.memory_layout.remap_word_address(address).ok())
-                .flatten()
-                .map(|address| address as usize)
-        } else {
-            None
-        };
-        Ok(Self {
-            rd_inc: JoltVmIncrementStreamKind::RdInc.value_from_row(row),
-            ram_inc: JoltVmIncrementStreamKind::RamInc.value_from_row(row),
-            lookup_index,
-            bytecode_pc,
-            ram_address,
-        })
-    }
-}
-
 impl JoltVmIncrementStreamKind {
-    pub(crate) const fn value_from_row(self, row: &TraceRow) -> i128 {
-        match self {
-            Self::RdInc => match row.registers.rd {
-                Some(write) => write.post_value as i128 - write.pre_value as i128,
-                None => 0,
-            },
-            Self::RamInc => match row.ram_access {
-                RamAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
-                RamAccess::Read(_) | RamAccess::NoOp => 0,
-            },
-        }
-    }
-
-    pub(crate) const fn value_from_facts(self, facts: &JoltVmBatchRow) -> i128 {
-        match self {
-            Self::RdInc => facts.rd_inc,
-            Self::RamInc => facts.ram_inc,
-        }
+    fn value(self, row: &TraceRow, env: &WitnessEnv<'_>) -> Result<i128, WitnessError> {
+        Ok(match self {
+            Self::RdInc => RdInc::extract(row, None, env)?.0,
+            Self::RamInc => RamInc::extract(row, None, env)?.0,
+        })
     }
 }
 
@@ -490,37 +403,16 @@ impl JoltVmOneHotStreamKind {
         }
     }
 
-    pub(crate) fn value_from_row(
-        self,
-        row: &TraceRow,
-        preprocessing: &JoltProgramPreprocessing,
-    ) -> Result<Option<usize>, WitnessError> {
-        match self {
-            Self::Instruction(selector) => instruction_lookup_index::<RV64_XLEN>(row)
-                .map(|index| Some(selector.chunk_u128(index)))
-                .map_err(|error| WitnessError::InvalidWitnessData {
-                    label: JOLT_VM_LABEL,
-                    reason: error.to_string(),
-                }),
-            Self::Bytecode(selector) => Ok(preprocessing
-                .bytecode
-                .get_pc(&row.instruction)
-                .map(|pc| selector.chunk_usize(pc))),
-            Self::Ram(selector) => Ok(ram_access_address(row.ram_access)
-                .and_then(|address| preprocessing.memory_layout.remap_word_address(address).ok())
-                .flatten()
-                .map(|address| selector.chunk_usize(address as usize))),
-        }
-    }
-
-    pub(crate) fn value_from_facts(self, facts: &JoltVmBatchRow) -> Option<usize> {
-        match self {
-            Self::Instruction(selector) => Some(selector.chunk_u128(facts.lookup_index)),
-            Self::Bytecode(selector) => facts.bytecode_pc.map(|pc| selector.chunk_usize(pc)),
-            Self::Ram(selector) => facts
-                .ram_address
-                .map(|address| selector.chunk_usize(address)),
-        }
+    fn value(self, row: &TraceRow, env: &WitnessEnv<'_>) -> Result<Option<usize>, WitnessError> {
+        Ok(match self {
+            Self::Instruction(selector) => {
+                InstructionRaChunk::extract_indexed(selector, row, None, env)?.0
+            }
+            Self::Bytecode(selector) => {
+                BytecodeRaChunk::extract_indexed(selector, row, None, env)?.0
+            }
+            Self::Ram(selector) => RamRaChunk::extract_indexed(selector, row, None, env)?.0,
+        })
     }
 }
 

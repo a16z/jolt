@@ -1,8 +1,6 @@
 //! The trace-backed witness backend: derives every served oracle from an
 //! execution trace via the atomic extractors in [`crate::witnesses`].
 
-use std::collections::HashMap;
-
 use jolt_claims::protocols::jolt::{
     geometry::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltPolynomialId,
@@ -15,7 +13,6 @@ use jolt_program::{
     preprocess::JoltProgramPreprocessing,
 };
 
-use self::lookup::instruction_lookup_index;
 use crate::witnesses::ram_access_address;
 use crate::{
     PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialStream, WitnessError,
@@ -23,7 +20,6 @@ use crate::{
 };
 
 mod cycle;
-mod lookup;
 mod oracle;
 mod ra;
 mod ram;
@@ -31,9 +27,6 @@ mod registers;
 mod streams;
 
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
-
-pub(crate) use cycle::PcLookupCache;
-pub(crate) use ra::RaChunkSelector;
 
 pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
 
@@ -248,21 +241,6 @@ pub(crate) fn checked_pow2(log_rows: usize) -> Result<usize, WitnessError> {
         });
     }
     1_usize
-        .checked_shl(log_rows as u32)
-        .ok_or_else(|| WitnessError::InvalidDimensions {
-            label: JOLT_VM_LABEL,
-            reason: "witness row count overflow".to_owned(),
-        })
-}
-
-fn checked_pow2_u128(log_rows: usize) -> Result<u128, WitnessError> {
-    if log_rows >= u128::BITS as usize {
-        return Err(WitnessError::InvalidDimensions {
-            label: JOLT_VM_LABEL,
-            reason: "witness row count overflow".to_owned(),
-        });
-    }
-    1_u128
         .checked_shl(log_rows as u32)
         .ok_or_else(|| WitnessError::InvalidDimensions {
             label: JOLT_VM_LABEL,

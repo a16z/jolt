@@ -1,43 +1,7 @@
-//! One-hot RA chunk selection.
+//! Virtual instruction-RA grid materialization.
 
 use super::*;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RaChunkSelector {
-    shift: usize,
-    mask: u128,
-}
-
-impl RaChunkSelector {
-    pub(crate) fn new(
-        index: usize,
-        chunks: usize,
-        chunk_bits: usize,
-    ) -> Result<Self, WitnessError> {
-        let remaining = chunks
-            .checked_sub(index + 1)
-            .ok_or(WitnessError::UnknownOracle {
-                label: JOLT_VM_LABEL,
-            })?;
-        let shift =
-            remaining
-                .checked_mul(chunk_bits)
-                .ok_or_else(|| WitnessError::InvalidDimensions {
-                    label: JOLT_VM_LABEL,
-                    reason: "RA chunk shift overflow".to_owned(),
-                })?;
-        let k = checked_pow2_u128(chunk_bits)?;
-        Ok(Self { shift, mask: k - 1 })
-    }
-
-    pub(crate) const fn chunk_usize(self, value: usize) -> usize {
-        self.chunk_u128(value as u128)
-    }
-
-    pub(crate) const fn chunk_u128(self, value: u128) -> usize {
-        ((value >> self.shift) & self.mask) as usize
-    }
-}
+use crate::witnesses::{Extract, LookupIndex, RaChunkSelector, WitnessEnv};
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn materialize_instruction_ra<F: Field>(
@@ -50,6 +14,9 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         require_index(index, chunks)?;
         let selector = RaChunkSelector::new(index, chunks, chunk_bits)?;
         let addresses = checked_pow2(chunk_bits)?;
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
         let mut values = vec![F::zero(); addresses * cycles];
         let mut trace = self.trace.trace.clone();
 
@@ -57,12 +24,8 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             let value = trace.next_row().map_or_else(
                 || Ok(selector.chunk_u128(0)),
                 |row| {
-                    instruction_lookup_index::<RV64_XLEN>(&row)
-                        .map(|lookup_index| selector.chunk_u128(lookup_index))
-                        .map_err(|error| WitnessError::InvalidWitnessData {
-                            label: JOLT_VM_LABEL,
-                            reason: error.to_string(),
-                        })
+                    LookupIndex::extract(&row, None, &env)
+                        .map(|lookup_index| selector.chunk_u128(lookup_index.0))
                 },
             )?;
             values[value * cycles + cycle] = F::one();

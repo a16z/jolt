@@ -35,11 +35,12 @@ mod consumer;
 mod error;
 mod shape;
 
+pub use backend::fixed::FixedBackend;
 pub use backend::trace::{
     JoltVmCommittedBatchStream, JoltVmCommittedStream, JoltVmWitnessConfig, JoltVmWitnessInputs,
     TraceBackend,
 };
-pub use backend::{BundleSource, JoltWitnessOracle};
+pub use backend::{validate_servable, BundleSource, JoltWitnessOracle};
 pub use bundle::WitnessBundle;
 pub use chunk::{
     PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialChunkKind,

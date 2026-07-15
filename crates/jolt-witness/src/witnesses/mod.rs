@@ -23,7 +23,9 @@ use crate::WitnessError;
 use crate::JOLT_VM_LABEL;
 
 mod flags;
+mod increments;
 mod lookups;
+mod one_hot;
 mod operands;
 mod pc;
 mod ram;
@@ -33,7 +35,9 @@ pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
     NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
 };
+pub use increments::{RamInc, RdInc};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};
+pub use one_hot::{BytecodeRaChunk, InstructionRaChunk, RaChunkSelector, RamRaChunk};
 pub use operands::{
     Imm, LeftInstructionInput, LeftLookupOperand, Product, RightInstructionInput,
     RightLookupOperand,

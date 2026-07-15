@@ -110,3 +110,60 @@ pub(crate) fn stream_pair_lsb<F: Field>(values: [F; 2], cycles: usize) -> Vec<F>
     }
     out
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use jolt_claims::protocols::jolt::{
+        JoltOpeningId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
+    };
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
+
+    use super::{address_fold, cycle_fold, dense_view};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    /// The stored-column backend replays a `(K x T)` grid into the kernels'
+    /// fold helpers — the oracle seam's second implementor, no trace behind
+    /// it.
+    #[test]
+    fn fold_helpers_run_against_a_fixed_backend_grid() {
+        let mut backend = FixedBackend::new();
+        let id = JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal);
+        // K = 2, T = 2, address-major: grid[(k << log_t) | j].
+        let grid = vec![fr(1), fr(2), fr(3), fr(4)];
+        backend
+            .insert(id, Shape::new(2, PolynomialEncoding::Dense), grid.clone())
+            .unwrap();
+        let opening = JoltOpeningId::virtual_polynomial(
+            JoltVirtualPolynomial::RamVal,
+            JoltRelationId::RamReadWriteChecking,
+        );
+
+        assert_eq!(dense_view::<Fr>(&backend, opening).unwrap(), grid);
+
+        let r = fr(7);
+        let folded = address_fold::<Fr>(&backend, opening, 1, &[r]).unwrap();
+        // out[j] = (1 - r) * grid[j] + r * grid[2 + j]
+        assert_eq!(
+            folded,
+            vec![
+                (Fr::from_u64(1) - r) * fr(1) + r * fr(3),
+                (Fr::from_u64(1) - r) * fr(2) + r * fr(4),
+            ]
+        );
+
+        let folded_cycles = cycle_fold::<Fr>(&backend, opening, 1, &[r]).unwrap();
+        // out[k] = (1 - r) * grid[k << 1] + r * grid[(k << 1) | 1]
+        assert_eq!(
+            folded_cycles,
+            vec![
+                (Fr::from_u64(1) - r) * fr(1) + r * fr(2),
+                (Fr::from_u64(1) - r) * fr(3) + r * fr(4),
+            ]
+        );
+    }
+}

@@ -9,9 +9,12 @@
 //! witness-commitment kernel; only the absorbs happen here.
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_kernels::bytecode_read_raf::BytecodeReadRafWitness;
+use jolt_kernels::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -20,7 +23,7 @@ use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
     absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::JoltWitnessOracle;
+use jolt_witness::{validate_servable, JoltWitnessOracle, WitnessBundle};
 
 use crate::config::advice_total_vars;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -163,6 +166,16 @@ where
             )
         })
         .collect();
+    // Stage-0 validation: every id the proof will request — the committed
+    // set and each bundle's annotated set — must be servable by the backend
+    // before witness generation starts.
+    let requested = ids
+        .iter()
+        .map(|&id| JoltPolynomialId::Committed(id))
+        .chain(InstructionReadRafWitness::annotated_ids())
+        .chain(BytecodeReadRafWitness::annotated_ids());
+    validate_servable(witness, requested)?;
+
     let grid = CommitmentGrid {
         total_vars: config.commitment_total_vars(
             &public_io.memory_layout,

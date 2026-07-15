@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::consumer::ChunkVisitor;
-use crate::witnesses::{row_is_noop, Extract, ExtractIndexed, ToField, WitnessEnv};
+use crate::witnesses::{Extract, ExtractIndexed, ToField, WitnessEnv};
 use std::ops::Range;
 
 use crate::{stream_witnesses, BundleSource, CollectBundles, RowSource, WitnessBundle};
@@ -110,35 +110,4 @@ impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
         stream_witnesses(self, 0..total, BUNDLE_PASS_CHUNK, &mut consumers)?;
         Ok(consumers.0.into_rows())
     }
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct PcLookupCache {
-    values: HashMap<(usize, u16), usize>,
-}
-
-impl PcLookupCache {
-    pub(crate) fn pc_for_row_optional(
-        &mut self,
-        row: &TraceRow,
-        preprocessing: &JoltProgramPreprocessing,
-    ) -> Option<usize> {
-        if row_is_noop(row) {
-            return Some(0);
-        }
-        let key = pc_lookup_key(row);
-        if let Some(&pc) = self.values.get(&key) {
-            return Some(pc);
-        }
-        let pc = preprocessing.bytecode.get_pc(&row.instruction)?;
-        let _ = self.values.insert(key, pc);
-        Some(pc)
-    }
-}
-
-pub(crate) fn pc_lookup_key(row: &TraceRow) -> (usize, u16) {
-    (
-        row.instruction.address,
-        row.instruction.virtual_sequence_remaining.unwrap_or(0),
-    )
 }

@@ -5,7 +5,27 @@ use jolt_field::Field;
 
 use crate::{PolynomialBatchStream, PolynomialStream, Shape, WitnessBundle, WitnessError};
 
+pub mod fixed;
 pub mod trace;
+
+/// Stage-0 validation: every id a proof will request — bundle annotated
+/// sets and the config's committed set — must be servable before witness
+/// generation starts. The servable set is the backend's exhaustive match
+/// (its `shape` resolving), never a curated list.
+pub fn validate_servable<F: Field>(
+    oracle: &dyn JoltWitnessOracle<F>,
+    ids: impl IntoIterator<Item = JoltPolynomialId>,
+) -> Result<(), WitnessError> {
+    for id in ids {
+        if let Err(error) = oracle.shape(id) {
+            return Err(WitnessError::InvalidWitnessData {
+                label: "stage-0 validation",
+                reason: format!("requested id {id:?} is not servable: {error}"),
+            });
+        }
+    }
+    Ok(())
+}
 
 /// The typed witness surface of a backend: materialize one bundle type over
 /// the full cycle domain. Implemented via the streaming pass
