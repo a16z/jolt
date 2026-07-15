@@ -26,7 +26,6 @@ jolt-claims.workspace = true
 jolt-witness-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
-jolt-poly.workspace = true
 jolt-program.workspace = true
 jolt-riscv.workspace = true
 rayon.workspace = true

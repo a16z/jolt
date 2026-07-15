@@ -3783,7 +3783,6 @@ dependencies = [
  "jolt-claims",
  "jolt-field",
  "jolt-lookup-tables",
- "jolt-poly",
  "jolt-program",
  "jolt-riscv",
  "jolt-witness-derive",
