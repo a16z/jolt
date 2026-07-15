@@ -51,6 +51,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/read_table_round.cu"),
     include_str!("cuda/prefix_suffix_round.cu"),
     include_str!("cuda/bind_high_to_low.cu"),
+    include_str!("cuda/batched_bind_high_to_low.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
@@ -109,6 +110,8 @@ pub struct CudaKernelContext {
     read_table_round_pairs: CudaFunction,
     prefix_suffix_round_pairs: CudaFunction,
     bind_high_to_low_kernel: CudaFunction,
+    #[expect(dead_code, reason = "used once the batched_bind_high_to_low body + wiring land")]
+    batched_bind_high_to_low_kernel: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
@@ -941,6 +944,8 @@ impl CudaKernelContext {
             read_table_round_pairs: module.load_function("read_table_round_pairs")?,
             prefix_suffix_round_pairs: module.load_function("prefix_suffix_round_pairs")?,
             bind_high_to_low_kernel: module.load_function("bind_high_to_low_kernel")?,
+            batched_bind_high_to_low_kernel: module
+                .load_function("batched_bind_high_to_low_kernel")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
@@ -3237,6 +3242,17 @@ impl CudaKernelContext {
 
         std::mem::swap(values, scratch);
         Ok(())
+    }
+
+    pub fn batched_bind_high_to_low(
+        &self,
+        values: &mut DeviceFrVec,
+        scratch: &mut DeviceFrVec,
+        num_polys: usize,
+        challenge: Fr,
+    ) -> Result<(), CudaError> {
+        let _ = (&values, &scratch, num_polys, challenge);
+        Err(CudaError::Unsupported)
     }
 
     pub fn cubic_accumulate(
@@ -6098,6 +6114,38 @@ mod tests {
             let mut values = c.upload(&buffer).unwrap();
             let mut scratch = c.upload(&[]).unwrap();
             c.bind_high_to_low(&mut values, &mut scratch, challenge).unwrap();
+            prop_assert_eq!(values.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn batched_bind_high_to_low_matches_cpu(
+            log_half in 0usize..8,
+            num_polys in 1usize..6,
+            challenge in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            let half = 1usize << log_half;
+            let poly_len = half * 2;
+            let polys: Vec<Vec<Fr>> = (0..num_polys)
+                .map(|p| {
+                    (0..poly_len)
+                        .map(|i| seed + Fr::from_u64((p * poly_len + i + 1) as u64))
+                        .collect()
+                })
+                .collect();
+
+            let mut expected = Vec::with_capacity(num_polys * half);
+            for poly in &polys {
+                let mut bound = poly.clone();
+                jolt_poly::bind_high_to_low(&mut bound, challenge);
+                expected.extend(bound);
+            }
+
+            let packed: Vec<Fr> = polys.into_iter().flatten().collect();
+            let c = ctx();
+            let mut values = c.upload(&packed).unwrap();
+            let mut scratch = c.upload(&[]).unwrap();
+            c.batched_bind_high_to_low(&mut values, &mut scratch, num_polys, challenge).unwrap();
             prop_assert_eq!(values.to_host().unwrap(), expected);
         }
 
