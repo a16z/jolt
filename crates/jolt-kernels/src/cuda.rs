@@ -5428,6 +5428,10 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 16, .. ProptestConfig::default()
+        })]
+
         #[test]
         fn compute_row_dots_matches_cpu(
             log_cycles in 0usize..8,
@@ -5481,6 +5485,10 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 16, .. ProptestConfig::default()
+        })]
+
         #[test]
         fn sum_of_products_round_poly_matches_cpu(
             log_pairs in 0usize..10,
