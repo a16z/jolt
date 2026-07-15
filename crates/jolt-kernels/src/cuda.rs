@@ -112,7 +112,6 @@ pub struct CudaKernelContext {
     prefix_suffix_round_pairs: CudaFunction,
     bind_high_to_low_kernel: CudaFunction,
     batched_bind_high_to_low_kernel: CudaFunction,
-    #[expect(dead_code, reason = "used once the mul_scalar body + wiring land")]
     mul_scalar: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
@@ -3080,8 +3079,25 @@ impl CudaKernelContext {
     }
 
     pub fn mul_scalar(&self, a: &mut DeviceFrVec, scalar: Fr) -> Result<(), CudaError> {
-        let _ = (&a, scalar);
-        Err(CudaError::Unsupported)
+        let n = a.len;
+        if n == 0 {
+            return Ok(());
+        }
+        let scalar_dev = self.stream.clone_htod(&fr_to_limbs(scalar))?;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let n_arg = n as u64;
+        let f = self.mul_scalar.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch.arg(&mut a.buf).arg(&scalar_dev).arg(&n_arg);
+        // SAFETY: each thread i reads a[i] and the single scalar, writing a[i] in place;
+        // a holds n * LIMBS u64s. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        Ok(())
     }
 
     pub fn u64_to_mont(&self, values: &[u64]) -> Result<DeviceFrVec, CudaError> {
