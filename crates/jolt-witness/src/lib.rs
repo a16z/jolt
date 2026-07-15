@@ -56,7 +56,6 @@ pub mod __private {
     pub use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
     };
-    pub use jolt_field::Field;
     pub use jolt_program::execution::TraceRow;
 }
 

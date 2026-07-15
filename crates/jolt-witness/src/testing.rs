@@ -1,6 +1,6 @@
 //! Sample-trace fixtures for the derive-generated bundle consistency tests.
 
-use jolt_claims::protocols::jolt::JoltOneHotConfig;
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
 use jolt_field::Fr;
 use jolt_program::{
     execution::{
@@ -91,26 +91,25 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
     f(&backend)
 }
 
-/// Asserts that the bundle's `position`-th annotated column equals the
-/// backend's `oracle_table` for the same id — the typed path and the id path
-/// meeting at the `Extract` impls.
+/// Asserts that one annotated bundle field's column (extracted by `value`)
+/// equals the backend's `oracle_table` for `id` — the typed path and the id
+/// path meeting at the `Extract` impls. Driven by the derive-generated
+/// per-field consistency tests.
 #[expect(clippy::unwrap_used, reason = "test assertion helper")]
-pub fn assert_annotated_column_matches<B>(position: usize)
+pub fn assert_bundle_column_matches<B>(id: JoltPolynomialId, value: impl Fn(&B) -> Fr)
 where
     B: WitnessBundle + Clone + Send + Sync,
 {
     with_sample_backend(|backend| {
-        let rows: Vec<B> = backend.bundles().unwrap();
-        let ids = B::annotated_ids();
-        let columns = B::annotated_columns::<Fr>(&rows);
-        let (id, column) = &columns[position];
-        assert_eq!(
-            id, &ids[position],
-            "annotated_columns must be ordered like annotated_ids"
+        assert!(
+            B::annotated_ids().contains(&id),
+            "{id:?} is not in the bundle's annotated id set"
         );
-        let table = JoltWitnessOracle::<Fr>::oracle_table(backend, *id).unwrap();
+        let rows: Vec<B> = backend.bundles().unwrap();
+        let column: Vec<Fr> = rows.iter().map(value).collect();
+        let table = JoltWitnessOracle::<Fr>::oracle_table(backend, id).unwrap();
         assert_eq!(
-            column, &table,
+            column, table,
             "bundle column diverges from oracle_table for {id:?}"
         );
     });

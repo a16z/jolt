@@ -1,7 +1,6 @@
 //! Consumer bundles: a consumer's witness data flow, stated as a type.
 
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_field::Field;
 use jolt_program::execution::TraceRow;
 
 use crate::witnesses::WitnessEnv;
@@ -23,13 +22,10 @@ pub trait WitnessBundle: Sized {
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError>;
 
-    /// The jolt-claims ids of the annotated fields, in declaration order.
+    /// The jolt-claims ids of the annotated fields, in declaration order —
+    /// the stage-0 validation input (checked against the backend's servable
+    /// set before witness generation).
     fn annotated_ids() -> Vec<JoltPolynomialId>;
-
-    /// The annotated fields' columns as field elements, keyed and ordered
-    /// like [`annotated_ids`](Self::annotated_ids) — the consistency surface
-    /// pinning the typed path to the id path.
-    fn annotated_columns<F: Field>(rows: &[Self]) -> Vec<(JoltPolynomialId, Vec<F>)>;
 }
 
 #[cfg(test)]
@@ -85,10 +81,6 @@ mod tests {
             // first cycle's product is rs1 * imm = 5 * 3.
             assert_eq!(rows[0].product.to_field::<Fr>(), Fr::from_u64(15));
             assert_eq!(rows[1].lookup_index, LookupIndex(0));
-            assert_eq!(
-                DeriveCoverageBundle::annotated_columns::<Fr>(&rows).len(),
-                3
-            );
         });
     }
 }

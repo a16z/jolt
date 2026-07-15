@@ -196,12 +196,6 @@ mod tests {
         fn annotated_ids() -> Vec<JoltPolynomialId> {
             Vec::new()
         }
-
-        fn annotated_columns<F: jolt_field::Field>(
-            _rows: &[Self],
-        ) -> Vec<(JoltPolynomialId, Vec<F>)> {
-            Vec::new()
-        }
     }
 
     fn collect_with_chunk_size(chunk_size: usize) -> Vec<WindowBundle> {

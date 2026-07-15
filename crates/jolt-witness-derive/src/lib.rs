@@ -5,11 +5,12 @@
 //!
 //! - `from_row` composes the fields' `Extract`/`ExtractIndexed` impls, so the
 //!   derivation of every field stays single-sourced in `jolt-witness`;
-//! - `annotated_ids`/`annotated_columns` expose the `#[opening(..)]`-annotated
-//!   fields' jolt-claims ids and field-element columns;
-//! - a `#[cfg(test)]` consistency test per annotated field pins the bundle
+//! - `annotated_ids` exposes the `#[opening(..)]`-annotated fields' ids (the
+//!   stage-0 validation input);
+//! - a `#[cfg(test)]` consistency test per annotated field pins the field's
 //!   column against the backend's `oracle_table` for the same id, so the
-//!   typed path and the id path cannot drift.
+//!   typed path and the id path cannot drift (test-only surface lives only
+//!   in the emitted test module).
 //!
 //! ## `#[opening(..)]` field grammar (the `OutputClaims` style)
 //!
@@ -88,19 +89,8 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .filter_map(|field| field.opening.as_ref())
         .map(id_expr)
         .collect();
-    let column_entries = annotated.iter().zip(&id_exprs).map(|(field, id)| {
-        let field_name = &field.name;
-        quote! {
-            (
-                #id,
-                rows.iter()
-                    .map(|bundle| ::jolt_witness::witnesses::ToField::to_field(bundle.#field_name))
-                    .collect(),
-            )
-        }
-    });
 
-    let consistency_tests = consistency_tests(name, &annotated);
+    let consistency_tests = consistency_tests(name, &annotated, &id_exprs);
 
     Ok(quote! {
         impl ::jolt_witness::WitnessBundle for #name {
@@ -116,15 +106,6 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
             fn annotated_ids() -> ::std::vec::Vec<::jolt_witness::__private::JoltPolynomialId> {
                 ::std::vec![#(#id_exprs),*]
-            }
-
-            fn annotated_columns<FieldElement: ::jolt_witness::__private::Field>(
-                rows: &[Self],
-            ) -> ::std::vec::Vec<(
-                ::jolt_witness::__private::JoltPolynomialId,
-                ::std::vec::Vec<FieldElement>,
-            )> {
-                ::std::vec![#(#column_entries),*]
             }
         }
 
@@ -235,9 +216,15 @@ fn id_expr(opening: &OpeningId) -> TokenStream2 {
     }
 }
 
-/// One `#[cfg(test)]` test per annotated field: the bundle column must equal
-/// the backend's `oracle_table` for the same id on the sample trace.
-fn consistency_tests(name: &Ident, annotated: &[&BundleField]) -> TokenStream2 {
+/// One `#[cfg(test)]` test per annotated field: the field's column must
+/// equal the backend's `oracle_table` for the same id on the sample trace.
+/// The column extraction is emitted here, inside the test module, so the
+/// consistency surface exists only in test builds.
+fn consistency_tests(
+    name: &Ident,
+    annotated: &[&BundleField],
+    id_exprs: &[TokenStream2],
+) -> TokenStream2 {
     if annotated.is_empty() {
         return TokenStream2::new();
     }
@@ -245,18 +232,26 @@ fn consistency_tests(name: &Ident, annotated: &[&BundleField]) -> TokenStream2 {
         "{}_witness_bundle_consistency",
         snake_case(&name.to_string())
     );
-    let tests = annotated.iter().enumerate().map(|(position, field)| {
+    let tests = annotated.iter().zip(id_exprs).map(|(field, id)| {
+        let field_name = &field.name;
         let test_name = format_ident!("{}_column_matches_oracle_table", field.name);
         quote! {
             #[test]
             fn #test_name() {
-                ::jolt_witness::testing::assert_annotated_column_matches::<super::#name>(#position);
+                ::jolt_witness::testing::assert_bundle_column_matches::<super::#name>(
+                    #id,
+                    |bundle| ::jolt_witness::witnesses::ToField::to_field(bundle.#field_name),
+                );
             }
         }
     });
     quote! {
         #[cfg(test)]
         mod #module {
+            // Annotation payloads (e.g. `CircuitFlags::..`) resolve at the
+            // bundle's declaring scope.
+            use super::*;
+
             #(#tests)*
         }
     }
