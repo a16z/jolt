@@ -54,13 +54,8 @@ extern "C" __global__ void raf_q_scatter(
     unsigned long worker = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (worker >= num_workers) return;
 
-    unsigned long bank_stride = 5UL * poly_len * 4UL;
-    u64 *bank = worker_banks + worker * bank_stride;
-    unsigned long shift_half_off = 0;
-    unsigned long left_off = poly_len * 4UL;
-    unsigned long right_off = 2UL * poly_len * 4UL;
-    unsigned long shift_full_off = 3UL * poly_len * 4UL;
-    unsigned long identity_off = 4UL * poly_len * 4UL;
+    #define RAF_BANK_SLOT(grp) \
+        (worker_banks + (((unsigned long)(grp) * poly_len + index) * num_workers + worker) * 4UL)
 
     u128 suffix_mask = (suffix_len >= 128)
         ? (u128)-1
@@ -76,7 +71,7 @@ extern "C" __global__ void raf_q_scatter(
         load4(weight + c * 4, w);
 
         if (is_interleaved[c]) {
-            raf_add_inplace(bank + shift_half_off + index * 4, w);
+            raf_add_inplace(RAF_BANK_SLOT(0), w);
             u64 left_suffix, right_suffix;
             uninterleave_u128(suffix_bits, &left_suffix, &right_suffix);
             if (left_suffix != 0) {
@@ -84,17 +79,17 @@ extern "C" __global__ void raf_q_scatter(
                 u64 s_mont[4], contrib[4];
                 raf_to_mont(s_raw, s_mont);
                 fr_mul(w, s_mont, contrib);
-                raf_add_inplace(bank + left_off + index * 4, contrib);
+                raf_add_inplace(RAF_BANK_SLOT(1), contrib);
             }
             if (right_suffix != 0) {
                 u64 s_raw[4] = {right_suffix, 0, 0, 0};
                 u64 s_mont[4], contrib[4];
                 raf_to_mont(s_raw, s_mont);
                 fr_mul(w, s_mont, contrib);
-                raf_add_inplace(bank + right_off + index * 4, contrib);
+                raf_add_inplace(RAF_BANK_SLOT(2), contrib);
             }
         } else {
-            raf_add_inplace(bank + shift_full_off + index * 4, w);
+            raf_add_inplace(RAF_BANK_SLOT(3), w);
             if (suffix_bits != 0) {
                 u64 s_raw[4] = {
                     (u64)suffix_bits,
@@ -104,10 +99,11 @@ extern "C" __global__ void raf_q_scatter(
                 u64 s_mont[4], contrib[4];
                 raf_to_mont(s_raw, s_mont);
                 fr_mul(w, s_mont, contrib);
-                raf_add_inplace(bank + identity_off + index * 4, contrib);
+                raf_add_inplace(RAF_BANK_SLOT(4), contrib);
             }
         }
     }
+    #undef RAF_BANK_SLOT
 }
 
 extern "C" __global__ void raf_q_scatter_reduce(
@@ -116,16 +112,28 @@ extern "C" __global__ void raf_q_scatter_reduce(
     unsigned long slots,
     unsigned long num_workers
 ) {
-    unsigned long slot = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    extern __shared__ u64 sdata[];
+    u64 *acc = sdata + threadIdx.x * 4;
+
+    unsigned long slot = blockIdx.x;
     if (slot >= slots) return;
 
-    unsigned long bank_stride = slots * 4UL;
-    u64 acc[4];
-    load4(worker_banks + slot * 4, acc);
-    for (unsigned long w = 1; w < num_workers; w++) {
+    const u64 *slot_base = worker_banks + slot * num_workers * 4UL;
+    for (int k = 0; k < 4; k++) acc[k] = 0;
+    for (unsigned long w = threadIdx.x; w < num_workers; w += blockDim.x) {
         u64 v[4];
-        load4(worker_banks + w * bank_stride + slot * 4, v);
+        load4(slot_base + w * 4, v);
         raf_add_inplace(acc, v);
     }
-    store4(banks + slot * 4, acc);
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            raf_add_inplace(acc, sdata + (threadIdx.x + stride) * 4);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        store4(banks + slot * 4, acc);
+    }
 }

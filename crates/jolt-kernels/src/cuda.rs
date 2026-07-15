@@ -4216,10 +4216,11 @@ impl CudaKernelContext {
         // index/flag arrays (trace_len elems each) it is passed.
         let _ = unsafe { launch.launch(scatter_cfg) }?;
 
+        let reduce_block = BLOCK.min(num_workers.max(1).next_power_of_two() as u32);
         let reduce_cfg = LaunchConfig {
-            grid_dim: ((slots as u32).div_ceil(BLOCK), 1, 1),
-            block_dim: (BLOCK, 1, 1),
-            shared_mem_bytes: 0,
+            grid_dim: (slots as u32, 1, 1),
+            block_dim: (reduce_block, 1, 1),
+            shared_mem_bytes: reduce_block * LIMBS as u32 * std::mem::size_of::<u64>() as u32,
         };
         let slots_arg = slots as u64;
         let reduce = self.raf_q_scatter_reduce.clone();
@@ -4229,11 +4230,11 @@ impl CudaKernelContext {
             .arg(&worker_banks)
             .arg(&slots_arg)
             .arg(&num_workers_arg);
-        // SAFETY: thread `slot` sums worker_banks[*][slot] across num_workers and
-        // writes final_banks[slot]; slots threads, each buffer holds >= slots*LIMBS
-        // (final) / num_workers*slots*LIMBS (worker) u64s.
+        // SAFETY: one block per slot; the block's `reduce_block` threads cooperatively sum
+        // worker_banks[*][slot] across num_workers via a shared-mem tree reduction and thread 0
+        // writes final_banks[slot]. shared holds `reduce_block` Fr accumulators; each buffer
+        // holds >= slots*LIMBS (final) / num_workers*slots*LIMBS (worker) u64s.
         let _ = unsafe { launch.launch(reduce_cfg) }?;
-        self.stream.synchronize()?;
 
         let mut banks = Vec::with_capacity(5);
         for i in 0..5 {
@@ -4248,7 +4249,6 @@ impl CudaKernelContext {
                 staging: self.staging.clone(),
             });
         }
-        self.stream.synchronize()?;
         Ok(banks)
     }
 
@@ -4306,10 +4306,11 @@ impl CudaKernelContext {
         // (m / suffix_count elems) it is passed.
         let _ = unsafe { launch.launch(scatter_cfg) }?;
 
+        let reduce_block = BLOCK.min(num_workers.max(1).next_power_of_two() as u32);
         let reduce_cfg = LaunchConfig {
-            grid_dim: ((slots as u32).div_ceil(BLOCK), 1, 1),
-            block_dim: (BLOCK, 1, 1),
-            shared_mem_bytes: 0,
+            grid_dim: (slots as u32, 1, 1),
+            block_dim: (reduce_block, 1, 1),
+            shared_mem_bytes: reduce_block * LIMBS as u32 * std::mem::size_of::<u64>() as u32,
         };
         let slots_arg = slots as u64;
         let reduce = self.raf_q_scatter_reduce.clone();
@@ -4319,11 +4320,11 @@ impl CudaKernelContext {
             .arg(&worker_banks)
             .arg(&slots_arg)
             .arg(&num_workers_arg);
-        // SAFETY: thread `slot` sums worker_banks[*][slot] across num_workers and
-        // writes final_banks[slot]; slots threads, each buffer holds >= slots*LIMBS
-        // (final) / num_workers*slots*LIMBS (worker) u64s.
+        // SAFETY: one block per slot; the block's `reduce_block` threads cooperatively sum
+        // worker_banks[*][slot] across num_workers via a shared-mem tree reduction and thread 0
+        // writes final_banks[slot]. shared holds `reduce_block` Fr accumulators; each buffer
+        // holds >= slots*LIMBS (final) / num_workers*slots*LIMBS (worker) u64s.
         let _ = unsafe { launch.launch(reduce_cfg) }?;
-        self.stream.synchronize()?;
 
         let mut banks = Vec::with_capacity(suffix_count);
         for i in 0..suffix_count {
@@ -4338,7 +4339,6 @@ impl CudaKernelContext {
                 staging: self.staging.clone(),
             });
         }
-        self.stream.synchronize()?;
         Ok(banks)
     }
 
