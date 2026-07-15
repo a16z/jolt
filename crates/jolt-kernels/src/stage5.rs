@@ -1625,6 +1625,8 @@ struct InstructionReadRafStage5State<F: Field> {
     backend: &'static str,
     #[cfg(feature = "cuda")]
     cuda_address: Option<cuda::CudaAddressPhaseState>,
+    #[cfg(feature = "cuda")]
+    cuda_address_round: Option<cuda::CudaAddressPhaseRound>,
 }
 
 struct InstructionReadRafLookupGroup<F: Field> {
@@ -1851,6 +1853,15 @@ impl<F: Field> InstructionReadRafStage5State<F> {
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
         if self.round < Self::LOG_K {
             self.ensure_address_phase();
+            #[cfg(feature = "cuda")]
+            if let Some(round_state) = self.cuda_address_round.as_ref() {
+                let previous_claim_fr = crate::cuda::into_fr(previous_claim)
+                    .unwrap_or_else(|| std::process::abort());
+                let poly = round_state
+                    .round_poly(previous_claim_fr)
+                    .unwrap_or_else(|_| std::process::abort());
+                return Ok(fr_poly_into::<F>(poly).unwrap_or_else(|| std::process::abort()));
+            }
             let Some(address_phase) = self.address_phase.as_ref() else {
                 std::process::abort();
             };
@@ -1917,7 +1928,18 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         if self.round < Self::LOG_K {
             self.ensure_address_phase();
             self.address_challenges.push(challenge);
-            if let Some(phase) = &mut self.address_phase {
+            #[cfg(feature = "cuda")]
+            let device_round = self.cuda_address_round.is_some();
+            #[cfg(not(feature = "cuda"))]
+            let device_round = false;
+            if device_round {
+                #[cfg(feature = "cuda")]
+                if let Some(round_state) = self.cuda_address_round.as_mut() {
+                    let challenge_fr = crate::cuda::into_fr(challenge)
+                        .unwrap_or_else(|| std::process::abort());
+                    round_state.bind(challenge_fr).unwrap_or_else(|_| std::process::abort());
+                }
+            } else if let Some(phase) = &mut self.address_phase {
                 phase.bind(challenge);
             }
             if (self.round + 1).is_multiple_of(Self::ADDRESS_CHUNK_BITS) {
@@ -2003,7 +2025,72 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let _span = trace_stage5_inner_spans().then(|| {
             tracing::info_span!("Stage5::instruction_read_raf.build_address_phase").entered()
         });
-        self.address_phase = Some(self.build_address_phase(phase));
+        #[cfg(feature = "cuda")]
+        let device_round = self.cuda_address.is_some();
+        #[cfg(not(feature = "cuda"))]
+        let device_round = false;
+        let built = self.build_address_phase(phase, device_round);
+        #[cfg(feature = "cuda")]
+        {
+            self.cuda_address_round = self.try_build_cuda_address_round(phase, &built);
+        }
+        self.address_phase = Some(built);
+    }
+
+    #[cfg(feature = "cuda")]
+    fn try_build_cuda_address_round(
+        &self,
+        phase: usize,
+        built: &InstructionReadRafAddressPhase<F>,
+    ) -> Option<cuda::CudaAddressPhaseRound> {
+        let state = self.cuda_address.as_ref()?;
+        let chunk_bits = Self::ADDRESS_CHUNK_BITS;
+        let poly_len = 1usize << chunk_bits;
+        let suffix_len = Self::LOG_K - (phase + 1) * chunk_bits;
+
+        let ctx = crate::cuda::shared_ctx()?;
+        let upload = |poly: &[F]| ctx.upload(crate::cuda::as_fr_slice(poly)?).ok();
+        let operand_prefixes = [
+            upload(&built.left_operand_prefix)?,
+            upload(&built.right_operand_prefix)?,
+            upload(&built.identity_prefix)?,
+        ];
+
+        let mut raf_banks = state.raf_banks_device(suffix_len).ok()?;
+        let shift_half_value = 1u128 << (suffix_len / 2);
+        let shift_full_value = 1u128 << suffix_len;
+        if shift_half_value != 1 {
+            ctx.mul_scalar(&mut raf_banks[0], Fr::from_u128(shift_half_value)).ok()?;
+        }
+        if shift_full_value != 1 {
+            ctx.mul_scalar(&mut raf_banks[3], Fr::from_u128(shift_full_value)).ok()?;
+        }
+
+        let read_prefix_flat: Vec<F> =
+            built.read_prefix_polys.iter().flatten().copied().collect();
+        let read_prefix_blob = upload(&read_prefix_flat)?;
+
+        let tables = LookupTableKind::<64>::all();
+        let mut table_variants = Vec::with_capacity(built.read_suffix_polys.len());
+        let mut read_suffix_banks = Vec::with_capacity(built.read_suffix_polys.len());
+        for read_table in &built.read_suffix_polys {
+            let variant = tables.iter().position(|t| *t == read_table.table)? as u32;
+            let table_index = variant as usize;
+            table_variants.push(variant);
+            read_suffix_banks.push(state.read_suffix_banks_device(table_index, suffix_len).ok()?);
+        }
+
+        cuda::CudaAddressPhaseRound::new(
+            operand_prefixes,
+            raf_banks,
+            read_prefix_blob,
+            read_suffix_banks,
+            table_variants,
+            crate::cuda::into_fr(self.gamma)?,
+            crate::cuda::into_fr(self.gamma2)?,
+            crate::cuda::into_fr(self.active_scale)?,
+            poly_len,
+        )
     }
 
     fn build_raf_q_cpu(
@@ -2083,7 +2170,11 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         ]
     }
 
-    fn build_address_phase(&self, phase: usize) -> InstructionReadRafAddressPhase<F> {
+    fn build_address_phase(
+        &self,
+        phase: usize,
+        device_round: bool,
+    ) -> InstructionReadRafAddressPhase<F> {
         let chunk_bits = Self::ADDRESS_CHUNK_BITS;
         let poly_len = 1usize << chunk_bits;
         let suffix_len = Self::LOG_K - (phase + 1) * chunk_bits;
@@ -2125,38 +2216,60 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         };
 
         #[cfg(feature = "cuda")]
-        let cuda_raf: Option<[Vec<F>; 5]> = self.cuda_address.as_ref().map(|state| {
-            let banks = state.raf_banks(suffix_len).unwrap_or_else(|_| std::process::abort());
-            let converted: Option<Vec<Vec<F>>> = banks
-                .into_iter()
-                .map(|bank| bank.into_iter().map(crate::cuda::fr_into::<F>).collect())
-                .collect();
-            match converted.and_then(|v| <[Vec<F>; 5]>::try_from(v).ok()) {
-                Some(arrays) => arrays,
-                None => std::process::abort(),
-            }
-        });
+        let cuda_raf: Option<[Vec<F>; 5]> = if device_round {
+            Some(std::array::from_fn(|_| Vec::new()))
+        } else {
+            self.cuda_address.as_ref().map(|state| {
+                let banks = state.raf_banks(suffix_len).unwrap_or_else(|_| std::process::abort());
+                let converted: Option<Vec<Vec<F>>> = banks
+                    .into_iter()
+                    .map(|bank| bank.into_iter().map(crate::cuda::fr_into::<F>).collect())
+                    .collect();
+                match converted.and_then(|v| <[Vec<F>; 5]>::try_from(v).ok()) {
+                    Some(arrays) => arrays,
+                    None => std::process::abort(),
+                }
+            })
+        };
         #[cfg(not(feature = "cuda"))]
         let cuda_raf: Option<[Vec<F>; 5]> = None;
 
         let [mut raf_shift_half_q, raf_left_q, raf_right_q, mut raf_shift_full_q, raf_identity_q] =
             cuda_raf.unwrap_or_else(|| self.build_raf_q_cpu(poly_len, suffix_len, suffix_mask));
 
-        if shift_half_value != 1 {
-            for value in &mut raf_shift_half_q {
-                *value *= shift_half;
+        if !device_round {
+            if shift_half_value != 1 {
+                for value in &mut raf_shift_half_q {
+                    *value *= shift_half;
+                }
             }
-        }
-        if shift_full_value != 1 {
-            for value in &mut raf_shift_full_q {
-                *value *= shift_full;
+            if shift_full_value != 1 {
+                for value in &mut raf_shift_full_q {
+                    *value *= shift_full;
+                }
             }
         }
 
         let tables = LookupTableKind::<64>::all();
 
         #[cfg(feature = "cuda")]
-        let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> =
+        let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> = if device_round {
+            Some(
+                tables
+                    .iter()
+                    .enumerate()
+                    .filter(|(table_index, _)| {
+                        self.cuda_address
+                            .as_ref()
+                            .is_some_and(|state| !state.table_is_empty(*table_index))
+                    })
+                    .map(|(_, table)| InstructionReadRafReadTablePhase {
+                        table: *table,
+                        suffix_polys: Vec::new(),
+                    })
+                    .collect(),
+            )
+        } else {
             self.cuda_address.as_ref().map(|state| {
                 tables
                     .iter()
@@ -2181,7 +2294,8 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                         }
                     })
                     .collect::<Vec<_>>()
-            });
+            })
+        };
         #[cfg(not(feature = "cuda"))]
         let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> = None;
 
@@ -2309,14 +2423,47 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let Some(phase) = self.address_phase.take() else {
             return;
         };
-        self.left_operand_checkpoint = phase.left_operand_prefix[0];
-        self.right_operand_checkpoint = phase.right_operand_prefix[0];
-        self.identity_checkpoint = phase.identity_prefix[0];
-        self.read_prefix_checkpoints = phase
-            .read_prefix_polys
-            .iter()
-            .map(|poly| PrefixEval::from(poly[0]))
-            .collect();
+
+        #[cfg(feature = "cuda")]
+        let device_round = self.cuda_address_round.take();
+        #[cfg(not(feature = "cuda"))]
+        let device_round: Option<()> = None;
+
+        if let Some(round_state) = device_round {
+            #[cfg(feature = "cuda")]
+            {
+                let (left, right, identity) = round_state
+                    .operand_checkpoints()
+                    .unwrap_or_else(|_| std::process::abort());
+                self.left_operand_checkpoint =
+                    crate::cuda::fr_into::<F>(left).unwrap_or_else(|| std::process::abort());
+                self.right_operand_checkpoint =
+                    crate::cuda::fr_into::<F>(right).unwrap_or_else(|| std::process::abort());
+                self.identity_checkpoint =
+                    crate::cuda::fr_into::<F>(identity).unwrap_or_else(|| std::process::abort());
+                let read_first = round_state
+                    .read_prefix_first(NUM_PREFIXES)
+                    .unwrap_or_else(|_| std::process::abort());
+                self.read_prefix_checkpoints = read_first
+                    .into_iter()
+                    .map(|v| {
+                        PrefixEval::from(
+                            crate::cuda::fr_into::<F>(v)
+                                .unwrap_or_else(|| std::process::abort()),
+                        )
+                    })
+                    .collect();
+            }
+        } else {
+            self.left_operand_checkpoint = phase.left_operand_prefix[0];
+            self.right_operand_checkpoint = phase.right_operand_prefix[0];
+            self.identity_checkpoint = phase.identity_prefix[0];
+            self.read_prefix_checkpoints = phase
+                .read_prefix_polys
+                .iter()
+                .map(|poly| PrefixEval::from(poly[0]))
+                .collect();
+        }
 
         let chunk_bits = Self::ADDRESS_CHUNK_BITS;
         let start = phase.phase * chunk_bits;
@@ -3746,6 +3893,8 @@ fn instruction_read_raf_state<F: Field>(
         backend,
         #[cfg(feature = "cuda")]
         cuda_address,
+        #[cfg(feature = "cuda")]
+        cuda_address_round: None,
     })
 }
 

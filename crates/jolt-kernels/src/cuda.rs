@@ -1100,6 +1100,28 @@ impl CudaKernelContext {
         Ok(out)
     }
 
+    pub fn concat_device(&self, parts: &[&DeviceFrVec]) -> Result<DeviceFrVec, CudaError> {
+        let total: usize = parts.iter().map(|p| p.len).sum();
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1) * LIMBS)?;
+        let mut offset = 0;
+        for part in parts {
+            if part.len == 0 {
+                continue;
+            }
+            let n = part.len * LIMBS;
+            let mut dst = buf.slice_mut(offset..offset + n);
+            self.stream.memcpy_dtod(&part.buf.slice(0..n), &mut dst)?;
+            offset += n;
+        }
+        self.stream.synchronize()?;
+        Ok(DeviceFrVec {
+            stream: self.stream.clone(),
+            buf,
+            len: total,
+            staging: self.staging.clone(),
+        })
+    }
+
     fn clone_htod_tracked<T: cudarc::driver::DeviceRepr>(
         &self,
         values: &[T],
