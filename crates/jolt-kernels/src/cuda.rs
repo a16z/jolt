@@ -47,6 +47,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/ram_derive.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
+    include_str!("cuda/prefix_combine.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
@@ -100,6 +101,8 @@ pub struct CudaKernelContext {
     raf_weight_phase_update: CudaFunction,
     #[cfg(test)]
     suffix_mle_probe: CudaFunction,
+    #[cfg(test)]
+    prefix_combine_probe: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
@@ -908,6 +911,8 @@ impl CudaKernelContext {
             raf_weight_phase_update: module.load_function("raf_weight_phase_update")?,
             #[cfg(test)]
             suffix_mle_probe: module.load_function("suffix_mle_probe")?,
+            #[cfg(test)]
+            prefix_combine_probe: module.load_function("prefix_combine_probe")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
@@ -4246,6 +4251,53 @@ impl CudaKernelContext {
         out.try_into().map_err(|_| CudaError::Pool)
     }
 
+    #[cfg(test)]
+    pub fn prefix_combine_probe(
+        &self,
+        prefixes: &[Fr],
+        suffixes: &[Fr],
+        suffix_count: &[u32],
+        variant: &[u32],
+    ) -> Result<Vec<Fr>, CudaError> {
+        let n = variant.len();
+        if suffix_count.len() != n || prefixes.len() != n * 46 || suffixes.len() != n * 4 {
+            return Err(CudaError::Unsupported);
+        }
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        let prefixes_dev = self.upload(prefixes)?;
+        let suffixes_dev = self.upload(suffixes)?;
+        let count_dev = self.clone_htod_tracked(suffix_count)?;
+        let variant_dev = self.clone_htod_tracked(variant)?;
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(n * LIMBS)?,
+            len: n,
+            staging: self.staging.clone(),
+        };
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.prefix_combine_probe.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out.buf)
+            .arg(&prefixes_dev.buf)
+            .arg(&suffixes_dev.buf)
+            .arg(&count_dev)
+            .arg(&variant_dev)
+            .arg(&n_arg);
+        // SAFETY: thread i reads prefixes[i*46..], suffixes[i*4..], suffix_count[i],
+        // variant[i] and writes out[i*LIMBS..]; all buffers hold >= n items.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        out.to_host()
+    }
+
     pub fn rd_wa_gather(
         &self,
         address_eq: &[Fr],
@@ -5538,6 +5590,42 @@ mod tests {
 
             let c = ctx();
             let got = c.suffix_mle_probe(&bits_lo, &bits_hi, &lens, &codes).unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn prefix_combine_probe_matches_cpu(seed in fr_strategy()) {
+            use jolt_lookup_tables::tables::{LookupTableKind, PrefixEval};
+
+            let tables = LookupTableKind::<64>::all();
+            let mut prefixes_flat = Vec::new();
+            let mut suffixes_flat = Vec::new();
+            let mut counts = Vec::new();
+            let mut variants = Vec::new();
+            let mut expected = Vec::new();
+            for (code, table) in tables.iter().enumerate() {
+                let prefix_vals: Vec<Fr> =
+                    (0..46).map(|p| seed + Fr::from_u64((code * 46 + p + 1) as u64)).collect();
+                let count = table.suffixes().len();
+                let suffix_vals: Vec<Fr> =
+                    (0..count).map(|s| seed + Fr::from_u64((code * 4 + s + 500) as u64)).collect();
+
+                let prefix_evals: Vec<PrefixEval<Fr>> =
+                    prefix_vals.iter().map(|&v| PrefixEval::from(v)).collect();
+                expected.push(table.combine(&prefix_evals, &suffix_vals));
+
+                prefixes_flat.extend_from_slice(&prefix_vals);
+                let mut padded = suffix_vals.clone();
+                padded.resize(4, Fr::zero());
+                suffixes_flat.extend_from_slice(&padded);
+                counts.push(count as u32);
+                variants.push(code as u32);
+            }
+
+            let c = ctx();
+            let got = c
+                .prefix_combine_probe(&prefixes_flat, &suffixes_flat, &counts, &variants)
+                .unwrap();
             prop_assert_eq!(got, expected);
         }
 
