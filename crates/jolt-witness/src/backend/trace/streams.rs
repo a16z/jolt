@@ -406,7 +406,7 @@ impl JoltVmOneHotStreamKind {
     fn value(self, row: &TraceRow, env: &WitnessEnv<'_>) -> Result<Option<usize>, WitnessError> {
         Ok(match self {
             Self::Instruction(selector) => {
-                InstructionRaChunk::extract_indexed(selector, row, None, env)?.0
+                Some(InstructionRaChunk::extract_indexed(selector, row, None, env)?.0)
             }
             Self::Bytecode(selector) => {
                 BytecodeRaChunk::extract_indexed(selector, row, None, env)?.0

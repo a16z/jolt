@@ -53,9 +53,10 @@ impl RaChunkSelector {
 }
 
 /// Hot address of one committed `InstructionRa` chunk: the selected chunk of
-/// the instruction's lookup index (always hot).
+/// the instruction's lookup index. Every cycle is hot — no-op rows look up
+/// index 0 — so, unlike its bytecode and RAM siblings, there is no cold case.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct InstructionRaChunk(pub Option<usize>);
+pub struct InstructionRaChunk(pub usize);
 
 /// Hot address of one committed `BytecodeRa` chunk: the selected chunk of
 /// the bytecode PC; cold when the row has no bytecode mapping.
@@ -75,7 +76,7 @@ impl ExtractIndexed<RaChunkSelector> for InstructionRaChunk {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let index = LookupQuery::<RV64_XLEN>::to_lookup_index(&lookup_query(row));
-        Ok(Self(Some(selector.chunk_u128(index))))
+        Ok(Self(selector.chunk_u128(index)))
     }
 }
 
