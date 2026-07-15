@@ -2736,7 +2736,11 @@ pub(crate) fn read_table_component_eval<F: Field>(
 }
 
 #[inline]
-fn prefix_suffix_round_evals<F: Field>(prefix: Option<&[F]>, q0: &[F], q1: &[F]) -> (F, F) {
+pub(crate) fn prefix_suffix_round_evals<F: Field>(
+    prefix: Option<&[F]>,
+    q0: &[F],
+    q1: &[F],
+) -> (F, F) {
     let len = q0.len();
     debug_assert_eq!(q1.len(), len);
     debug_assert!(len > 1);

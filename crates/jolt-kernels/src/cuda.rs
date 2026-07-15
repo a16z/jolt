@@ -49,6 +49,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/prefix_combine.cu"),
     include_str!("cuda/read_table_round.cu"),
+    include_str!("cuda/prefix_suffix_round.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
@@ -105,6 +106,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     prefix_combine_probe: CudaFunction,
     read_table_round_pairs: CudaFunction,
+    #[expect(dead_code, reason = "used once the prefix_suffix_round body + wiring land")]
+    prefix_suffix_round_pairs: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
@@ -668,6 +671,13 @@ pub struct ReadTableRoundInputs<'a> {
     pub items: usize,
 }
 
+pub struct PrefixSuffixRoundInputs<'a> {
+    pub prefix: Option<&'a DeviceFrVec>,
+    pub q0: &'a DeviceFrVec,
+    pub q1: &'a DeviceFrVec,
+    pub len: usize,
+}
+
 pub struct RamRwCycleRoundInputs<'a> {
     pub val_coeff: &'a DeviceFrVec,
     pub ra_coeff: &'a DeviceFrVec,
@@ -928,6 +938,7 @@ impl CudaKernelContext {
             #[cfg(test)]
             prefix_combine_probe: module.load_function("prefix_combine_probe")?,
             read_table_round_pairs: module.load_function("read_table_round_pairs")?,
+            prefix_suffix_round_pairs: module.load_function("prefix_suffix_round_pairs")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
@@ -4388,6 +4399,14 @@ impl CudaKernelContext {
         Ok([eval_0, eval_2_right + eval_2_right - eval_2_left])
     }
 
+    pub fn prefix_suffix_round_evals(
+        &self,
+        inputs: PrefixSuffixRoundInputs<'_>,
+    ) -> Result<(Fr, Fr), CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
+    }
+
     pub fn rd_wa_gather(
         &self,
         address_eq: &[Fr],
@@ -7661,6 +7680,39 @@ mod tests {
             })
             .unwrap();
         assert_eq!(got.to_vec(), expected.to_vec());
+    }
+
+    #[test]
+    fn prefix_suffix_round_evals_matches_cpu() {
+        use crate::stage5::prefix_suffix_round_evals;
+
+        let c = ctx();
+        let len = 32usize;
+        let seed = Fr::from_u64(777);
+        let q0: Vec<Fr> = (0..len).map(|j| seed + Fr::from_u64((j + 1) as u64)).collect();
+        let q1: Vec<Fr> = (0..len).map(|j| seed + Fr::from_u64((len + j + 3) as u64)).collect();
+        let prefix: Vec<Fr> = (0..len).map(|j| seed + Fr::from_u64((2 * len + j + 5) as u64)).collect();
+
+        let q0_dev = c.upload(&q0).unwrap();
+        let q1_dev = c.upload(&q1).unwrap();
+        let prefix_dev = c.upload(&prefix).unwrap();
+
+        for use_prefix in [false, true] {
+            let expected = prefix_suffix_round_evals(
+                use_prefix.then_some(prefix.as_slice()),
+                &q0,
+                &q1,
+            );
+            let got = c
+                .prefix_suffix_round_evals(PrefixSuffixRoundInputs {
+                    prefix: use_prefix.then_some(&prefix_dev),
+                    q0: &q0_dev,
+                    q1: &q1_dev,
+                    len,
+                })
+                .unwrap();
+            assert_eq!(got, expected);
+        }
     }
 
     #[test]
