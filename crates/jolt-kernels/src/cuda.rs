@@ -106,7 +106,6 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     prefix_combine_probe: CudaFunction,
     read_table_round_pairs: CudaFunction,
-    #[expect(dead_code, reason = "used once the prefix_suffix_round body + wiring land")]
     prefix_suffix_round_pairs: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
@@ -4403,8 +4402,74 @@ impl CudaKernelContext {
         &self,
         inputs: PrefixSuffixRoundInputs<'_>,
     ) -> Result<(Fr, Fr), CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        use num_traits::Zero;
+        let half = inputs.len / 2;
+        if half == 0 {
+            return Ok((Fr::zero(), Fr::zero()));
+        }
+
+        const WIDTH: usize = 3;
+        let tuple = WIDTH * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (half as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let empty: CudaSlice<u64> = self.stream.alloc_zeros(LIMBS)?;
+        let prefix_buf = inputs.prefix.map_or(&empty, |p| &p.buf);
+        let has_prefix_arg: u32 = u32::from(inputs.prefix.is_some());
+        let half_arg = half as u64;
+        let len_arg = inputs.len as u64;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.prefix_suffix_round_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(prefix_buf)
+            .arg(&inputs.q0.buf)
+            .arg(&inputs.q1.buf)
+            .arg(&has_prefix_arg)
+            .arg(&half_arg)
+            .arg(&len_arg);
+        // SAFETY: one thread per row of `half` forms a 3-lane tuple (eval_0, eval_2_left,
+        // eval_2_right): with prefix_0 = prefix[row] (or 1 when has_prefix == 0) and prefix_2 =
+        // 2*prefix[row+half] - prefix[row] (or 1), acc0 = p0*q0[row]+q1[row],
+        // acc1 = p2*q0[row]+q1[row], acc2 = p2*q0[row+half]+q1[row+half]; shared holds `block`
+        // 3-lane tuples reduced across the block.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let n_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&n_arg);
+            // SAFETY: round_poly_reduce sums 3-lane tuples across up to `block` blocks.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        let eval_0 = limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]);
+        let eval_2_left = limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]);
+        let eval_2_right = limbs_to_fr([raw[8], raw[9], raw[10], raw[11]]);
+        Ok((eval_0, eval_2_right + eval_2_right - eval_2_left))
     }
 
     pub fn rd_wa_gather(
