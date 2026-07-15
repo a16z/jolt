@@ -1,7 +1,7 @@
 use jolt_field::Field;
 use jolt_program::execution::TraceRow;
 
-use super::{Extract, WitnessEnv};
+use super::{Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 
 /// Value read from rs1; 0 when the instruction has no rs1 operand.
@@ -16,8 +16,8 @@ pub struct Rs2Value(pub u64);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RdWriteValue(pub u64);
 
-impl Rs1Value {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for Rs1Value {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -32,8 +32,8 @@ impl Extract for Rs1Value {
     }
 }
 
-impl Rs2Value {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for Rs2Value {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -48,8 +48,8 @@ impl Extract for Rs2Value {
     }
 }
 
-impl RdWriteValue {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for RdWriteValue {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }

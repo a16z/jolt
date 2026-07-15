@@ -19,7 +19,7 @@ use super::*;
 use crate::witnesses::{
     Extract, ExtractIndexed, Imm, InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop,
     OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value,
-    ShouldJump, UnexpandedPc, WitnessEnv,
+    ShouldJump, ToField, UnexpandedPc, WitnessEnv,
 };
 use crate::{JoltWitnessOracle, PolynomialChunk, PolynomialEncoding, PolynomialStream, Shape};
 
@@ -168,24 +168,15 @@ fn committed_oracle_descriptors_report_dimensions_and_encoding() {
 
     assert_eq!(
         shape(&witness, JoltCommittedPolynomial::RamInc),
-        Ok(Shape::new(
-            WitnessDimensions::new(4),
-            PolynomialEncoding::Compact
-        ))
+        Ok(Shape::new(4, PolynomialEncoding::Compact))
     );
     assert_eq!(
         shape(&witness, JoltCommittedPolynomial::InstructionRa(0)),
-        Ok(Shape::new(
-            WitnessDimensions::new(8),
-            PolynomialEncoding::OneHot
-        ))
+        Ok(Shape::new(8, PolynomialEncoding::OneHot))
     );
     assert_eq!(
         shape(&witness, JoltCommittedPolynomial::TrustedAdvice),
-        Ok(Shape::new(
-            WitnessDimensions::new(3),
-            PolynomialEncoding::Compact
-        ))
+        Ok(Shape::new(3, PolynomialEncoding::Compact))
     );
 }
 
@@ -219,21 +210,15 @@ fn virtual_oracle_descriptors_report_stage1_trace_columns() -> Result<(), String
 
     assert_eq!(
         shape(&witness, JoltVirtualPolynomial::Product).map_err(|error| error.to_string())?,
-        Shape::new(WitnessDimensions::new(2), PolynomialEncoding::Dense)
+        Shape::new(2, PolynomialEncoding::Dense)
     );
     assert_eq!(
         shape(&witness, JoltVirtualPolynomial::RamRa),
-        Ok(Shape::new(
-            WitnessDimensions::new(8),
-            PolynomialEncoding::Dense
-        ))
+        Ok(Shape::new(8, PolynomialEncoding::Dense))
     );
     assert_eq!(
         shape(&witness, JoltVirtualPolynomial::RamValFinal),
-        Ok(Shape::new(
-            WitnessDimensions::new(6),
-            PolynomialEncoding::Dense
-        ))
+        Ok(Shape::new(6, PolynomialEncoding::Dense))
     );
     Ok(())
 }

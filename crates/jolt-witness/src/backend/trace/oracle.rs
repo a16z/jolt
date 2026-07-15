@@ -10,6 +10,13 @@ use jolt_claims::protocols::jolt::{
 };
 
 use super::*;
+use crate::witnesses::{
+    Imm, InstructionFlag, InstructionRafFlag, LeftInstructionInput, LeftLookupOperand,
+    LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc,
+    NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamHammingWeight, RamReadValue,
+    RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
+    ShouldBranch, ShouldJump, UnexpandedPc,
+};
 use crate::{
     JoltWitnessOracle, PolynomialBatchStream, PolynomialEncoding, PolynomialStream, Shape,
 };
@@ -39,20 +46,21 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn shape_of(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;
-        let (dimensions, encoding) = match id {
+        use PolynomialEncoding::{Compact, Dense, OneHot};
+        match id {
             JoltPolynomialId::Committed(committed) => match committed {
-                C::RdInc | C::RamInc => (self.trace_dimensions()?, PolynomialEncoding::Compact),
+                C::RdInc | C::RamInc => Ok(Shape::new(self.trace_log_rows(), Compact)),
                 C::InstructionRa(index) => {
                     require_index(index, self.ra_layout()?.instruction())?;
-                    (self.one_hot_dimensions()?, PolynomialEncoding::OneHot)
+                    Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
                 C::BytecodeRa(index) => {
                     require_index(index, self.ra_layout()?.bytecode())?;
-                    (self.one_hot_dimensions()?, PolynomialEncoding::OneHot)
+                    Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
                 C::RamRa(index) => {
                     require_index(index, self.ra_layout()?.ram())?;
-                    (self.one_hot_dimensions()?, PolynomialEncoding::OneHot)
+                    Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
                 C::TrustedAdvice => {
                     if !self.config.include_trusted_advice {
@@ -60,12 +68,12 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                             label: JOLT_VM_LABEL,
                         });
                     }
-                    (
-                        Self::advice_dimensions(
+                    Ok(Shape::new(
+                        Self::advice_log_rows(
                             self.preprocessing.memory_layout.max_trusted_advice_size as usize / 8,
                         ),
-                        PolynomialEncoding::Compact,
-                    )
+                        Compact,
+                    ))
                 }
                 C::UntrustedAdvice => {
                     if !self.config.include_untrusted_advice {
@@ -73,15 +81,15 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                             label: JOLT_VM_LABEL,
                         });
                     }
-                    (
-                        Self::advice_dimensions(
+                    Ok(Shape::new(
+                        Self::advice_log_rows(
                             self.preprocessing.memory_layout.max_untrusted_advice_size as usize / 8,
                         ),
-                        PolynomialEncoding::Compact,
-                    )
+                        Compact,
+                    ))
                 }
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
-                    return Err(not_served(id, COMMITTED_PROGRAM_REASON));
+                    Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
                 C::UnsignedIncChunk(_)
                 | C::UnsignedIncMsb
@@ -94,29 +102,21 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 | C::BytecodeRafFlag { .. }
                 | C::BytecodeUnexpandedPcBytes { .. }
                 | C::BytecodeImmBytes { .. }
-                | C::ProgramImageBytes => {
-                    return Err(not_served(id, LATTICE_REASON));
-                }
+                | C::ProgramImageBytes => Err(not_served(id, LATTICE_REASON)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
-                V::RamVal | V::RamRa => {
-                    (self.ram_read_write_dimensions()?, PolynomialEncoding::Dense)
+                V::RamVal | V::RamRa => Ok(Shape::new(self.ram_read_write_log_rows()?, Dense)),
+                V::RegistersVal | V::Rs1Ra | V::Rs2Ra | V::RdWa => {
+                    Ok(Shape::new(self.register_read_write_log_rows()?, Dense))
                 }
-                V::RegistersVal | V::Rs1Ra | V::Rs2Ra | V::RdWa => (
-                    self.register_read_write_dimensions()?,
-                    PolynomialEncoding::Dense,
-                ),
-                V::RamValFinal => (self.ram_final_dimensions()?, PolynomialEncoding::Dense),
+                V::RamValFinal => Ok(Shape::new(self.ram_log_k()?, Dense)),
                 V::InstructionRa(index) => {
                     require_index(index, self.instruction_virtual_ra_count()?)?;
-                    (
-                        self.instruction_virtual_ra_dimensions()?,
-                        PolynomialEncoding::Dense,
-                    )
+                    Ok(Shape::new(self.instruction_virtual_ra_log_rows()?, Dense))
                 }
                 V::LookupTableFlag(index) => {
                     require_index(index, LookupTableKind::<RV64_XLEN>::COUNT)?;
-                    (self.trace_dimensions()?, PolynomialEncoding::Dense)
+                    Ok(Shape::new(self.trace_log_rows(), Dense))
                 }
                 V::PC
                 | V::UnexpandedPC
@@ -143,24 +143,19 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 | V::RamWriteValue
                 | V::RamHammingWeight
                 | V::OpFlags(_)
-                | V::InstructionFlags(_) => (self.trace_dimensions()?, PolynomialEncoding::Dense),
-                V::Rd | V::InstructionRaf | V::RamValInit => {
-                    return Err(not_served(id, UNSERVED_REASON));
-                }
+                | V::InstructionFlags(_) => Ok(Shape::new(self.trace_log_rows(), Dense)),
+                V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValStage(_)
                 | V::BytecodeReadRafAddrClaim
                 | V::BooleanityAddrClaim
                 | V::BytecodeClaimReductionIntermediate
                 | V::ProgramImageInitContributionRw => {
-                    return Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON));
+                    Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON))
                 }
-                V::FusedInc => {
-                    return Err(not_served(id, LATTICE_REASON));
-                }
+                V::FusedInc => Err(not_served(id, LATTICE_REASON)),
             },
-        };
-        Ok(Shape::new(dimensions, encoding))
+        }
     }
 }
 
@@ -207,33 +202,37 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
                 }
                 V::RamValFinal => self.materialize_ram_val_final(),
                 V::InstructionRa(index) => self.materialize_instruction_ra(index),
-                V::PC
-                | V::UnexpandedPC
-                | V::NextPC
-                | V::NextUnexpandedPC
-                | V::NextIsNoop
-                | V::NextIsVirtual
-                | V::NextIsFirstInSequence
-                | V::LeftLookupOperand
-                | V::RightLookupOperand
-                | V::LeftInstructionInput
-                | V::RightInstructionInput
-                | V::Product
-                | V::ShouldJump
-                | V::ShouldBranch
-                | V::Imm
-                | V::Rs1Value
-                | V::Rs2Value
-                | V::RdWriteValue
-                | V::LookupOutput
-                | V::InstructionRafFlag
-                | V::RamAddress
-                | V::RamReadValue
-                | V::RamWriteValue
-                | V::RamHammingWeight
-                | V::OpFlags(_)
-                | V::InstructionFlags(_)
-                | V::LookupTableFlag(_) => self.materialize_trace_virtual(virtual_id),
+                V::PC => self.materialize_cycle::<F, Pc>(),
+                V::UnexpandedPC => self.materialize_cycle::<F, UnexpandedPc>(),
+                V::NextPC => self.materialize_cycle::<F, NextPc>(),
+                V::NextUnexpandedPC => self.materialize_cycle::<F, NextUnexpandedPc>(),
+                V::NextIsNoop => self.materialize_cycle::<F, NextIsNoop>(),
+                V::NextIsVirtual => self.materialize_cycle::<F, NextIsVirtual>(),
+                V::NextIsFirstInSequence => self.materialize_cycle::<F, NextIsFirstInSequence>(),
+                V::LeftLookupOperand => self.materialize_cycle::<F, LeftLookupOperand>(),
+                V::RightLookupOperand => self.materialize_cycle::<F, RightLookupOperand>(),
+                V::LeftInstructionInput => self.materialize_cycle::<F, LeftInstructionInput>(),
+                V::RightInstructionInput => self.materialize_cycle::<F, RightInstructionInput>(),
+                V::Product => self.materialize_cycle::<F, Product>(),
+                V::ShouldJump => self.materialize_cycle::<F, ShouldJump>(),
+                V::ShouldBranch => self.materialize_cycle::<F, ShouldBranch>(),
+                V::Imm => self.materialize_cycle::<F, Imm>(),
+                V::Rs1Value => self.materialize_cycle::<F, Rs1Value>(),
+                V::Rs2Value => self.materialize_cycle::<F, Rs2Value>(),
+                V::RdWriteValue => self.materialize_cycle::<F, RdWriteValue>(),
+                V::LookupOutput => self.materialize_cycle::<F, LookupOutput>(),
+                V::InstructionRafFlag => self.materialize_cycle::<F, InstructionRafFlag>(),
+                V::RamAddress => self.materialize_cycle::<F, RamAddress>(),
+                V::RamReadValue => self.materialize_cycle::<F, RamReadValue>(),
+                V::RamWriteValue => self.materialize_cycle::<F, RamWriteValue>(),
+                V::RamHammingWeight => self.materialize_cycle::<F, RamHammingWeight>(),
+                V::OpFlags(flag) => self.materialize_cycle_indexed::<F, OpFlag, _>(flag),
+                V::InstructionFlags(flag) => {
+                    self.materialize_cycle_indexed::<F, InstructionFlag, _>(flag)
+                }
+                V::LookupTableFlag(table) => {
+                    self.materialize_cycle_indexed::<F, LookupTableFlag, _>(table)
+                }
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValStage(_)

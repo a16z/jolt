@@ -5,7 +5,7 @@ use jolt_field::{
 use jolt_lookup_tables::LookupQuery;
 use jolt_program::execution::TraceRow;
 
-use super::{lookup_query, Extract, WitnessEnv};
+use super::{lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 use crate::RV64_XLEN;
 
@@ -34,8 +34,8 @@ pub struct Product(pub S128);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Imm(pub i128);
 
-impl LeftLookupOperand {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for LeftLookupOperand {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -51,8 +51,8 @@ impl Extract for LeftLookupOperand {
     }
 }
 
-impl RightLookupOperand {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for RightLookupOperand {
+    fn to_field<F: Field>(self) -> F {
         F::from_u128(self.0)
     }
 }
@@ -68,8 +68,8 @@ impl Extract for RightLookupOperand {
     }
 }
 
-impl LeftInstructionInput {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for LeftInstructionInput {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -85,8 +85,8 @@ impl Extract for LeftInstructionInput {
     }
 }
 
-impl RightInstructionInput {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for RightInstructionInput {
+    fn to_field<F: Field>(self) -> F {
         F::from_i128(self.0)
     }
 }
@@ -102,10 +102,10 @@ impl Extract for RightInstructionInput {
     }
 }
 
-impl Product {
+impl ToField for Product {
     /// The product may exceed `i128`: fall back to the sign/magnitude split
     /// when the truncated representation does not fit.
-    pub fn to_field<F: Field>(self) -> F {
+    fn to_field<F: Field>(self) -> F {
         if let Some(value) = self.0.to_i128() {
             F::from_i128(value)
         } else {
@@ -132,8 +132,8 @@ impl Extract for Product {
     }
 }
 
-impl Imm {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for Imm {
+    fn to_field<F: Field>(self) -> F {
         F::from_i128(self.0)
     }
 }

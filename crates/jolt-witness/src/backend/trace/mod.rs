@@ -18,8 +18,8 @@ use jolt_program::{
 use self::lookup::instruction_lookup_index;
 use crate::witnesses::ram_access_address;
 use crate::{
-    PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialStream,
-    WitnessDimensions, WitnessError, JOLT_VM_LABEL, RV64_XLEN,
+    PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialStream, WitnessError,
+    JOLT_VM_LABEL, RV64_XLEN,
 };
 
 mod cycle;
@@ -171,8 +171,8 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
         })
     }
 
-    fn trace_dimensions(&self) -> Result<WitnessDimensions, WitnessError> {
-        Ok(WitnessDimensions::new(self.config.log_t))
+    fn trace_log_rows(&self) -> usize {
+        self.config.log_t
     }
 
     fn ram_log_k(&self) -> Result<usize, WitnessError> {
@@ -188,57 +188,44 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
         Ok(self.config.ram_k.ilog2() as usize)
     }
 
-    fn ram_read_write_dimensions(&self) -> Result<WitnessDimensions, WitnessError> {
-        let log_rows = self
-            .config
+    fn ram_read_write_log_rows(&self) -> Result<usize, WitnessError> {
+        self.config
             .log_t
             .checked_add(self.ram_log_k()?)
             .ok_or_else(|| WitnessError::InvalidDimensions {
                 label: JOLT_VM_LABEL,
                 reason: "RAM read-write rows overflow".to_owned(),
-            })?;
-        Ok(WitnessDimensions::new(log_rows))
+            })
     }
 
-    fn register_read_write_dimensions(&self) -> Result<WitnessDimensions, WitnessError> {
-        let log_rows = self
-            .config
+    fn register_read_write_log_rows(&self) -> Result<usize, WitnessError> {
+        self.config
             .log_t
             .checked_add(REGISTER_ADDRESS_BITS)
             .ok_or_else(|| WitnessError::InvalidDimensions {
                 label: JOLT_VM_LABEL,
                 reason: "register read-write rows overflow".to_owned(),
-            })?;
-        Ok(WitnessDimensions::new(log_rows))
+            })
     }
 
-    fn ram_final_dimensions(&self) -> Result<WitnessDimensions, WitnessError> {
-        let log_rows = self.ram_log_k()?;
-        Ok(WitnessDimensions::new(log_rows))
-    }
-
-    fn one_hot_dimensions(&self) -> Result<WitnessDimensions, WitnessError> {
-        let log_rows = self
-            .config
+    fn one_hot_log_rows(&self) -> Result<usize, WitnessError> {
+        self.config
             .log_t
             .checked_add(self.config.one_hot.committed_chunk_bits())
             .ok_or_else(|| WitnessError::InvalidDimensions {
                 label: JOLT_VM_LABEL,
                 reason: "one-hot committed rows overflow".to_owned(),
-            })?;
-        Ok(WitnessDimensions::new(log_rows))
+            })
     }
 
-    fn instruction_virtual_ra_dimensions(&self) -> Result<WitnessDimensions, WitnessError> {
-        let log_rows = self
-            .config
+    fn instruction_virtual_ra_log_rows(&self) -> Result<usize, WitnessError> {
+        self.config
             .log_t
             .checked_add(self.config.one_hot.lookup_virtual_chunk_bits())
             .ok_or_else(|| WitnessError::InvalidDimensions {
                 label: JOLT_VM_LABEL,
                 reason: "instruction virtual RA rows overflow".to_owned(),
-            })?;
-        Ok(WitnessDimensions::new(log_rows))
+            })
     }
 
     fn instruction_virtual_ra_count(&self) -> Result<usize, WitnessError> {
@@ -254,9 +241,8 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
         Ok(RV64_LOOKUP_ADDRESS_BITS / chunk_bits)
     }
 
-    fn advice_dimensions(words: usize) -> WitnessDimensions {
-        let rows = words.next_power_of_two().max(1);
-        WitnessDimensions::new(rows.ilog2() as usize)
+    fn advice_log_rows(words: usize) -> usize {
+        words.next_power_of_two().max(1).ilog2() as usize
     }
 }
 

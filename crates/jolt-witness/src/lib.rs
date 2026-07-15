@@ -38,7 +38,7 @@ pub use chunk::{
     PolynomialStream,
 };
 pub use error::WitnessError;
-pub use shape::{PolynomialEncoding, Shape, WitnessDimensions};
+pub use shape::{PolynomialEncoding, Shape};
 
 /// XLEN of the RV64 Jolt VM this crate derives witnesses for.
 pub const RV64_XLEN: usize = 64;

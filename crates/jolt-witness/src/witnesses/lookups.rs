@@ -2,7 +2,7 @@ use jolt_field::Field;
 use jolt_lookup_tables::LookupQuery;
 use jolt_program::execution::TraceRow;
 
-use super::{lookup_query, Extract, WitnessEnv};
+use super::{lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 use crate::RV64_XLEN;
 
@@ -10,8 +10,8 @@ use crate::RV64_XLEN;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LookupOutput(pub u64);
 
-impl LookupOutput {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for LookupOutput {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }

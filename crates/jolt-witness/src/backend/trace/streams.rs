@@ -602,18 +602,18 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         }
 
         let shape = self.shape_of(JoltPolynomialId::Committed(id))?;
-        let mut stream = self.committed_stream(id, shape.dimensions.rows().max(1))?;
-        let mut values = Vec::with_capacity(shape.dimensions.rows());
+        let mut stream = self.committed_stream(id, shape.rows().max(1))?;
+        let mut values = Vec::with_capacity(shape.rows());
         while let Some(chunk) = stream.next_chunk()? {
             append_compact_chunk(&mut values, chunk)?;
         }
-        if values.len() != shape.dimensions.rows() {
+        if values.len() != shape.rows() {
             return Err(WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: format!(
                     "committed oracle {id:?} materialized {} rows, expected {}",
                     values.len(),
-                    shape.dimensions.rows()
+                    shape.rows()
                 ),
             });
         }
@@ -626,18 +626,18 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     ) -> Result<Vec<F>, WitnessError> {
         let shape = self.shape_of(JoltPolynomialId::Committed(id))?;
         let cycles = checked_pow2(self.config.log_t)?;
-        if !shape.dimensions.rows().is_multiple_of(cycles) {
+        if !shape.rows().is_multiple_of(cycles) {
             return Err(WitnessError::InvalidDimensions {
                 label: JOLT_VM_LABEL,
                 reason: format!(
                     "committed oracle {id:?} has {} rows, not divisible by {cycles} cycles",
-                    shape.dimensions.rows()
+                    shape.rows()
                 ),
             });
         }
-        let addresses = shape.dimensions.rows() / cycles;
+        let addresses = shape.rows() / cycles;
         let mut stream = self.committed_stream(id, cycles.max(1))?;
-        let mut values = vec![F::zero(); shape.dimensions.rows()];
+        let mut values = vec![F::zero(); shape.rows()];
         let mut cycle = 0usize;
         loop {
             let next: Option<PolynomialChunk<F>> = stream.next_chunk()?;

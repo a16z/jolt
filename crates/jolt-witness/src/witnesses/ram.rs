@@ -1,7 +1,7 @@
 use jolt_field::Field;
 use jolt_program::execution::{RamAccess, TraceRow};
 
-use super::{Extract, WitnessEnv};
+use super::{Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 
 pub(crate) const fn ram_access_address(access: RamAccess) -> Option<u64> {
@@ -30,8 +30,8 @@ pub struct RamWriteValue(pub u64);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RamHammingWeight(pub bool);
 
-impl RamAddress {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for RamAddress {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -46,8 +46,8 @@ impl Extract for RamAddress {
     }
 }
 
-impl RamReadValue {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for RamReadValue {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -66,8 +66,8 @@ impl Extract for RamReadValue {
     }
 }
 
-impl RamWriteValue {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for RamWriteValue {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -86,8 +86,8 @@ impl Extract for RamWriteValue {
     }
 }
 
-impl RamHammingWeight {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for RamHammingWeight {
+    fn to_field<F: Field>(self) -> F {
         F::from_bool(self.0)
     }
 }

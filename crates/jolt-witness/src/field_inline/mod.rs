@@ -100,19 +100,17 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
         Ok(witness)
     }
 
-    fn trace_dimensions(&self) -> Result<crate::WitnessDimensions, WitnessError> {
-        Ok(crate::WitnessDimensions::new(self.log_t))
+    fn trace_log_rows(&self) -> usize {
+        self.log_t
     }
 
-    fn field_register_dimensions(&self) -> Result<crate::WitnessDimensions, WitnessError> {
-        let log_rows = self
-            .log_t
+    fn field_register_log_rows(&self) -> Result<usize, WitnessError> {
+        self.log_t
             .checked_add(FIELD_REGISTERS_LOG_K)
             .ok_or_else(|| WitnessError::InvalidDimensions {
                 label: FIELD_INLINE_LABEL,
                 reason: "field-register witness row count overflow".to_owned(),
-            })?;
-        Ok(crate::WitnessDimensions::new(log_rows))
+            })
     }
 
     fn validate_inputs(&self) -> Result<(), WitnessError> {
@@ -260,12 +258,12 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
     }
 
     fn describe_virtual(&self, id: FieldInlineVirtualPolynomial) -> Result<Shape, WitnessError> {
-        let dimensions = if is_register_domain_virtual(id) {
-            self.field_register_dimensions()?
+        let log_rows = if is_register_domain_virtual(id) {
+            self.field_register_log_rows()?
         } else {
-            self.trace_dimensions()?
+            self.trace_log_rows()
         };
-        Ok(Shape::new(dimensions, PolynomialEncoding::Dense))
+        Ok(Shape::new(log_rows, PolynomialEncoding::Dense))
     }
 }
 
@@ -273,9 +271,9 @@ impl TraceBackedFieldInlineWitness<'_> {
     /// The exhaustive shape map over the field-inline id vocabulary.
     pub fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError> {
         match id {
-            FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => Ok(
-                Shape::new(self.trace_dimensions()?, PolynomialEncoding::Dense),
-            ),
+            FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
+                Ok(Shape::new(self.trace_log_rows(), PolynomialEncoding::Dense))
+            }
             FieldInlinePolynomialId::Virtual(id) => self.describe_virtual(id),
         }
     }
@@ -1036,7 +1034,7 @@ mod tests {
                 FieldInlineCommittedPolynomial::FieldRdInc,
             ))
             .unwrap();
-        assert_eq!(shape.dimensions.rows(), 8);
+        assert_eq!(shape.rows(), 8);
         assert_eq!(shape.encoding, PolynomialEncoding::Dense);
     }
 

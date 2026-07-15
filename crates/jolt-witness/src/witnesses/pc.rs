@@ -1,7 +1,7 @@
 use jolt_field::Field;
 use jolt_program::execution::TraceRow;
 
-use super::{pc_for_row, Extract, WitnessEnv};
+use super::{pc_for_row, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 
 /// Bytecode-expanded program counter (the preprocessing PC index, not the
@@ -21,8 +21,8 @@ pub struct NextPc(pub u64);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NextUnexpandedPc(pub u64);
 
-impl Pc {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for Pc {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -37,8 +37,8 @@ impl Extract for Pc {
     }
 }
 
-impl UnexpandedPc {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for UnexpandedPc {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -53,8 +53,8 @@ impl Extract for UnexpandedPc {
     }
 }
 
-impl NextPc {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for NextPc {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -73,8 +73,8 @@ impl Extract for NextPc {
     }
 }
 
-impl NextUnexpandedPc {
-    pub fn to_field<F: Field>(self) -> F {
+impl ToField for NextUnexpandedPc {
+    fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }

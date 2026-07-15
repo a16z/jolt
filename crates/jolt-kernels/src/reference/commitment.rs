@@ -82,11 +82,8 @@ where
             // the flat `(K × T)` matrix — inexpressible through the
             // column-major one-hot stream. Materialize the flat table and
             // feed dense rows (the same MSM legacy's materialized path runs).
-            let flat = materialize_one_hot_flat::<F>(
-                &mut stream,
-                shape.dimensions.rows(),
-                1usize << grid.log_t,
-            )?;
+            let flat =
+                materialize_one_hot_flat::<F>(&mut stream, shape.rows(), 1usize << grid.log_t)?;
             let mut partial = PCS::begin(setup);
             for row in flat.chunks(row_width) {
                 PCS::feed(&mut partial, row, setup);
@@ -96,13 +93,11 @@ where
         PolynomialEncoding::OneHot => {
             // The one-hot `(K × T)` matrix: `K = 2^(log_rows − log_t)` and the
             // stream yields `row_width` cycles of hot addresses per chunk.
-            let log_k = shape
-                .dimensions
-                .log_rows
-                .checked_sub(grid.log_t)
-                .ok_or_else(|| KernelError::InvalidGeometry {
+            let log_k = shape.log_rows.checked_sub(grid.log_t).ok_or_else(|| {
+                KernelError::InvalidGeometry {
                     reason: format!("one-hot polynomial {id:?} has fewer variables than log_t"),
-                })?;
+                }
+            })?;
             let one_hot_k =
                 1usize
                     .checked_shl(log_k as u32)

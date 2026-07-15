@@ -8,7 +8,7 @@ use jolt_riscv::{
 
 use super::{
     decode_instruction, lookup_query, row_circuit_flags, row_is_noop, Extract, ExtractIndexed,
-    WitnessEnv,
+    ToField, WitnessEnv,
 };
 use crate::WitnessError;
 use crate::RV64_XLEN;
@@ -63,8 +63,8 @@ pub struct LookupTableFlag(pub bool);
 
 macro_rules! bool_to_field {
     ($($name:ident),* $(,)?) => {
-        $(impl $name {
-            pub fn to_field<F: Field>(self) -> F {
+        $(impl ToField for $name {
+            fn to_field<F: Field>(self) -> F {
                 F::from_bool(self.0)
             }
         })*
