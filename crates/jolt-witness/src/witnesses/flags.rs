@@ -10,8 +10,8 @@ use super::{
     decode_instruction, lookup_query, row_circuit_flags, row_is_noop, Extract, ExtractIndexed,
     WitnessEnv,
 };
-use crate::protocols::jolt_vm::RV64_XLEN;
 use crate::WitnessError;
+use crate::RV64_XLEN;
 
 /// Whether the successor row is a no-op. The last cycle's missing successor
 /// counts as a no-op: the product/shift family requires `NextIsNoop = 1` at

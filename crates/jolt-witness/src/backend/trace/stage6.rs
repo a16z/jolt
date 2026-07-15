@@ -16,7 +16,7 @@ pub trait JoltVmStage6Rows {
     fn stage6_rows(&self) -> Result<Vec<JoltVmStage6Row>, WitnessError>;
 }
 
-impl<T: TraceSource + Clone> JoltVmStage6Rows for TraceBackedJoltVmWitness<'_, T> {
+impl<T: TraceSource + Clone> JoltVmStage6Rows for TraceBackend<'_, T> {
     fn stage6_rows(&self) -> Result<Vec<JoltVmStage6Row>, WitnessError> {
         let rows = checked_pow2(self.config.log_t)?;
         let mut values = Vec::with_capacity(rows);
@@ -30,7 +30,7 @@ impl<T: TraceSource + Clone> JoltVmStage6Rows for TraceBackedJoltVmWitness<'_, T
             let instruction_lookup_index =
                 instruction_lookup_index::<RV64_XLEN>(&row).map_err(|error| {
                     WitnessError::InvalidWitnessData {
-                        namespace: JOLT_VM_NAMESPACE.name,
+                        label: JOLT_VM_LABEL,
                         reason: error.to_string(),
                     }
                 })?;

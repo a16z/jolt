@@ -46,8 +46,8 @@ use jolt_verifier::stages::stage6a::outputs::{
     Stage6aSumchecks,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage6Rows};
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltVmStage6Rows;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -81,7 +81,7 @@ where
     VC: VectorCommitment<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows,
+    W: JoltWitnessOracle<F> + JoltVmStage6Rows,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     // Committed-program mode stages the five raw bound `Val_s` values as

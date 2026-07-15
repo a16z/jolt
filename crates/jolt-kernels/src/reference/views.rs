@@ -3,18 +3,16 @@
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
-use jolt_witness::protocols::jolt_vm::{jolt_opening_oracle_ref, JoltVmNamespace};
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::KernelError;
 
 /// Materialize a dense field-element table of the oracle behind `opening`.
 pub(crate) fn dense_view<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
 ) -> Result<Vec<F>, KernelError<F>> {
-    let oracle = jolt_opening_oracle_ref(opening)?;
-    Ok(witness.oracle_table(oracle)?)
+    Ok(witness.oracle_table(opening.polynomial_id())?)
 }
 
 /// `eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index MSB).
@@ -26,7 +24,7 @@ pub(crate) fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
 /// eq weights of `point` (big-endian, `K = 2^point.len()`):
 /// `out[j] = Σ_k eq(point, k) · grid[(k << log_t) | j]`.
 pub(crate) fn address_fold<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
     log_t: usize,
     point: &[F],
@@ -55,7 +53,7 @@ pub(crate) fn address_fold<F: Field>(
 /// eq weights of `point` (big-endian, `T = 2^point.len()`):
 /// `out[k] = Σ_j eq(point, j) · grid[(k << log_t) | j]`.
 pub(crate) fn cycle_fold<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
     log_k: usize,
     point: &[F],

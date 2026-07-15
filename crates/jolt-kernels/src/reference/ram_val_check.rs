@@ -21,8 +21,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic, TraceDimens
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial};
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{address_fold, dense_view};
 use crate::ram_val_check::RamValCheckProver;
@@ -38,7 +37,7 @@ impl<F: Field> RamValCheckProver<F> for ReferenceBackend {
         r_address: &[F],
         r_cycle: &[F],
         challenges: &RamValCheckChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamValCheck<F>>>, KernelError<F>> {
         // The address-bound `ra` slice, folded from the full `(K × T)` grid.
         let ra_folded = address_fold(

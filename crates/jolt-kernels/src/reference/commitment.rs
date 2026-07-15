@@ -14,11 +14,12 @@
 //! materialized address-major commit runs, full matrix height included (its
 //! trailing identity rows are part of the wire hint).
 
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+use jolt_claims::protocols::jolt::{
+    JoltCommittedPolynomial, JoltPolynomialId, TracePolynomialOrder,
+};
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::{OracleRef, PolynomialChunk, PolynomialEncoding, WitnessProvider};
+use jolt_witness::{JoltWitnessOracle, PolynomialChunk, PolynomialEncoding};
 
 use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 use crate::{KernelError, ProofSession, ReferenceBackend};
@@ -31,7 +32,7 @@ where
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -50,7 +51,7 @@ where
 }
 
 fn commit_one<F, PCS>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     id: JoltCommittedPolynomial,
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -59,14 +60,14 @@ where
     F: Field,
     PCS: CommitmentScheme<Field = F> + StreamingCommitment,
 {
-    let descriptor = witness.describe_oracle(OracleRef::<JoltVmNamespace>::Committed(id))?;
+    let shape = witness.shape(JoltPolynomialId::Committed(id))?;
     let row_width = grid.num_columns();
     let mut stream = witness.committed_stream(id, row_width)?;
 
     if grid.order == TracePolynomialOrder::AddressMajor {
         // No cycle-contiguous stream exists in this order (see the module
         // doc): materialize the strided grid table and feed dense rows.
-        let table = materialize_address_major::<F>(&mut stream, descriptor.encoding, grid, id)?;
+        let table = materialize_address_major::<F>(&mut stream, shape.encoding, grid, id)?;
         let mut partial = PCS::begin(setup);
         for row in table.chunks(row_width) {
             PCS::feed(&mut partial, row, setup);
@@ -74,7 +75,7 @@ where
         return Ok(PCS::finish_with_hint(partial, setup));
     }
 
-    match descriptor.encoding {
+    match shape.encoding {
         PolynomialEncoding::OneHot if row_width > (1usize << grid.log_t) => {
             // A precommitted candidate widened the grid columns past the
             // trace length, so one committed row packs multiple `k`-blocks of
@@ -83,7 +84,7 @@ where
             // feed dense rows (the same MSM legacy's materialized path runs).
             let flat = materialize_one_hot_flat::<F>(
                 &mut stream,
-                descriptor.dimensions.rows(),
+                shape.dimensions.rows(),
                 1usize << grid.log_t,
             )?;
             let mut partial = PCS::begin(setup);
@@ -95,7 +96,7 @@ where
         PolynomialEncoding::OneHot => {
             // The one-hot `(K × T)` matrix: `K = 2^(log_rows − log_t)` and the
             // stream yields `row_width` cycles of hot addresses per chunk.
-            let log_k = descriptor
+            let log_k = shape
                 .dimensions
                 .log_rows
                 .checked_sub(grid.log_t)

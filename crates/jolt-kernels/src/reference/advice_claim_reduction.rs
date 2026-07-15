@@ -14,8 +14,7 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedReductionLayout,
 };
 use jolt_field::Field;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::precommitted_reduction::{
     lsb_permutation, permute_challenges, permute_coefficients, PrecommittedReductionKernel,
@@ -31,7 +30,7 @@ impl<F: Field> AdviceClaimReduction<F> for ReferenceBackend {
         _session: &mut ProofSession,
         kind: JoltAdviceKind,
         point: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<F, KernelError<F>> {
         let table = advice_table(witness, kind, point.len())?;
         let eq = eq_table(point);
@@ -48,7 +47,7 @@ impl<F: Field> AdviceClaimReduction<F> for ReferenceBackend {
         kind: JoltAdviceKind,
         layout: &AdviceClaimReductionLayout,
         r_val: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>> {
         let reduction = layout.precommitted().clone();
         let permutation = reduction.poly_opening_round_permutation_be();
@@ -84,7 +83,7 @@ impl<F: Field> AdviceClaimReduction<F> for ReferenceBackend {
 }
 
 fn advice_table<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     kind: JoltAdviceKind,
     expected_vars: usize,
 ) -> Result<Vec<F>, KernelError<F>> {

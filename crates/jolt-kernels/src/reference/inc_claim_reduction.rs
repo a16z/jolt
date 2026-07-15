@@ -18,8 +18,7 @@ use jolt_claims::protocols::jolt::{IncClaimReductionPublic, JoltDerivedId, Trace
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::inc_claim_reduction::IncClaimReductionProver;
@@ -32,7 +31,7 @@ impl<F: Field> IncClaimReductionProver<F> for ReferenceBackend {
         trace_dimensions: TraceDimensions,
         cycle_points: &[Vec<F>; 4],
         challenges: &IncClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
         for point in cycle_points {
             if point.len() != trace_dimensions.log_t() {

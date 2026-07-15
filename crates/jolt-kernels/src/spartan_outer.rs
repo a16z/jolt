@@ -4,8 +4,7 @@
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -16,7 +15,7 @@ pub trait SpartanOuterProver<F: Field> {
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn SpartanOuterInstance<F>>, KernelError<F>>;
 }
 

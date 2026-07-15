@@ -18,8 +18,8 @@ use jolt_lookup_tables::JoltLookupQuery;
 use jolt_program::{execution::TraceRow, preprocess::JoltProgramPreprocessing};
 use jolt_riscv::{Flags, JoltInstruction, JoltInstructionKind};
 
-use crate::protocols::jolt_vm::JOLT_VM_NAMESPACE;
 use crate::WitnessError;
+use crate::JOLT_VM_LABEL;
 
 mod flags;
 mod lookups;
@@ -40,6 +40,8 @@ pub use operands::{
 pub use pc::{NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
 pub use ram::{RamAddress, RamHammingWeight, RamReadValue, RamWriteValue};
 pub use registers::{RdWriteValue, Rs1Value, Rs2Value};
+
+pub(crate) use ram::ram_access_address;
 
 /// Non-row inputs of witness extraction: the preprocessing (bytecode PC
 /// mapping, memory layout).
@@ -73,7 +75,7 @@ pub(crate) fn lookup_query(row: &TraceRow) -> JoltLookupQuery<&TraceRow> {
 
 pub(crate) fn decode_instruction(row: &TraceRow) -> Result<JoltInstruction, WitnessError> {
     JoltInstruction::try_from(row.instruction).map_err(|kind| WitnessError::InvalidWitnessData {
-        namespace: JOLT_VM_NAMESPACE.name,
+        label: JOLT_VM_LABEL,
         reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
     })
 }
@@ -100,7 +102,7 @@ pub(crate) fn pc_for_row(
 
 pub(crate) fn missing_pc_mapping(row: &TraceRow) -> WitnessError {
     WitnessError::InvalidWitnessData {
-        namespace: JOLT_VM_NAMESPACE.name,
+        label: JOLT_VM_LABEL,
         reason: format!(
             "bytecode preprocessing is missing PC mapping for address {:#x} with virtual_sequence_remaining {:?}",
             row.instruction.address, row.instruction.virtual_sequence_remaining

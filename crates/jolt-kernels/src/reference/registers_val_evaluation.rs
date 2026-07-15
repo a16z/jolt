@@ -18,8 +18,7 @@ use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial};
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{address_fold, dense_view};
 use crate::registers_val_evaluation::RegistersValEvaluationProver;
@@ -32,7 +31,7 @@ impl<F: Field> RegistersValEvaluationProver<F> for ReferenceBackend {
         trace_dimensions: TraceDimensions,
         registers_val_point: &[F],
         challenges: &NoChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
     {
         if registers_val_point.len() != REGISTER_ADDRESS_BITS + trace_dimensions.log_t() {

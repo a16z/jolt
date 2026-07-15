@@ -4,7 +4,7 @@ use jolt_program::execution::{TraceRow, TraceSource};
 use super::lookup::instruction_lookup_index;
 use jolt_riscv::{Flags, InterleavedBitsMarker, JoltInstruction};
 
-use super::{TraceBackedJoltVmWitness, JOLT_VM_NAMESPACE, RV64_XLEN};
+use super::{TraceBackend, JOLT_VM_LABEL, RV64_XLEN};
 use crate::WitnessError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,7 +28,7 @@ struct Stage5InstructionCycle {
     interleaved_operands: bool,
 }
 
-impl<T> JoltVmStage5InstructionReadRafRows for TraceBackedJoltVmWitness<'_, T>
+impl<T> JoltVmStage5InstructionReadRafRows for TraceBackend<'_, T>
 where
     T: TraceSource + Clone,
 {
@@ -64,7 +64,7 @@ fn stage5_instruction_cycle(
     let address = match row {
         Some(row) => instruction_lookup_index::<RV64_XLEN>(row).map_err(|error| {
             WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: error.to_string(),
             }
         })?,
@@ -86,14 +86,14 @@ fn stage5_instruction_cycle(
 
 fn invalid_dimensions(reason: impl std::fmt::Display) -> WitnessError {
     WitnessError::InvalidDimensions {
-        namespace: JOLT_VM_NAMESPACE.name,
+        label: JOLT_VM_LABEL,
         reason: reason.to_string(),
     }
 }
 
 fn invalid_data(reason: impl std::fmt::Display) -> WitnessError {
     WitnessError::InvalidWitnessData {
-        namespace: JOLT_VM_NAMESPACE.name,
+        label: JOLT_VM_LABEL,
         reason: reason.to_string(),
     }
 }

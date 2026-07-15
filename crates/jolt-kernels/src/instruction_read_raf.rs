@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimen
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafChallenges;
 use jolt_field::Field;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::protocols::jolt_vm::Stage5InstructionReadRafRow;
+use jolt_witness::Stage5InstructionReadRafRow;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 

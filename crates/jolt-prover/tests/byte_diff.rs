@@ -58,7 +58,7 @@ mod support {
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::JoltVerifierPreprocessing;
-    use jolt_witness::protocols::jolt_vm::{JoltVmWitnessConfig, TraceBackedJoltVmWitness};
+    use jolt_witness::{JoltVmWitnessConfig, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
     pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
@@ -264,7 +264,7 @@ mod support {
     /// legacy's dedicated-context commitment bytes exactly.
     pub fn modular_trusted_advice_commitment(
         backend: &JoltBackend<Fr, DoryScheme>,
-        witness: &TraceBackedJoltVmWitness<'_, OwnedTrace>,
+        witness: &TraceBackend<'_, OwnedTrace>,
         memory_layout: &MemoryLayout,
         setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
         expected: &DoryCommitment,
@@ -444,7 +444,7 @@ mod muldiv {
     use jolt_prover_legacy::zkvm::RV64IMACProver;
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::verify_until_stage1;
-    use jolt_witness::protocols::jolt_vm::{JoltVmWitnessInputs, TraceBackedJoltVmWitness};
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::support;
 
@@ -510,7 +510,7 @@ mod muldiv {
             &legacy_proof,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackedJoltVmWitness::new(
+        let witness = TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
         );
@@ -950,7 +950,7 @@ mod advice_consumer {
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_prover_legacy::zkvm::RV64IMACProver;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_witness::protocols::jolt_vm::{JoltVmWitnessInputs, TraceBackedJoltVmWitness};
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::support;
 
@@ -1029,7 +1029,7 @@ mod advice_consumer {
             &legacy_proof,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackedJoltVmWitness::new(
+        let witness = TraceBackend::new(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),
@@ -1119,7 +1119,7 @@ mod committed_muldiv {
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_prover_legacy::zkvm::RV64IMACProver;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_witness::protocols::jolt_vm::{JoltVmWitnessInputs, TraceBackedJoltVmWitness};
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::support;
 
@@ -1207,7 +1207,7 @@ mod committed_muldiv {
         // The witness borrows its own copy: `full_program` itself moves into
         // the prover preprocessing below.
         let witness_program = full_program.clone();
-        let witness = TraceBackedJoltVmWitness::new(
+        let witness = TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),
         );
@@ -1290,7 +1290,7 @@ mod address_major {
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_prover_legacy::zkvm::RV64IMACProver;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_witness::protocols::jolt_vm::{JoltVmWitnessInputs, TraceBackedJoltVmWitness};
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::support;
 
@@ -1348,7 +1348,7 @@ mod address_major {
             &legacy_proof,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackedJoltVmWitness::new(
+        let witness = TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
         );
@@ -1414,7 +1414,7 @@ mod advice_committed {
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_prover_legacy::zkvm::RV64IMACProver;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_witness::protocols::jolt_vm::{JoltVmWitnessInputs, TraceBackedJoltVmWitness};
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
     use super::support;
 
@@ -1496,7 +1496,7 @@ mod advice_committed {
         // The witness borrows its own copy: `full_program` itself moves into
         // the prover preprocessing below.
         let witness_program = full_program.clone();
-        let witness = TraceBackedJoltVmWitness::new(
+        let witness = TraceBackend::new(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),

@@ -2,15 +2,7 @@
 
 use super::*;
 
-pub(crate) const fn ram_access_address(access: RamAccess) -> Option<u64> {
-    match access {
-        RamAccess::Read(read) => Some(read.address),
-        RamAccess::Write(write) => Some(write.address),
-        RamAccess::NoOp => None,
-    }
-}
-
-impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn materialize_ram_read_write_virtual<F: Field>(
         &self,
         id: JoltVirtualPolynomial,
@@ -19,7 +11,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             JoltVirtualPolynomial::RamVal => self.materialize_ram_val(),
             JoltVirtualPolynomial::RamRa => self.materialize_ram_ra(),
             _ => Err(WitnessError::UnknownOracle {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
             }),
         }
     }
@@ -86,7 +78,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
     pub(crate) fn initial_ram_state(&self) -> Result<Vec<u64>, WitnessError> {
         if self.config.ram_k == 0 {
             return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "ram_k must be nonzero".to_owned(),
             });
         }
@@ -138,7 +130,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
     pub(crate) fn final_ram_state(&self) -> Result<Vec<u64>, WitnessError> {
         if self.config.ram_k == 0 {
             return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "ram_k must be nonzero".to_owned(),
             });
         }
@@ -214,7 +206,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
                 dram_start
                     .checked_add(address)
                     .ok_or_else(|| WitnessError::InvalidWitnessData {
-                        namespace: JOLT_VM_NAMESPACE.name,
+                        label: JOLT_VM_LABEL,
                         reason: format!("final memory address offset {address:#x} overflows"),
                     })?
             };
@@ -223,7 +215,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             };
             if word_index >= state.len() {
                 return Err(WitnessError::InvalidWitnessData {
-                    namespace: JOLT_VM_NAMESPACE.name,
+                    label: JOLT_VM_LABEL,
                     reason: format!(
                         "final memory address {absolute_address:#x} remapped to {word_index}, beyond ram_k {}",
                         state.len()
@@ -243,7 +235,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             .stack_end
             .checked_sub(self.preprocessing.memory_layout.program_size)
             .ok_or_else(|| WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "memory layout stack_end is below program_size".to_owned(),
             })
     }
@@ -258,7 +250,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             .remapped_word_address(address)
             .map(|address| address as usize)
             .map_err(|error| WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!("failed to remap {label} address {address:#x}: {error}"),
             })
     }
@@ -269,7 +261,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             .memory_layout
             .remap_word_address(address)
             .map_err(|error| WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!("failed to remap RAM access address {address:#x}: {error}"),
             })?;
         let Some(address) = remapped else {
@@ -278,7 +270,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
         let address = address as usize;
         if address >= self.config.ram_k {
             return Err(WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!(
                     "RAM access address remapped to {address}, beyond ram_k {}",
                     self.config.ram_k
@@ -314,7 +306,7 @@ pub(crate) fn set_ram_word(
 ) -> Result<(), WitnessError> {
     let Some(slot) = state.get_mut(index) else {
         return Err(WitnessError::InvalidWitnessData {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
             reason: format!("{label} memory index {index} exceeds ram_k {}", state.len()),
         });
     };
@@ -331,12 +323,12 @@ pub(crate) fn populate_ram_words(
     let end = start
         .checked_add(words.len())
         .ok_or_else(|| WitnessError::InvalidWitnessData {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
             reason: format!("{label} memory range overflows"),
         })?;
     if end > state.len() {
         return Err(WitnessError::InvalidWitnessData {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
             reason: format!(
                 "{label} memory range [{start}, {end}) exceeds ram_k {}",
                 state.len()

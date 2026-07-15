@@ -2,8 +2,15 @@ use jolt_field::Field;
 use jolt_program::execution::{RamAccess, TraceRow};
 
 use super::{Extract, WitnessEnv};
-use crate::protocols::jolt_vm::ram_access_address;
 use crate::WitnessError;
+
+pub(crate) const fn ram_access_address(access: RamAccess) -> Option<u64> {
+    match access {
+        RamAccess::Read(read) => Some(read.address),
+        RamAccess::Write(write) => Some(write.address),
+        RamAccess::NoOp => None,
+    }
+}
 
 /// Raw (unremapped) RAM access address; 0 when the cycle makes no RAM
 /// access.

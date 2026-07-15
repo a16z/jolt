@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::geometry::ram::RamRaVirtualizationDimensions;
 use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -23,6 +22,6 @@ pub trait RamRaVirtualizationProver<F: Field> {
         ram_reduced_cycle: &[F],
         committed_chunk_bits: usize,
         challenges: &NoChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRaVirtualization<F>>>, KernelError<F>>;
 }

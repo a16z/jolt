@@ -18,8 +18,7 @@ use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table, tile};
 use crate::ram_read_write::RamReadWriteProver;
@@ -33,7 +32,7 @@ impl<F: Field> RamReadWriteProver<F> for ReferenceBackend {
         ram_log_k: usize,
         tau_low: &[F],
         challenges: &RamReadWriteChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>> {
         if dimensions.phase1_num_rounds() != dimensions.log_t() {
             return Err(KernelError::Unsupported {

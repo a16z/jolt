@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub fn committed_stream(
         &self,
         polynomial: JoltCommittedPolynomial,
@@ -10,7 +10,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
     ) -> Result<JoltVmCommittedStream<'_, T>, WitnessError> {
         if chunk_size == 0 {
             return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "stream chunk size must be nonzero".to_owned(),
             });
         }
@@ -36,7 +36,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
     ) -> Result<JoltVmCommittedBatchStream<'_, T>, WitnessError> {
         if chunk_size == 0 {
             return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "stream chunk size must be nonzero".to_owned(),
             });
         }
@@ -133,7 +133,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
             | JoltCommittedPolynomial::BytecodeImmBytes { .. }
             | JoltCommittedPolynomial::ProgramImageBytes => Err(WitnessError::UnknownOracle {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
             }),
         }
     }
@@ -144,13 +144,13 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
     ) -> Result<JoltVmCommittedStreamKind, WitnessError> {
         if !kind.is_included(&self.config) {
             return Err(WitnessError::UnknownOracle {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
             });
         }
         kind.validate_len(
             self.advice_bytes(kind).len(),
             self.preprocessing,
-            JOLT_VM_NAMESPACE.name,
+            JOLT_VM_LABEL,
         )?;
         Ok(JoltVmCommittedStreamKind::Advice(kind))
     }
@@ -313,12 +313,12 @@ impl<F, T: TraceSource> PolynomialStream<F> for JoltVmCommittedStream<'_, T> {
     }
 }
 
-impl<F, T: TraceSource> PolynomialBatchStream<F, JoltVmNamespace>
+impl<F, T: TraceSource> PolynomialBatchStream<F, JoltCommittedPolynomial>
     for JoltVmCommittedBatchStream<'_, T>
 {
     fn next_batch(
         &mut self,
-    ) -> Result<Option<PolynomialBatchChunk<JoltVmNamespace, F>>, WitnessError> {
+    ) -> Result<Option<PolynomialBatchChunk<JoltCommittedPolynomial, F>>, WitnessError> {
         if self.emitted >= self.rows {
             return Ok(None);
         }
@@ -431,7 +431,7 @@ impl JoltVmBatchRow {
         let lookup_index = if needs.instruction {
             instruction_lookup_index::<RV64_XLEN>(row).map_err(|error| {
                 WitnessError::InvalidWitnessData {
-                    namespace: JOLT_VM_NAMESPACE.name,
+                    label: JOLT_VM_LABEL,
                     reason: error.to_string(),
                 }
             })?
@@ -499,7 +499,7 @@ impl JoltVmOneHotStreamKind {
             Self::Instruction(selector) => instruction_lookup_index::<RV64_XLEN>(row)
                 .map(|index| Some(selector.chunk_u128(index)))
                 .map_err(|error| WitnessError::InvalidWitnessData {
-                    namespace: JOLT_VM_NAMESPACE.name,
+                    label: JOLT_VM_LABEL,
                     reason: error.to_string(),
                 }),
             Self::Bytecode(selector) => Ok(preprocessing
@@ -554,12 +554,12 @@ impl JoltVmAdviceStreamKind {
         self,
         bytes_len: usize,
         preprocessing: &JoltProgramPreprocessing,
-        namespace: &'static str,
+        label: &'static str,
     ) -> Result<(), WitnessError> {
         let max_bytes = self.max_bytes(preprocessing);
         if bytes_len > max_bytes {
             return Err(WitnessError::InvalidWitnessData {
-                namespace,
+                label,
                 reason: format!(
                     "{self:?} advice has {bytes_len} bytes, exceeding configured max {max_bytes}",
                 ),
@@ -587,7 +587,7 @@ pub(crate) fn advice_word_le(bytes: &[u8], word_index: usize) -> u64 {
     u64::from_le_bytes(word)
 }
 
-impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn materialize_compact_committed<F: Field>(
         &self,
         id: JoltCommittedPolynomial,
@@ -601,22 +601,19 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             return self.materialize_one_hot_committed(id);
         }
 
-        let descriptor = <Self as crate::WitnessProvider<F, JoltVmNamespace>>::describe_oracle(
-            self,
-            OracleRef::committed(id),
-        )?;
-        let mut stream = self.committed_stream(id, descriptor.dimensions.rows().max(1))?;
-        let mut values = Vec::with_capacity(descriptor.dimensions.rows());
+        let shape = self.shape_of(JoltPolynomialId::Committed(id))?;
+        let mut stream = self.committed_stream(id, shape.dimensions.rows().max(1))?;
+        let mut values = Vec::with_capacity(shape.dimensions.rows());
         while let Some(chunk) = stream.next_chunk()? {
             append_compact_chunk(&mut values, chunk)?;
         }
-        if values.len() != descriptor.dimensions.rows() {
+        if values.len() != shape.dimensions.rows() {
             return Err(WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!(
                     "committed oracle {id:?} materialized {} rows, expected {}",
                     values.len(),
-                    descriptor.dimensions.rows()
+                    shape.dimensions.rows()
                 ),
             });
         }
@@ -627,23 +624,20 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
         &self,
         id: JoltCommittedPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
-        let descriptor = <Self as crate::WitnessProvider<F, JoltVmNamespace>>::describe_oracle(
-            self,
-            OracleRef::committed(id),
-        )?;
+        let shape = self.shape_of(JoltPolynomialId::Committed(id))?;
         let cycles = checked_pow2(self.config.log_t)?;
-        if !descriptor.dimensions.rows().is_multiple_of(cycles) {
+        if !shape.dimensions.rows().is_multiple_of(cycles) {
             return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!(
                     "committed oracle {id:?} has {} rows, not divisible by {cycles} cycles",
-                    descriptor.dimensions.rows()
+                    shape.dimensions.rows()
                 ),
             });
         }
-        let addresses = descriptor.dimensions.rows() / cycles;
+        let addresses = shape.dimensions.rows() / cycles;
         let mut stream = self.committed_stream(id, cycles.max(1))?;
-        let mut values = vec![F::zero(); descriptor.dimensions.rows()];
+        let mut values = vec![F::zero(); shape.dimensions.rows()];
         let mut cycle = 0usize;
         loop {
             let next: Option<PolynomialChunk<F>> = stream.next_chunk()?;
@@ -652,7 +646,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             };
             let PolynomialChunk::OneHot(chunk) = chunk else {
                 return Err(WitnessError::InvalidWitnessData {
-                    namespace: JOLT_VM_NAMESPACE.name,
+                    label: JOLT_VM_LABEL,
                     reason: format!("committed oracle {id:?} did not stream one-hot chunks"),
                 });
             };
@@ -660,7 +654,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
                 if let Some(address) = address {
                     if address >= addresses {
                         return Err(WitnessError::InvalidWitnessData {
-                            namespace: JOLT_VM_NAMESPACE.name,
+                            label: JOLT_VM_LABEL,
                             reason: format!(
                                 "committed oracle {id:?} streamed address {address}, beyond {addresses}"
                             ),
@@ -670,7 +664,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
                         .checked_mul(cycles)
                         .and_then(|base| base.checked_add(cycle))
                         .ok_or_else(|| WitnessError::InvalidDimensions {
-                            namespace: JOLT_VM_NAMESPACE.name,
+                            label: JOLT_VM_LABEL,
                             reason: format!("committed oracle {id:?} index overflow"),
                         })?;
                     values[index] = F::one();
@@ -680,7 +674,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
         }
         if cycle != cycles {
             return Err(WitnessError::InvalidWitnessData {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!("committed oracle {id:?} streamed {cycle} rows, expected {cycles}"),
             });
         }

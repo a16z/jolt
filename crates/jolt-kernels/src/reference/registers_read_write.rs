@@ -20,8 +20,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, ReadWriteDimensions, Registers
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table, tile};
 use crate::registers_read_write::RegistersReadWriteProver;
@@ -34,7 +33,7 @@ impl<F: Field> RegistersReadWriteProver<F> for ReferenceBackend {
         dimensions: ReadWriteDimensions,
         r_cycle: &[F],
         challenges: &RegistersReadWriteChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
         if dimensions.phase1_num_rounds() != dimensions.log_t() {

@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn materialize_register_read_write_virtual<F: Field>(
         &self,
         id: JoltVirtualPolynomial,
@@ -14,7 +14,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             | JoltVirtualPolynomial::RdWa => {}
             _ => {
                 return Err(WitnessError::UnknownOracle {
-                    namespace: JOLT_VM_NAMESPACE.name,
+                    label: JOLT_VM_LABEL,
                 });
             }
         }
@@ -70,7 +70,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
 
 pub(crate) fn invalid_register_address(register: u8) -> WitnessError {
     WitnessError::InvalidWitnessData {
-        namespace: JOLT_VM_NAMESPACE.name,
+        label: JOLT_VM_LABEL,
         reason: format!(
             "register index {register} exceeds {}-bit register read-write domain",
             REGISTER_ADDRESS_BITS

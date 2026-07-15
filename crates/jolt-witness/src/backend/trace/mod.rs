@@ -1,9 +1,12 @@
+//! The trace-backed witness backend: derives every served oracle from an
+//! execution trace via the atomic extractors in [`crate::witnesses`].
+
 use std::collections::HashMap;
 
 use jolt_claims::protocols::jolt::{
     geometry::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    JoltCommittedPolynomial, JoltDerivedId, JoltFormulaDimensions, JoltOneHotConfig, JoltOpeningId,
-    JoltPolynomialId, JoltVirtualPolynomial,
+    JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltPolynomialId,
+    JoltVirtualPolynomial,
 };
 use jolt_field::Field;
 use jolt_lookup_tables::LookupTableKind;
@@ -13,71 +16,32 @@ use jolt_program::{
 };
 
 use self::lookup::instruction_lookup_index;
-
+use crate::witnesses::ram_access_address;
 use crate::{
-    NamespaceId, OracleDescriptor, OracleRef, PolynomialBatchChunk, PolynomialBatchStream,
-    PolynomialChunk, PolynomialEncoding, PolynomialStream, WitnessDimensions, WitnessError,
-    WitnessNamespace,
+    PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialStream,
+    WitnessDimensions, WitnessError, JOLT_VM_LABEL, RV64_XLEN,
 };
 
-pub mod stage5;
-
-#[cfg(feature = "field-inline")]
-pub mod field_inline;
-
+mod cycle;
 mod lookup;
-
-pub use stage5::{JoltVmStage5InstructionReadRafRows, Stage5InstructionReadRafRow};
-
-mod provider;
+mod oracle;
 mod ra;
 mod ram;
 mod registers;
-mod stage6;
 mod streams;
-mod trace;
 
+pub mod stage5;
+pub mod stage6;
+
+pub use stage5::{JoltVmStage5InstructionReadRafRows, Stage5InstructionReadRafRow};
 pub use stage6::{JoltVmStage6Row, JoltVmStage6Rows};
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
+pub(crate) use cycle::PcLookupCache;
 pub(crate) use ra::RaChunkSelector;
-pub(crate) use ram::ram_access_address;
 pub(crate) use streams::JoltVmIncrementStreamKind;
-pub(crate) use trace::{supported_trace_virtual, PcLookupCache};
 
-pub const JOLT_VM_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm");
-pub const RV64_XLEN: usize = 64;
 pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum JoltVmNamespace {}
-
-impl WitnessNamespace for JoltVmNamespace {
-    type CommittedId = JoltCommittedPolynomial;
-    type VirtualId = JoltVirtualPolynomial;
-    type OpeningId = JoltOpeningId;
-    type PublicId = JoltDerivedId;
-    type ChallengeId = JoltDerivedId;
-
-    const ID: NamespaceId = JOLT_VM_NAMESPACE;
-}
-
-pub fn jolt_opening_oracle_ref(
-    opening: JoltOpeningId,
-) -> Result<OracleRef<JoltVmNamespace>, WitnessError> {
-    Ok(match opening {
-        JoltOpeningId::Polynomial { polynomial, .. } => match polynomial {
-            JoltPolynomialId::Committed(id) => OracleRef::committed(id),
-            JoltPolynomialId::Virtual(id) => OracleRef::virtual_polynomial(id),
-        },
-        JoltOpeningId::TrustedAdvice { .. } => {
-            OracleRef::committed(JoltCommittedPolynomial::TrustedAdvice)
-        }
-        JoltOpeningId::UntrustedAdvice { .. } => {
-            OracleRef::committed(JoltCommittedPolynomial::UntrustedAdvice)
-        }
-    })
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoltVmWitnessConfig {
@@ -155,16 +119,16 @@ impl<'a, T: TraceSource> JoltVmWitnessInputs<'a, T> {
     }
 }
 
-pub struct TraceBackedJoltVmWitness<'a, T: TraceSource> {
+pub struct TraceBackend<'a, T: TraceSource> {
     pub config: JoltVmWitnessConfig,
     pub program: &'a JoltProgram,
     pub preprocessing: &'a JoltProgramPreprocessing,
     pub trace: TraceOutput<T>,
     #[cfg(feature = "field-inline")]
-    field_inline: Option<field_inline::TraceBackedFieldInlineWitness<'a>>,
+    pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness<'a>>,
 }
 
-impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
+impl<'a, T: TraceSource> TraceBackend<'a, T> {
     pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<'a, T>) -> Self {
         Self {
             config,
@@ -201,7 +165,7 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
         );
         JoltFormulaDimensions::try_from(dimensions).map_err(|error| {
             WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: error.to_string(),
             }
         })
@@ -214,7 +178,7 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
     fn ram_log_k(&self) -> Result<usize, WitnessError> {
         if self.config.ram_k == 0 || !self.config.ram_k.is_power_of_two() {
             return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!(
                     "ram_k must be a nonzero power of two, got {}",
                     self.config.ram_k
@@ -230,7 +194,7 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
             .log_t
             .checked_add(self.ram_log_k()?)
             .ok_or_else(|| WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "RAM read-write rows overflow".to_owned(),
             })?;
         Ok(WitnessDimensions::new(log_rows))
@@ -242,7 +206,7 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
             .log_t
             .checked_add(REGISTER_ADDRESS_BITS)
             .ok_or_else(|| WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "register read-write rows overflow".to_owned(),
             })?;
         Ok(WitnessDimensions::new(log_rows))
@@ -259,7 +223,7 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
             .log_t
             .checked_add(self.config.one_hot.committed_chunk_bits())
             .ok_or_else(|| WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "one-hot committed rows overflow".to_owned(),
             })?;
         Ok(WitnessDimensions::new(log_rows))
@@ -271,7 +235,7 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
             .log_t
             .checked_add(self.config.one_hot.lookup_virtual_chunk_bits())
             .ok_or_else(|| WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: "instruction virtual RA rows overflow".to_owned(),
             })?;
         Ok(WitnessDimensions::new(log_rows))
@@ -281,7 +245,7 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
         let chunk_bits = self.config.one_hot.lookup_virtual_chunk_bits();
         if chunk_bits == 0 || !RV64_LOOKUP_ADDRESS_BITS.is_multiple_of(chunk_bits) {
             return Err(WitnessError::InvalidDimensions {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
                 reason: format!(
                     "lookup virtual chunk bits {chunk_bits} must evenly divide {RV64_LOOKUP_ADDRESS_BITS}"
                 ),
@@ -296,17 +260,17 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
     }
 }
 
-fn checked_pow2(log_rows: usize) -> Result<usize, WitnessError> {
+pub(crate) fn checked_pow2(log_rows: usize) -> Result<usize, WitnessError> {
     if log_rows >= usize::BITS as usize {
         return Err(WitnessError::InvalidDimensions {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
             reason: "witness row count overflow".to_owned(),
         });
     }
     1_usize
         .checked_shl(log_rows as u32)
         .ok_or_else(|| WitnessError::InvalidDimensions {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
             reason: "witness row count overflow".to_owned(),
         })
 }
@@ -314,14 +278,14 @@ fn checked_pow2(log_rows: usize) -> Result<usize, WitnessError> {
 fn checked_pow2_u128(log_rows: usize) -> Result<u128, WitnessError> {
     if log_rows >= u128::BITS as usize {
         return Err(WitnessError::InvalidDimensions {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
             reason: "witness row count overflow".to_owned(),
         });
     }
     1_u128
         .checked_shl(log_rows as u32)
         .ok_or_else(|| WitnessError::InvalidDimensions {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
             reason: "witness row count overflow".to_owned(),
         })
 }
@@ -331,7 +295,7 @@ fn require_index(index: usize, len: usize) -> Result<(), WitnessError> {
         Ok(())
     } else {
         Err(WitnessError::UnknownOracle {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
         })
     }
 }

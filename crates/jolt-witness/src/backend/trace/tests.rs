@@ -21,7 +21,7 @@ use crate::witnesses::{
     OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value,
     ShouldJump, UnexpandedPc, WitnessEnv,
 };
-use crate::{PolynomialChunk, PolynomialStream, WitnessProvider};
+use crate::{JoltWitnessOracle, PolynomialChunk, PolynomialEncoding, PolynomialStream, Shape};
 
 fn preprocessing() -> JoltProgramPreprocessing {
     let bytecode = BytecodePreprocessing {
@@ -111,14 +111,11 @@ fn compact_memory_layout() -> MemoryLayout {
     })
 }
 
-fn describe(
-    witness: &TraceBackedJoltVmWitness<'_, OwnedTrace>,
-    oracle: OracleRef<JoltVmNamespace>,
-) -> Result<OracleDescriptor<JoltVmNamespace>, WitnessError> {
-    <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<
-            Fr,
-            JoltVmNamespace,
-        >>::describe_oracle(witness, oracle)
+fn shape(
+    witness: &TraceBackend<'_, OwnedTrace>,
+    id: impl Into<JoltPolynomialId>,
+) -> Result<Shape, WitnessError> {
+    witness.shape_of(id.into())
 }
 
 #[test]
@@ -128,15 +125,8 @@ fn witness_keeps_jolt_program_execution_boundary() {
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
     let config = config().retain_trace_rows(true);
 
-    let witness = TraceBackedJoltVmWitness::new(config.clone(), inputs);
+    let witness = TraceBackend::new(config.clone(), inputs);
 
-    assert_eq!(
-            <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<
-                Fr,
-                JoltVmNamespace,
-            >>::namespace(&witness),
-            JOLT_VM_NAMESPACE
-        );
     assert_eq!(witness.config, config);
     assert_eq!(witness.program.elf_bytes(), program.elf_bytes());
     assert_eq!(
@@ -150,7 +140,7 @@ fn committed_polynomial_order_uses_proof_payload_order() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackedJoltVmWitness::new(
+    let witness = TraceBackend::new(
         config()
             .include_trusted_advice(true)
             .include_untrusted_advice(true),
@@ -174,39 +164,27 @@ fn committed_oracle_descriptors_report_dimensions_and_encoding() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackedJoltVmWitness::new(config().include_trusted_advice(true), inputs);
+    let witness = TraceBackend::new(config().include_trusted_advice(true), inputs);
 
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::committed(JoltCommittedPolynomial::RamInc)
-        ),
-        Ok(OracleDescriptor::new(
-            OracleRef::committed(JoltCommittedPolynomial::RamInc),
+        shape(&witness, JoltCommittedPolynomial::RamInc),
+        Ok(Shape::new(
             WitnessDimensions::new(4),
-            PolynomialEncoding::Compact,
+            PolynomialEncoding::Compact
         ))
     );
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::committed(JoltCommittedPolynomial::InstructionRa(0)),
-        ),
-        Ok(OracleDescriptor::new(
-            OracleRef::committed(JoltCommittedPolynomial::InstructionRa(0)),
+        shape(&witness, JoltCommittedPolynomial::InstructionRa(0)),
+        Ok(Shape::new(
             WitnessDimensions::new(8),
-            PolynomialEncoding::OneHot,
+            PolynomialEncoding::OneHot
         ))
     );
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::committed(JoltCommittedPolynomial::TrustedAdvice),
-        ),
-        Ok(OracleDescriptor::new(
-            OracleRef::committed(JoltCommittedPolynomial::TrustedAdvice),
+        shape(&witness, JoltCommittedPolynomial::TrustedAdvice),
+        Ok(Shape::new(
             WitnessDimensions::new(3),
-            PolynomialEncoding::Compact,
+            PolynomialEncoding::Compact
         ))
     );
 }
@@ -216,24 +194,18 @@ fn descriptors_reject_disabled_advice_and_out_of_range_ra() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackedJoltVmWitness::new(config(), inputs);
+    let witness = TraceBackend::new(config(), inputs);
 
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::committed(JoltCommittedPolynomial::TrustedAdvice),
-        ),
+        shape(&witness, JoltCommittedPolynomial::TrustedAdvice),
         Err(WitnessError::UnknownOracle {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
         })
     );
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::committed(JoltCommittedPolynomial::BytecodeRa(2)),
-        ),
+        shape(&witness, JoltCommittedPolynomial::BytecodeRa(2)),
         Err(WitnessError::UnknownOracle {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
         })
     );
 }
@@ -243,40 +215,24 @@ fn virtual_oracle_descriptors_report_stage1_trace_columns() -> Result<(), String
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
 
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::virtual_polynomial(JoltVirtualPolynomial::Product)
-        )
-        .map_err(|error| error.to_string())?,
-        OracleDescriptor::new(
-            OracleRef::virtual_polynomial(JoltVirtualPolynomial::Product),
-            WitnessDimensions::new(2),
-            PolynomialEncoding::Dense,
-        )
+        shape(&witness, JoltVirtualPolynomial::Product).map_err(|error| error.to_string())?,
+        Shape::new(WitnessDimensions::new(2), PolynomialEncoding::Dense)
     );
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::virtual_polynomial(JoltVirtualPolynomial::RamRa),
-        ),
-        Ok(OracleDescriptor::new(
-            OracleRef::virtual_polynomial(JoltVirtualPolynomial::RamRa),
+        shape(&witness, JoltVirtualPolynomial::RamRa),
+        Ok(Shape::new(
             WitnessDimensions::new(8),
-            PolynomialEncoding::Dense,
+            PolynomialEncoding::Dense
         ))
     );
     assert_eq!(
-        describe(
-            &witness,
-            OracleRef::virtual_polynomial(JoltVirtualPolynomial::RamValFinal),
-        ),
-        Ok(OracleDescriptor::new(
-            OracleRef::virtual_polynomial(JoltVirtualPolynomial::RamValFinal),
+        shape(&witness, JoltVirtualPolynomial::RamValFinal),
+        Ok(Shape::new(
             WitnessDimensions::new(6),
-            PolynomialEncoding::Dense,
+            PolynomialEncoding::Dense
         ))
     );
     Ok(())
@@ -318,7 +274,7 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
         TraceRow::default(),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
 
     assert_virtual_values(
         &witness,
@@ -388,8 +344,7 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
         },
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness =
-        TraceBackedJoltVmWitness::new(JoltVmWitnessConfig::new(2, 16, config().one_hot), inputs);
+    let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 16, config().one_hot), inputs);
 
     let val = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamVal)?;
     let ra = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamRa)?;
@@ -450,7 +405,7 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
         },
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
 
     let val = materialized_virtual_view(&witness, JoltVirtualPolynomial::RegistersVal)?;
     let rs1_ra = materialized_virtual_view(&witness, JoltVirtualPolynomial::Rs1Ra)?;
@@ -496,8 +451,7 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
         &preprocessing,
         trace_output_with_device_and_final_memory(device, final_memory),
     );
-    let witness =
-        TraceBackedJoltVmWitness::new(JoltVmWitnessConfig::new(2, 32, config().one_hot), inputs);
+    let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 32, config().one_hot), inputs);
 
     let val_final = materialized_virtual_view(&witness, JoltVirtualPolynomial::RamValFinal)?;
     assert_eq!(val_final.len(), 32);
@@ -634,7 +588,7 @@ fn lookahead_witnesses_pad_the_final_cycle() {
 }
 
 fn assert_virtual_values(
-    witness: &TraceBackedJoltVmWitness<'_, OwnedTrace>,
+    witness: &TraceBackend<'_, OwnedTrace>,
     id: JoltVirtualPolynomial,
     expected: &[u64],
 ) -> Result<(), String> {
@@ -649,12 +603,12 @@ fn assert_virtual_values(
 }
 
 fn materialized_virtual_view(
-    witness: &TraceBackedJoltVmWitness<'_, OwnedTrace>,
+    witness: &TraceBackend<'_, OwnedTrace>,
     id: JoltVirtualPolynomial,
 ) -> Result<Vec<Fr>, String> {
-    let oracle = OracleRef::virtual_polynomial(id);
-    <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<Fr, JoltVmNamespace>>::oracle_table(
-        witness, oracle,
+    <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(
+        witness,
+        JoltPolynomialId::Virtual(id),
     )
     .map_err(|error| error.to_string())
 }
@@ -688,7 +642,7 @@ fn rd_inc_streams_register_write_deltas_and_padding() {
         },
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let stream_result = witness.committed_stream(JoltCommittedPolynomial::RdInc, 3);
     let mut stream = match stream_result {
         Ok(stream) => stream,
@@ -736,7 +690,7 @@ fn ram_inc_streams_write_deltas_only() {
         },
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let stream_result = witness.committed_stream(JoltCommittedPolynomial::RamInc, 2);
     let mut stream = match stream_result {
         Ok(stream) => stream,
@@ -788,7 +742,7 @@ fn bytecode_ra_streams_pc_chunks_and_noop_padding() {
         },
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let stream_result = witness.committed_stream(JoltCommittedPolynomial::BytecodeRa(0), 3);
     let mut stream = match stream_result {
         Ok(stream) => stream,
@@ -840,7 +794,7 @@ fn ram_ra_streams_remapped_address_chunks_and_noop_padding() {
         },
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let stream_result = witness.committed_stream(JoltCommittedPolynomial::RamRa(1), 4);
     let mut stream = match stream_result {
         Ok(stream) => stream,
@@ -885,7 +839,7 @@ fn instruction_ra_streams_lookup_index_chunks_and_noop_padding() {
         ..Default::default()
     }];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let stream_result = witness.committed_stream(JoltCommittedPolynomial::InstructionRa(15), 2);
     let mut stream = match stream_result {
         Ok(stream) => stream,
@@ -964,7 +918,7 @@ fn committed_batch_stream_preserves_single_pass_core_shape() {
         },
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-    let witness = TraceBackedJoltVmWitness::new(config().with_log_t(2), inputs);
+    let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let ids = [
         JoltCommittedPolynomial::RdInc,
         JoltCommittedPolynomial::RamInc,
@@ -972,10 +926,10 @@ fn committed_batch_stream_preserves_single_pass_core_shape() {
         JoltCommittedPolynomial::BytecodeRa(0),
         JoltCommittedPolynomial::RamRa(1),
     ];
-    let stream_result = <TraceBackedJoltVmWitness<'_, OwnedTrace> as WitnessProvider<
-        Fr,
-        JoltVmNamespace,
-    >>::committed_batch_stream(&witness, &ids, 3);
+    let stream_result =
+        <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::committed_batch_stream(
+            &witness, &ids, 3,
+        );
     let mut stream = match stream_result {
         Ok(stream) => stream,
         Err(error) => {
@@ -1068,7 +1022,7 @@ fn advice_streams_pack_device_bytes_as_little_endian_words() {
     };
     let inputs =
         JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_device(device));
-    let witness = TraceBackedJoltVmWitness::new(
+    let witness = TraceBackend::new(
         config()
             .include_trusted_advice(true)
             .include_untrusted_advice(true),
@@ -1125,12 +1079,12 @@ fn advice_streams_reject_disabled_and_oversized_advice() {
     };
     let inputs =
         JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_device(device));
-    let witness = TraceBackedJoltVmWitness::new(config().include_trusted_advice(true), inputs);
+    let witness = TraceBackend::new(config().include_trusted_advice(true), inputs);
 
     assert!(matches!(
         witness.committed_stream(JoltCommittedPolynomial::TrustedAdvice, 1),
         Err(WitnessError::InvalidWitnessData {
-            namespace: "jolt_vm",
+            label: "jolt_vm",
             ..
         })
     ));
@@ -1140,12 +1094,10 @@ fn advice_streams_reject_disabled_and_oversized_advice() {
         &preprocessing,
         trace_output_with_device(Default::default()),
     );
-    let disabled = TraceBackedJoltVmWitness::new(config(), inputs);
+    let disabled = TraceBackend::new(config(), inputs);
     assert!(matches!(
         disabled.committed_stream(JoltCommittedPolynomial::TrustedAdvice, 1),
-        Err(WitnessError::UnknownOracle {
-            namespace: "jolt_vm",
-        })
+        Err(WitnessError::UnknownOracle { label: "jolt_vm" })
     ));
 }
 
@@ -1154,7 +1106,7 @@ fn committed_batch_stream_rejects_advice_until_variable_length_batches_land() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackedJoltVmWitness::new(config().include_trusted_advice(true), inputs);
+    let witness = TraceBackend::new(config().include_trusted_advice(true), inputs);
 
     assert!(matches!(
         witness.committed_batch_stream(&[JoltCommittedPolynomial::TrustedAdvice], 1),
@@ -1169,16 +1121,80 @@ fn committed_stream_rejects_unsupported_oracles_and_empty_chunks() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackedJoltVmWitness::new(config(), inputs);
+    let witness = TraceBackend::new(config(), inputs);
 
     assert!(matches!(
         witness.committed_stream(JoltCommittedPolynomial::TrustedAdvice, 1),
-        Err(WitnessError::UnknownOracle {
-            namespace: "jolt_vm",
-        })
+        Err(WitnessError::UnknownOracle { label: "jolt_vm" })
     ));
     assert!(matches!(
         witness.committed_stream(JoltCommittedPolynomial::RdInc, 0),
         Err(WitnessError::InvalidDimensions { .. })
     ));
+}
+
+#[test]
+fn excluded_ids_report_their_classification() {
+    use super::oracle::{
+        COMMITTED_PROGRAM_REASON, LATTICE_REASON, PROTOCOL_INTERMEDIATE_REASON, UNSERVED_REASON,
+    };
+    let program = JoltProgram::default();
+    let preprocessing = preprocessing();
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
+    let witness = TraceBackend::new(config(), inputs);
+
+    let assert_reason = |id: JoltPolynomialId, reason: &'static str| {
+        for result in [
+            witness.shape_of(id).map(|_| ()),
+            <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(&witness, id)
+                .map(|_| ()),
+        ] {
+            assert_eq!(
+                result,
+                Err(WitnessError::NotServed {
+                    oracle: format!("{id:?}"),
+                    reason,
+                }),
+                "classification mismatch for {id:?}"
+            );
+        }
+    };
+
+    for id in [
+        JoltCommittedPolynomial::BytecodeChunk(0),
+        JoltCommittedPolynomial::ProgramImageInit,
+    ] {
+        assert_reason(JoltPolynomialId::Committed(id), COMMITTED_PROGRAM_REASON);
+    }
+    for id in [
+        JoltCommittedPolynomial::UnsignedIncChunk(0),
+        JoltCommittedPolynomial::UnsignedIncMsb,
+        JoltCommittedPolynomial::TrustedAdviceBytes,
+        JoltCommittedPolynomial::UntrustedAdviceBytes,
+        JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 },
+        JoltCommittedPolynomial::ProgramImageBytes,
+    ] {
+        assert_reason(JoltPolynomialId::Committed(id), LATTICE_REASON);
+    }
+    for id in [
+        JoltVirtualPolynomial::Rd,
+        JoltVirtualPolynomial::InstructionRaf,
+        JoltVirtualPolynomial::RamValInit,
+    ] {
+        assert_reason(JoltPolynomialId::Virtual(id), UNSERVED_REASON);
+    }
+    for id in [
+        JoltVirtualPolynomial::UnivariateSkip,
+        JoltVirtualPolynomial::BytecodeValStage(0),
+        JoltVirtualPolynomial::BytecodeReadRafAddrClaim,
+        JoltVirtualPolynomial::BooleanityAddrClaim,
+        JoltVirtualPolynomial::BytecodeClaimReductionIntermediate,
+        JoltVirtualPolynomial::ProgramImageInitContributionRw,
+    ] {
+        assert_reason(JoltPolynomialId::Virtual(id), PROTOCOL_INTERMEDIATE_REASON);
+    }
+    assert_reason(
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc),
+        LATTICE_REASON,
+    );
 }

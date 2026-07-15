@@ -44,7 +44,7 @@ use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::protocols::jolt_vm::Stage5InstructionReadRafRow;
+use jolt_witness::Stage5InstructionReadRafRow;
 
 use super::views::eq_table;
 use crate::instruction_read_raf::InstructionReadRafProver;

@@ -17,8 +17,7 @@ use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{address_fold, eq_table};
 use crate::ram_ra_virtualization::RamRaVirtualizationProver;
@@ -33,7 +32,7 @@ impl<F: Field> RamRaVirtualizationProver<F> for ReferenceBackend {
         ram_reduced_cycle: &[F],
         committed_chunk_bits: usize,
         challenges: &NoChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
         let relation = RamRaVirtualization::new(
             dimensions,

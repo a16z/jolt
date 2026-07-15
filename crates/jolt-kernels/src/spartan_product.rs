@@ -4,8 +4,7 @@
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -17,7 +16,7 @@ pub trait SpartanProductProver<F: Field> {
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn SpartanProductInstance<F>>, KernelError<F>>;
 }
 

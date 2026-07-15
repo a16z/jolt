@@ -17,13 +17,13 @@ impl RaChunkSelector {
         let remaining = chunks
             .checked_sub(index + 1)
             .ok_or(WitnessError::UnknownOracle {
-                namespace: JOLT_VM_NAMESPACE.name,
+                label: JOLT_VM_LABEL,
             })?;
         let shift =
             remaining
                 .checked_mul(chunk_bits)
                 .ok_or_else(|| WitnessError::InvalidDimensions {
-                    namespace: JOLT_VM_NAMESPACE.name,
+                    label: JOLT_VM_LABEL,
                     reason: "RA chunk shift overflow".to_owned(),
                 })?;
         let k = checked_pow2_u128(chunk_bits)?;
@@ -39,7 +39,7 @@ impl RaChunkSelector {
     }
 }
 
-impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn materialize_instruction_ra<F: Field>(
         &self,
         index: usize,
@@ -60,7 +60,7 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
                     instruction_lookup_index::<RV64_XLEN>(&row)
                         .map(|lookup_index| selector.chunk_u128(lookup_index))
                         .map_err(|error| WitnessError::InvalidWitnessData {
-                            namespace: JOLT_VM_NAMESPACE.name,
+                            label: JOLT_VM_LABEL,
                             reason: error.to_string(),
                         })
                 },

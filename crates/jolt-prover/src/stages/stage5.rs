@@ -35,8 +35,8 @@ use jolt_verifier::stages::stage5::{
     stage5_input_points_from_upstream, stage5_input_values_from_upstream,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage5InstructionReadRafRows};
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltVmStage5InstructionReadRafRows;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -67,7 +67,7 @@ where
     VC: VectorCommitment<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage5InstructionReadRafRows,
+    W: JoltWitnessOracle<F> + JoltVmStage5InstructionReadRafRows,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;

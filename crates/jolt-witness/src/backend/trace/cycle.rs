@@ -10,17 +10,11 @@ use crate::witnesses::{
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
 
-impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn materialize_trace_virtual<F: Field>(
         &self,
         id: JoltVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
-        if !supported_trace_virtual(id) {
-            return Err(WitnessError::UnknownOracle {
-                namespace: JOLT_VM_NAMESPACE.name,
-            });
-        }
-
         let rows = checked_pow2(self.config.log_t)?;
         let env = WitnessEnv {
             preprocessing: self.preprocessing,
@@ -37,39 +31,6 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
         }
         Ok(values)
     }
-}
-
-pub(crate) const fn supported_trace_virtual(id: JoltVirtualPolynomial) -> bool {
-    matches!(
-        id,
-        JoltVirtualPolynomial::PC
-            | JoltVirtualPolynomial::UnexpandedPC
-            | JoltVirtualPolynomial::NextPC
-            | JoltVirtualPolynomial::NextUnexpandedPC
-            | JoltVirtualPolynomial::NextIsNoop
-            | JoltVirtualPolynomial::NextIsVirtual
-            | JoltVirtualPolynomial::NextIsFirstInSequence
-            | JoltVirtualPolynomial::LeftLookupOperand
-            | JoltVirtualPolynomial::RightLookupOperand
-            | JoltVirtualPolynomial::LeftInstructionInput
-            | JoltVirtualPolynomial::RightInstructionInput
-            | JoltVirtualPolynomial::Product
-            | JoltVirtualPolynomial::ShouldJump
-            | JoltVirtualPolynomial::ShouldBranch
-            | JoltVirtualPolynomial::Imm
-            | JoltVirtualPolynomial::Rs1Value
-            | JoltVirtualPolynomial::Rs2Value
-            | JoltVirtualPolynomial::RdWriteValue
-            | JoltVirtualPolynomial::LookupOutput
-            | JoltVirtualPolynomial::RamAddress
-            | JoltVirtualPolynomial::RamReadValue
-            | JoltVirtualPolynomial::RamWriteValue
-            | JoltVirtualPolynomial::RamHammingWeight
-            | JoltVirtualPolynomial::InstructionRafFlag
-            | JoltVirtualPolynomial::OpFlags(_)
-            | JoltVirtualPolynomial::InstructionFlags(_)
-            | JoltVirtualPolynomial::LookupTableFlag(_)
-    )
 }
 
 /// One cycle-domain witness value, dispatched to its atomic extractor.
@@ -149,13 +110,13 @@ pub(crate) fn cycle_witness_value<F: Field>(
         JoltVirtualPolynomial::LookupTableFlag(table) => {
             if table >= LookupTableKind::<RV64_XLEN>::COUNT {
                 return Err(WitnessError::UnknownOracle {
-                    namespace: JOLT_VM_NAMESPACE.name,
+                    label: JOLT_VM_LABEL,
                 });
             }
             LookupTableFlag::extract_indexed(table, row, next, env).map(|w| w.to_field())
         }
         _ => Err(WitnessError::UnknownOracle {
-            namespace: JOLT_VM_NAMESPACE.name,
+            label: JOLT_VM_LABEL,
         }),
     }
 }

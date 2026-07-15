@@ -4,7 +4,8 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::{
     field_inline::{
-        FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlineVirtualPolynomial,
+        FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlinePolynomialId,
+        FieldInlineVirtualPolynomial,
     },
     jolt::{JoltCommittedPolynomial, JoltOneHotConfig},
 };
@@ -24,12 +25,9 @@ use jolt_riscv::{
     NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_witness::{
-    protocols::jolt_vm::{
-        field_inline::{FieldInlineNamespace, FIELD_INLINE_NAMESPACE},
-        JoltVmWitnessConfig, JoltVmWitnessInputs,
-    },
-    CommittedWitnessProvider, OracleRef, PolynomialChunk, PolynomialStream, WitnessError,
-    WitnessProvider,
+    field_inline::{TraceBackedFieldInlineWitness, FIELD_INLINE_LABEL},
+    JoltVmWitnessConfig, JoltVmWitnessInputs, PolynomialChunk, PolynomialStream, TraceBackend,
+    WitnessError,
 };
 
 const ENTRY: u64 = RAM_START_ADDRESS;
@@ -91,8 +89,8 @@ fn witness<'a>(
     preprocessing: &'a JoltProgramPreprocessing,
     rows: Vec<TraceRow>,
     log_t: usize,
-) -> jolt_witness::protocols::jolt_vm::TraceBackedJoltVmWitness<'a, OwnedTrace> {
-    jolt_witness::protocols::jolt_vm::TraceBackedJoltVmWitness::new(
+) -> TraceBackend<'a, OwnedTrace> {
+    TraceBackend::new(
         config(log_t),
         JoltVmWitnessInputs::new(
             program,
@@ -192,11 +190,10 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
 }
 
 fn owned_view(
-    provider: &jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_>,
-    oracle: OracleRef<FieldInlineNamespace>,
+    provider: &TraceBackedFieldInlineWitness<'_>,
+    id: impl Into<FieldInlinePolynomialId>,
 ) -> Vec<Fr> {
-    <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_> as WitnessProvider<Fr, FieldInlineNamespace>>::oracle_table(provider, oracle)
-        .unwrap()
+    provider.oracle_table::<Fr>(id.into()).unwrap()
 }
 
 #[test]
@@ -207,19 +204,12 @@ fn field_inline_public_provider_streams_and_materializes_views() {
     let witness = witness(&program, &preprocessing, rows, 2);
     let provider = witness.field_inline_witness().unwrap();
 
-    let order: Vec<FieldInlineCommittedPolynomial> =
-        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_> as CommittedWitnessProvider<Fr, FieldInlineNamespace>>::committed_oracle_order(
-            &provider
-        )
-        .unwrap();
+    let order = provider.committed_order();
     assert_eq!(order, vec![FieldInlineCommittedPolynomial::FieldRdInc]);
 
-    let mut stream = <_ as WitnessProvider<Fr, FieldInlineNamespace>>::committed_stream(
-        &provider,
-        FieldInlineCommittedPolynomial::FieldRdInc,
-        4,
-    )
-    .unwrap();
+    let mut stream = provider
+        .committed_stream::<Fr>(FieldInlineCommittedPolynomial::FieldRdInc, 4)
+        .unwrap();
     assert_eq!(
         stream.next_chunk(),
         Ok(Some(PolynomialChunk::Dense(vec![
@@ -232,13 +222,13 @@ fn field_inline_public_provider_streams_and_materializes_views() {
 
     let products = owned_view(
         &provider,
-        OracleRef::virtual_polynomial(FieldInlineVirtualPolynomial::FieldProduct),
+        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldProduct),
     );
     assert_eq!(&products[..4], &[fr(0), fr(0), fr(221), fr(0)]);
 
     let mul_flags = owned_view(
         &provider,
-        OracleRef::virtual_polynomial(FieldInlineVirtualPolynomial::FieldOpFlag(
+        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldOpFlag(
             FieldInlineOpFlag::Mul,
         )),
     );
@@ -270,7 +260,7 @@ fn field_inline_public_provider_is_absent_for_fr_off_programs() {
     assert_eq!(
         witness.field_inline_witness().err(),
         Some(WitnessError::UnavailableView {
-            namespace: FIELD_INLINE_NAMESPACE.name,
+            label: FIELD_INLINE_LABEL,
         })
     );
 }
@@ -366,12 +356,9 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
         Ok(Some(PolynomialChunk::<Fr>::I128(vec![0, 19, 0, 0])))
     );
 
-    let mut field_stream = <_ as WitnessProvider<Fr, FieldInlineNamespace>>::committed_stream(
-        &provider,
-        FieldInlineCommittedPolynomial::FieldRdInc,
-        4,
-    )
-    .unwrap();
+    let mut field_stream = provider
+        .committed_stream::<Fr>(FieldInlineCommittedPolynomial::FieldRdInc, 4)
+        .unwrap();
     assert_eq!(
         field_stream.next_chunk(),
         Ok(Some(PolynomialChunk::Dense(vec![

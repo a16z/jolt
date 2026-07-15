@@ -20,8 +20,7 @@ use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
     absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::CommittedWitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::config::advice_total_vars;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -62,7 +61,7 @@ pub fn prove_stage0<F, PCS, VC, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
-    witness: &dyn CommittedWitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
@@ -155,7 +154,7 @@ where
     );
 
     let ids: Vec<JoltCommittedPolynomial> = witness
-        .committed_oracle_order()?
+        .committed_order()?
         .into_iter()
         .filter(|id| {
             !matches!(

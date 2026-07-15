@@ -8,8 +8,7 @@ use jolt_claims::protocols::jolt::relations::bytecode::{
 use jolt_field::Field;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -58,6 +57,6 @@ pub trait BytecodeReadRafCycleProver<F: Field> {
         committed_chunk_bits: usize,
         stage_values_at_r_address: [F; 5],
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>;
 }

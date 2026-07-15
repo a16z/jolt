@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -17,6 +16,6 @@ pub trait RamHammingBooleanityProver<F: Field> {
         trace_dimensions: TraceDimensions,
         stage1_cycle_binding: &[F],
         challenges: &NoChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>>;
 }

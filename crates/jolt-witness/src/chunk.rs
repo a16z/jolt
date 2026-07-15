@@ -1,4 +1,4 @@
-use crate::{WitnessError, WitnessNamespace};
+use crate::WitnessError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolynomialChunkKind {
@@ -64,13 +64,15 @@ pub trait PolynomialStream<F> {
     fn next_chunk(&mut self) -> Result<Option<PolynomialChunk<F>>, WitnessError>;
 }
 
+/// One lockstep chunk of a batched stream: the same row range of every
+/// polynomial in the batch, keyed by the protocol's committed id type.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PolynomialBatchChunk<N: WitnessNamespace, F> {
-    pub chunks: Vec<(N::CommittedId, PolynomialChunk<F>)>,
+pub struct PolynomialBatchChunk<Id, F> {
+    pub chunks: Vec<(Id, PolynomialChunk<F>)>,
 }
 
-impl<N: WitnessNamespace, F> PolynomialBatchChunk<N, F> {
-    pub fn new(chunks: Vec<(N::CommittedId, PolynomialChunk<F>)>) -> Self {
+impl<Id, F> PolynomialBatchChunk<Id, F> {
+    pub fn new(chunks: Vec<(Id, PolynomialChunk<F>)>) -> Self {
         Self { chunks }
     }
 
@@ -83,8 +85,8 @@ impl<N: WitnessNamespace, F> PolynomialBatchChunk<N, F> {
     }
 }
 
-pub trait PolynomialBatchStream<F, N: WitnessNamespace> {
-    fn next_batch(&mut self) -> Result<Option<PolynomialBatchChunk<N, F>>, WitnessError>;
+pub trait PolynomialBatchStream<F, Id> {
+    fn next_batch(&mut self) -> Result<Option<PolynomialBatchChunk<Id, F>>, WitnessError>;
 }
 
 #[cfg(test)]

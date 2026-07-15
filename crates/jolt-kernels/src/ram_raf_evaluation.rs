@@ -5,8 +5,7 @@ use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::Field;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -24,6 +23,6 @@ pub trait RamRafEvaluationProver<F: Field> {
         ram_log_k: usize,
         lowest_address: u64,
         tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRafEvaluation<F>>>, KernelError<F>>;
 }

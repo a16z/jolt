@@ -40,8 +40,7 @@ use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_verifier::stages::stage2::stage2_batch_input_values_from_upstream;
 use jolt_verifier::VerifierError;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{ProverConfig, ProverError};
 
@@ -61,7 +60,7 @@ pub fn prove_stage2<F, PCS, C, T>(
     config: &ProverConfig,
     public_io: &JoltDevice,
     stage1: &Stage1ClearOutput<F>,
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     transcript: &mut T,
 ) -> Result<Stage2ProverOutput<F, C>, ProverError<F>>
 where

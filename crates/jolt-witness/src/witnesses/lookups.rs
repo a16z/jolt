@@ -3,8 +3,8 @@ use jolt_lookup_tables::LookupQuery;
 use jolt_program::execution::TraceRow;
 
 use super::{lookup_query, Extract, WitnessEnv};
-use crate::protocols::jolt_vm::RV64_XLEN;
 use crate::WitnessError;
+use crate::RV64_XLEN;
 
 /// Output of the instruction's lookup query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
