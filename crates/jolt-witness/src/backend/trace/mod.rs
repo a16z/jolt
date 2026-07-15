@@ -3,8 +3,7 @@
 
 use jolt_claims::protocols::jolt::{
     geometry::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltPolynomialId,
-    JoltVirtualPolynomial,
+    JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltVirtualPolynomial,
 };
 use jolt_field::Field;
 use jolt_lookup_tables::LookupTableKind;
@@ -16,10 +15,9 @@ use jolt_program::{
 use crate::witnesses::ram_access_address;
 use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
-mod committed;
+mod advice;
 mod cycle;
 mod oracle;
-mod ra;
 mod ram;
 mod registers;
 
@@ -223,8 +221,8 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
         Ok(RV64_LOOKUP_ADDRESS_BITS / chunk_bits)
     }
 
-    fn advice_log_rows(words: usize) -> usize {
-        words.next_power_of_two().max(1).ilog2() as usize
+    fn advice_log_rows(max_bytes: usize) -> usize {
+        advice::advice_words(max_bytes).ilog2() as usize
     }
 }
 
@@ -254,4 +252,5 @@ fn require_index(index: usize, len: usize) -> Result<(), WitnessError> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
 mod tests;

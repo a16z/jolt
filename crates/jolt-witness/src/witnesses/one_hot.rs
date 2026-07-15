@@ -67,6 +67,26 @@ pub struct BytecodeRaChunk(pub Option<usize>);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RamRaChunk(pub Option<usize>);
 
+// A chunk witness is its per-cycle hot address; `None` is a cold cycle.
+// Instruction chunks are hot every cycle (no-op rows look up index 0).
+impl From<InstructionRaChunk> for Option<usize> {
+    fn from(chunk: InstructionRaChunk) -> Self {
+        Some(chunk.0)
+    }
+}
+
+impl From<BytecodeRaChunk> for Option<usize> {
+    fn from(chunk: BytecodeRaChunk) -> Self {
+        chunk.0
+    }
+}
+
+impl From<RamRaChunk> for Option<usize> {
+    fn from(chunk: RamRaChunk) -> Self {
+        chunk.0
+    }
+}
+
 impl ExtractIndexed<RaChunkSelector> for InstructionRaChunk {
     fn extract_indexed(
         selector: RaChunkSelector,

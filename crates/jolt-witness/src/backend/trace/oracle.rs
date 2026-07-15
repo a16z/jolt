@@ -11,11 +11,12 @@ use jolt_claims::protocols::jolt::{
 
 use super::*;
 use crate::witnesses::{
-    Imm, InstructionFlag, InstructionRafFlag, LeftInstructionInput, LeftLookupOperand,
-    LookupOutput, LookupTableFlag, NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc,
-    NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamHammingWeight, RamReadValue,
-    RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
-    ShouldBranch, ShouldJump, UnexpandedPc,
+    BytecodeRaChunk, Imm, InstructionFlag, InstructionRaChunk, InstructionRafFlag,
+    LeftInstructionInput, LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence,
+    NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress,
+    RamHammingWeight, RamInc, RamRaChunk, RamReadValue, RamWriteValue, RdInc, RdWriteValue,
+    RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump,
+    UnexpandedPc,
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
@@ -68,7 +69,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                     }
                     Ok(Shape::new(
                         Self::advice_log_rows(
-                            self.preprocessing.memory_layout.max_trusted_advice_size as usize / 8,
+                            self.preprocessing.memory_layout.max_trusted_advice_size as usize,
                         ),
                         Compact,
                     ))
@@ -81,7 +82,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                     }
                     Ok(Shape::new(
                         Self::advice_log_rows(
-                            self.preprocessing.memory_layout.max_untrusted_advice_size as usize / 8,
+                            self.preprocessing.memory_layout.max_untrusted_advice_size as usize,
                         ),
                         Compact,
                     ))
@@ -170,13 +171,25 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
         let _ = self.shape_of(id)?;
         match id {
             JoltPolynomialId::Committed(committed) => match committed {
-                C::RdInc
-                | C::RamInc
-                | C::InstructionRa(_)
-                | C::BytecodeRa(_)
-                | C::RamRa(_)
-                | C::TrustedAdvice
-                | C::UntrustedAdvice => self.materialize_compact_committed(committed),
+                C::RdInc => self.materialize_cycle::<F, RdInc>(),
+                C::RamInc => self.materialize_cycle::<F, RamInc>(),
+                C::InstructionRa(index) => self.materialize_one_hot::<F, InstructionRaChunk>(
+                    index,
+                    self.ra_layout()?.instruction(),
+                    self.config.one_hot.committed_chunk_bits(),
+                ),
+                C::BytecodeRa(index) => self.materialize_one_hot::<F, BytecodeRaChunk>(
+                    index,
+                    self.ra_layout()?.bytecode(),
+                    self.config.one_hot.committed_chunk_bits(),
+                ),
+                C::RamRa(index) => self.materialize_one_hot::<F, RamRaChunk>(
+                    index,
+                    self.ra_layout()?.ram(),
+                    self.config.one_hot.committed_chunk_bits(),
+                ),
+                C::TrustedAdvice => self.materialize_trusted_advice(),
+                C::UntrustedAdvice => self.materialize_untrusted_advice(),
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
@@ -199,7 +212,11 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
                     self.materialize_register_read_write_virtual(virtual_id)
                 }
                 V::RamValFinal => self.materialize_ram_val_final(),
-                V::InstructionRa(index) => self.materialize_instruction_ra(index),
+                V::InstructionRa(index) => self.materialize_one_hot::<F, InstructionRaChunk>(
+                    index,
+                    self.instruction_virtual_ra_count()?,
+                    self.config.one_hot.lookup_virtual_chunk_bits(),
+                ),
                 V::PC => self.materialize_cycle::<F, Pc>(),
                 V::UnexpandedPC => self.materialize_cycle::<F, UnexpandedPc>(),
                 V::NextPC => self.materialize_cycle::<F, NextPc>(),

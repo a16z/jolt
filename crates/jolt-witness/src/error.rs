@@ -17,6 +17,4 @@ pub enum WitnessError {
     InvalidDimensions { label: &'static str, reason: String },
     #[error("invalid witness data for `{label}`: {reason}")]
     InvalidWitnessData { label: &'static str, reason: String },
-    #[error("witness provider does not support this view: {view}")]
-    UnsupportedView { view: &'static str },
 }

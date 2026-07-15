@@ -15,13 +15,15 @@ use jolt_riscv::{
     RV64IMAC_JOLT,
 };
 
+use jolt_claims::protocols::jolt::JoltPolynomialId;
+
 use super::*;
 use crate::witnesses::{
     Extract, ExtractIndexed, Imm, InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop,
     OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value,
     ShouldJump, ToField, UnexpandedPc, WitnessEnv,
 };
-use crate::{CommittedChunk, JoltWitnessOracle, PolynomialEncoding, Shape};
+use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
 fn preprocessing() -> JoltProgramPreprocessing {
     let bytecode = BytecodePreprocessing {
@@ -118,34 +120,39 @@ fn shape(
     witness.shape_of(id.into())
 }
 
-/// Owned mirror of [`CommittedChunk`] for chunk-boundary assertions.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Chunk {
-    Words(Vec<u64>),
-    Increments(Vec<i128>),
-    HotAddresses(Vec<Option<usize>>),
-}
-
-fn collect_column(
+fn committed_table(
     witness: &TraceBackend<'_, OwnedTrace>,
     id: JoltCommittedPolynomial,
-    chunk_size: usize,
-) -> Result<Vec<Chunk>, WitnessError> {
-    let mut chunks = Vec::new();
-    witness.visit_committed_column::<Fr>(id, chunk_size, &mut |chunk| {
-        chunks.push(match chunk {
-            CommittedChunk::Words(values) => Chunk::Words(values.to_vec()),
-            CommittedChunk::Increments(values) => Chunk::Increments(values.to_vec()),
-            CommittedChunk::HotAddresses(values) => Chunk::HotAddresses(values.to_vec()),
-            CommittedChunk::Dense(_) | CommittedChunk::Zeros(_) => {
-                return Err(WitnessError::UnsupportedView {
-                    view: "unexpected dense chunk from the trace backend",
-                });
-            }
-        });
-        Ok(())
-    })?;
-    Ok(chunks)
+) -> Result<Vec<Fr>, WitnessError> {
+    <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(
+        witness,
+        JoltPolynomialId::Committed(id),
+    )
+}
+
+/// Recovers the per-cycle hot addresses from a flat address-major `(K x T)`
+/// one-hot grid, asserting every entry is 0 or 1 and every cycle has at most
+/// one hot address (`None` is a cold cycle).
+fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
+    assert!(table.len().is_multiple_of(cycles));
+    let addresses = table.len() / cycles;
+    (0..cycles)
+        .map(|cycle| {
+            let hot: Vec<usize> = (0..addresses)
+                .filter(|address| {
+                    let value = table[address * cycles + cycle];
+                    assert!(value == Fr::from_u64(0) || value == Fr::from_u64(1));
+                    value == Fr::from_u64(1)
+                })
+                .collect();
+            assert!(
+                hot.len() <= 1,
+                "cycle {cycle} has {} hot addresses",
+                hot.len()
+            );
+            hot.first().copied()
+        })
+        .collect()
 }
 
 #[test]
@@ -629,7 +636,7 @@ fn materialized_virtual_view(
 }
 
 #[test]
-fn rd_inc_streams_register_write_deltas_and_padding() {
+fn rd_inc_materializes_register_write_deltas_and_padding() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let rows = vec![
@@ -659,16 +666,13 @@ fn rd_inc_streams_register_write_deltas_and_padding() {
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
     assert_eq!(
-        collect_column(&witness, JoltCommittedPolynomial::RdInc, 3),
-        Ok(vec![
-            Chunk::Increments(vec![-6, 9, 0]),
-            Chunk::Increments(vec![0]),
-        ])
+        committed_table(&witness, JoltCommittedPolynomial::RdInc),
+        Ok([-6, 9, 0, 0].map(Fr::from_i128).to_vec())
     );
 }
 
 #[test]
-fn ram_inc_streams_write_deltas_only() {
+fn ram_inc_materializes_write_deltas_only() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let rows = vec![
@@ -691,16 +695,13 @@ fn ram_inc_streams_write_deltas_only() {
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
     assert_eq!(
-        collect_column(&witness, JoltCommittedPolynomial::RamInc, 2),
-        Ok(vec![
-            Chunk::Increments(vec![7, 0]),
-            Chunk::Increments(vec![0, 0]),
-        ])
+        committed_table(&witness, JoltCommittedPolynomial::RamInc),
+        Ok([7, 0, 0, 0].map(Fr::from_i128).to_vec())
     );
 }
 
 #[test]
-fn bytecode_ra_streams_pc_chunks_and_noop_padding() {
+fn bytecode_ra_materializes_pc_chunks_and_noop_padding() {
     let program = JoltProgram::default();
     let first = instruction(RAM_START_ADDRESS as usize);
     let second = instruction(RAM_START_ADDRESS as usize + 4);
@@ -726,17 +727,16 @@ fn bytecode_ra_streams_pc_chunks_and_noop_padding() {
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
+    let table = committed_table(&witness, JoltCommittedPolynomial::BytecodeRa(0)).unwrap();
+    assert_eq!(table.len(), 16 * 4);
     assert_eq!(
-        collect_column(&witness, JoltCommittedPolynomial::BytecodeRa(0), 3),
-        Ok(vec![
-            Chunk::HotAddresses(vec![Some(1), Some(2), Some(0)]),
-            Chunk::HotAddresses(vec![Some(0)]),
-        ])
+        hot_addresses(&table, 4),
+        vec![Some(1), Some(2), Some(0), Some(0)]
     );
 }
 
 #[test]
-fn ram_ra_streams_remapped_address_chunks_and_noop_padding() {
+fn ram_ra_materializes_remapped_address_chunks_and_noop_padding() {
     let program = JoltProgram::default();
     let memory_layout = compact_memory_layout();
     let access_address = memory_layout.stack_end;
@@ -758,14 +758,13 @@ fn ram_ra_streams_remapped_address_chunks_and_noop_padding() {
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
-    assert_eq!(
-        collect_column(&witness, JoltCommittedPolynomial::RamRa(1), 4),
-        Ok(vec![Chunk::HotAddresses(vec![Some(10), None, None, None])])
-    );
+    let table = committed_table(&witness, JoltCommittedPolynomial::RamRa(1)).unwrap();
+    assert_eq!(table.len(), 16 * 4);
+    assert_eq!(hot_addresses(&table, 4), vec![Some(10), None, None, None]);
 }
 
 #[test]
-fn instruction_ra_streams_lookup_index_chunks_and_noop_padding() {
+fn instruction_ra_materializes_lookup_index_chunks_and_noop_padding() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let mut instruction_row = instruction(RAM_START_ADDRESS as usize);
@@ -783,17 +782,16 @@ fn instruction_ra_streams_lookup_index_chunks_and_noop_padding() {
     }];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
+    let table = committed_table(&witness, JoltCommittedPolynomial::InstructionRa(15)).unwrap();
+    assert_eq!(table.len(), 16 * 4);
     assert_eq!(
-        collect_column(&witness, JoltCommittedPolynomial::InstructionRa(15), 2),
-        Ok(vec![
-            Chunk::HotAddresses(vec![Some(1), Some(0)]),
-            Chunk::HotAddresses(vec![Some(0), Some(0)]),
-        ])
+        hot_addresses(&table, 4),
+        vec![Some(1), Some(0), Some(0), Some(0)]
     );
 }
 
 #[test]
-fn advice_streams_pack_device_bytes_as_little_endian_words() {
+fn advice_packs_device_bytes_as_little_endian_words() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let device = JoltDevice {
@@ -811,23 +809,20 @@ fn advice_streams_pack_device_bytes_as_little_endian_words() {
     );
 
     assert_eq!(
-        collect_column(&witness, JoltCommittedPolynomial::TrustedAdvice, 3),
-        Ok(vec![
-            Chunk::Words(vec![0x0807_0605_0403_0201, 0x0a09, 0]),
-            Chunk::Words(vec![0, 0, 0]),
-            Chunk::Words(vec![0, 0]),
-        ])
+        committed_table(&witness, JoltCommittedPolynomial::TrustedAdvice),
+        Ok([0x0807_0605_0403_0201, 0x0a09, 0, 0, 0, 0, 0, 0]
+            .map(Fr::from_u64)
+            .to_vec())
     );
 
-    let untrusted = collect_column(&witness, JoltCommittedPolynomial::UntrustedAdvice, 5);
-    assert_eq!(
-        untrusted.map(|chunks| chunks.first().cloned()),
-        Ok(Some(Chunk::Words(vec![0xbbaa, 0, 0, 0, 0])))
-    );
+    let untrusted = committed_table(&witness, JoltCommittedPolynomial::UntrustedAdvice).unwrap();
+    assert_eq!(untrusted.len(), 16);
+    assert_eq!(untrusted[0], Fr::from_u64(0xbbaa));
+    assert!(untrusted[1..].iter().all(|word| *word == Fr::from_u64(0)));
 }
 
 #[test]
-fn advice_streams_reject_disabled_and_oversized_advice() {
+fn advice_rejects_disabled_and_oversized_advice() {
     let program = JoltProgram::default();
     let preprocessing = preprocessing();
     let device = JoltDevice {
@@ -839,7 +834,7 @@ fn advice_streams_reject_disabled_and_oversized_advice() {
     let witness = TraceBackend::new(config().include_trusted_advice(true), inputs);
 
     assert!(matches!(
-        collect_column(&witness, JoltCommittedPolynomial::TrustedAdvice, 1),
+        committed_table(&witness, JoltCommittedPolynomial::TrustedAdvice),
         Err(WitnessError::InvalidWitnessData {
             label: "jolt_vm",
             ..
@@ -853,25 +848,8 @@ fn advice_streams_reject_disabled_and_oversized_advice() {
     );
     let disabled = TraceBackend::new(config(), inputs);
     assert!(matches!(
-        collect_column(&disabled, JoltCommittedPolynomial::TrustedAdvice, 1),
+        committed_table(&disabled, JoltCommittedPolynomial::TrustedAdvice),
         Err(WitnessError::UnknownOracle { label: "jolt_vm" })
-    ));
-}
-
-#[test]
-fn committed_columns_reject_unsupported_oracles_and_empty_chunks() {
-    let program = JoltProgram::default();
-    let preprocessing = preprocessing();
-    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let witness = TraceBackend::new(config(), inputs);
-
-    assert!(matches!(
-        collect_column(&witness, JoltCommittedPolynomial::TrustedAdvice, 1),
-        Err(WitnessError::UnknownOracle { label: "jolt_vm" })
-    ));
-    assert!(matches!(
-        collect_column(&witness, JoltCommittedPolynomial::RdInc, 0),
-        Err(WitnessError::InvalidDimensions { .. })
     ));
 }
 

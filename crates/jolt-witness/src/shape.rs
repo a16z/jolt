@@ -1,5 +1,6 @@
-/// Physical representation of a polynomial's evaluations in views and stream
-/// chunks.
+/// Physical representation of a polynomial's evaluations; a declared
+/// property of the id — oracle tables always materialize to dense field
+/// elements.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PolynomialEncoding {
     /// One field element per row.

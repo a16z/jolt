@@ -20,7 +20,7 @@ use self::witnesses::{
 };
 use crate::backend::trace::{checked_pow2, TraceBackend};
 use crate::witnesses::{Extract, ExtractIndexed, WitnessEnv};
-use crate::{ColumnVisitor, CommittedChunk, PolynomialEncoding, Shape, WitnessError};
+use crate::{PolynomialEncoding, Shape, WitnessError};
 
 pub mod witnesses;
 
@@ -334,54 +334,6 @@ impl TraceBackedFieldInlineWitness<'_> {
         }
     }
 
-    /// Walks the committed column's coefficients in chunks of at most
-    /// `chunk_size` — the committed analog of the bundle pass, mirroring
-    /// [`crate::JoltWitnessOracle::visit_committed_column`].
-    pub fn visit_committed_column<F: Field>(
-        &self,
-        id: FieldInlineCommittedPolynomial,
-        chunk_size: usize,
-        visitor: &mut ColumnVisitor<'_, F>,
-    ) -> Result<(), WitnessError> {
-        if chunk_size == 0 {
-            return Err(WitnessError::InvalidDimensions {
-                label: FIELD_INLINE_LABEL,
-                reason: "column chunk size must be nonzero".to_owned(),
-            });
-        }
-        match id {
-            FieldInlineCommittedPolynomial::FieldRdInc => {
-                let all_zero = self.trace_rows.iter().all(|row| {
-                    row.field_inline
-                        .as_deref()
-                        .and_then(|data| data.rd)
-                        .is_none()
-                });
-                if all_zero {
-                    return visitor(CommittedChunk::Zeros(self.rows));
-                }
-                let env = WitnessEnv {
-                    preprocessing: self.preprocessing,
-                };
-                let mut buffer = Vec::with_capacity(chunk_size.min(self.rows));
-                let mut emitted = 0;
-                while emitted < self.rows {
-                    let end = emitted.saturating_add(chunk_size).min(self.rows);
-                    buffer.clear();
-                    for index in emitted..end {
-                        buffer.push(match self.trace_rows.get(index) {
-                            Some(row) => FieldRdInc::extract(row, None, &env)?.0,
-                            None => F::zero(),
-                        });
-                    }
-                    visitor(CommittedChunk::Dense(&buffer))?;
-                    emitted = end;
-                }
-                Ok(())
-            }
-        }
-    }
-
     pub fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
         vec![FieldInlineCommittedPolynomial::FieldRdInc]
     }
@@ -677,7 +629,9 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
 mod tests {
     use common::constants::RAM_START_ADDRESS;
     use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
-    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig};
+    use jolt_claims::protocols::jolt::{
+        JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
+    };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_program::{
         execution::{
@@ -903,27 +857,6 @@ mod tests {
         provider.oracle_table::<Fr>(id.into()).unwrap()
     }
 
-    fn collect_dense_column(
-        provider: &TraceBackedFieldInlineWitness<'_>,
-        chunk_size: usize,
-    ) -> Vec<Vec<Fr>> {
-        let mut chunks = Vec::new();
-        provider
-            .visit_committed_column::<Fr>(
-                FieldInlineCommittedPolynomial::FieldRdInc,
-                chunk_size,
-                &mut |chunk| {
-                    let CommittedChunk::Dense(values) = chunk else {
-                        panic!("field-inline columns are dense, got {chunk:?}");
-                    };
-                    chunks.push(values.to_vec());
-                    Ok(())
-                },
-            )
-            .unwrap();
-        chunks
-    }
-
     #[test]
     fn fr_off_provider_is_absent_without_field_data() {
         let bytecode = vec![instruction(
@@ -1007,16 +940,15 @@ mod tests {
     }
 
     #[test]
-    fn field_rd_inc_streams_field_deltas_and_padding() {
+    fn field_rd_inc_materializes_field_deltas_and_padding() {
         let (bytecode, rows) = arithmetic_fixture();
         let provider = build_field_provider(bytecode, rows, 3);
         assert_eq!(
-            collect_dense_column(&provider, 3),
-            vec![
-                vec![fr(5), fr(7), fr(35)],
-                vec![fr(0), fr(0), fr(0)],
-                vec![fr(0), fr(0)],
-            ]
+            owned_view(
+                &provider,
+                FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc)
+            ),
+            vec![fr(5), fr(7), fr(35), fr(0), fr(0), fr(0), fr(0), fr(0)]
         );
     }
 
@@ -1168,21 +1100,19 @@ mod tests {
         let witness = witness(&program, &preprocessing, vec![row0, row1], 2);
         let provider = witness.field_inline_witness().unwrap();
 
-        let mut ordinary = Vec::new();
-        witness
-            .visit_committed_column::<Fr>(JoltCommittedPolynomial::RdInc, 4, &mut |chunk| {
-                let CommittedChunk::Increments(values) = chunk else {
-                    panic!("RdInc streams increments, got {chunk:?}");
-                };
-                ordinary.extend_from_slice(values);
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(ordinary, vec![0, 11, 0, 0]);
+        let ordinary = crate::JoltWitnessOracle::<Fr>::oracle_table(
+            &witness,
+            JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
+        )
+        .unwrap();
+        assert_eq!(ordinary, vec![fr(0), fr(11), fr(0), fr(0)]);
 
         assert_eq!(
-            collect_dense_column(&provider, 4),
-            vec![vec![fr(11), fr(0), fr(0), fr(0)]]
+            owned_view(
+                &provider,
+                FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc)
+            ),
+            vec![fr(11), fr(0), fr(0), fr(0)]
         );
     }
 

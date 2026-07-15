@@ -30,7 +30,6 @@ pub mod testing;
 pub mod witnesses;
 
 mod bundle;
-mod chunk;
 mod consumer;
 mod error;
 mod shape;
@@ -40,7 +39,6 @@ pub use backend::fixed::FixedBackend;
 pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 pub use backend::{validate_servable, BundleSource, JoltWitnessOracle};
 pub use bundle::WitnessBundle;
-pub use chunk::{ColumnVisitor, CommittedChunk};
 pub use consumer::{stream_witnesses, CollectBundles, ConsumerSet, RowSource, StreamConsumer};
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};

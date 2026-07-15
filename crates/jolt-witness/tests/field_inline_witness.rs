@@ -7,7 +7,7 @@ use jolt_claims::protocols::{
         FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlinePolynomialId,
         FieldInlineVirtualPolynomial,
     },
-    jolt::{JoltCommittedPolynomial, JoltOneHotConfig},
+    jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId},
 };
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_program::{
@@ -26,7 +26,7 @@ use jolt_riscv::{
 };
 use jolt_witness::{
     field_inline::{TraceBackedFieldInlineWitness, FIELD_INLINE_LABEL},
-    CommittedChunk, JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend, WitnessError,
+    JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend, WitnessError,
 };
 
 const ENTRY: u64 = RAM_START_ADDRESS;
@@ -195,26 +195,15 @@ fn owned_view(
     provider.oracle_table::<Fr>(id.into()).unwrap()
 }
 
-fn field_rd_inc_column(provider: &TraceBackedFieldInlineWitness<'_>, chunk_size: usize) -> Vec<Fr> {
-    let mut values = Vec::new();
-    provider
-        .visit_committed_column::<Fr>(
-            FieldInlineCommittedPolynomial::FieldRdInc,
-            chunk_size,
-            &mut |chunk| {
-                let CommittedChunk::Dense(chunk) = chunk else {
-                    panic!("field-inline columns are dense, got {chunk:?}");
-                };
-                values.extend_from_slice(chunk);
-                Ok(())
-            },
-        )
-        .unwrap();
-    values
+fn field_rd_inc_column(provider: &TraceBackedFieldInlineWitness<'_>) -> Vec<Fr> {
+    owned_view(
+        provider,
+        FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc),
+    )
 }
 
 #[test]
-fn field_inline_public_provider_streams_and_materializes_views() {
+fn field_inline_public_provider_materializes_views() {
     let (bytecode, rows) = public_fixture();
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
@@ -225,7 +214,7 @@ fn field_inline_public_provider_streams_and_materializes_views() {
     assert_eq!(order, vec![FieldInlineCommittedPolynomial::FieldRdInc]);
 
     assert_eq!(
-        field_rd_inc_column(&provider, 4),
+        field_rd_inc_column(&provider),
         vec![fr(13), fr(17), fr(221), fr(0)]
     );
 
@@ -357,20 +346,15 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
     let witness = witness(&program, &preprocessing, vec![load_row, store_row], 2);
     let provider = witness.field_inline_witness().unwrap();
 
-    let mut ordinary = Vec::new();
-    witness
-        .visit_committed_column::<Fr>(JoltCommittedPolynomial::RdInc, 4, &mut |chunk| {
-            let CommittedChunk::Increments(values) = chunk else {
-                panic!("RdInc streams increments, got {chunk:?}");
-            };
-            ordinary.extend_from_slice(values);
-            Ok(())
-        })
-        .unwrap();
-    assert_eq!(ordinary, vec![0, 19, 0, 0]);
+    let ordinary = JoltWitnessOracle::<Fr>::oracle_table(
+        &witness,
+        JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
+    )
+    .unwrap();
+    assert_eq!(ordinary, vec![fr(0), fr(19), fr(0), fr(0)]);
 
     assert_eq!(
-        field_rd_inc_column(&provider, 4),
+        field_rd_inc_column(&provider),
         vec![fr(19), fr(0), fr(0), fr(0)]
     );
 }
