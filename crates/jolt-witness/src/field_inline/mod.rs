@@ -1,10 +1,10 @@
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::field_inline::{
-    FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlinePolynomialId,
-    FieldInlineVirtualPolynomial, FIELD_REGISTERS_LOG_K,
+    FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
+    FIELD_REGISTERS_LOG_K,
 };
-use jolt_field::{Field, ReducingBytes};
+use jolt_field::Field;
 use jolt_program::{
     execution::{JoltProgram, TraceOutput, TraceRow, TraceSource},
     field_inline::{
@@ -13,13 +13,18 @@ use jolt_program::{
     },
     preprocess::JoltProgramPreprocessing,
 };
-use jolt_riscv::{
-    field_inline_operand_shape, FieldInlineOp, FieldInlineOperandShape, FieldInlineXRegisterRole,
-};
+use jolt_riscv::{field_inline_operand_shape, FieldInlineOperandShape, FieldInlineXRegisterRole};
 use rayon::prelude::*;
 
+use self::witnesses::{
+    decode_value, FieldInvProduct, FieldOpFlag, FieldProduct, FieldRdInc, FieldRdValue,
+    FieldRs1Value, FieldRs2Value, FieldValue,
+};
 use crate::backend::trace::{checked_pow2, TraceBackend};
+use crate::witnesses::{Extract, ExtractIndexed, WitnessEnv};
 use crate::{PolynomialChunk, PolynomialEncoding, PolynomialStream, Shape, WitnessError};
+
+pub mod witnesses;
 
 /// Error label for the field-inline witness backend.
 pub const FIELD_INLINE_LABEL: &str = "jolt_vm.field_inline";
@@ -194,16 +199,39 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
         }
     }
 
-    fn materialize_trace_virtual<F: Field>(
+    /// Materializes one cycle-domain witness column; rows beyond the trace
+    /// are zero. All per-witness logic lives on `W`.
+    fn materialize_cycle<F: Field, W: Extract + FieldValue<F> + Send>(
         &self,
-        id: FieldInlineVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
-        let trace_rows = self.trace_rows.as_slice();
+        self.walk_cycles(|row, env| W::extract(row, None, env).map(FieldValue::value))
+    }
+
+    /// [`Self::materialize_cycle`] for indexed witness families.
+    fn materialize_cycle_indexed<F: Field, W: ExtractIndexed<I> + FieldValue<F>, I: Copy + Sync>(
+        &self,
+        index: I,
+    ) -> Result<Vec<F>, WitnessError> {
+        self.walk_cycles(|row, env| {
+            W::extract_indexed(index, row, None, env).map(FieldValue::value)
+        })
+    }
+
+    fn walk_cycles<F: Field>(
+        &self,
+        value: impl Fn(&TraceRow, &WitnessEnv<'_>) -> Result<F, WitnessError> + Sync,
+    ) -> Result<Vec<F>, WitnessError> {
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
         let mut values = vec![F::from_u64(0); self.rows];
         values
             .par_iter_mut()
-            .zip(trace_rows.par_iter())
-            .for_each(|(value, row)| *value = trace_virtual_value(row, id));
+            .zip(self.trace_rows.par_iter())
+            .try_for_each(|(slot, row)| {
+                *slot = value(row, &env)?;
+                Ok(())
+            })?;
         Ok(values)
     }
 
@@ -256,25 +284,31 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
 
         Ok(values)
     }
-
-    fn describe_virtual(&self, id: FieldInlineVirtualPolynomial) -> Result<Shape, WitnessError> {
-        let log_rows = if is_register_domain_virtual(id) {
-            self.field_register_log_rows()?
-        } else {
-            self.trace_log_rows()
-        };
-        Ok(Shape::new(log_rows, PolynomialEncoding::Dense))
-    }
 }
 
 impl TraceBackedFieldInlineWitness<'_> {
-    /// The exhaustive shape map over the field-inline id vocabulary.
+    /// The exhaustive shape map over the field-inline id vocabulary — no
+    /// wildcard arm, like the jolt-vm backend: a new jolt-claims variant
+    /// fails compilation here until classified.
     pub fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError> {
+        use FieldInlineVirtualPolynomial as V;
         match id {
             FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 Ok(Shape::new(self.trace_log_rows(), PolynomialEncoding::Dense))
             }
-            FieldInlinePolynomialId::Virtual(id) => self.describe_virtual(id),
+            FieldInlinePolynomialId::Virtual(virtual_id) => match virtual_id {
+                V::FieldRs1Value
+                | V::FieldRs2Value
+                | V::FieldRdValue
+                | V::FieldProduct
+                | V::FieldInvProduct
+                | V::FieldOpFlag(_) => {
+                    Ok(Shape::new(self.trace_log_rows(), PolynomialEncoding::Dense))
+                }
+                V::FieldRs1Ra | V::FieldRs2Ra | V::FieldRdWa | V::FieldRegistersVal => Ok(
+                    Shape::new(self.field_register_log_rows()?, PolynomialEncoding::Dense),
+                ),
+            },
         }
     }
 
@@ -282,15 +316,23 @@ impl TraceBackedFieldInlineWitness<'_> {
         &self,
         id: FieldInlinePolynomialId,
     ) -> Result<Vec<F>, WitnessError> {
+        use FieldInlineVirtualPolynomial as V;
         let _ = self.shape(id)?;
         match id {
             FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
-                Ok(materialize_field_rd_inc::<F>(&self.trace_rows, self.rows))
+                self.materialize_cycle::<F, FieldRdInc<F>>()
             }
-            FieldInlinePolynomialId::Virtual(id) if is_register_domain_virtual(id) => {
-                self.materialize_register_virtual(id)
-            }
-            FieldInlinePolynomialId::Virtual(id) => self.materialize_trace_virtual(id),
+            FieldInlinePolynomialId::Virtual(virtual_id) => match virtual_id {
+                V::FieldRs1Value => self.materialize_cycle::<F, FieldRs1Value<F>>(),
+                V::FieldRs2Value => self.materialize_cycle::<F, FieldRs2Value<F>>(),
+                V::FieldRdValue => self.materialize_cycle::<F, FieldRdValue<F>>(),
+                V::FieldProduct => self.materialize_cycle::<F, FieldProduct<F>>(),
+                V::FieldInvProduct => self.materialize_cycle::<F, FieldInvProduct<F>>(),
+                V::FieldOpFlag(flag) => self.materialize_cycle_indexed::<F, FieldOpFlag, _>(flag),
+                V::FieldRs1Ra | V::FieldRs2Ra | V::FieldRdWa | V::FieldRegistersVal => {
+                    self.materialize_register_virtual(virtual_id)
+                }
+            },
         }
     }
 
@@ -311,6 +353,7 @@ impl TraceBackedFieldInlineWitness<'_> {
                 emitted: 0,
                 rows: self.rows,
                 chunk_size,
+                preprocessing: self.preprocessing,
                 all_zero: self.trace_rows.iter().all(|row| {
                     row.field_inline
                         .as_deref()
@@ -331,13 +374,17 @@ impl<F: Field> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWit
     fn field_inline_register_read_write_rows(
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
-        Ok((0..self.rows)
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
+        (0..self.rows)
             .map(|index| {
-                self.trace_rows
-                    .get(index)
-                    .map_or_else(FieldInlineRegisterReadWriteRow::default, field_register_row)
+                self.trace_rows.get(index).map_or_else(
+                    || Ok(FieldInlineRegisterReadWriteRow::default()),
+                    |row| field_register_row(row, &env),
+                )
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -385,6 +432,7 @@ pub struct FieldInlineCommittedStream<'a, F> {
     rows: usize,
     chunk_size: usize,
     all_zero: bool,
+    preprocessing: &'a JoltProgramPreprocessing,
     _field: PhantomData<F>,
 }
 
@@ -398,13 +446,16 @@ impl<F: Field> PolynomialStream<F> for FieldInlineCommittedStream<'_, F> {
             self.emitted = self.rows;
             return Ok(Some(PolynomialChunk::Zeros(rows)));
         }
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
         let end = self.emitted.saturating_add(self.chunk_size).min(self.rows);
         let mut values = Vec::with_capacity(end - self.emitted);
         while self.emitted < end {
-            let value = self
-                .trace_rows
-                .get(self.emitted)
-                .map_or_else(F::zero, field_rd_inc);
+            let value = match self.trace_rows.get(self.emitted) {
+                Some(row) => FieldRdInc::extract(row, None, &env)?.0,
+                None => F::zero(),
+            };
             values.push(value);
             self.emitted += 1;
         }
@@ -412,25 +463,12 @@ impl<F: Field> PolynomialStream<F> for FieldInlineCommittedStream<'_, F> {
     }
 }
 
-fn materialize_field_rd_inc<F: Field>(trace_rows: &[TraceRow], rows: usize) -> Vec<F> {
-    (0..rows)
-        .into_par_iter()
-        .map(|index| trace_rows.get(index).map_or_else(F::zero, field_rd_inc))
-        .collect()
-}
-
-fn field_rd_inc<F: Field>(row: &TraceRow) -> F {
-    row.field_inline
-        .as_deref()
-        .and_then(|data| data.rd)
-        .map_or_else(F::zero, |write| {
-            decode_value::<F>(write.post_value) - decode_value::<F>(write.pre_value)
-        })
-}
-
-fn field_register_row<F: Field>(row: &TraceRow) -> FieldInlineRegisterReadWriteRow<F> {
+fn field_register_row<F: Field>(
+    row: &TraceRow,
+    env: &WitnessEnv<'_>,
+) -> Result<FieldInlineRegisterReadWriteRow<F>, WitnessError> {
     let Some(data) = row.field_inline.as_deref() else {
-        return FieldInlineRegisterReadWriteRow::default();
+        return Ok(FieldInlineRegisterReadWriteRow::default());
     };
     let rs1 = data.rs1.map(|read| FieldInlineRegisterReadRow {
         register: read.register,
@@ -445,71 +483,12 @@ fn field_register_row<F: Field>(row: &TraceRow) -> FieldInlineRegisterReadWriteR
         pre_value: decode_value(write.pre_value),
         post_value: decode_value(write.post_value),
     });
-    FieldInlineRegisterReadWriteRow {
+    Ok(FieldInlineRegisterReadWriteRow {
         rs1,
         rs2,
         rd,
-        rd_increment: field_rd_inc(row),
-    }
-}
-
-fn trace_virtual_value<F: Field>(row: &TraceRow, id: FieldInlineVirtualPolynomial) -> F {
-    let Some(data) = row.field_inline.as_deref() else {
-        return F::zero();
-    };
-    match id {
-        FieldInlineVirtualPolynomial::FieldRs1Value => data
-            .rs1
-            .map_or_else(F::zero, |read| decode_value(read.value)),
-        FieldInlineVirtualPolynomial::FieldRs2Value => data
-            .rs2
-            .map_or_else(F::zero, |read| decode_value(read.value)),
-        FieldInlineVirtualPolynomial::FieldRdValue => data
-            .rd
-            .map_or_else(F::zero, |write| decode_value(write.post_value)),
-        FieldInlineVirtualPolynomial::FieldProduct => {
-            let rs1 = data
-                .rs1
-                .map_or_else(F::zero, |read| decode_value(read.value));
-            let rs2 = data
-                .rs2
-                .map_or_else(F::zero, |read| decode_value(read.value));
-            rs1 * rs2
-        }
-        FieldInlineVirtualPolynomial::FieldInvProduct => {
-            let rs1 = data
-                .rs1
-                .map_or_else(F::zero, |read| decode_value(read.value));
-            let rd = data
-                .rd
-                .map_or_else(F::zero, |write| decode_value(write.post_value));
-            rs1 * rd
-        }
-        FieldInlineVirtualPolynomial::FieldOpFlag(flag) => F::from_bool(data.op == Some(op(flag))),
-        FieldInlineVirtualPolynomial::FieldRs1Ra
-        | FieldInlineVirtualPolynomial::FieldRs2Ra
-        | FieldInlineVirtualPolynomial::FieldRdWa
-        | FieldInlineVirtualPolynomial::FieldRegistersVal => F::zero(),
-    }
-}
-
-fn decode_value<F: Field>(value: FieldEncodedValue) -> F {
-    if value.bytes_le[8..].iter().all(|byte| *byte == 0) {
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&value.bytes_le[..8]);
-        return F::from_u64(u64::from_le_bytes(bytes));
-    }
-    <F as ReducingBytes>::from_le_bytes_mod_order(&value.bytes_le)
-}
-
-fn is_register_domain_virtual(id: FieldInlineVirtualPolynomial) -> bool {
-    matches!(
-        id,
-        FieldInlineVirtualPolynomial::FieldRs1Ra
-            | FieldInlineVirtualPolynomial::FieldRs2Ra
-            | FieldInlineVirtualPolynomial::FieldRdWa
-            | FieldInlineVirtualPolynomial::FieldRegistersVal
-    )
+        rd_increment: FieldRdInc::extract(row, None, env)?.0,
+    })
 }
 
 fn validate_trace_data(
@@ -714,23 +693,11 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
     }
 }
 
-const fn op(flag: FieldInlineOpFlag) -> FieldInlineOp {
-    match flag {
-        FieldInlineOpFlag::Add => FieldInlineOp::Add,
-        FieldInlineOpFlag::Sub => FieldInlineOp::Sub,
-        FieldInlineOpFlag::Mul => FieldInlineOp::Mul,
-        FieldInlineOpFlag::Inv => FieldInlineOp::Inv,
-        FieldInlineOpFlag::AssertEq => FieldInlineOp::AssertEq,
-        FieldInlineOpFlag::LoadFromX => FieldInlineOp::LoadFromX,
-        FieldInlineOpFlag::StoreToX => FieldInlineOp::StoreToX,
-        FieldInlineOpFlag::LoadImm => FieldInlineOp::LoadImm,
-    }
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::constants::RAM_START_ADDRESS;
+    use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_program::{
@@ -739,6 +706,7 @@ mod tests {
         },
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
     };
+    use jolt_riscv::FieldInlineOp;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
         RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
