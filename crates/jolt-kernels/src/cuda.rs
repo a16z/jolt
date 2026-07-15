@@ -52,6 +52,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/prefix_suffix_round.cu"),
     include_str!("cuda/bind_high_to_low.cu"),
     include_str!("cuda/batched_bind_high_to_low.cu"),
+    include_str!("cuda/mul_scalar.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
@@ -111,6 +112,8 @@ pub struct CudaKernelContext {
     prefix_suffix_round_pairs: CudaFunction,
     bind_high_to_low_kernel: CudaFunction,
     batched_bind_high_to_low_kernel: CudaFunction,
+    #[expect(dead_code, reason = "used once the mul_scalar body + wiring land")]
+    mul_scalar: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
@@ -945,6 +948,7 @@ impl CudaKernelContext {
             bind_high_to_low_kernel: module.load_function("bind_high_to_low_kernel")?,
             batched_bind_high_to_low_kernel: module
                 .load_function("batched_bind_high_to_low_kernel")?,
+            mul_scalar: module.load_function("mul_scalar")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
@@ -3073,6 +3077,11 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
 
         Ok(())
+    }
+
+    pub fn mul_scalar(&self, a: &mut DeviceFrVec, scalar: Fr) -> Result<(), CudaError> {
+        let _ = (&a, scalar);
+        Err(CudaError::Unsupported)
     }
 
     pub fn u64_to_mont(&self, values: &[u64]) -> Result<DeviceFrVec, CudaError> {
@@ -6005,6 +6014,22 @@ mod tests {
             let c = ctx();
             let mut dev = c.upload(&base).unwrap();
             c.add_scalar(&mut dev, scalar).unwrap();
+            prop_assert_eq!(dev.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn mul_scalar_matches_cpu(
+            log_n in 0usize..12,
+            seed in fr_strategy(),
+            scalar in fr_strategy(),
+        ) {
+            let n = 1usize << log_n;
+            let base: Vec<Fr> = (0..n).map(|i| seed + Fr::from_u64(i as u64)).collect();
+            let expected: Vec<Fr> = base.iter().map(|&x| x * scalar).collect();
+
+            let c = ctx();
+            let mut dev = c.upload(&base).unwrap();
+            c.mul_scalar(&mut dev, scalar).unwrap();
             prop_assert_eq!(dev.to_host().unwrap(), expected);
         }
 
