@@ -3051,6 +3051,10 @@ fn multiply_linear_factor<F: Field>(
     coefficients[..=*degree].copy_from_slice(&scratch[..=*degree]);
 }
 
+// Unreachable via a real prover: dense host-only fallback selected only when the booleanity
+// witness has `index_chunks == None`. The production witness assembler
+// (Stage6ProverInputs::with_stage6_witness) always sets `index_chunks: Some(..)`, forcing the
+// device-capable CoreBooleanityStage6State. Only unit tests construct the None witness.
 struct BooleanityStage6State<F: Field> {
     eq: Vec<F>,
     eq_scratch: Vec<F>,
@@ -4652,6 +4656,11 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 }
 
+// Unreachable via a real prover: host-only dense fallback for bytecode_read_raf, selected only
+// when the witness provides neither sparse `bytecode_ra_index_chunks` (Some) nor one-hot-decodable
+// dense `bytecode_ra_chunks`. The production witness assembler always supplies sparse index chunks,
+// so bytecode_read_raf_state takes the device-capable BytecodeReadRafStage6State. Only unit tests
+// hit this fallback.
 struct DenseStage6State<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
@@ -6717,6 +6726,13 @@ fn instruction_ra_virtual_state<'a, F: Field>(
         );
     }
 
+    // Unreachable via a real prover: dense (split_eq=None) InstructionRaVirtual fallback, reached
+    // only when `instruction_ra_index_chunks == None`. The production witness assembler always sets
+    // it to Some, so the sparse branch above is taken; and JoltProtocolParams forces
+    // chunks_per_virtual == 4, so that branch's device path is always available. Only unit tests
+    // hit this. (For RamRaVirtual, chunks_per_virtual = ram_d, and the degree_bound <= 5 check in
+    // ::new caps ram_d at 4 = the device path; ram_d >= 5 is protocol-unsupported and ram_d <= 3
+    // needs ram_K below the bytecode-region floor, so no real witness takes a RamRaVirtual host path.)
     InstructionRaVirtualStage6State::new(
         Stage6Relation::InstructionRaVirtual,
         eq_cycle,
