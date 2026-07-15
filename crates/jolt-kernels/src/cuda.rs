@@ -108,7 +108,6 @@ pub struct CudaKernelContext {
     prefix_combine_probe: CudaFunction,
     read_table_round_pairs: CudaFunction,
     prefix_suffix_round_pairs: CudaFunction,
-    #[expect(dead_code, reason = "used once the bind_high_to_low body + wiring land")]
     bind_high_to_low_kernel: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
@@ -3204,8 +3203,40 @@ impl CudaKernelContext {
         scratch: &mut DeviceFrVec,
         challenge: Fr,
     ) -> Result<(), CudaError> {
-        let _ = (&values, &scratch, challenge);
-        Err(CudaError::Unsupported)
+        let half = values.len / 2;
+        if scratch.buf.len() < half * LIMBS {
+            scratch.buf = self.stream.alloc_zeros(half * LIMBS)?;
+        }
+        scratch.len = half;
+        if half == 0 {
+            std::mem::swap(values, scratch);
+            return Ok(());
+        }
+
+        let challenge_dev = self.stream.clone_htod(&fr_to_limbs(challenge))?;
+        let cfg = LaunchConfig {
+            grid_dim: ((half as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let half_arg = half as u64;
+        let f = self.bind_high_to_low_kernel.clone();
+        xfer_stats::timed(xfer_stats::Phase::Bind, || {
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut scratch.buf)
+                .arg(&values.buf)
+                .arg(&challenge_dev)
+                .arg(&half_arg);
+            // SAFETY: each thread i reads values[i], values[i+half] and the single challenge,
+            // writing scratch[i] = lo + challenge*(hi - lo); scratch and values are distinct
+            // buffers holding >= half and 2*half elements respectively.
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()
+        })?;
+
+        std::mem::swap(values, scratch);
+        Ok(())
     }
 
     pub fn cubic_accumulate(
