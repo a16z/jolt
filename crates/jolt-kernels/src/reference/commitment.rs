@@ -196,17 +196,22 @@ fn column_kinds<F: Field>(
         .collect()
 }
 
-/// The fused cycle-major commit consumer: every column's streaming state,
-/// fed per row window.
+/// The fused cycle-major commit consumer: every column's in-progress
+/// commitment, advanced per row window.
 struct FusedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> {
-    feeders: Vec<ColumnFeeder<PCS>>,
+    columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     setup: &'a PCS::ProverSetup,
+    /// Scratch buffers for one row window's column values, reused across
+    /// windows and columns to avoid per-chunk allocation.
     increments: Vec<i128>,
     hot_addresses: Vec<Option<usize>>,
 }
 
-enum ColumnFeeder<PCS: StreamingCommitment> {
+/// One column's in-progress commitment: dense columns accumulate a partial
+/// commitment through the `feed` family; one-hot columns accumulate
+/// per-window chunk commitments through the column-major one-hot stream.
+enum ColumnCommitState<PCS: StreamingCommitment> {
     Increment {
         kind: ColumnKind,
         partial: PCS::PartialCommitment,
@@ -227,17 +232,17 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
         grid: CommitmentGrid,
         setup: &'a PCS::ProverSetup,
     ) -> Self {
-        let feeders = kinds
+        let columns = kinds
             .iter()
             .map(|&kind| {
                 if kind.is_one_hot() {
-                    ColumnFeeder::OneHot {
+                    ColumnCommitState::OneHot {
                         kind,
                         context: PCS::begin_one_hot_column_major_stream(setup, row_width),
                         chunk_commitments: Vec::new(),
                     }
                 } else {
-                    ColumnFeeder::Increment {
+                    ColumnCommitState::Increment {
                         kind,
                         partial: PCS::begin(setup),
                     }
@@ -245,7 +250,7 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
             })
             .collect();
         Self {
-            feeders,
+            columns,
             one_hot_k: 1usize << grid.log_k_chunk,
             setup,
             increments: Vec::with_capacity(row_width),
@@ -255,11 +260,13 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
 
     fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
         let one_hot_k = self.one_hot_k;
-        self.feeders
+        self.columns
             .into_iter()
-            .map(|feeder| match feeder {
-                ColumnFeeder::Increment { partial, .. } => PCS::finish_with_hint(partial, setup),
-                ColumnFeeder::OneHot {
+            .map(|column| match column {
+                ColumnCommitState::Increment { partial, .. } => {
+                    PCS::finish_with_hint(partial, setup)
+                }
+                ColumnCommitState::OneHot {
                     chunk_commitments, ..
                 } => PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, &chunk_commitments),
             })
@@ -273,15 +280,15 @@ impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamCon
     type Witness = CommittedColumnsWitness;
 
     fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
-        for feeder in &mut self.feeders {
-            match feeder {
-                ColumnFeeder::Increment { kind, partial } => {
+        for column in &mut self.columns {
+            match column {
+                ColumnCommitState::Increment { kind, partial } => {
                     self.increments.clear();
                     self.increments
                         .extend(chunk.iter().map(|row| kind.increment(row)));
                     PCS::feed_i128(partial, &self.increments, self.setup);
                 }
-                ColumnFeeder::OneHot {
+                ColumnCommitState::OneHot {
                     kind,
                     context,
                     chunk_commitments,
