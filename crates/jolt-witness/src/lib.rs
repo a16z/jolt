@@ -35,6 +35,7 @@ mod consumer;
 mod error;
 mod shape;
 
+#[cfg(any(test, feature = "test-utils"))]
 pub use backend::fixed::FixedBackend;
 pub use backend::trace::{
     JoltVmCommittedBatchStream, JoltVmCommittedStream, JoltVmWitnessConfig, JoltVmWitnessInputs,

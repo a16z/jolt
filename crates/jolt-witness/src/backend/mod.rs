@@ -5,6 +5,7 @@ use jolt_field::Field;
 
 use crate::{PolynomialBatchStream, PolynomialStream, Shape, WitnessBundle, WitnessError};
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod fixed;
 pub mod trace;
 
