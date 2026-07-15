@@ -29,7 +29,6 @@ mod lookup;
 
 pub use stage5::{JoltVmStage5InstructionReadRafRows, Stage5InstructionReadRafRow};
 
-mod extract;
 mod provider;
 mod ra;
 mod ram;
@@ -41,11 +40,10 @@ mod trace;
 pub use stage6::{JoltVmStage6Row, JoltVmStage6Rows};
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
-pub(crate) use extract::supported_trace_virtual;
 pub(crate) use ra::RaChunkSelector;
 pub(crate) use ram::ram_access_address;
 pub(crate) use streams::JoltVmIncrementStreamKind;
-pub(crate) use trace::PcLookupCache;
+pub(crate) use trace::{supported_trace_virtual, PcLookupCache};
 
 pub const JOLT_VM_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm");
 pub const RV64_XLEN: usize = 64;

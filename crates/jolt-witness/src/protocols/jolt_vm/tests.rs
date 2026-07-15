@@ -15,12 +15,11 @@ use jolt_riscv::{
     RV64IMAC_JOLT,
 };
 
-use super::extract::{Extract, ExtractIndexed, WitnessEnv};
 use super::*;
 use crate::witnesses::{
-    Imm, InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, Pc, Product,
-    RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value, ShouldJump,
-    UnexpandedPc,
+    Extract, ExtractIndexed, Imm, InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop,
+    OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value,
+    ShouldJump, UnexpandedPc, WitnessEnv,
 };
 use crate::{PolynomialChunk, PolynomialStream, WitnessProvider};
 

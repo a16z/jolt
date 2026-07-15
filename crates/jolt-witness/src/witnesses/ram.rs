@@ -1,4 +1,9 @@
 use jolt_field::Field;
+use jolt_program::execution::{RamAccess, TraceRow};
+
+use super::{Extract, WitnessEnv};
+use crate::protocols::jolt_vm::ram_access_address;
+use crate::WitnessError;
 
 /// Raw (unremapped) RAM access address; 0 when the cycle makes no RAM
 /// access.
@@ -24,9 +29,33 @@ impl RamAddress {
     }
 }
 
+impl Extract for RamAddress {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(ram_access_address(row.ram_access).unwrap_or(0)))
+    }
+}
+
 impl RamReadValue {
     pub fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
+    }
+}
+
+impl Extract for RamReadValue {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(match row.ram_access {
+            RamAccess::Read(read) => read.value,
+            RamAccess::Write(write) => write.pre_value,
+            RamAccess::NoOp => 0,
+        }))
     }
 }
 
@@ -36,8 +65,34 @@ impl RamWriteValue {
     }
 }
 
+impl Extract for RamWriteValue {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(match row.ram_access {
+            RamAccess::Read(read) => read.value,
+            RamAccess::Write(write) => write.post_value,
+            RamAccess::NoOp => 0,
+        }))
+    }
+}
+
 impl RamHammingWeight {
     pub fn to_field<F: Field>(self) -> F {
         F::from_bool(self.0)
+    }
+}
+
+impl Extract for RamHammingWeight {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(
+            ram_access_address(row.ram_access).is_some_and(|address| address != 0),
+        ))
     }
 }

@@ -1,4 +1,17 @@
 use jolt_field::Field;
+use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
+use jolt_program::execution::TraceRow;
+use jolt_riscv::{
+    CircuitFlags, Flags, InstructionFlags as InstructionFlagKind, InterleavedBitsMarker,
+    JoltInstruction,
+};
+
+use super::{
+    decode_instruction, lookup_query, row_circuit_flags, row_is_noop, Extract, ExtractIndexed,
+    WitnessEnv,
+};
+use crate::protocols::jolt_vm::RV64_XLEN;
+use crate::WitnessError;
 
 /// Whether the successor row is a no-op. The last cycle's missing successor
 /// counts as a no-op: the product/shift family requires `NextIsNoop = 1` at
@@ -69,3 +82,111 @@ bool_to_field!(
     InstructionFlag,
     LookupTableFlag,
 );
+
+impl Extract for NextIsNoop {
+    fn extract(
+        _row: &TraceRow,
+        next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(next.is_none_or(row_is_noop)))
+    }
+}
+
+impl Extract for NextIsVirtual {
+    fn extract(
+        _row: &TraceRow,
+        next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(next.is_some_and(|row| {
+            row_circuit_flags(row).is_ok_and(|flags| flags[CircuitFlags::VirtualInstruction])
+        })))
+    }
+}
+
+impl Extract for NextIsFirstInSequence {
+    fn extract(
+        _row: &TraceRow,
+        next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(next.is_some_and(|row| {
+            row_circuit_flags(row).is_ok_and(|flags| flags[CircuitFlags::IsFirstInSequence])
+        })))
+    }
+}
+
+impl Extract for ShouldJump {
+    fn extract(
+        row: &TraceRow,
+        next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        let circuit_flags = row_circuit_flags(row)?;
+        let next_is_noop = next.is_some_and(row_is_noop);
+        Ok(Self(circuit_flags[CircuitFlags::Jump] && !next_is_noop))
+    }
+}
+
+impl Extract for ShouldBranch {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        let instruction_flags = decode_instruction(row)?.instruction_flags();
+        let lookup_output = LookupQuery::<RV64_XLEN>::to_lookup_output(&lookup_query(row));
+        Ok(Self(
+            instruction_flags[InstructionFlagKind::Branch] && lookup_output == 1,
+        ))
+    }
+}
+
+impl Extract for InstructionRafFlag {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        let circuit_flags = row_circuit_flags(row)?;
+        Ok(Self(!circuit_flags.is_interleaved_operands()))
+    }
+}
+
+impl ExtractIndexed<CircuitFlags> for OpFlag {
+    fn extract_indexed(
+        flag: CircuitFlags,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row_circuit_flags(row)?[flag]))
+    }
+}
+
+impl ExtractIndexed<InstructionFlagKind> for InstructionFlag {
+    fn extract_indexed(
+        flag: InstructionFlagKind,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(decode_instruction(row)?.instruction_flags()[flag]))
+    }
+}
+
+impl ExtractIndexed<usize> for LookupTableFlag {
+    fn extract_indexed(
+        table: usize,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        let instruction = decode_instruction(row)?;
+        let table_index =
+            <JoltInstruction as InstructionLookupTable<RV64_XLEN>>::lookup_table(&instruction)
+                .map(|kind| kind.index());
+        Ok(Self(table_index == Some(table)))
+    }
+}

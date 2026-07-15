@@ -1,8 +1,14 @@
 //! Cycle-domain virtual polynomial materialization over the atomic
 //! extractors.
 
-use super::extract::{cycle_witness_value, row_is_noop, supported_trace_virtual, WitnessEnv};
 use super::*;
+use crate::witnesses::{
+    row_is_noop, Extract, ExtractIndexed, Imm, InstructionFlag, InstructionRafFlag,
+    LeftInstructionInput, LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence,
+    NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress,
+    RamHammingWeight, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
+};
 
 impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
     pub(crate) fn materialize_trace_virtual<F: Field>(
@@ -30,6 +36,127 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             }
         }
         Ok(values)
+    }
+}
+
+pub(crate) const fn supported_trace_virtual(id: JoltVirtualPolynomial) -> bool {
+    matches!(
+        id,
+        JoltVirtualPolynomial::PC
+            | JoltVirtualPolynomial::UnexpandedPC
+            | JoltVirtualPolynomial::NextPC
+            | JoltVirtualPolynomial::NextUnexpandedPC
+            | JoltVirtualPolynomial::NextIsNoop
+            | JoltVirtualPolynomial::NextIsVirtual
+            | JoltVirtualPolynomial::NextIsFirstInSequence
+            | JoltVirtualPolynomial::LeftLookupOperand
+            | JoltVirtualPolynomial::RightLookupOperand
+            | JoltVirtualPolynomial::LeftInstructionInput
+            | JoltVirtualPolynomial::RightInstructionInput
+            | JoltVirtualPolynomial::Product
+            | JoltVirtualPolynomial::ShouldJump
+            | JoltVirtualPolynomial::ShouldBranch
+            | JoltVirtualPolynomial::Imm
+            | JoltVirtualPolynomial::Rs1Value
+            | JoltVirtualPolynomial::Rs2Value
+            | JoltVirtualPolynomial::RdWriteValue
+            | JoltVirtualPolynomial::LookupOutput
+            | JoltVirtualPolynomial::RamAddress
+            | JoltVirtualPolynomial::RamReadValue
+            | JoltVirtualPolynomial::RamWriteValue
+            | JoltVirtualPolynomial::RamHammingWeight
+            | JoltVirtualPolynomial::InstructionRafFlag
+            | JoltVirtualPolynomial::OpFlags(_)
+            | JoltVirtualPolynomial::InstructionFlags(_)
+            | JoltVirtualPolynomial::LookupTableFlag(_)
+    )
+}
+
+/// One cycle-domain witness value, dispatched to its atomic extractor.
+pub(crate) fn cycle_witness_value<F: Field>(
+    id: JoltVirtualPolynomial,
+    row: &TraceRow,
+    next: Option<&TraceRow>,
+    env: &WitnessEnv<'_>,
+) -> Result<F, WitnessError> {
+    match id {
+        JoltVirtualPolynomial::PC => Pc::extract(row, next, env).map(|w| w.to_field()),
+        JoltVirtualPolynomial::UnexpandedPC => {
+            UnexpandedPc::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::NextPC => NextPc::extract(row, next, env).map(|w| w.to_field()),
+        JoltVirtualPolynomial::NextUnexpandedPC => {
+            NextUnexpandedPc::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::NextIsNoop => {
+            NextIsNoop::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::NextIsVirtual => {
+            NextIsVirtual::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::NextIsFirstInSequence => {
+            NextIsFirstInSequence::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::LeftLookupOperand => {
+            LeftLookupOperand::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::RightLookupOperand => {
+            RightLookupOperand::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::LeftInstructionInput => {
+            LeftInstructionInput::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::RightInstructionInput => {
+            RightInstructionInput::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::Product => Product::extract(row, next, env).map(|w| w.to_field()),
+        JoltVirtualPolynomial::ShouldJump => {
+            ShouldJump::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::ShouldBranch => {
+            ShouldBranch::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::Imm => Imm::extract(row, next, env).map(|w| w.to_field()),
+        JoltVirtualPolynomial::Rs1Value => Rs1Value::extract(row, next, env).map(|w| w.to_field()),
+        JoltVirtualPolynomial::Rs2Value => Rs2Value::extract(row, next, env).map(|w| w.to_field()),
+        JoltVirtualPolynomial::RdWriteValue => {
+            RdWriteValue::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::LookupOutput => {
+            LookupOutput::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::InstructionRafFlag => {
+            InstructionRafFlag::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::RamAddress => {
+            RamAddress::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::RamReadValue => {
+            RamReadValue::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::RamWriteValue => {
+            RamWriteValue::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::RamHammingWeight => {
+            RamHammingWeight::extract(row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::OpFlags(flag) => {
+            OpFlag::extract_indexed(flag, row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::InstructionFlags(flag) => {
+            InstructionFlag::extract_indexed(flag, row, next, env).map(|w| w.to_field())
+        }
+        JoltVirtualPolynomial::LookupTableFlag(table) => {
+            if table >= LookupTableKind::<RV64_XLEN>::COUNT {
+                return Err(WitnessError::UnknownOracle {
+                    namespace: JOLT_VM_NAMESPACE.name,
+                });
+            }
+            LookupTableFlag::extract_indexed(table, row, next, env).map(|w| w.to_field())
+        }
+        _ => Err(WitnessError::UnknownOracle {
+            namespace: JOLT_VM_NAMESPACE.name,
+        }),
     }
 }
 

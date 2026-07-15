@@ -1,4 +1,8 @@
 use jolt_field::Field;
+use jolt_program::execution::TraceRow;
+
+use super::{pc_for_row, Extract, WitnessEnv};
+use crate::WitnessError;
 
 /// Bytecode-expanded program counter (the preprocessing PC index, not the
 /// instruction's memory address).
@@ -23,9 +27,29 @@ impl Pc {
     }
 }
 
+impl Extract for Pc {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        pc_for_row(row, env.preprocessing).map(|pc| Self(pc as u64))
+    }
+}
+
 impl UnexpandedPc {
     pub fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
+    }
+}
+
+impl Extract for UnexpandedPc {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.instruction.address as u64))
     }
 }
 
@@ -35,8 +59,32 @@ impl NextPc {
     }
 }
 
+impl Extract for NextPc {
+    fn extract(
+        _row: &TraceRow,
+        next: Option<&TraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(
+            next.map(|row| pc_for_row(row, env.preprocessing))
+                .transpose()?
+                .map_or(0, |pc| pc as u64),
+        ))
+    }
+}
+
 impl NextUnexpandedPc {
     pub fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
+    }
+}
+
+impl Extract for NextUnexpandedPc {
+    fn extract(
+        _row: &TraceRow,
+        next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(next.map_or(0, |row| row.instruction.address as u64)))
     }
 }

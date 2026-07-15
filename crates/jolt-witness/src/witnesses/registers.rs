@@ -1,4 +1,8 @@
 use jolt_field::Field;
+use jolt_program::execution::TraceRow;
+
+use super::{Extract, WitnessEnv};
+use crate::WitnessError;
 
 /// Value read from rs1; 0 when the instruction has no rs1 operand.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -18,14 +22,44 @@ impl Rs1Value {
     }
 }
 
+impl Extract for Rs1Value {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.registers.rs1.map_or(0, |read| read.value)))
+    }
+}
+
 impl Rs2Value {
     pub fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
     }
 }
 
+impl Extract for Rs2Value {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.registers.rs2.map_or(0, |read| read.value)))
+    }
+}
+
 impl RdWriteValue {
     pub fn to_field<F: Field>(self) -> F {
         F::from_u64(self.0)
+    }
+}
+
+impl Extract for RdWriteValue {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.registers.rd.map_or(0, |write| write.post_value)))
     }
 }
