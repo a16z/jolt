@@ -104,7 +104,6 @@ pub struct CudaKernelContext {
     suffix_mle_probe: CudaFunction,
     #[cfg(test)]
     prefix_combine_probe: CudaFunction,
-    #[expect(dead_code, reason = "used once the read_table_round body + wiring land")]
     read_table_round_pairs: CudaFunction,
     read_suffix_scatter: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
@@ -4318,8 +4317,75 @@ impl CudaKernelContext {
         &self,
         inputs: ReadTableRoundInputs<'_>,
     ) -> Result<[Fr; 2], CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        use num_traits::Zero;
+        if inputs.items == 0 {
+            return Ok([Fr::zero(); 2]);
+        }
+        let half = inputs.len / 2;
+
+        const WIDTH: usize = 3;
+        let tuple = WIDTH * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (inputs.items as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let len_arg = inputs.len as u64;
+        let half_arg = half as u64;
+        let items_arg = inputs.items as u64;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.read_table_round_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.prefix_polys.buf)
+            .arg(&inputs.suffix_blob.buf)
+            .arg(inputs.table_variant)
+            .arg(inputs.table_suffix_offset)
+            .arg(inputs.table_suffix_count)
+            .arg(inputs.item_table)
+            .arg(inputs.item_row)
+            .arg(&len_arg)
+            .arg(&half_arg)
+            .arg(&items_arg);
+        // SAFETY: one thread per (table, row) work-item gathers 46 prefix evals (x=0 low, x=2 =
+        // 2*high-low) and the item table's suffix values (left=suffix[row], right=suffix[row+half]),
+        // then calls combine_eval 3x to form the 3-lane tuple (combine(pfx0,sL), combine(pfx2,sL),
+        // combine(pfx2,sR)); shared holds `block` 3-lane tuples reduced across the block.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let n_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&n_arg);
+            // SAFETY: round_poly_reduce sums 3-lane tuples across up to `block` blocks.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        let eval_0 = limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]);
+        let eval_2_left = limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]);
+        let eval_2_right = limbs_to_fr([raw[8], raw[9], raw[10], raw[11]]);
+        Ok([eval_0, eval_2_right + eval_2_right - eval_2_left])
     }
 
     pub fn rd_wa_gather(
