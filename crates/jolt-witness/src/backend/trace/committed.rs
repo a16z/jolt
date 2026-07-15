@@ -1,17 +1,18 @@
-//! Committed-column walks over the atomic extractors: the push-based,
-//! sequential-only committed analog of the bundle pass.
+//! Committed-column walks over the atomic extractors: the committed analog
+//! of the bundle pass, driven by the same [`RowSource`] row walk.
 //!
-//! Padding beyond the physical trace follows the committed conventions —
-//! zero increments, the address-0 chunk for instruction/bytecode one-hots,
-//! cold RAM cycles — NOT default-row extraction (a padding row's bytecode
-//! chunk must be `Some(0)` regardless of the preprocessing's no-op mapping).
+//! Padding beyond the physical trace is default (no-op) rows, whose
+//! extraction coincides with the committed conventions by construction: a
+//! no-op's lookup index is 0 and `get_pc` short-circuits no-ops to slot 0,
+//! so instruction/bytecode one-hots pad to the address-0 chunk, RAM one-hots
+//! to cold cycles, and increments to zero.
 
 use super::*;
 use crate::witnesses::{
     BytecodeRaChunk, Extract, ExtractIndexed, InstructionRaChunk, RaChunkSelector, RamInc,
     RamRaChunk, RdInc, WitnessEnv,
 };
-use crate::{ColumnVisitor, CommittedChunk};
+use crate::{ColumnVisitor, CommittedChunk, RowSource};
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn visit_committed_column_impl<F: Field>(
@@ -29,12 +30,12 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         let layout = self.ra_layout()?;
         match self.committed_column_kind(id, layout)? {
             JoltVmColumnKind::Increment(kind) => {
-                self.visit_cycle_column(chunk_size, 0_i128, kind, visitor, |buffer| {
+                self.visit_cycle_column(chunk_size, kind, visitor, |buffer| {
                     CommittedChunk::Increments(buffer)
                 })
             }
             JoltVmColumnKind::OneHot(kind) => {
-                self.visit_cycle_column(chunk_size, kind.padding_value(), kind, visitor, |buffer| {
+                self.visit_cycle_column(chunk_size, kind, visitor, |buffer| {
                     CommittedChunk::HotAddresses(buffer)
                 })
             }
@@ -55,37 +56,24 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         }
     }
 
-    /// One sequential walk over the `2^log_t` cycle domain: physical rows go
-    /// through `values`'s per-row derivation, rows beyond the trace emit
-    /// `padding`.
-    fn visit_cycle_column<F, S: Copy, V: ColumnValues<S>>(
+    /// One [`RowSource`] walk over the `2^log_t` cycle domain, each row
+    /// buffer mapped through `values`'s per-row derivation.
+    fn visit_cycle_column<F, S, V: ColumnValues<S>>(
         &self,
         chunk_size: usize,
-        padding: S,
         values: V,
         visitor: &mut ColumnVisitor<'_, F>,
         wrap: impl for<'b> Fn(&'b [S]) -> CommittedChunk<'b, F>,
     ) -> Result<(), WitnessError> {
         let total = checked_pow2(self.config.log_t)?;
-        let env = WitnessEnv {
-            preprocessing: self.preprocessing,
-        };
-        let mut trace = self.trace.trace.clone();
         let mut buffer = Vec::with_capacity(chunk_size.min(total));
-        let mut emitted = 0;
-        while emitted < total {
-            let end = emitted.saturating_add(chunk_size).min(total);
+        self.visit_chunks(0..total, chunk_size, &mut |rows, _next_after, env| {
             buffer.clear();
-            for _ in emitted..end {
-                buffer.push(match trace.next_row() {
-                    Some(row) => values.value(&row, &env)?,
-                    None => padding,
-                });
+            for row in rows {
+                buffer.push(values.value(row, env)?);
             }
-            visitor(wrap(&buffer))?;
-            emitted = end;
-        }
-        Ok(())
+            visitor(wrap(&buffer))
+        })
     }
 }
 
@@ -141,15 +129,6 @@ impl ColumnValues<Option<usize>> for JoltVmOneHotKind {
             }
             Self::Ram(selector) => RamRaChunk::extract_indexed(*selector, row, None, env)?.0,
         })
-    }
-}
-
-impl JoltVmOneHotKind {
-    const fn padding_value(self) -> Option<usize> {
-        match self {
-            Self::Instruction(selector) | Self::Bytecode(selector) => Some(selector.chunk_usize(0)),
-            Self::Ram(_) => None,
-        }
     }
 }
 
