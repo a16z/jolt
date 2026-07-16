@@ -1669,8 +1669,9 @@ impl CudaKernelContext {
             .arg(&num_sets_arg);
         // SAFETY: one thread per input element i writes out[i]=(1-c)*in[i] and
         // out[total+i]=c*in[i]; `out` sized for 2*total. No shared memory.
+        // No host sync: `out` is consumed only by later same-stream kernels (next round's
+        // round_poly / this round's bind chain); host reads self-sync.
         let _ = unsafe { launch.launch(cfg) }?;
-        self.stream.synchronize()?;
         Ok(out)
     }
 
@@ -2055,8 +2056,8 @@ impl CudaKernelContext {
         // SAFETY: one thread per element i of the `total` input elements writes
         // out[i]=(1-c)*in[i] and out[total+i]=c*in[i]; `out` is sized for 2*total elements
         // and `in`/challenge are read-only. No shared memory.
+        // No host sync: `out` is consumed only by later same-stream kernels; host reads self-sync.
         let _ = unsafe { launch.launch(cfg) }?;
-        self.stream.synchronize()?;
         Ok(out)
     }
 
@@ -2370,8 +2371,8 @@ impl CudaKernelContext {
         // absent) from the input SoA and writes the linear-eval at `challenge` plus the
         // carried prev_val/next_val into the freshly allocated output SoA of length
         // `items`; no shared memory.
+        // No host sync: the returned entries feed only later same-stream kernels; host reads self-sync.
         let _ = unsafe { launch.launch(cfg) }?;
-        self.stream.synchronize()?;
         Ok(SparseRegisterEntries { val, read_ra, rd_wa, prev_val, next_val })
     }
 
