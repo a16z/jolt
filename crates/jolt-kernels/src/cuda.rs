@@ -622,7 +622,7 @@ fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
 }
 
 pub struct FusedOuterInputs<'a> {
-    pub eq_evals: &'a [Fr],
+    pub eq_evals: &'a DeviceFrVec,
     pub scale: Fr,
     pub witness: &'a [Fr],
     pub a_offsets: &'a [u32],
@@ -1287,7 +1287,7 @@ impl CudaKernelContext {
         &self,
         inputs: FusedOuterInputs<'_>,
     ) -> Result<(DeviceFrVec, DeviceFrVec, DeviceFrVec), CudaError> {
-        let len = inputs.eq_evals.len();
+        let len = inputs.eq_evals.len;
         let cycles = len / 2;
 
         let mut eq: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
@@ -1295,7 +1295,7 @@ impl CudaKernelContext {
         let mut bz: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
 
         if cycles > 0 {
-            let eq_evals = self.upload(inputs.eq_evals)?;
+            let eq_evals = inputs.eq_evals;
             let scale = self.upload(&[inputs.scale])?;
             let witness = self.resident_witness(inputs.witness)?;
             let a_coeffs = self.upload(inputs.a_coeffs)?;

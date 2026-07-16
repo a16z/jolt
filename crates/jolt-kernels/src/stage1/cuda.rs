@@ -41,7 +41,6 @@ pub fn prove_remaining_rounds_cuda<F: Field>(
     );
     let weights = lagrange_evals(OUTER_UNISKIP_BASE_START, OUTER_UNISKIP_DOMAIN_SIZE, context.r0);
     let scale = lagrange_tau_r0 * batching_coeff;
-    let eq_evals = EqPolynomial::new(tau_low.to_vec()).evaluations();
 
     // Build weighted CSR for each matrix: the row groups concatenated (first then
     // second), with each row's coefficients pre-scaled by its lagrange weight, so
@@ -75,14 +74,17 @@ pub fn prove_remaining_rounds_cuda<F: Field>(
     let (a_offsets, a_vars, a_coeffs) = weighted_csr(&data.key.matrices.a);
     let (b_offsets, b_vars, b_coeffs) = weighted_csr(&data.key.matrices.b);
 
-    let eq_evals = as_fr_slice(&eq_evals)?;
+    let eq_evals = match ctx.eq_evals(as_fr_slice(tau_low)?, None) {
+        Ok(eq) => eq,
+        Err(error) => return Some(Err(cuda_error(error))),
+    };
     let scale = into_fr(scale)?;
     let witness = as_fr_slice(data.witness)?;
     let a_coeffs = as_fr_slice(&a_coeffs)?;
     let b_coeffs = as_fr_slice(&b_coeffs)?;
 
     let (eq, az, bz) = match ctx.dense_outer_fused(FusedOuterInputs {
-        eq_evals,
+        eq_evals: &eq_evals,
         scale,
         witness,
         a_offsets: &a_offsets,
