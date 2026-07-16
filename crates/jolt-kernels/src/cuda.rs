@@ -3201,8 +3201,9 @@ impl CudaKernelContext {
             // SAFETY: each thread i reads values[2i], values[2i+1] and the single
             // challenge, writing scratch[i]; scratch and values are distinct buffers
             // holding >= half and 2*half elements respectively.
-            let _ = unsafe { launch.launch(cfg) }?;
-            self.stream.synchronize()
+            // No host sync: single stream, so the next same-stream consumer (round_poly
+            // kernel) is ordered after this bind; host reads (first/to_host) self-sync.
+            unsafe { launch.launch(cfg) }.map(|_| ())
         })?;
 
         std::mem::swap(values, scratch);
@@ -3243,8 +3244,9 @@ impl CudaKernelContext {
             // SAFETY: each thread i reads values[2i], values[2i+1] and the single
             // challenge, writing scratch[i]; scratch and values are distinct buffers
             // holding >= half and 2*half elements respectively.
-            let _ = unsafe { launch.launch(cfg) }?;
-            self.stream.synchronize()
+            // No host sync: single stream, so the next same-stream consumer (round_poly
+            // kernel) is ordered after this bind; host reads (first/to_host) self-sync.
+            unsafe { launch.launch(cfg) }.map(|_| ())
         })?;
 
         std::mem::swap(values, scratch);
@@ -3309,8 +3311,9 @@ impl CudaKernelContext {
             // writing out_ptrs[poly][i] = lo + challenge*(hi-lo). Each in/out buffer holds >= 2*half
             // / half elements; the ptr guards keep them alive across the launch. One launch + one
             // sync for all `num_polys` binds.
-            let _ = unsafe { launch.launch(cfg) }?;
-            self.stream.synchronize()
+            // No host sync: single stream, so the next same-stream consumer (round_poly
+            // kernel) is ordered after this bind; host reads (first/to_host) self-sync.
+            unsafe { launch.launch(cfg) }.map(|_| ())
         })?;
         drop(guards);
 
@@ -3355,8 +3358,9 @@ impl CudaKernelContext {
             // SAFETY: each thread i reads values[i], values[i+half] and the single challenge,
             // writing scratch[i] = lo + challenge*(hi - lo); scratch and values are distinct
             // buffers holding >= half and 2*half elements respectively.
-            let _ = unsafe { launch.launch(cfg) }?;
-            self.stream.synchronize()
+            // No host sync: single stream, so the next same-stream consumer (round_poly
+            // kernel) is ordered after this bind; host reads (first/to_host) self-sync.
+            unsafe { launch.launch(cfg) }.map(|_| ())
         })?;
 
         std::mem::swap(values, scratch);
@@ -3410,8 +3414,9 @@ impl CudaKernelContext {
             // and values[poly*len+i+half] (len = 2*half) and the single challenge, writing
             // scratch[poly*half+i] = lo + challenge*(hi - lo). Binding each poly high-to-low keeps
             // the packed output contiguous. scratch holds >= num_polys*half elements.
-            let _ = unsafe { launch.launch(cfg) }?;
-            self.stream.synchronize()
+            // No host sync: single stream, so the next same-stream consumer (round_poly
+            // kernel) is ordered after this bind; host reads (first/to_host) self-sync.
+            unsafe { launch.launch(cfg) }.map(|_| ())
         })?;
 
         std::mem::swap(values, scratch);
