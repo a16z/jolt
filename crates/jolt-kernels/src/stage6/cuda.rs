@@ -8,7 +8,6 @@ use crate::cuda::{
 pub(crate) enum CudaBytecodeReadRafState {
     SumOfProducts {
         factors: Vec<DeviceFrVec>,
-        scratch: DeviceFrVec,
         term_coeffs: DeviceFrVec,
         term_factor_offsets: Vec<u32>,
         term_factor_indices: Vec<u32>,
@@ -66,7 +65,6 @@ impl CudaBytecodeReadRafState {
         let term_coeffs = ctx.upload(&term_coeffs).ok()?;
         Some(Self::SumOfProducts {
             factors,
-            scratch: ctx.upload(&[]).ok()?,
             term_coeffs,
             term_factor_offsets,
             term_factor_indices,
@@ -99,7 +97,6 @@ impl CudaBytecodeReadRafState {
             .collect();
         Some(Self::SumOfProducts {
             factors,
-            scratch: ctx.upload(&[]).ok()?,
             term_coeffs: ctx.upload(&[Fr::from(1u64)]).ok()?,
             term_factor_offsets: vec![0, (num_chunks + 1) as u32],
             term_factor_indices,
@@ -209,14 +206,7 @@ impl CudaBytecodeReadRafState {
     pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
         match self {
-            Self::SumOfProducts {
-                factors, scratch, ..
-            } => {
-                for factor in factors.iter_mut() {
-                    ctx.bind(factor, scratch, challenge)?;
-                }
-                Ok(())
-            }
+            Self::SumOfProducts { factors, .. } => ctx.bind_many(factors, challenge),
             Self::CycleSparse {
                 round,
                 tables,
@@ -278,7 +268,6 @@ impl CudaBytecodeReadRafState {
 
 pub(crate) struct CudaRaVirtualD4State {
     chunks: Vec<DeviceFrVec>,
-    scratch: DeviceFrVec,
     gamma_powers: DeviceFrVec,
 }
 
@@ -296,7 +285,6 @@ impl CudaRaVirtualD4State {
         let gamma_powers = ctx.upload(crate::cuda::as_fr_slice(gamma_powers)?).ok()?;
         Some(Self {
             chunks: device_chunks,
-            scratch: ctx.upload(&[]).ok()?,
             gamma_powers,
         })
     }
@@ -305,10 +293,8 @@ impl CudaRaVirtualD4State {
         chunks: Vec<DeviceFrVec>,
         gamma_powers: DeviceFrVec,
     ) -> Option<Self> {
-        let ctx = crate::cuda::shared_ctx()?;
         Some(Self {
             chunks,
-            scratch: ctx.upload(&[]).ok()?,
             gamma_powers,
         })
     }
@@ -331,10 +317,7 @@ impl CudaRaVirtualD4State {
 
     pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
-        for chunk in &mut self.chunks {
-            ctx.bind(chunk, &mut self.scratch, challenge)?;
-        }
-        Ok(())
+        ctx.bind_many(&mut self.chunks, challenge)
     }
 
     pub(crate) fn chunk_first(&self, chunk: usize) -> Option<Result<Fr, CudaError>> {
@@ -521,18 +504,12 @@ impl CudaHammingBooleanityState {
 
 pub(crate) struct CudaCoreBooleanityState {
     h: Vec<DeviceFrVec>,
-    scratch: DeviceFrVec,
     rho: DeviceFrVec,
 }
 
 impl CudaCoreBooleanityState {
     pub(crate) fn from_device_h(h: Vec<DeviceFrVec>, rho: DeviceFrVec) -> Option<Self> {
-        let ctx = crate::cuda::shared_ctx()?;
-        Some(Self {
-            h,
-            scratch: ctx.upload(&[]).ok()?,
-            rho,
-        })
+        Some(Self { h, rho })
     }
 
     pub(crate) fn round_poly_q(&self, e_in: &DeviceFrVec, e_out: &DeviceFrVec) -> Option<[Fr; 2]> {
@@ -549,10 +526,7 @@ impl CudaCoreBooleanityState {
 
     pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
-        for poly in &mut self.h {
-            ctx.bind(poly, &mut self.scratch, challenge)?;
-        }
-        Ok(())
+        ctx.bind_many(&mut self.h, challenge)
     }
 
     pub(crate) fn poly_first(&self, index: usize) -> Option<Result<Fr, CudaError>> {

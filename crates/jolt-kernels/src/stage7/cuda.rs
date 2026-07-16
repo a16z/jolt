@@ -7,7 +7,6 @@ pub(crate) struct CudaHammingWeightState {
     eq_bool: DeviceFrVec,
     eq_virt: Vec<DeviceFrVec>,
     gamma_powers: DeviceFrVec,
-    scratch: DeviceFrVec,
     scale: Fr,
 }
 
@@ -38,7 +37,6 @@ impl CudaHammingWeightState {
             eq_bool: ctx.upload(crate::cuda::as_fr_slice(eq_bool)?).ok()?,
             eq_virt,
             gamma_powers: ctx.upload(crate::cuda::as_fr_slice(gamma_powers)?).ok()?,
-            scratch: ctx.upload(&[]).ok()?,
             scale: crate::cuda::into_fr(active_scale)?,
         })
     }
@@ -59,13 +57,14 @@ impl CudaHammingWeightState {
 
     pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
-        for g in &mut self.g {
-            ctx.bind(g, &mut self.scratch, challenge)?;
-        }
-        ctx.bind(&mut self.eq_bool, &mut self.scratch, challenge)?;
-        for eq in &mut self.eq_virt {
-            ctx.bind(eq, &mut self.scratch, challenge)?;
-        }
+        let num_g = self.g.len();
+        let mut polys: Vec<DeviceFrVec> = std::mem::take(&mut self.g);
+        polys.push(std::mem::replace(&mut self.eq_bool, ctx.upload(&[])?));
+        polys.append(&mut self.eq_virt);
+        ctx.bind_many(&mut polys, challenge)?;
+        self.eq_virt = polys.split_off(num_g + 1);
+        self.eq_bool = polys.pop().ok_or(CudaError::Pool)?;
+        self.g = polys;
         Ok(())
     }
 

@@ -100,7 +100,6 @@ pub struct CudaKernelContext {
     mul: CudaFunction,
     fma: CudaFunction,
     bind: CudaFunction,
-    #[expect(dead_code, reason = "used once the bind_many body + wiring land")]
     bind_many: CudaFunction,
     eq_double: CudaFunction,
     lt_double: CudaFunction,
@@ -3253,8 +3252,73 @@ impl CudaKernelContext {
     }
 
     pub fn bind_many(&self, polys: &mut [DeviceFrVec], challenge: Fr) -> Result<(), CudaError> {
-        let _ = (&polys, challenge);
-        Err(CudaError::Unsupported)
+        use cudarc::driver::DevicePtr;
+        if polys.is_empty() {
+            return Ok(());
+        }
+        let len = polys[0].len;
+        if polys.iter().any(|p| p.len != len) {
+            return Err(CudaError::Unsupported);
+        }
+        let half = len / 2;
+        if half == 0 {
+            for poly in polys.iter_mut() {
+                poly.len = half;
+            }
+            return Ok(());
+        }
+
+        let mut scratch: Vec<CudaSlice<u64>> = polys
+            .iter()
+            .map(|_| self.stream.alloc_zeros(half * LIMBS))
+            .collect::<Result<_, _>>()?;
+
+        let challenge_dev = self.stream.clone_htod(&fr_to_limbs(challenge))?;
+        let half_arg = half as u64;
+        let num_polys_arg = polys.len() as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (((polys.len() * half) as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+
+        let mut out_ptrs = Vec::with_capacity(polys.len());
+        let mut in_ptrs = Vec::with_capacity(polys.len());
+        let mut guards = Vec::with_capacity(polys.len() * 2);
+        for (poly, scr) in polys.iter().zip(scratch.iter()) {
+            let (out_ptr, out_guard) = scr.device_ptr(&self.stream);
+            let (in_ptr, in_guard) = poly.buf.device_ptr(&self.stream);
+            out_ptrs.push(out_ptr);
+            in_ptrs.push(in_ptr);
+            guards.push(out_guard);
+            guards.push(in_guard);
+        }
+        let out_array = self.clone_htod_tracked(&out_ptrs)?;
+        let in_array = self.clone_htod_tracked(&in_ptrs)?;
+
+        xfer_stats::timed(xfer_stats::Phase::Bind, || {
+            let f = self.bind_many.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&out_array)
+                .arg(&in_array)
+                .arg(&challenge_dev)
+                .arg(&half_arg)
+                .arg(&num_polys_arg);
+            // SAFETY: thread t=(poly,i) reads in_ptrs[poly][2i],[2i+1] and the single challenge,
+            // writing out_ptrs[poly][i] = lo + challenge*(hi-lo). Each in/out buffer holds >= 2*half
+            // / half elements; the ptr guards keep them alive across the launch. One launch + one
+            // sync for all `num_polys` binds.
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()
+        })?;
+        drop(guards);
+
+        for (poly, scr) in polys.iter_mut().zip(scratch.drain(..)) {
+            poly.buf = scr;
+            poly.len = half;
+        }
+        Ok(())
     }
 
     pub fn bind_high_to_low(
