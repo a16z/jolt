@@ -2434,6 +2434,14 @@ fn registers_state<F: Field>(
     let eq_point = store.point("stage3.input.stage1.RdWriteValue")?;
     let gamma = store.scalar("stage3.registers.gamma")?;
     let gamma2 = store.scalar("stage3.registers.gamma2")?;
+    let outputs = registers_outputs();
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(state) = cuda_registers_state(cycles, gamma, gamma2, eq_point, outputs.clone())
+        {
+            return Ok(state);
+        }
+    }
     let (rd_write_value, rs1_value, rs2_value) = register_factors(cycles);
     let factors = vec![rd_write_value, rs1_value, rs2_value];
     Ok(SumOfProductsState::new(
@@ -2449,27 +2457,31 @@ fn registers_state<F: Field>(
                 coefficient: gamma2,
             },
         ],
-        vec![
-            FactorOutput {
-                name: "stage3.registers_claim_reduction.eval.RdWriteValue",
-                oracle: "RdWriteValue",
-                factor: 0,
-            },
-            FactorOutput {
-                name: "stage3.registers_claim_reduction.eval.Rs1Value",
-                oracle: "Rs1Value",
-                factor: 1,
-            },
-            FactorOutput {
-                name: "stage3.registers_claim_reduction.eval.Rs2Value",
-                oracle: "Rs2Value",
-                factor: 2,
-            },
-        ],
+        outputs,
         Vec::new(),
         backend,
         eq_point,
     ))
+}
+
+fn registers_outputs() -> Vec<FactorOutput> {
+    vec![
+        FactorOutput {
+            name: "stage3.registers_claim_reduction.eval.RdWriteValue",
+            oracle: "RdWriteValue",
+            factor: 0,
+        },
+        FactorOutput {
+            name: "stage3.registers_claim_reduction.eval.Rs1Value",
+            oracle: "Rs1Value",
+            factor: 1,
+        },
+        FactorOutput {
+            name: "stage3.registers_claim_reduction.eval.Rs2Value",
+            oracle: "Rs2Value",
+            factor: 2,
+        },
+    ]
 }
 
 fn stage3_cycles<'a, F: Field>(
@@ -2751,6 +2763,46 @@ fn register_factors<F: Field>(cycles: &[Stage3Cycle]) -> RegisterFactors<F> {
             *rs2_value = F::from_u64(cycle.rs2_value);
         });
     (rd_write_value, rs1_value, rs2_value)
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_registers_state<F: Field>(
+    cycles: &[Stage3Cycle],
+    gamma: F,
+    gamma2: F,
+    split_point: &[F],
+    outputs: Vec<FactorOutput>,
+) -> Option<SumOfProductsState<F>> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let u64_col = |f: fn(&Stage3Cycle) -> u64| -> Vec<u64> { cycles.par_iter().map(f).collect() };
+    let factors = vec![
+        ctx.u64_to_mont(&u64_col(|c| c.rd_write_value)).ok()?,
+        ctx.u64_to_mont(&u64_col(|c| c.rs1_value)).ok()?,
+        ctx.u64_to_mont(&u64_col(|c| c.rs2_value)).ok()?,
+    ];
+    let split_point_fr = crate::cuda::as_fr_slice(split_point)?;
+    let cuda = cuda::CudaSumOfProductsState::from_device_factors(
+        cuda::CudaGruenKind::Registers {
+            gamma: crate::cuda::into_fr(gamma)?,
+            gamma2: crate::cuda::into_fr(gamma2)?,
+        },
+        factors,
+        split_point_fr,
+        None,
+    )?;
+    Some(SumOfProductsState::new_cuda(
+        SumOfProductsKind::Registers,
+        cuda,
+        Some(SplitEqState::new_low_to_high(split_point, None)),
+        vec![
+            ProductTerm { coefficient: F::one() },
+            ProductTerm { coefficient: gamma },
+            ProductTerm { coefficient: gamma2 },
+        ],
+        outputs,
+        Vec::new(),
+    ))
 }
 
 fn expected_batched_output_claim<F: Field>(
