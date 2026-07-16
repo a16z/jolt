@@ -1361,7 +1361,8 @@ fn prove_batch_committed_twin_matches_committed_consistency() {
     let mut short = DenseMember::with_sum(1, sum_short, 57);
 
     let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-zk-twin");
-    let mut recorder = CommittedSumcheckRecorder::<F, VC>::new(&setup).unwrap();
+    let mut recorder =
+        CommittedSumcheckRecorder::<F, VC, _>::new(&setup, rand_core::OsRng).unwrap();
     recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_transcript);
     let coeff_long: F = prover_transcript.challenge_scalar();
     let coeff_short: F = prover_transcript.challenge_scalar();
@@ -1512,12 +1513,13 @@ fn prove_uniskip_committed_twin_matches_committed_consistency() {
         <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(&poly, &coefficients);
 
     let mut prover_transcript = Blake2bTranscript::new(b"uniskip-zk-twin");
-    let proved = prove_uniskip_committed::<F, VC, _>(
+    let proved = prove_uniskip_committed::<F, VC, _, _>(
         poly,
         input_claim,
         degree,
         domain_size,
         &setup,
+        rand_core::OsRng,
         &mut prover_transcript,
     )
     .unwrap();

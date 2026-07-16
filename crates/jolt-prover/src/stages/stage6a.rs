@@ -164,9 +164,11 @@ where
 
     // The per-row stage-value tables, via the verifier's own fold over the
     // padded bytecode (the prover-retained copy in committed mode).
-    let program = preprocessing.program().ok_or(ProverError::Unsupported {
-        reason: "full bytecode preprocessing is unavailable",
-    })?;
+    let program = preprocessing
+        .program()
+        .ok_or(ProverError::InvariantViolation {
+            reason: "full bytecode preprocessing is unavailable",
+        })?;
     let stage_gammas = carried.bytecode_read_raf.stage_gamma_powers();
     let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
         bytecode: &program.bytecode.bytecode,
@@ -182,7 +184,7 @@ where
         .verifier
         .program
         .entry_bytecode_index()
-        .ok_or(ProverError::Unsupported {
+        .ok_or(ProverError::InvariantViolation {
             reason: "entry address was not found in bytecode preprocessing",
         })?;
     let bytecode_indices: Vec<usize> = witness
@@ -215,6 +217,18 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    bytecode_read_raf.validate_derived_tables(
+        &sumchecks.bytecode_read_raf,
+        &input_points.bytecode_read_raf,
+        &output_points.bytecode_read_raf,
+        &carried.bytecode_read_raf,
+    )?;
+    booleanity.validate_derived_tables(
+        &sumchecks.booleanity,
+        &input_points.booleanity,
+        &output_points.booleanity,
+        &address_challenges.booleanity,
+    )?;
     let output_values = Stage6aOutputClaims {
         bytecode_read_raf: bytecode_read_raf.output_claims()?,
         booleanity: booleanity.output_claims()?,
@@ -278,7 +292,7 @@ pub(crate) fn bytecode_stage_points<F: Field>(
     let stage1_cycle_binding = stage1_remainder_reversed
         .split_first()
         .map(|(_, cycle)| cycle.to_vec())
-        .ok_or(ProverError::Unsupported {
+        .ok_or(ProverError::InvariantViolation {
             reason: "stage-1 remainder point is empty",
         })?;
     let registers_read_write_point = stage4.output_points.registers_read_write_point().to_vec();

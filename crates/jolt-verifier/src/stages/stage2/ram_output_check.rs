@@ -1,8 +1,9 @@
 //! The stage 2 `RamOutputCheck` sumcheck instance.
 //!
-//! Owns the RAM output-check address opening-point derivation and the `EqIoMask` /
-//! `NegEqIoMaskValIo` public-value computation (against the committed public IO
-//! memory), in lockstep with the BlindFold constraint's `ram::output_check` formula.
+//! Owns the RAM output-check address opening-point derivation and the
+//! `EqAddress` / `IoMask` / `ValIo` public-value computation (against the
+//! committed public IO memory), in lockstep with the BlindFold constraint's
+//! `ram::output_check` formula.
 //!
 //! The relation has no input opening; its claimed sum is the constant zero.
 

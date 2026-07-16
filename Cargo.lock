@@ -3768,6 +3768,7 @@ dependencies = [
  "jolt-verifier-derive",
  "num-traits",
  "postcard",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

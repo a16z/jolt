@@ -135,6 +135,24 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    instruction_read_raf.validate_derived_tables(
+        &sumchecks.instruction_read_raf,
+        &input_points.instruction_read_raf,
+        &output_points.instruction_read_raf,
+        &challenges.instruction_read_raf,
+    )?;
+    ram_ra_claim_reduction.validate_derived_tables(
+        &sumchecks.ram_ra_claim_reduction,
+        &input_points.ram_ra_claim_reduction,
+        &output_points.ram_ra_claim_reduction,
+        &challenges.ram_ra_claim_reduction,
+    )?;
+    registers_val_evaluation.validate_derived_tables(
+        &sumchecks.registers_val_evaluation,
+        &input_points.registers_val_evaluation,
+        &output_points.registers_val_evaluation,
+        &challenges.registers_val_evaluation,
+    )?;
     let output_values = Stage5OutputClaims {
         instruction_read_raf: instruction_read_raf.output_claims()?,
         ram_ra_claim_reduction: ram_ra_claim_reduction.output_claims()?,

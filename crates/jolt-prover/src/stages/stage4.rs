@@ -91,7 +91,7 @@ where
     }
     let (r_address, r_cycle_ram) = ram_read_write_opening_point.split_at(log_k);
     if ram_output_check_opening_point != r_address {
-        return Err(ProverError::Unsupported {
+        return Err(ProverError::InvariantViolation {
             reason: "stage-2 RAM val and val_final opening points disagree",
         });
     }
@@ -105,29 +105,30 @@ where
     // The committed program-image contribution: the image words' block MLE at
     // the RAM address point (the public initial-RAM evaluation switched to
     // inputs-only above, so this staged opening carries the image's share).
-    let program_image_contribution =
-        init_structure
-            .program_image_point
-            .as_ref()
-            .map(|point| {
-                let layout = checked.precommitted.program_image.as_ref().ok_or(
-                    ProverError::Unsupported {
-                        reason: "program-image init contribution without a committed layout",
-                    },
-                )?;
-                let program = preprocessing.program().ok_or(ProverError::Unsupported {
+    let program_image_contribution = init_structure
+        .program_image_point
+        .as_ref()
+        .map(|point| {
+            let layout = checked.precommitted.program_image.as_ref().ok_or(
+                ProverError::InvariantViolation {
+                    reason: "program-image init contribution without a committed layout",
+                },
+            )?;
+            let program = preprocessing
+                .program()
+                .ok_or(ProverError::InvariantViolation {
                     reason: "full program preprocessing is unavailable",
                 })?;
-                let value = sparse_segments_mle_msb(
-                    std::iter::once((
-                        layout.start_index() as u128,
-                        program.ram.bytecode_words.as_slice(),
-                    )),
-                    point,
-                );
-                Ok::<_, ProverError<F>>((point.clone(), value))
-            })
-            .transpose()?;
+            let value = sparse_segments_mle_msb(
+                std::iter::once((
+                    layout.start_index() as u128,
+                    program.ram.bytecode_words.as_slice(),
+                )),
+                point,
+            );
+            Ok::<_, ProverError<F>>((point.clone(), value))
+        })
+        .transpose()?;
     // The advice blocks' opening values: each advice polynomial evaluated at
     // its block's address sub-point. Staged before the RAM value-check gamma
     // draw, exactly as legacy's `prover_accumulate_advice` — transcript-silent
@@ -204,6 +205,18 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    registers_read_write.validate_derived_tables(
+        &sumchecks.registers_read_write,
+        &input_points.registers_read_write,
+        &output_points.registers_read_write,
+        &challenges.registers_read_write,
+    )?;
+    ram_val_check.validate_derived_tables(
+        &sumchecks.ram_val_check,
+        &input_points.ram_val_check,
+        &output_points.ram_val_check,
+        &challenges.ram_val_check,
+    )?;
     // The staged advice openings ride on the RAM value-check claims struct
     // (the naive kernel fills only its own `Expr` leaves), mirroring the
     // verifier's wire-claim attach.
@@ -243,8 +256,8 @@ where
 
     // The stage-curated absorb: `no_opening_values` suppresses the generated
     // method, so the finish order comes from the claims struct's hand-ordered
-    // `opening_values()` (staged advice/program-image first — none here —
-    // then registers, then RAM).
+    // `opening_values()` (the staged advice/program-image openings attached
+    // above, when present, first — then registers, then RAM).
     let recorded = recorder.finish(&output_values.opening_values(), transcript)?;
 
     Ok(Stage4ProverOutput {

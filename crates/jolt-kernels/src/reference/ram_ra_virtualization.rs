@@ -44,7 +44,7 @@ impl<F: Field> RamRaVirtualizationProver<F> for ReferenceBackend {
 
         let chunks = committed_address_chunks(ram_reduced_address, committed_chunk_bits);
         if chunks.len() != dimensions.num_committed_ra_polys() {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "RAM address chunk count disagrees with the committed RA count",
             });
         }

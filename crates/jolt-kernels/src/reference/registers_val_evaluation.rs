@@ -21,7 +21,7 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluat
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use super::views::{dense_view, eq_table};
+use super::views::{address_fold, dense_view};
 use crate::registers_val_evaluation::RegistersValEvaluationProver;
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
@@ -35,25 +35,20 @@ impl<F: Field> RegistersValEvaluationProver<F> for ReferenceBackend {
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
     {
-        let cycles = 1usize << trace_dimensions.log_t();
-        let registers = 1usize << REGISTER_ADDRESS_BITS;
         if registers_val_point.len() != REGISTER_ADDRESS_BITS + trace_dimensions.log_t() {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "registers value-evaluation input point has the wrong variable count",
             });
         }
         let (r_address, r_cycle) = registers_val_point.split_at(REGISTER_ADDRESS_BITS);
 
         // The address-bound `rd_wa` slice, folded from the one-hot grid.
-        let eq_address = eq_table(r_address);
-        let rd_wa_full = dense_view(witness, rd_wa_val_evaluation())?;
-        let wa_folded: Vec<F> = (0..cycles)
-            .map(|j| {
-                (0..registers)
-                    .map(|k| rd_wa_full[(k << trace_dimensions.log_t()) | j] * eq_address[k])
-                    .sum()
-            })
-            .collect();
+        let wa_folded = address_fold(
+            witness,
+            rd_wa_val_evaluation(),
+            trace_dimensions.log_t(),
+            r_address,
+        )?;
 
         let opening_tables = BTreeMap::from([
             (rd_wa_val_evaluation(), Polynomial::new(wa_folded)),

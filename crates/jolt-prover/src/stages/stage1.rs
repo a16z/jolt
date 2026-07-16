@@ -94,6 +94,12 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    member.validate_derived_tables(
+        &sumchecks.outer_remainder,
+        &input_points.outer_remainder,
+        &output_points.outer_remainder,
+        &challenges.outer_remainder,
+    )?;
     let output_values = Stage1BatchOutputClaims {
         outer_remainder: member.output_claims()?,
     };

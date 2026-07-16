@@ -17,10 +17,11 @@
 //!
 //! Two self-checks pin it: the engine's running-claim check
 //! (`s(0) + s(1) == previous_claim`, re-checked per member here), and
-//! [`validate_derived_tables`](NaiveSumcheckProver::validate_derived_tables) —
-//! each bound `Derived` table's final value must equal `derive_output_term`
+//! [`validate_derived_tables`](crate::ProveSumcheck::validate_derived_tables)
+//! — each bound `Derived` table's final value must equal `derive_output_term`
 //! at the bound point, tying the hand-materialized tables to the verifier's
-//! scalar path.
+//! scalar path. The stage recipes run it on every member after the round
+//! loop.
 
 use std::collections::BTreeMap;
 
@@ -33,6 +34,7 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
+use jolt_verifier::VerifierError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -142,33 +144,6 @@ where
             0 => Ok(()),
             remaining => Err(KernelError::NotFullyBound { remaining }),
         }
-    }
-
-    /// The `Derived`-leaf cross-check: each bound table's final value must
-    /// equal the verifier's `derive_output_term` at the bound point. This is
-    /// what pins a hand-materialized eq/LT/selector table (orientation,
-    /// binding order, contents) to the relation's scalar path.
-    pub fn validate_derived_tables(
-        &self,
-        input_points: &SumcheckInputPoints<F, R>,
-        output_points: &SumcheckOutputPoints<F, R>,
-        challenges: &ConcreteSumcheckChallenges<F, R>,
-    ) -> Result<(), KernelError<F>> {
-        self.require_fully_bound()?;
-        for (id, table) in &self.derived_tables {
-            let expected =
-                self.relation
-                    .derive_output_term(id, input_points, output_points, challenges)?;
-            let got = table.evals()[0];
-            if got != expected {
-                return Err(KernelError::DerivedTableDrift {
-                    id: *id,
-                    expected,
-                    got,
-                });
-            }
-        }
-        Ok(())
     }
 }
 
@@ -284,6 +259,39 @@ where
             opening_tables.get(id).map(|table| table.evals()[0])
         })
         .map_err(KernelError::from)
+    }
+
+    /// The `Derived`-leaf cross-check: each bound table's final value must
+    /// equal the verifier's `derive_output_term` at the bound point. This is
+    /// what pins a hand-materialized eq/LT/selector table (orientation,
+    /// binding order, contents) to the relation's scalar path. Derived ids
+    /// the relation's scalar path does not serve (staged intermediates) are
+    /// skipped — those are pinned by `expected_final_claim` instead.
+    fn validate_derived_tables(
+        &self,
+        relation: &R,
+        input_points: &SumcheckInputPoints<F, R>,
+        output_points: &SumcheckOutputPoints<F, R>,
+        challenges: &ConcreteSumcheckChallenges<F, R>,
+    ) -> Result<(), KernelError<F>> {
+        self.require_fully_bound()?;
+        for (id, table) in &self.derived_tables {
+            let expected =
+                match relation.derive_output_term(id, input_points, output_points, challenges) {
+                    Ok(value) => value,
+                    Err(VerifierError::MissingStageClaimDerived { .. }) => continue,
+                    Err(error) => return Err(error.into()),
+                };
+            let got = table.evals()[0];
+            if got != expected {
+                return Err(KernelError::DerivedTableDrift {
+                    id: *id,
+                    expected,
+                    got,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -548,7 +556,7 @@ mod tests {
             .unwrap();
         let output_claims = naive.output_claims().unwrap();
         naive
-            .validate_derived_tables(&input_points, &output_points, &challenges)
+            .validate_derived_tables(naive.relation(), &input_points, &output_points, &challenges)
             .unwrap();
 
         // The assembled claims cover exactly the expression's openings (the
@@ -657,7 +665,12 @@ mod tests {
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
         assert!(matches!(
-            naive.validate_derived_tables(&input_points, &output_points, &challenges),
+            naive.validate_derived_tables(
+                naive.relation(),
+                &input_points,
+                &output_points,
+                &challenges
+            ),
             Err(KernelError::DerivedTableDrift {
                 id: JoltDerivedId::Test,
                 ..

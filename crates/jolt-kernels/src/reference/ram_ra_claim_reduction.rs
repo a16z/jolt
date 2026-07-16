@@ -22,7 +22,7 @@ use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use super::views::{dense_view, eq_table};
+use super::views::{address_fold, eq_table};
 use crate::ram_ra_claim_reduction::RamRaClaimReductionProver;
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
@@ -36,8 +36,6 @@ impl<F: Field> RamRaClaimReductionProver<F> for ReferenceBackend {
         challenges: &RamRaClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRaClaimReduction<F>>>, KernelError<F>> {
-        let cycles = 1usize << trace_dimensions.log_t();
-        let addresses = 1usize << ram_log_k;
         let expected_len = ram_log_k + trace_dimensions.log_t();
         for point in [
             input_points.raf(),
@@ -45,7 +43,7 @@ impl<F: Field> RamRaClaimReductionProver<F> for ReferenceBackend {
             input_points.val_check(),
         ] {
             if point.len() != expected_len {
-                return Err(KernelError::Unsupported {
+                return Err(KernelError::InvariantViolation {
                     reason: "RAM RA claim-reduction input point has the wrong variable count",
                 });
             }
@@ -54,15 +52,12 @@ impl<F: Field> RamRaClaimReductionProver<F> for ReferenceBackend {
         // hard-checks that all three inputs agree on it).
         let r_address = &input_points.read_write()[..ram_log_k];
 
-        let eq_address = eq_table(r_address);
-        let ram_ra_full = dense_view(witness, ram_ra_claim_reduction())?;
-        let ra_folded: Vec<F> = (0..cycles)
-            .map(|j| {
-                (0..addresses)
-                    .map(|k| ram_ra_full[(k << trace_dimensions.log_t()) | j] * eq_address[k])
-                    .sum()
-            })
-            .collect();
+        let ra_folded = address_fold(
+            witness,
+            ram_ra_claim_reduction(),
+            trace_dimensions.log_t(),
+            r_address,
+        )?;
 
         let opening_tables =
             BTreeMap::from([(ram_ra_claim_reduction(), Polynomial::new(ra_folded))]);

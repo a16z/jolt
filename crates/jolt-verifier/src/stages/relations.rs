@@ -1657,7 +1657,8 @@ mod engine_twin_tests {
             57,
         );
 
-        let mut recorder = CommittedSumcheckRecorder::<Fr, VC>::new(&setup).unwrap();
+        let mut recorder =
+            CommittedSumcheckRecorder::<Fr, VC, _>::new(&setup, rand_core::OsRng).unwrap();
         let (batch, prover_coefficients) = sumchecks
             .begin_batch(
                 &inputs,

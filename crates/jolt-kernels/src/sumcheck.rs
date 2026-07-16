@@ -3,7 +3,8 @@ use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::Field;
 use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+    SumcheckOutputClaims, SumcheckOutputPoints,
 };
 
 use crate::KernelError;
@@ -32,4 +33,26 @@ where
     /// bound state. Call after the engine's round loop has ingested every
     /// challenge.
     fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, Self::Relation>, KernelError<F>>;
+
+    /// Cross-check any hand-materialized `Derived` leaf tables against the
+    /// verifier's `derive_output_term` at the bound point. Call after the
+    /// engine's round loop has ingested every challenge; the stage recipes
+    /// run it on every member before the aggregate final-claim check, so a
+    /// drifted table is attributed to its id rather than surfacing as a
+    /// coarse `FinalClaimMismatch`. Kernels without derived tables keep the
+    /// no-op default.
+    ///
+    /// `relation` must be the STAGE's relation instance — the one whose
+    /// `derive_opening_points` already ran (some relations capture their
+    /// bound point there) and whose `expected_final_claim` the recipe checks
+    /// against — not the member's internal copy.
+    fn validate_derived_tables(
+        &self,
+        _relation: &Self::Relation,
+        _input_points: &SumcheckInputPoints<F, Self::Relation>,
+        _output_points: &SumcheckOutputPoints<F, Self::Relation>,
+        _challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
+    ) -> Result<(), KernelError<F>> {
+        Ok(())
+    }
 }

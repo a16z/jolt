@@ -32,7 +32,15 @@ pub enum ProverError<F: FieldCore> {
         got: F,
     },
 
-    /// A capability the modular prover does not implement yet.
+    /// A capability the modular prover does not implement yet, or an input
+    /// regime it rejects up front. Recoverable in principle: the caller may
+    /// fall back to another prover.
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
+
+    /// A cross-stage carry or kernel contract the prover itself must uphold
+    /// was violated — a prover bug, never a capability gap, so never worth
+    /// retrying with different inputs or another backend.
+    #[error("prover invariant violated: {reason}")]
+    InvariantViolation { reason: &'static str },
 }

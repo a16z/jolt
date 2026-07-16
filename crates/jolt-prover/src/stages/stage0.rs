@@ -200,7 +200,7 @@ where
             advice_grid,
             &preprocessing.pcs_setup,
         )?;
-        let advice = advice.pop().ok_or(ProverError::Unsupported {
+        let advice = advice.pop().ok_or(ProverError::InvariantViolation {
             reason: "the commit slot produced no untrusted-advice commitment",
         })?;
         hints.push((advice.id, advice.hint));
@@ -290,7 +290,7 @@ fn assemble_commitments<PCS: CommitmentScheme>(
             JoltCommittedPolynomial::RamRa(_) => ram.push(commitment),
             JoltCommittedPolynomial::BytecodeRa(_) => bytecode.push(commitment),
             other => {
-                return Err(ProverError::Unsupported {
+                return Err(ProverError::InvariantViolation {
                     reason: match other {
                         JoltCommittedPolynomial::TrustedAdvice
                         | JoltCommittedPolynomial::UntrustedAdvice => {
@@ -305,7 +305,7 @@ fn assemble_commitments<PCS: CommitmentScheme>(
     }
 
     let (Some(rd_inc), Some(ram_inc)) = (rd_inc, ram_inc) else {
-        return Err(ProverError::Unsupported {
+        return Err(ProverError::InvariantViolation {
             reason: "witness did not produce the RdInc/RamInc commitments",
         });
     };

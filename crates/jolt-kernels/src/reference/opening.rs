@@ -110,7 +110,7 @@ fn address_major_embed<F: Field>(
             }
         }
         _ => {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "only trace polynomials embed address-major",
             });
         }

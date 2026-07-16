@@ -617,15 +617,17 @@ pub enum JoltDerivedId {
     UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
+    ProgramImageReconstruction(ProgramImageReconstructionPublic),
+    BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
     /// Test-only derived id for toy relations that define their own
     /// `derive_output_term`. Gated on `any(test, feature = "test-utils")`
     /// rather than `test` alone because `cfg(test)` is per-crate: a downstream
     /// crate's tests (the naive prover's toy relation foremost) see this crate
     /// compiled without `cfg(test)` and reach the variant via the feature.
+    /// Kept LAST so toggling the feature cannot shift the discriminants of
+    /// real variants across feature-unified builds.
     #[cfg(any(test, feature = "test-utils"))]
     Test,
-    ProgramImageReconstruction(ProgramImageReconstructionPublic),
-    BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
 }
 
 #[cfg(test)]

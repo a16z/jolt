@@ -91,13 +91,11 @@ where
         config.one_hot_config.committed_chunk_bits(),
     );
 
-    let booleanity_opening =
-        stage6b
-            .output_points
-            .booleanity_opening_point()
-            .ok_or(ProverError::Unsupported {
-                reason: "stage-6b booleanity produced no opening point",
-            })?;
+    let booleanity_opening = stage6b.output_points.booleanity_opening_point().ok_or(
+        ProverError::InvariantViolation {
+            reason: "stage-6b booleanity produced no opening point",
+        },
+    )?;
     let (booleanity_r_address, booleanity_r_cycle) =
         booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
     let virtualization_points =
@@ -128,68 +126,31 @@ where
         witness,
     )?;
 
-    // The advice address phases: the stage-6b kernel objects, transitioned.
-    // A member joins exactly when the batch declares it (layout committed AND
-    // active address rounds) — the kernel exists whenever the layout does, so
-    // absence here just leaves a cycle-completed kernel behind.
-    let mut trusted_advice = match (&sumchecks.trusted_advice, trusted_advice_member.as_mut()) {
-        (Some(_), Some(member)) => {
-            member.transition_to_address_phase();
-            Some(member)
-        }
-        (Some(_), None) => {
-            return Err(ProverError::Unsupported {
-                reason: "stage 6b carried no trusted-advice kernel for the scheduled address phase",
-            });
-        }
-        (None, _) => None,
-    };
-    let mut untrusted_advice = match (
-        &sumchecks.untrusted_advice,
+    // The precommitted address phases: the stage-6b kernel objects,
+    // transitioned. A member joins exactly when the batch declares it (layout
+    // committed AND active address rounds) — the kernel exists whenever the
+    // layout does, so absence here just leaves a cycle-completed kernel
+    // behind.
+    let mut trusted_advice = take_scheduled(
+        sumchecks.trusted_advice.is_some(),
+        trusted_advice_member.as_mut(),
+        "stage 6b carried no trusted-advice kernel for the scheduled address phase",
+    )?;
+    let mut untrusted_advice = take_scheduled(
+        sumchecks.untrusted_advice.is_some(),
         untrusted_advice_member.as_mut(),
-    ) {
-        (Some(_), Some(member)) => {
-            member.transition_to_address_phase();
-            Some(member)
-        }
-        (Some(_), None) => {
-            return Err(ProverError::Unsupported {
-                reason:
-                    "stage 6b carried no untrusted-advice kernel for the scheduled address phase",
-            });
-        }
-        (None, _) => None,
-    };
-    let mut bytecode_reduction = match (
-        &sumchecks.bytecode_address_phase,
+        "stage 6b carried no untrusted-advice kernel for the scheduled address phase",
+    )?;
+    let mut bytecode_reduction = take_scheduled(
+        sumchecks.bytecode_address_phase.is_some(),
         bytecode_reduction_member.as_mut(),
-    ) {
-        (Some(_), Some(member)) => {
-            member.transition_to_address_phase();
-            Some(member)
-        }
-        (Some(_), None) => {
-            return Err(ProverError::Unsupported {
-                reason: "stage 6b carried no bytecode kernel for the scheduled address phase",
-            });
-        }
-        (None, _) => None,
-    };
-    let mut program_image = match (
-        &sumchecks.program_image_address_phase,
+        "stage 6b carried no bytecode kernel for the scheduled address phase",
+    )?;
+    let mut program_image = take_scheduled(
+        sumchecks.program_image_address_phase.is_some(),
         program_image_member.as_mut(),
-    ) {
-        (Some(_), Some(member)) => {
-            member.transition_to_address_phase();
-            Some(member)
-        }
-        (Some(_), None) => {
-            return Err(ProverError::Unsupported {
-                reason: "stage 6b carried no program-image kernel for the scheduled address phase",
-            });
-        }
-        (None, _) => None,
-    };
+        "stage 6b carried no program-image kernel for the scheduled address phase",
+    )?;
 
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut *hamming];
     if let Some(member) = trusted_advice.as_mut() {
@@ -207,6 +168,12 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    hamming.validate_derived_tables(
+        &sumchecks.hamming_weight_claim_reduction,
+        &input_points.hamming_weight_claim_reduction,
+        &output_points.hamming_weight_claim_reduction,
+        &challenges.hamming_weight_claim_reduction,
+    )?;
     let output_values = Stage7OutputClaims {
         hamming_weight_claim_reduction: hamming.output_claims()?,
         trusted_advice: trusted_advice
@@ -268,4 +235,23 @@ where
             output_points,
         },
     })
+}
+
+/// Transition a stage-6b precommitted kernel into its scheduled stage-7
+/// address phase: the batch declaring the phase without a carried kernel is a
+/// cross-stage invariant violation; an undeclared phase leaves the
+/// cycle-completed kernel behind.
+fn take_scheduled<'a, F: Field>(
+    scheduled: bool,
+    member: Option<&'a mut Box<dyn PrecommittedReductionProver<F>>>,
+    missing: &'static str,
+) -> Result<Option<&'a mut Box<dyn PrecommittedReductionProver<F>>>, ProverError<F>> {
+    match (scheduled, member) {
+        (true, Some(member)) => {
+            member.transition_to_address_phase();
+            Ok(Some(member))
+        }
+        (true, None) => Err(ProverError::InvariantViolation { reason: missing }),
+        (false, _) => Ok(None),
+    }
 }

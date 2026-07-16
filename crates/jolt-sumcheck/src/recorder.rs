@@ -21,6 +21,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::Transcript;
+use rand_core::RngCore;
 
 use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
 use crate::error::SumcheckError;
@@ -154,30 +155,33 @@ impl<F: Field, C> SumcheckRecorder<F> for ClearSumcheckRecorder<F, C> {
 /// claims' commitments were already absorbed by the stage that produced them.
 /// The retained witness (coefficients, rows, blindings) is returned by
 /// [`finish`](SumcheckRecorder::finish) for BlindFold.
-pub struct CommittedSumcheckRecorder<'a, F, VC>
+pub struct CommittedSumcheckRecorder<'a, F, VC, R>
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
+    R: RngCore,
 {
-    builder: CommittedSumcheckBuilder<'a, F, VC>,
+    builder: CommittedSumcheckBuilder<'a, F, VC, R>,
 }
 
-impl<'a, F, VC> CommittedSumcheckRecorder<'a, F, VC>
+impl<'a, F, VC, R> CommittedSumcheckRecorder<'a, F, VC, R>
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
+    R: RngCore,
 {
-    pub fn new(setup: &'a VC::Setup) -> Result<Self, SumcheckError<F>> {
+    pub fn new(setup: &'a VC::Setup, rng: R) -> Result<Self, SumcheckError<F>> {
         Ok(Self {
-            builder: CommittedSumcheckBuilder::new(setup)?,
+            builder: CommittedSumcheckBuilder::new(setup, rng)?,
         })
     }
 }
 
-impl<F, VC> SumcheckRecorder<F> for CommittedSumcheckRecorder<'_, F, VC>
+impl<F, VC, R> SumcheckRecorder<F> for CommittedSumcheckRecorder<'_, F, VC, R>
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
+    R: RngCore,
 {
     type Commitment = VC::Output;
 

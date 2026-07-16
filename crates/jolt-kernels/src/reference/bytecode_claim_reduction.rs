@@ -84,7 +84,7 @@ impl<F: Field> BytecodeClaimReduction<F> for ReferenceBackend {
         let (value, eq) = match (permuted.next(), permuted.next()) {
             (Some(value), Some(eq)) => (value, eq),
             _ => {
-                return Err(KernelError::Unsupported {
+                return Err(KernelError::InvariantViolation {
                     reason: "bytecode reduction table permutation lost the value/eq tables",
                 });
             }

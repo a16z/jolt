@@ -96,7 +96,7 @@ where
         .output_points
         .hamming_weight_opening_point()
         .map(<[F]>::to_vec)
-        .ok_or(ProverError::Unsupported {
+        .ok_or(ProverError::InvariantViolation {
             reason: "stage 7 produced no hamming-weight openings",
         })?;
     let inc_opening_point = stage6b.output_points.inc_opening_point();
@@ -138,7 +138,7 @@ where
     let statement: Vec<VerifierOpeningClaim<F, PCS::Output>> = entries
         .iter()
         .map(|entry| {
-            let opening_claim = entry.opening_claim.ok_or(ProverError::Unsupported {
+            let opening_claim = entry.opening_claim.ok_or(ProverError::InvariantViolation {
                 reason: "stage-8 batch entry carries no clear opening claim",
             })?;
             Ok(VerifierOpeningClaim {
@@ -173,7 +173,7 @@ where
         order: config.trace_polynomial_order,
     };
     if grid.total_vars != opening_point.len() {
-        return Err(ProverError::Unsupported {
+        return Err(ProverError::InvariantViolation {
             reason: "commitment grid width disagrees with the unified opening point",
         });
     }
@@ -181,9 +181,11 @@ where
     // oracles): materialize them from the prover-retained full program.
     let mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>> = BTreeMap::new();
     if let Some(bytecode_layout) = &precommitted.bytecode {
-        let program = preprocessing.program().ok_or(ProverError::Unsupported {
-            reason: "full program preprocessing is unavailable",
-        })?;
+        let program = preprocessing
+            .program()
+            .ok_or(ProverError::InvariantViolation {
+                reason: "full program preprocessing is unavailable",
+            })?;
         let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
             &program.bytecode.bytecode,
             bytecode_layout.chunk_count(),
@@ -210,7 +212,7 @@ where
                 .iter()
                 .find(|(id, _)| id == polynomial)
                 .map(|(_, hint)| hint.clone())
-                .ok_or(ProverError::Unsupported {
+                .ok_or(ProverError::InvariantViolation {
                     reason: "missing stage-0 opening hint for a batched polynomial",
                 })
         })

@@ -89,7 +89,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
         let chunk_size = 1usize << log_k_chunk;
         let cycles = 1usize << log_t;
         if reference_address.len() != log_k_chunk || reference_cycle.len() != log_t {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "booleanity reference point lengths disagree with the dimensions",
             });
         }
@@ -271,10 +271,11 @@ impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
         // The fixed address eq factor: both vectors pair positionally in the
         // verifier's `derive_output_term` (each side reversed, so the product
         // is the same either way).
-        let address_scalar =
-            try_eq_mle(r_address, reference_address).map_err(|_| KernelError::Unsupported {
+        let address_scalar = try_eq_mle(r_address, reference_address).map_err(|_| {
+            KernelError::InvariantViolation {
                 reason: "booleanity address point and reference length mismatch",
-            })?;
+            }
+        })?;
         let derived_tables = BTreeMap::from([(
             JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
             Polynomial::new(

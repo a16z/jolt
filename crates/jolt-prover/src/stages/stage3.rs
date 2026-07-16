@@ -108,6 +108,24 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    shift.validate_derived_tables(
+        &sumchecks.shift,
+        &input_points.shift,
+        &output_points.shift,
+        &challenges.shift,
+    )?;
+    instruction_input.validate_derived_tables(
+        &sumchecks.instruction_input,
+        &input_points.instruction_input,
+        &output_points.instruction_input,
+        &challenges.instruction_input,
+    )?;
+    registers_claim_reduction.validate_derived_tables(
+        &sumchecks.registers_claim_reduction,
+        &input_points.registers_claim_reduction,
+        &output_points.registers_claim_reduction,
+        &challenges.registers_claim_reduction,
+    )?;
     let output_values = Stage3OutputClaims {
         shift: shift.output_claims()?,
         instruction_input: instruction_input.output_claims()?,

@@ -43,7 +43,7 @@ impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
         if r_address.len() != dimensions.log_k_chunk
             || virtualization_points.len() != dimensions.layout.total()
         {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "hamming reduction reference point shapes disagree with the layout",
             });
         }

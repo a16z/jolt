@@ -1,10 +1,10 @@
 //! Stage 6b: the cycle-phase batch — bytecode read+RAF and booleanity cycle
 //! phases, RAM Hamming booleanity, both RA virtualizations, the increment
-//! claim reduction, and the present advice claim-reduction cycle phases
-//! (head-aligned members; the committed-program `Option` members remain
-//! rejected upstream). An advice member with active address-phase rounds
-//! stages its intermediate claim here and its kernel object is carried to
-//! stage 7 for the address phase.
+//! claim reduction, and the present precommitted claim-reduction cycle
+//! phases (advice, committed bytecode, program image — head-aligned
+//! members). A precommitted member with active address-phase rounds stages
+//! its intermediate claim here and its kernel object is carried to stage 7
+//! for the address phase.
 //!
 //! Pure orchestration mirroring `stage6b::verify`: the bytecode gamma is
 //! carried from stage 6a's squeeze (no draw here), the instruction-RA and
@@ -154,7 +154,7 @@ where
     } = bytecode_stage_points(stage1, stage2, stage3, stage4, stage5)?;
     let ram_reduced = stage5.output_points.ram_reduced_opening_point();
     if ram_reduced.len() != log_k + log_t {
-        return Err(ProverError::Unsupported {
+        return Err(ProverError::InvariantViolation {
             reason: "stage-5 RAM RA reduction opening point length mismatch",
         });
     }
@@ -165,14 +165,16 @@ where
         registers_read_write_point[REGISTER_ADDRESS_BITS..].to_vec(),
         registers_val_evaluation_point[REGISTER_ADDRESS_BITS..].to_vec(),
     ];
-    let program = preprocessing.program().ok_or(ProverError::Unsupported {
-        reason: "full bytecode preprocessing is unavailable",
-    })?;
+    let program = preprocessing
+        .program()
+        .ok_or(ProverError::InvariantViolation {
+            reason: "full bytecode preprocessing is unavailable",
+        })?;
     let entry_bytecode_index = preprocessing
         .verifier
         .program
         .entry_bytecode_index()
-        .ok_or(ProverError::Unsupported {
+        .ok_or(ProverError::InvariantViolation {
             reason: "entry address was not found in bytecode preprocessing",
         })?;
     let stage_gammas = carried.bytecode_read_raf.stage_gamma_powers();
@@ -340,7 +342,7 @@ where
         let staged = &stage6a.output_values.bytecode_read_raf.val_stages;
         let mut stage_values = [F::zero(); 5];
         if staged.len() != stage_values.len() {
-            return Err(ProverError::Unsupported {
+            return Err(ProverError::InvariantViolation {
                 reason: "stage 6a staged the wrong number of bytecode val stages",
             });
         }
@@ -428,7 +430,7 @@ where
             let Some(layout) = layout else {
                 return Ok(None);
             };
-            let reference = advice_reference(kind).ok_or(ProverError::Unsupported {
+            let reference = advice_reference(kind).ok_or(ProverError::InvariantViolation {
                 reason: "stage 4 staged no advice opening for a scheduled advice reduction",
             })?;
             Ok(Some(
@@ -468,7 +470,7 @@ where
                 .ram_val_check_init
                 .program_image_contribution
                 .as_ref()
-                .ok_or(ProverError::Unsupported {
+                .ok_or(ProverError::InvariantViolation {
                     reason: "stage 4 staged no program-image contribution",
                 })?;
             backend
@@ -507,6 +509,42 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    bytecode_read_raf.validate_derived_tables(
+        &sumchecks.bytecode_read_raf,
+        &input_points.bytecode_read_raf,
+        &output_points.bytecode_read_raf,
+        &cycle_challenges.bytecode_read_raf,
+    )?;
+    booleanity.validate_derived_tables(
+        &sumchecks.booleanity,
+        &input_points.booleanity,
+        &output_points.booleanity,
+        &cycle_challenges.booleanity,
+    )?;
+    ram_hamming_booleanity.validate_derived_tables(
+        &sumchecks.ram_hamming_booleanity,
+        &input_points.ram_hamming_booleanity,
+        &output_points.ram_hamming_booleanity,
+        &cycle_challenges.ram_hamming_booleanity,
+    )?;
+    ram_ra_virtualization.validate_derived_tables(
+        &sumchecks.ram_ra_virtualization,
+        &input_points.ram_ra_virtualization,
+        &output_points.ram_ra_virtualization,
+        &cycle_challenges.ram_ra_virtualization,
+    )?;
+    instruction_ra_virtualization.validate_derived_tables(
+        &sumchecks.instruction_ra_virtualization,
+        &input_points.instruction_ra_virtualization,
+        &output_points.instruction_ra_virtualization,
+        &cycle_challenges.instruction_ra_virtualization,
+    )?;
+    inc_claim_reduction.validate_derived_tables(
+        &sumchecks.inc_claim_reduction,
+        &input_points.inc_claim_reduction,
+        &output_points.inc_claim_reduction,
+        &cycle_challenges.inc_claim_reduction,
+    )?;
     // An advice member's wire claim: the intermediate handoff claim when its
     // schedule continues into the stage-7 address phase, else the final
     // (fully bound) advice opening.
@@ -590,7 +628,7 @@ where
     // order including the runtime booleanity-vs-bytecode point dedup.
     let booleanity_opening_point = output_points
         .booleanity_opening_point()
-        .ok_or(ProverError::Unsupported {
+        .ok_or(ProverError::InvariantViolation {
             reason: "stage-6b booleanity produced no opening point",
         })?
         .to_vec();

@@ -91,7 +91,7 @@ impl<F: Field> PrecommittedReductionKernel<F> {
 
     fn require_fully_bound(&self) -> Result<(), KernelError<F>> {
         if self.value.len() != 1 {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason:
                     "precommitted reduction final claim requested before the polynomial is fully bound",
             });

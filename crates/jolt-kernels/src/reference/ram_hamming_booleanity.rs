@@ -33,7 +33,7 @@ impl<F: Field> RamHammingBooleanityProver<F> for ReferenceBackend {
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>> {
         if stage1_cycle_binding.len() != trace_dimensions.log_t() {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "stage-1 cycle binding has the wrong variable count",
             });
         }

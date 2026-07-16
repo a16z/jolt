@@ -117,12 +117,17 @@ impl ProverConfig {
 
 /// Map a byte address into the RAM word index space: word offsets from the
 /// memory layout's lowest mapped address; address 0 means "no access".
+///
+/// Panics on a nonzero address below the layout's lowest mapped address — a
+/// malformed trace, failed loudly here (matching legacy) rather than
+/// silently under-sizing `ram_K` and failing as an opaque sumcheck error.
 pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> {
     if address == 0 {
         return None;
     }
     let lowest = memory_layout.get_lowest_address();
-    (address >= lowest).then(|| (address - lowest) / 8)
+    assert!(address >= lowest, "Unexpected address {address}");
+    Some((address - lowest) / 8)
 }
 
 /// Read-write checking phase splits: cycle variables in phase 1, address

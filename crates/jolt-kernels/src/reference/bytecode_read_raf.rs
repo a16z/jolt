@@ -125,13 +125,13 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
         }
         for point in stage_cycle_points {
             if point.len() != dimensions.log_t() {
-                return Err(KernelError::Unsupported {
+                return Err(KernelError::InvariantViolation {
                     reason: "bytecode stage cycle point has the wrong variable count",
                 });
             }
         }
         if entry_bytecode_index >= addresses || bytecode_indices.iter().any(|&pc| pc >= addresses) {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "bytecode index outside the padded bytecode domain",
             });
         }
@@ -308,7 +308,7 @@ impl<F: Field> BytecodeReadRafCycleProver<F> for ReferenceBackend {
 
         let chunks = committed_address_chunks(r_address, committed_chunk_bits);
         if chunks.len() != dimensions.num_committed_ra_polys() {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "bytecode address chunk count disagrees with the committed RA count",
             });
         }

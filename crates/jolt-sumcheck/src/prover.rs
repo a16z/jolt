@@ -20,6 +20,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::Transcript;
+use rand_core::RngCore;
 
 use crate::batch::BatchPrelude;
 use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
@@ -298,23 +299,26 @@ where
 /// Prove a committed uni-skip first round, mirroring the verifier's
 /// `uniskip::verify_zk`: commit the round polynomial (absorbing only the
 /// commitment), squeeze the reduction challenge, then commit and absorb the
-/// output claim. The claim scalar never reaches the transcript.
-pub fn prove_uniskip_committed<F, VC, T>(
+/// output claim. The claim scalar never reaches the transcript. Blindings
+/// come from the caller-supplied `rng`.
+pub fn prove_uniskip_committed<F, VC, T, R>(
     round_poly: UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
     domain_size: usize,
     setup: &VC::Setup,
+    rng: R,
     transcript: &mut T,
 ) -> Result<ProvedUniskipCommitted<F, VC::Output>, SumcheckError<F>>
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
+    R: RngCore,
 {
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
 
-    let mut builder = CommittedSumcheckBuilder::<F, VC>::new(setup)?;
+    let mut builder = CommittedSumcheckBuilder::<F, VC, R>::new(setup, rng)?;
     let challenge = builder.commit_round(&round_poly, transcript)?;
     let output_claim = round_poly.evaluate(challenge);
     let (proof, witness) = builder.finish(&[output_claim], transcript)?;

@@ -76,7 +76,14 @@ pub enum KernelError<F: FieldCore> {
         got: F,
     },
 
-    /// A capability the kernel does not implement yet.
+    /// A capability the kernel does not implement yet. Recoverable in
+    /// principle: a caller may retry the slot against a different backend.
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
+
+    /// A contract the kernel's inputs must uphold (witness shape, point
+    /// geometry, internal state) was violated — a bug, never a capability
+    /// gap, so never worth retrying against another backend.
+    #[error("kernel invariant violated: {reason}")]
+    InvariantViolation { reason: &'static str },
 }

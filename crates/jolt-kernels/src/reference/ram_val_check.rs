@@ -24,7 +24,7 @@ use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use super::views::{dense_view, eq_table};
+use super::views::{address_fold, dense_view};
 use crate::ram_val_check::RamValCheckProver;
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
@@ -40,19 +40,13 @@ impl<F: Field> RamValCheckProver<F> for ReferenceBackend {
         challenges: &RamValCheckChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamValCheck<F>>>, KernelError<F>> {
-        let cycles = 1usize << trace_dimensions.log_t();
-        let addresses = 1usize << ram_log_k;
-
         // The address-bound `ra` slice, folded from the full `(K × T)` grid.
-        let eq_address = eq_table(r_address);
-        let ram_ra_full = dense_view(witness, ram_ra_val_check())?;
-        let ra_folded: Vec<F> = (0..cycles)
-            .map(|j| {
-                (0..addresses)
-                    .map(|k| ram_ra_full[(k << trace_dimensions.log_t()) | j] * eq_address[k])
-                    .sum()
-            })
-            .collect();
+        let ra_folded = address_fold(
+            witness,
+            ram_ra_val_check(),
+            trace_dimensions.log_t(),
+            r_address,
+        )?;
 
         let lt_plus_gamma: Vec<F> = LtPolynomial::evaluations(r_cycle)
             .into_iter()

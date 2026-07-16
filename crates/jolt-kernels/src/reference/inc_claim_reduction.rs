@@ -36,7 +36,7 @@ impl<F: Field> IncClaimReductionProver<F> for ReferenceBackend {
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
         for point in cycle_points {
             if point.len() != trace_dimensions.log_t() {
-                return Err(KernelError::Unsupported {
+                return Err(KernelError::InvariantViolation {
                     reason: "increment reduction cycle point has the wrong variable count",
                 });
             }

@@ -24,7 +24,7 @@ use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use super::views::{dense_view, eq_table};
+use super::views::cycle_fold;
 use crate::ram_raf_evaluation::RamRafEvaluationProver;
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
@@ -46,17 +46,8 @@ impl<F: Field> RamRafEvaluationProver<F> for ReferenceBackend {
             });
         }
 
-        let cycles = 1usize << tau_low.len();
         let addresses = 1usize << ram_log_k;
-        let eq_cycle = eq_table(tau_low);
-        let ram_ra_full = dense_view(witness, ram_ra_raf_evaluation())?;
-        let ra_folded: Vec<F> = (0..addresses)
-            .map(|k| {
-                (0..cycles)
-                    .map(|j| ram_ra_full[(k << tau_low.len()) | j] * eq_cycle[j])
-                    .sum()
-            })
-            .collect();
+        let ra_folded = cycle_fold(witness, ram_ra_raf_evaluation(), ram_log_k, tau_low)?;
         let unmap: Vec<F> = (0..addresses as u64)
             .map(|k| F::from_u64(8 * k + lowest_address))
             .collect();

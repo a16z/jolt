@@ -215,6 +215,36 @@ where
     let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
 
     let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
+    ram_read_write.validate_derived_tables(
+        &sumchecks.ram_read_write,
+        &input_points.ram_read_write,
+        &output_points.ram_read_write,
+        &challenges.ram_read_write,
+    )?;
+    product_remainder.validate_derived_tables(
+        &sumchecks.product_remainder,
+        &input_points.product_remainder,
+        &output_points.product_remainder,
+        &challenges.product_remainder,
+    )?;
+    instruction_claim_reduction.validate_derived_tables(
+        &sumchecks.instruction_claim_reduction,
+        &input_points.instruction_claim_reduction,
+        &output_points.instruction_claim_reduction,
+        &challenges.instruction_claim_reduction,
+    )?;
+    ram_raf_evaluation.validate_derived_tables(
+        &sumchecks.ram_raf_evaluation,
+        &input_points.ram_raf_evaluation,
+        &output_points.ram_raf_evaluation,
+        &challenges.ram_raf_evaluation,
+    )?;
+    ram_output_check.validate_derived_tables(
+        &sumchecks.ram_output_check,
+        &input_points.ram_output_check,
+        &output_points.ram_output_check,
+        &challenges.ram_output_check,
+    )?;
     let output_values = Stage2BatchOutputClaims {
         ram_read_write: ram_read_write.output_claims()?,
         product_remainder: product_remainder.output_claims()?,

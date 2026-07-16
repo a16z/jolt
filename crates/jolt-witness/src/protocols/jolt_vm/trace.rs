@@ -244,6 +244,11 @@ pub(crate) fn trace_virtual_value<F: Field>(
             signed_128_to_field(product)
         }
         JoltVirtualPolynomial::ShouldJump => {
+            // Deliberately `is_some_and` (unlike `NextIsNoop` above): at
+            // `T - 1` constraint 21 (`ShouldJump = Jump · (1 − NextIsNoop)`)
+            // forces `ShouldJump = 0`, which holds under either convention
+            // only because the padded trace ends in a NoOp row (`Jump = 0`
+            // there) — the padding every prover config guarantees.
             let next_is_noop = next.is_some_and(row_is_noop);
             F::from_bool(circuit_flags[CircuitFlags::Jump] && !next_is_noop)
         }

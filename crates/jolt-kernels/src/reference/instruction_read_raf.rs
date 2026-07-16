@@ -207,7 +207,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
             if let Some(table_index) = row.table_index {
                 buckets
                     .get_mut(table_index)
-                    .ok_or(KernelError::Unsupported {
+                    .ok_or(KernelError::InvariantViolation {
                         reason: "stage-5 row selects an unknown lookup table",
                     })?
                     .push(j);
@@ -624,9 +624,12 @@ impl<F: Field> ProveSumcheck<F> for InstructionReadRafKernel<F> {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
-        let tables = self.cycle_tables.as_ref().ok_or(KernelError::Unsupported {
-            reason: "cycle tables absent after full binding",
-        })?;
+        let tables = self
+            .cycle_tables
+            .as_ref()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "cycle tables absent after full binding",
+            })?;
 
         // Flag claims at the normalized (big-endian) cycle point: the flags
         // never participate in the round loop (they only appear in the output

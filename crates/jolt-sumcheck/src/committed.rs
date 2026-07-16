@@ -4,7 +4,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
-use rand_core::OsRng;
+use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SumcheckError;
@@ -195,30 +195,33 @@ impl<F> CommittedSumcheckWitness<F> {
 /// round polynomial's coefficients with a fresh blinding, absorb the
 /// commitment, and squeeze the round challenge; at the end, row-commit the
 /// flattened output-claim values and absorb those commitments. Blindings are
-/// drawn from [`OsRng`] and retained in the witness.
-pub struct CommittedSumcheckBuilder<'a, F, VC>
+/// drawn from the caller-supplied `rng` and retained in the witness — the
+/// caller owns the randomness source, so a fixed seed reproduces the proof.
+pub struct CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
+    R: RngCore,
 {
     setup: &'a VC::Setup,
-    rng: OsRng,
+    rng: R,
     rounds: Vec<CommittedRound<VC::Output>>,
     witness: CommittedSumcheckWitness<F>,
 }
 
-impl<'a, F, VC> CommittedSumcheckBuilder<'a, F, VC>
+impl<'a, F, VC, R> CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
+    R: RngCore,
 {
-    pub fn new(setup: &'a VC::Setup) -> Result<Self, SumcheckError<F>> {
+    pub fn new(setup: &'a VC::Setup, rng: R) -> Result<Self, SumcheckError<F>> {
         if VC::capacity(setup) == 0 {
             return Err(SumcheckError::ZeroCommitmentCapacity);
         }
         Ok(Self {
             setup,
-            rng: OsRng,
+            rng,
             rounds: Vec::new(),
             witness: CommittedSumcheckWitness::new(),
         })

@@ -45,7 +45,7 @@ impl<F: Field> InstructionRaVirtualizationProver<F> for ReferenceBackend {
 
         let chunks = committed_address_chunks(instruction_r_address, committed_chunk_bits);
         if chunks.len() != dimensions.num_committed_ra_polys() {
-            return Err(KernelError::Unsupported {
+            return Err(KernelError::InvariantViolation {
                 reason: "instruction address chunk count disagrees with the committed RA count",
             });
         }

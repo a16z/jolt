@@ -24,7 +24,7 @@ pub(crate) fn dense_view<F: Field>(
     })?;
     Ok(view
         .as_slice()
-        .ok_or(KernelError::Unsupported {
+        .ok_or(KernelError::InvariantViolation {
             reason: "oracle view was not materialized as a dense slice",
         })?
         .to_vec())

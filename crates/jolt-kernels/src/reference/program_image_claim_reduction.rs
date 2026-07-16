@@ -61,7 +61,7 @@ impl<F: Field> ProgramImageClaimReduction<F> for ReferenceBackend {
         let (value, eq) = match (permuted.next(), permuted.next()) {
             (Some(value), Some(eq)) => (value, eq),
             _ => {
-                return Err(KernelError::Unsupported {
+                return Err(KernelError::InvariantViolation {
                     reason: "program image table permutation lost the value/eq tables",
                 });
             }
