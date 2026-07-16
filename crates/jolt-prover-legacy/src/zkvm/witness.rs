@@ -274,7 +274,7 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         Some(
                             crate::zkvm::packed_witness::FusedIncCycle::from_cycle(cycle)
-                                .chunk_symbol_bits(width, *i) as u8,
+                                .chunk_hot_lane_bits(width, *i) as u8,
                         )
                     })
                     .collect();

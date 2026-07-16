@@ -152,6 +152,18 @@ pub struct AkitaVerifierSetup {
 }
 
 impl AkitaVerifierSetup {
+    pub fn max_num_vars(&self) -> usize {
+        self.max_num_vars
+    }
+
+    pub fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group
+    }
+
+    pub fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest
+    }
+
     /// Primes the lazy key cache with freshly built backend keys, so
     /// in-process setups never pay the shape→key re-derivation.
     pub(crate) fn prime_backend_cache(

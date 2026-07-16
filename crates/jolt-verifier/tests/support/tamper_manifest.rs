@@ -1031,10 +1031,9 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-/// The packed-path claim cells (the inc-virtualization and reconstruction
-/// phases, the lattice booleanity chunk/msb cells, and the stage-7 chunk
-/// reconstruction finals). Fixture-driven coverage arrives with the packed
-/// prover; until then the entries document the expected catching phase.
+/// The Akita-path claim cells: standalone increment virtualization, the fused
+/// increment reduction, lattice Booleanity, and the fused Stage-7 Hamming
+/// reduction. Fixture-driven coverage promotes these entries to active tests.
 #[cfg(feature = "akita")]
 pub const AKITA_TARGETS: &[TamperTarget] = &[
     checked_standard(
@@ -1054,6 +1053,14 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "the stage-6a lattice read-raf input fold consumes the store claim",
     ),
     checked_standard(
+        "stage6.claims.fused_inc_claim_reduction.fused_inc",
+        "claims.stage6b.fused_inc_claim_reduction.fused_inc",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "the Stage-6b fused increment reduction final-claim fold rejects an offset output claim",
+    ),
+    checked_standard(
         "stage6.claims.booleanity.unsigned_inc_chunks",
         "claims.stage6b.booleanity.unsigned_inc_chunks",
         VerifierPhase::Stage6,
@@ -1070,20 +1077,20 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "the lattice booleanity output fold covers the msb cell",
     ),
     checked_standard(
-        "stage7.claims.chunk_reconstruction.chunks",
-        "claims.stage7.chunk_reconstruction.chunks",
+        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_chunks",
+        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_chunks",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "the chunk reconstruction final-claim fold covers every chunk final",
+        "the hamming-weight reduction final-claim fold covers every increment chunk",
     ),
     checked_standard(
-        "stage7.claims.chunk_reconstruction.msb",
-        "claims.stage7.chunk_reconstruction.msb",
+        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_msb",
+        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_msb",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "the chunk reconstruction final-claim fold covers the msb final",
+        "the hamming-weight reduction final-claim fold covers the increment MSB",
     ),
     checked_standard(
         "reconstruction.claims.untrusted_advice",
@@ -1534,6 +1541,9 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                     committed_instruction_ra: vec![zero],
                 },
+            #[cfg(feature = "akita")]
+            fused_inc_claim_reduction:
+                stage6b::outputs::FusedIncClaimReductionOutputClaims { fused_inc: zero },
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                 ram_inc: zero,
@@ -1558,17 +1568,15 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
             ),
         },
         stage7: stage7::outputs::Stage7OutputClaims {
-            #[cfg(feature = "akita")]
-            chunk_reconstruction:
-                jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionOutputClaims {
-                    chunks: vec![zero],
-                    msb: zero,
-                },
             hamming_weight_claim_reduction:
                 stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
+                    #[cfg(feature = "akita")]
+                    unsigned_inc_chunks: vec![zero],
+                    #[cfg(feature = "akita")]
+                    unsigned_inc_msb: zero,
                 },
             trusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::TrustedAdviceAddressPhaseOutputClaims {

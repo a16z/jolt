@@ -1,38 +1,32 @@
-//! The packed (lattice) final opening: statement assembly for
-//! [`jolt_openings::verify_packed_openings`].
+//! The Akita final opening.
 //!
-//! Every commitment object — `W_jolt`, the optional advice byte objects, and
-//! `W_prog` in committed-program mode — packs its columns into one committed
-//! polynomial. By this point each column has exactly one outstanding claim,
-//! produced by stage 7 (`Ra` hamming weights, unsigned-inc chunks) or by the
-//! reconstruction phase (advice, bytecode, and program-image byte columns),
-//! each at its own point, keyed by the canonical cell orders the output
-//! structs pin. This module only resolves those leaf
-//! claims against the canonical packings and hands the assembled statements
-//! to the joint opening — one cross-object reduction sumcheck, then one
-//! native PCS opening per object, no commitment homomorphism anywhere.
+//! Wjolt is a native group of uniform one-hot members, all opened directly at
+//! one canonical point. Optional advice and committed-program objects have
+//! distinct domains and are discharged separately through
+//! [`jolt_openings::verify_packed_openings`].
 
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::lattice::geometry::word_byte_num_vars;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_bytes_packing, precommitted_packing, PrecommittedPackingShape, ProofPackingShape,
+    advice_bytes_packing, precommitted_packing, PrecommittedPackingShape, WJoltShape,
 };
-use jolt_claims::protocols::jolt::lattice::strategy::{WJoltPlan, W_JOLT_STRATEGY};
+use jolt_claims::protocols::jolt::lattice::strategy::{WJoltLayoutPlan, W_JOLT_LAYOUT};
 use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_openings::{
     verify_packed_openings, CommitmentScheme, EvaluationClaim, PackedObjectGroup,
-    PackedOpeningProof, PackedVerifierObject, PrefixPackedStatement, PrefixPacking,
+    PackedVerifierObject, PrefixPackedStatement, PrefixPacking,
 };
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use super::reconstruction::ReconstructionClearOutput;
 use crate::stages::stage7::outputs::Stage7ClearOutput;
+use crate::stages::stage8::{WJoltCommitmentMetadata, WJoltSetupMetadata};
 use crate::VerifierError;
 
 fn batch_failed(reason: impl ToString) -> VerifierError {
@@ -45,6 +39,47 @@ fn opening_failed(reason: impl ToString) -> VerifierError {
     VerifierError::FinalOpeningVerificationFailed {
         reason: reason.to_string(),
     }
+}
+
+fn validate_wjolt_metadata<C, S>(
+    commitment: &C,
+    setup: &S,
+    canonical_digest: [u8; 32],
+    member_arity: usize,
+    member_count: usize,
+) -> Result<(), VerifierError>
+where
+    C: WJoltCommitmentMetadata,
+    S: WJoltSetupMetadata,
+{
+    if !commitment.is_one_hot_backend() {
+        return Err(batch_failed(
+            "Wjolt commitment must use Akita's one-hot backend",
+        ));
+    }
+    if commitment.layout_digest() != canonical_digest {
+        return Err(batch_failed(
+            "Wjolt commitment has a noncanonical layout digest",
+        ));
+    }
+    if commitment.num_vars() != member_arity || setup.max_num_vars() != member_arity {
+        return Err(batch_failed(format!(
+            "Wjolt commitment/setup arity must equal canonical arity {member_arity}"
+        )));
+    }
+    if commitment.poly_count() != member_count
+        || setup.max_num_polys_per_commitment_group() != member_count
+    {
+        return Err(batch_failed(format!(
+            "Wjolt commitment/setup member count must equal canonical count {member_count}"
+        )));
+    }
+    if setup.default_layout_digest() != canonical_digest {
+        return Err(batch_failed(
+            "Wjolt verifier setup has a noncanonical layout digest",
+        ));
+    }
+    Ok(())
 }
 
 /// A byte column's word-variable count, recovered from its leaf claim's
@@ -105,60 +140,81 @@ pub fn verify<PCS, VC, T>(
     w_jolt_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    proof: &PackedOpeningProof<PCS::Field, PCS::Proof>,
+    proof: &crate::proof::AkitaJointOpeningProof<PCS::Field, PCS::Proof>,
     transcript: &mut T,
     stage7: &Stage7ClearOutput<PCS::Field>,
     reconstruction: &ReconstructionClearOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + WJoltCommitmentMetadata,
+    PCS::VerifierSetup: WJoltSetupMetadata,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
     // Per-object packings, commitments, and setups in canonical object order:
-    // `W_jolt` first (per its strategy: the single `Packed` union, or the
-    // `Grouped` members as one commitment group opened by one native batch
-    // proof), then the optional singleton objects. The layout comes from the
-    // shared commitment strategy — the same plan the prover committed under.
+    // `W_jolt` is one native group of uniform one-hot members, followed by the
+    // optional auxiliary commitment objects. The shared layout is the same
+    // one the prover committed under.
     // Optional objects join exactly when their reconstruction outputs exist;
     // presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
-    let plan = W_JOLT_STRATEGY
-        .plan(&ProofPackingShape {
-            ra_layout: formula_dimensions.ra_layout,
-            log_t: formula_dimensions.trace.log_t(),
-            log_k_chunk: chunk_width,
-        })
+    let wjolt_shape = WJoltShape {
+        ra_layout: formula_dimensions.ra_layout,
+        log_t: formula_dimensions.trace.log_t(),
+        log_k_chunk: chunk_width,
+    };
+    let plan = W_JOLT_LAYOUT.plan(&wjolt_shape).map_err(batch_failed)?;
+    let canonical_digest = W_JOLT_LAYOUT
+        .layout_digest(&wjolt_shape)
         .map_err(batch_failed)?;
+    let WJoltLayoutPlan {
+        members,
+        member_arity,
+    } = &plan;
+    validate_wjolt_metadata(
+        w_jolt_commitment,
+        &preprocessing.pcs_setup,
+        canonical_digest,
+        *member_arity,
+        members.len(),
+    )?;
+    let leaves = leaf_claims(stage7, reconstruction);
+    let mut common_point: Option<Vec<PCS::Field>> = None;
+    let mut evaluations = Vec::with_capacity(members.len());
+    for polynomial in members {
+        let claim = leaves
+            .get(polynomial)
+            .ok_or_else(|| batch_failed(format!("missing final Wjolt claim for {polynomial:?}")))?;
+        let point = W_JOLT_LAYOUT
+            .member_point(*polynomial, chunk_width, claim.point.as_slice())
+            .map_err(batch_failed)?;
+        if let Some(expected) = &common_point {
+            if expected != &point {
+                return Err(batch_failed(format!(
+                    "Wjolt member {polynomial:?} does not share the canonical opening point"
+                )));
+            }
+        } else {
+            common_point = Some(point);
+        }
+        evaluations.push(claim.value);
+    }
+    let common_point = common_point.ok_or_else(|| batch_failed("Wjolt has no members"))?;
+    PCS::verify_batch(
+        w_jolt_commitment,
+        &common_point,
+        &evaluations,
+        &proof.w_jolt,
+        &preprocessing.pcs_setup,
+        transcript,
+    )
+    .map_err(opening_failed)?;
+
     let mut packings = Vec::new();
     let mut commitments = Vec::new();
     let mut setups = Vec::new();
-    match &plan {
-        WJoltPlan::Packed { packing } => {
-            packings.push(packing.clone());
-            commitments.push(w_jolt_commitment);
-            setups.push(&preprocessing.pcs_setup);
-        }
-        WJoltPlan::Grouped {
-            members,
-            member_arity,
-        } => {
-            for polynomial in members {
-                packings.push(
-                    W_JOLT_STRATEGY
-                        .member_packing(*polynomial, *member_arity)
-                        .map_err(batch_failed)?,
-                );
-                commitments.push(w_jolt_commitment);
-                setups.push(&preprocessing.pcs_setup);
-            }
-        }
-    }
-    let mut groups = vec![PackedObjectGroup {
-        start: 0,
-        len: packings.len(),
-    }];
+    let mut groups = Vec::new();
 
     if let Some((packing, commitment, setup)) = advice_object::<PCS>(
         reconstruction
@@ -239,21 +295,7 @@ where
         }
     }
 
-    // Re-express each grouped `W_jolt` leaf claim on its member's committed
-    // variable order before statement assembly; the `Packed` union and the
-    // singleton objects keep their leaf points untouched.
-    let mut leaves = leaf_claims(stage7, reconstruction);
-    if let WJoltPlan::Grouped { members, .. } = &plan {
-        for polynomial in members {
-            let Some(claim) = leaves.get_mut(polynomial) else {
-                continue;
-            };
-            let mapped = W_JOLT_STRATEGY
-                .member_point(*polynomial, chunk_width, claim.point.as_slice())
-                .map_err(batch_failed)?;
-            *claim = EvaluationClaim::new(Point::high_to_low(mapped), claim.value);
-        }
-    }
+    // Auxiliary objects retain their own logical leaf points and packings.
     let statements = packings
         .iter()
         .zip(&commitments)
@@ -270,7 +312,14 @@ where
         })
         .collect();
 
-    verify_packed_openings(&objects, &groups, proof, transcript).map_err(opening_failed)
+    match (&proof.auxiliary, objects.is_empty()) {
+        (None, true) => Ok(()),
+        (Some(auxiliary), false) => {
+            verify_packed_openings(&objects, &groups, auxiliary, transcript).map_err(opening_failed)
+        }
+        (None, false) => Err(batch_failed("missing auxiliary packed opening proof")),
+        (Some(_), true) => Err(batch_failed("unexpected auxiliary packed opening proof")),
+    }
 }
 
 /// Assembles one object's statement: each of its packing's canonical columns
@@ -354,18 +403,19 @@ fn leaf_claims<F: Field>(
         Poly::RamRa,
     );
 
-    let chunk_values = &stage7.output_values.chunk_reconstruction;
-    let chunk_points = &stage7.output_points.chunk_reconstruction;
     insert_indexed(
         &mut leaves,
-        &chunk_values.chunks,
-        &chunk_points.chunks,
+        &hamming_values.unsigned_inc_chunks,
+        &hamming_points.unsigned_inc_chunks,
         Poly::UnsignedIncChunk,
     );
     insert(
         &mut leaves,
         Poly::UnsignedIncMsb,
-        leaf(chunk_values.msb, &chunk_points.msb),
+        leaf(
+            hamming_values.unsigned_inc_msb,
+            &hamming_points.unsigned_inc_msb,
+        ),
     );
 
     if let Some((values, points)) = reconstruction
@@ -438,12 +488,10 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_claims::protocols::jolt::lattice::packing::proof_packing;
     use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
         TrustedAdviceReconstructionOutputClaims, UntrustedAdviceReconstructionOutputClaims,
     };
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims;
-    use jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::ProgramImageReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::BytecodeRegisterLane;
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -462,8 +510,109 @@ mod tests {
     const LOG_IMAGE_WORDS: usize = 5;
     const ADVICE_WORD_VARS: usize = 3;
 
+    #[derive(Clone, Copy)]
+    struct CommitmentMetadata {
+        one_hot: bool,
+        digest: [u8; 32],
+        num_vars: usize,
+        poly_count: usize,
+    }
+
+    impl WJoltCommitmentMetadata for CommitmentMetadata {
+        fn is_one_hot_backend(&self) -> bool {
+            self.one_hot
+        }
+
+        fn layout_digest(&self) -> [u8; 32] {
+            self.digest
+        }
+
+        fn num_vars(&self) -> usize {
+            self.num_vars
+        }
+
+        fn poly_count(&self) -> usize {
+            self.poly_count
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct SetupMetadata {
+        digest: [u8; 32],
+        num_vars: usize,
+        poly_count: usize,
+    }
+
+    impl WJoltSetupMetadata for SetupMetadata {
+        fn max_num_vars(&self) -> usize {
+            self.num_vars
+        }
+
+        fn max_num_polys_per_commitment_group(&self) -> usize {
+            self.poly_count
+        }
+
+        fn default_layout_digest(&self) -> [u8; 32] {
+            self.digest
+        }
+    }
+
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
+    }
+
+    #[test]
+    fn wjolt_metadata_is_enforced_before_pcs_verification() {
+        let digest = [7; 32];
+        let commitment = CommitmentMetadata {
+            one_hot: true,
+            digest,
+            num_vars: 12,
+            poly_count: 17,
+        };
+        let setup = SetupMetadata {
+            digest,
+            num_vars: 12,
+            poly_count: 17,
+        };
+        assert!(validate_wjolt_metadata(&commitment, &setup, digest, 12, 17).is_ok());
+
+        for invalid in [
+            CommitmentMetadata {
+                one_hot: false,
+                ..commitment
+            },
+            CommitmentMetadata {
+                digest: [8; 32],
+                ..commitment
+            },
+            CommitmentMetadata {
+                num_vars: 13,
+                ..commitment
+            },
+            CommitmentMetadata {
+                poly_count: 18,
+                ..commitment
+            },
+        ] {
+            assert!(validate_wjolt_metadata(&invalid, &setup, digest, 12, 17).is_err());
+        }
+        for invalid in [
+            SetupMetadata {
+                digest: [9; 32],
+                ..setup
+            },
+            SetupMetadata {
+                num_vars: 13,
+                ..setup
+            },
+            SetupMetadata {
+                poly_count: 18,
+                ..setup
+            },
+        ] {
+            assert!(validate_wjolt_metadata(&commitment, &invalid, digest, 12, 17).is_err());
+        }
     }
 
     fn point(arity: usize) -> Vec<Fr> {
@@ -478,19 +627,19 @@ mod tests {
                 .collect(),
             bytecode_ra: (0..layout.bytecode()).map(|i| fr(200 + i as u64)).collect(),
             ram_ra: (0..layout.ram()).map(|i| fr(300 + i as u64)).collect(),
+            unsigned_inc_chunks: (0..INC_CHUNKS).map(|i| fr(400 + i as u64)).collect(),
+            unsigned_inc_msb: fr(500),
         };
         let hamming_points = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![point(one_hot_arity); layout.instruction()],
             bytecode_ra: vec![point(one_hot_arity); layout.bytecode()],
             ram_ra: vec![point(one_hot_arity); layout.ram()],
+            unsigned_inc_chunks: vec![point(one_hot_arity); INC_CHUNKS],
+            unsigned_inc_msb: point(one_hot_arity),
         };
         Stage7ClearOutput {
             output_values: Stage7OutputClaims {
                 hamming_weight_claim_reduction: hamming_values,
-                chunk_reconstruction: ChunkReconstructionOutputClaims {
-                    chunks: (0..INC_CHUNKS).map(|i| fr(400 + i as u64)).collect(),
-                    msb: fr(500),
-                },
                 trusted_advice: None,
                 untrusted_advice: None,
                 bytecode_address_phase: None,
@@ -498,10 +647,6 @@ mod tests {
             },
             output_points: Stage7OutputPoints {
                 hamming_weight_claim_reduction: hamming_points,
-                chunk_reconstruction: ChunkReconstructionOutputClaims {
-                    chunks: vec![point(one_hot_arity); INC_CHUNKS],
-                    msb: point(LOG_T),
-                },
                 trusted_advice: None,
                 untrusted_advice: None,
                 bytecode_address_phase: None,
@@ -572,23 +717,17 @@ mod tests {
         }
     }
 
-    /// Every commitment object's packing resolves exactly one leaf claim per
+    /// Every auxiliary object's packing resolves exactly one leaf claim per
     /// column at the slot's arity — `prepare_statement` machine-checks
     /// one-claim-per-slot, full coverage, and per-slot point arity, so a
     /// passing preparation pins the leaf-resolution map against the canonical
     /// packings.
     #[test]
-    fn packed_statements_cover_every_object_column_at_slot_arity() {
+    fn auxiliary_packed_statements_cover_every_column_at_slot_arity() {
         let layout = JoltRaPolynomialLayout::new(2, 1, 1).unwrap();
         let leaves = leaf_claims(&stage7(layout), &reconstruction());
 
         let objects = [
-            proof_packing(&ProofPackingShape {
-                ra_layout: layout,
-                log_t: LOG_T,
-                log_k_chunk: LOG_K_CHUNK,
-            })
-            .unwrap(),
             advice_bytes_packing(JoltAdviceKind::Untrusted, ADVICE_WORD_VARS).unwrap(),
             advice_bytes_packing(JoltAdviceKind::Trusted, ADVICE_WORD_VARS).unwrap(),
             precommitted_packing(&PrecommittedPackingShape {

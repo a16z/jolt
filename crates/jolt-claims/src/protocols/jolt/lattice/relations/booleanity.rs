@@ -43,8 +43,9 @@ impl LatticeBooleanityDimensions {
 }
 
 /// Every boolean-checked opening at the booleanity point: the base `Ra`
-/// families at `(r_address ‖ r_cycle)`, the unsigned-inc chunks at the same
-/// point, and the msb at `r_cycle` (it has no address variables).
+/// families, unsigned-inc chunks, and increment MSB at the same full
+/// `(r_address || r_cycle)` point. The MSB column is a strict one-hot column
+/// whose hot address is zero or one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

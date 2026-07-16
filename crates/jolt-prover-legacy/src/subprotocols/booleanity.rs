@@ -605,14 +605,10 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 }
 
-/// Extends the base booleanity params for the lattice/packed mode: the
-/// unsigned-inc chunk columns join `polynomial_types` (they are one-hot over
-/// the same `(address ‖ cycle)` domain as the `Ra` families) and
-/// `gamma_powers_square` grows by `chunk_count + 1` — the extra last entry is
-/// the msb column's weight. The msb column has no address variables, so it
-/// joins only the cycle phase (its `(msb² − msb)` term contributes exactly
-/// zero to every address round: the cycle variables stay hypercube-summed
-/// there and the column is boolean).
+/// Extends the base Booleanity parameters with the unsigned-inc chunks and
+/// MSB. Every added member is a full `(address ‖ cycle)` one-hot polynomial;
+/// the MSB selects address zero or one. The batching weights therefore grow
+/// by `chunk_count + 1`, and every added member participates in both phases.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub fn lattice_booleanity_params<F: JoltField>(
     log_t: usize,
@@ -627,6 +623,9 @@ pub fn lattice_booleanity_params<F: JoltField>(
             .polynomial_types
             .push(CommittedPolynomial::UnsignedIncChunk(index));
     }
+    params
+        .polynomial_types
+        .push(CommittedPolynomial::UnsignedIncMsb);
     let gamma_f: F = params.gamma.into();
     let gamma_sq = gamma_f.square();
     let mut next = *params
@@ -641,14 +640,14 @@ pub fn lattice_booleanity_params<F: JoltField>(
     params
 }
 
-/// Per-cycle lattice inc columns consumed by the lattice booleanity and
-/// chunk-reconstruction provers.
+/// Per-cycle lattice increment one-hot columns consumed by Booleanity and the
+/// Stage 7 hamming-weight reduction.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub struct LatticeIncColumns {
-    /// `symbols[i][j]` — chunk `i`'s hot symbol at cycle `j`.
-    pub symbols: Vec<Vec<u8>>,
-    /// The msb bit per cycle.
-    pub msb: Vec<u8>,
+    /// `hot_lanes[i][j]` is chunk `i`'s hot address at cycle `j`.
+    pub hot_lanes: Vec<Vec<u8>>,
+    /// The MSB column's hot address (zero or one) at each cycle.
+    pub msb_hot_lanes: Vec<u8>,
     /// The signed fused delta per cycle.
     pub fused: Vec<i128>,
 }
@@ -658,9 +657,9 @@ pub struct LatticeIncColumns {
 pub struct LatticeBooleanityCycleInput<F: JoltField> {
     base: BooleanityCycleInput<F>,
     #[allocative(skip)]
-    symbols: Vec<Vec<u8>>,
+    hot_lanes: Vec<Vec<u8>>,
     #[allocative(skip)]
-    msb: Vec<u8>,
+    msb_hot_lanes: Vec<u8>,
 }
 
 /// Lattice booleanity address phase: the base prover with the chunk columns'
@@ -672,9 +671,9 @@ pub struct LatticeBooleanityCycleInput<F: JoltField> {
 pub struct LatticeBooleanityAddressSumcheckProver<F: JoltField> {
     inner: BooleanityAddressSumcheckProver<F>,
     #[allocative(skip)]
-    symbols: Vec<Vec<u8>>,
+    hot_lanes: Vec<Vec<u8>>,
     #[allocative(skip)]
-    msb: Vec<u8>,
+    msb_hot_lanes: Vec<u8>,
 }
 
 #[cfg(all(feature = "prover", feature = "akita"))]
@@ -685,13 +684,13 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
         trace: &[Cycle],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        symbols: Vec<Vec<u8>>,
-        msb: Vec<u8>,
+        hot_lanes: Vec<Vec<u8>>,
+        msb_hot_lanes: Vec<u8>,
     ) -> Self {
         let mut inner =
             BooleanityAddressSumcheckProver::initialize(params, trace, bytecode, memory_layout);
 
-        // Chunk pushforwards `G_i(k) = Σ_{j: symbol_i(j) = k} eq(r_cycle, j)`,
+        // Chunk pushforwards `G_i(k) = Σ_{j: hot_lane_i(j) = k} eq(r_cycle, j)`,
         // with the same two-table split-eq as `compute_all_G`.
         let r_cycle = &inner.params.common.r_cycle;
         let lo_bits = r_cycle.len() / 2;
@@ -702,12 +701,14 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
             || EqPolynomial::<F>::evals(r_lo),
         );
         let k_chunk = 1usize << inner.params.common.log_k_chunk;
-        let chunk_g: Vec<Vec<F>> = symbols
+        let mut one_hot_columns = hot_lanes.clone();
+        one_hot_columns.push(msb_hot_lanes.clone());
+        let chunk_g: Vec<Vec<F>> = one_hot_columns
             .par_iter()
-            .map(|symbol_column| {
+            .map(|hot_lane_column| {
                 let mut g = vec![F::zero(); k_chunk];
-                for (j, symbol) in symbol_column.iter().enumerate() {
-                    g[*symbol as usize] += e_hi[j >> lo_bits] * e_lo[j & ((1 << lo_bits) - 1)];
+                for (j, hot_lane) in hot_lane_column.iter().enumerate() {
+                    g[*hot_lane as usize] += e_hi[j >> lo_bits] * e_lo[j & ((1 << lo_bits) - 1)];
                 }
                 g
             })
@@ -716,16 +717,16 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
 
         Self {
             inner,
-            symbols,
-            msb,
+            hot_lanes,
+            msb_hot_lanes,
         }
     }
 
     pub fn into_cycle_input(self) -> LatticeBooleanityCycleInput<F> {
         LatticeBooleanityCycleInput {
             base: self.inner.into_cycle_input(),
-            symbols: self.symbols,
-            msb: self.msb,
+            hot_lanes: self.hot_lanes,
+            msb_hot_lanes: self.msb_hot_lanes,
         }
     }
 }
@@ -765,16 +766,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 }
 
 /// Lattice booleanity cycle phase: the base fold extended over the chunk
-/// columns (pre-scaled dense `H` tables, one-hot in the shared bound-address
-/// eq table) and the msb column (a dense boolean column with no address
-/// variables, pre-scaled by its own `ρ`).
+/// columns, including the MSB, as full one-hot columns in the shared bound-
+/// address table.
 #[cfg(all(feature = "prover", feature = "akita"))]
 #[derive(Allocative)]
 pub struct LatticeBooleanityCycleSumcheckProver<F: JoltField> {
     D: GruenSplitEqPolynomial<F>,
     H: SharedRaPolynomials<F>,
     chunk_h: Vec<crate::poly::multilinear_polynomial::MultilinearPolynomial<F>>,
-    msb: crate::poly::multilinear_polynomial::MultilinearPolynomial<F>,
     eq_r_r: F,
     /// Per-column powers γ^i over `polynomial_types ++ [msb]`.
     gamma_powers: Vec<F>,
@@ -798,7 +797,7 @@ impl<F: JoltField> LatticeBooleanityCycleSumcheckProver<F> {
             + params.common.one_hot_params.bytecode_d
             + params.common.one_hot_params.ram_d;
         let (gamma_powers, gamma_powers_inv) =
-            compute_gamma_powers(params.common.gamma, num_one_hot + 1);
+            compute_gamma_powers(params.common.gamma, num_one_hot);
 
         let tables: Vec<Vec<F>> = (0..num_base)
             .into_par_iter()
@@ -807,27 +806,20 @@ impl<F: JoltField> LatticeBooleanityCycleSumcheckProver<F> {
                 base_eq.iter().map(|v| rho * *v).collect()
             })
             .collect();
-        let chunk_h: Vec<MultilinearPolynomial<F>> = input
-            .symbols
+        let mut one_hot_columns = input.hot_lanes;
+        one_hot_columns.push(input.msb_hot_lanes);
+        let chunk_h: Vec<MultilinearPolynomial<F>> = one_hot_columns
             .par_iter()
             .enumerate()
-            .map(|(index, symbol_column)| {
+            .map(|(index, hot_lane_column)| {
                 let rho = gamma_powers[num_base + index];
-                symbol_column
+                hot_lane_column
                     .iter()
-                    .map(|symbol| rho * base_eq[*symbol as usize])
+                    .map(|hot_lane| rho * base_eq[*hot_lane as usize])
                     .collect::<Vec<F>>()
                     .into()
             })
             .collect();
-        let rho_msb = gamma_powers[num_one_hot];
-        let msb: MultilinearPolynomial<F> = input
-            .msb
-            .par_iter()
-            .map(|bit| rho_msb * F::from_u64(*bit as u64))
-            .collect::<Vec<F>>()
-            .into();
-
         Self {
             D: GruenSplitEqPolynomial::new(&params.common.r_cycle, BindingOrder::LowToHigh),
             H: SharedRaPolynomials::new(
@@ -836,7 +828,6 @@ impl<F: JoltField> LatticeBooleanityCycleSumcheckProver<F> {
                 params.common.one_hot_params.clone(),
             ),
             chunk_h,
-            msb,
             eq_r_r,
             gamma_powers,
             gamma_powers_inv,
@@ -855,7 +846,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let num_base = self.H.num_polys();
-        let num_one_hot = self.params.common.polynomial_types.len();
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = self
             .D
             .par_fold_out_in_unreduced::<{ DEGREE_BOUND - 1 }>(&|j_prime| {
@@ -875,14 +865,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                     let b = h_1 - h_0;
                     let rho = self.gamma_powers[num_base + index];
                     acc_c += h_0.mul_to_product_accum(h_0 - rho);
-                    acc_e += b.mul_to_product_accum(b);
-                }
-                {
-                    let m_0 = self.msb.get_bound_coeff(2 * j_prime);
-                    let m_1 = self.msb.get_bound_coeff(2 * j_prime + 1);
-                    let b = m_1 - m_0;
-                    let rho = self.gamma_powers[num_one_hot];
-                    acc_c += m_0.mul_to_product_accum(m_0 - rho);
                     acc_e += b.mul_to_product_accum(b);
                 }
                 [
@@ -905,7 +887,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         for chunk in self.chunk_h.iter_mut() {
             chunk.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
-        self.msb.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn cache_openings(
@@ -917,7 +898,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let num_base = self.H.num_polys();
-        let num_one_hot = self.params.common.polynomial_types.len();
         let mut claims: Vec<F> = (0..num_base)
             .map(|i| self.H.final_sumcheck_claim(i) * self.gamma_powers_inv[i])
             .collect();
@@ -930,12 +910,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             opening_point.r[..self.params.common.log_k_chunk].to_vec(),
             opening_point.r[self.params.common.log_k_chunk..].to_vec(),
             claims,
-        );
-        accumulator.append_dense(
-            CommittedPolynomial::UnsignedIncMsb,
-            SumcheckId::Booleanity,
-            opening_point.r[self.params.common.log_k_chunk..].to_vec(),
-            self.msb.final_sumcheck_claim() * self.gamma_powers_inv[num_one_hot],
         );
     }
 
@@ -1148,7 +1122,7 @@ mod tests {
         let shifted = |delta: i128| {
             (delta + (1i128 << crate::zkvm::packed_witness::UNSIGNED_INC_BITS)) as u128
         };
-        let symbols: Vec<Vec<u8>> = (0..chunk_count)
+        let hot_lanes: Vec<Vec<u8>> = (0..chunk_count)
             .map(|index| {
                 fused
                     .iter()
@@ -1207,8 +1181,8 @@ mod tests {
         let params =
             lattice_booleanity_params::<Fr>(LOG_T, &one_hot_params, &accumulator, &mut transcript);
         let num_one_hot = params.polynomial_types.len();
-        assert_eq!(num_one_hot, num_base + chunk_count);
-        assert_eq!(params.gamma_powers_square.len(), num_one_hot + 1);
+        assert_eq!(num_one_hot, num_base + chunk_count + 1);
+        assert_eq!(params.gamma_powers_square.len(), num_one_hot);
 
         // The 6a-bound address point, and its eq scalar/table exactly as the
         // cycle prover derives them.
@@ -1227,7 +1201,7 @@ mod tests {
 
         // Brute-forced cycle-phase input claim: eq_r_r * sum_j eq(r_cycle, j)
         // * sum_legs (h^2 - rho*h) with h the rho-scaled table reads.
-        let (gamma_powers, _) = compute_gamma_powers::<Fr>(params.gamma, num_one_hot + 1);
+        let (gamma_powers, _) = compute_gamma_powers::<Fr>(params.gamma, num_one_hot);
         let w_cycle = EqPolynomial::<Fr>::evals(&params.r_cycle);
         let leg = |rho: Fr, f: Fr| {
             let h = rho * f;
@@ -1243,10 +1217,13 @@ mod tests {
                     .unwrap_or(Fr::zero());
                 inner += leg(gamma_powers[i], f);
             }
-            for (index, column) in symbols.iter().enumerate() {
+            for (index, column) in hot_lanes.iter().enumerate() {
                 inner += leg(gamma_powers[num_base + index], f_table[column[j] as usize]);
             }
-            inner += leg(gamma_powers[num_one_hot], Fr::from(msb[j] as u64));
+            inner += leg(
+                gamma_powers[num_base + chunk_count],
+                f_table[msb[j] as usize],
+            );
             input_claim += w_cycle[j] * inner;
         }
         input_claim *= eq_r_r;
@@ -1266,8 +1243,8 @@ mod tests {
                 params: params.clone(),
                 ra_indices,
             },
-            symbols,
-            msb,
+            hot_lanes,
+            msb_hot_lanes: msb,
         };
         let mut prover = LatticeBooleanityCycleSumcheckProver::initialize(input, &accumulator);
 
@@ -1314,12 +1291,6 @@ mod tests {
                 accumulator.get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity);
             fold += (c.square() - c) * *gamma_2i;
         }
-        let (_, msb_claim) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::UnsignedIncMsb,
-            SumcheckId::Booleanity,
-        );
-        fold +=
-            (msb_claim.square() - msb_claim) * cycle_params.common.gamma_powers_square[num_one_hot];
         let expected = EqPolynomial::<Fr>::mle(
             &cycle_params.full_challenges(&challenges),
             &cycle_params.common.combined_r_big_endian(),

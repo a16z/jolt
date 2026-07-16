@@ -1,144 +1,132 @@
-//! The `W_jolt` commitment strategy: every fact the prover and verifier must
-//! agree on to commit the packed witness and settle its joint opening,
-//! owned in one place. Selected at compile time by the `packed` cargo
-//! feature (default: [`WJoltStrategy::Grouped`]). Consumers `match` on
-//! [`W_JOLT_STRATEGY`], so both strategies stay compile-checked in every
-//! build, and cargo feature unification makes a prover/verifier strategy
-//! mismatch unrepresentable within one binary.
+//! The canonical native-Akita `W_jolt` commitment layout. Every committed
+//! member is a strict `K x T` one-hot polynomial, in the order returned by
+//! [`wjolt_members`](super::packing::wjolt_members), and all members open at
+//! one common `(cycle || address)` point.
 
+use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::Field;
-use jolt_openings::{OpeningsError, PrefixPacking};
+use jolt_openings::OpeningsError;
 
 use super::super::JoltCommittedPolynomial;
-use super::packing::{proof_packing, ProofPackingShape};
+use super::packing::{wjolt_members, WJoltShape};
 
-/// The strategy in force: `Grouped` by default, `Packed` under the `packed`
-/// cargo feature.
-#[cfg(feature = "packed")]
-pub const W_JOLT_STRATEGY: WJoltStrategy = WJoltStrategy::Packed;
-#[cfg(not(feature = "packed"))]
-pub const W_JOLT_STRATEGY: WJoltStrategy = WJoltStrategy::Grouped;
+/// Wjolt is always committed as one native Akita group of strict one-hot
+/// members.
+pub const W_JOLT_LAYOUT: WJoltLayout = WJoltLayout;
 
-/// How the per-proof packed witness (`W_jolt`) is committed.
+/// The one protocol layout for the per-proof `W_jolt` commitment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WJoltStrategy {
-    /// One prefix-packed sparse-unit polynomial over the canonical proof
-    /// packing — every column scattered into a single committed object,
-    /// opened as a singleton.
-    Packed,
-    /// One commitment group of strict row-major one-hot members — one
-    /// `K = 2^log_k_chunk` member per committed column — reduced at a shared
-    /// cell point and opened by a single native batch proof.
-    Grouped,
+pub struct WJoltLayout;
+
+/// The canonical member order and uniform arity for one proof shape.
+pub struct WJoltLayoutPlan {
+    pub members: Vec<JoltCommittedPolynomial>,
+    pub member_arity: usize,
 }
 
-/// The strategy's object layout for a proof shape.
-pub enum WJoltPlan {
-    /// The single packed object: its canonical multi-slot packing. Leaf
-    /// claims keep their `(symbol ‖ cycle)` points; the packing's prefixes
-    /// place them.
-    Packed {
-        packing: PrefixPacking<JoltCommittedPolynomial>,
-    },
-    /// The member group: the canonical column order and the shared committed
-    /// arity every member polynomial has (the native batch opens them at a
-    /// single point).
-    Grouped {
-        members: Vec<JoltCommittedPolynomial>,
-        member_arity: usize,
-    },
-}
-
-/// The commitment-object setup shape a strategy requires.
+/// The commitment-object setup shape the layout requires.
 pub struct WJoltSetupShape {
     pub num_vars: usize,
     pub num_polys: usize,
-    /// Whether the object only ever commits/opens through the backend's
-    /// one-hot flavor (the full-flavor setup of the same shape is large and
-    /// slow, and a grouped one-hot object never touches it).
-    pub one_hot_only: bool,
 }
 
-impl WJoltStrategy {
+impl WJoltLayout {
     /// The canonical object layout for `shape`.
-    pub fn plan(&self, shape: &ProofPackingShape) -> Result<WJoltPlan, OpeningsError> {
-        let packing =
-            proof_packing(shape).map_err(|error| OpeningsError::InvalidBatch(error.to_string()))?;
-        Ok(match self {
-            Self::Packed => WJoltPlan::Packed { packing },
-            Self::Grouped => WJoltPlan::Grouped {
-                members: packing
-                    .iter()
-                    .map(|(polynomial, _slot)| *polynomial)
-                    .collect(),
-                member_arity: shape.log_k_chunk + shape.log_t,
-            },
+    pub fn plan(&self, shape: &WJoltShape) -> Result<WJoltLayoutPlan, OpeningsError> {
+        let members =
+            wjolt_members(shape).map_err(|error| OpeningsError::InvalidBatch(error.to_string()))?;
+        Ok(WJoltLayoutPlan {
+            members,
+            member_arity: shape.log_k_chunk + shape.log_t,
         })
     }
 
     /// The commitment-object setup shape.
-    pub fn setup_shape(&self, shape: &ProofPackingShape) -> Result<WJoltSetupShape, OpeningsError> {
-        Ok(match self.plan(shape)? {
-            WJoltPlan::Packed { packing } => WJoltSetupShape {
-                num_vars: packing.packed_num_vars,
-                num_polys: 1,
-                one_hot_only: false,
-            },
-            WJoltPlan::Grouped {
-                members,
-                member_arity,
-            } => WJoltSetupShape {
-                num_vars: member_arity,
-                num_polys: members.len(),
-                one_hot_only: true,
-            },
+    pub fn setup_shape(&self, shape: &WJoltShape) -> Result<WJoltSetupShape, OpeningsError> {
+        let plan = self.plan(shape)?;
+        Ok(WJoltSetupShape {
+            num_vars: plan.member_arity,
+            num_polys: plan.members.len(),
         })
     }
 
-    /// Maps a column's leaf-claim point (its `(symbol ‖ cycle)` cell order,
+    /// A protocol-owned digest of the exact native batch layout. This binds
+    /// the commitment and verifier setup to the ordered member identities,
+    /// dimensions, and layout version; it is never supplied by the proof.
+    pub fn layout_digest(&self, shape: &WJoltShape) -> Result<[u8; 32], OpeningsError> {
+        let WJoltLayoutPlan {
+            members,
+            member_arity,
+        } = self.plan(shape)?;
+        let mut hasher = Blake2b::<U32>::new();
+        hasher.update(b"jolt/akita/w_jolt/native-one-hot/v1");
+        append_usize(&mut hasher, member_arity);
+        append_usize(&mut hasher, members.len());
+        append_usize(&mut hasher, shape.log_t);
+        append_usize(&mut hasher, shape.log_k_chunk);
+        append_usize(&mut hasher, shape.ra_layout.instruction());
+        append_usize(&mut hasher, shape.ra_layout.bytecode());
+        append_usize(&mut hasher, shape.ra_layout.ram());
+        for member in members {
+            match member {
+                JoltCommittedPolynomial::InstructionRa(index) => {
+                    hasher.update([0]);
+                    append_usize(&mut hasher, index);
+                }
+                JoltCommittedPolynomial::BytecodeRa(index) => {
+                    hasher.update([1]);
+                    append_usize(&mut hasher, index);
+                }
+                JoltCommittedPolynomial::RamRa(index) => {
+                    hasher.update([2]);
+                    append_usize(&mut hasher, index);
+                }
+                JoltCommittedPolynomial::UnsignedIncChunk(index) => {
+                    hasher.update([3]);
+                    append_usize(&mut hasher, index);
+                }
+                JoltCommittedPolynomial::UnsignedIncMsb => hasher.update([4]),
+                other => {
+                    return Err(OpeningsError::InvalidBatch(format!(
+                        "non-Wjolt polynomial {other:?} in native one-hot layout"
+                    )));
+                }
+            }
+        }
+        Ok(hasher.finalize().into())
+    }
+
+    /// Maps a column's leaf-claim point (its `(address || cycle)` cell order,
     /// high-to-low) onto the committed variable order.
     ///
-    /// [`Self::Packed`] commits the cell order directly — the leaf point is
-    /// already the slot-local point the packing expects. For
-    /// [`Self::Grouped`], members are row-major (`cycle ‖ lane`): `Ra` and
-    /// unsigned-inc chunk columns move their `chunk_width`-variable symbol
-    /// block behind the cycle block, and the msb column — committed as a
-    /// `2^chunk_width`-lane member holding its bit on lanes 0/1 — gains the
-    /// constant lane suffix selecting lane 1:
-    /// `M(r_cycle) = member(r_cycle ‖ 0..0, 1)`.
+    /// Members are row-major (`cycle || address`), while relation leaves use
+    /// (`address || cycle`), so this moves the address block behind the cycle
+    /// block. The MSB is treated identically: it is a full `K x T` one-hot
+    /// member whose hot address is either zero or one.
     pub fn member_point<F: Field>(
         &self,
         polynomial: JoltCommittedPolynomial,
         chunk_width: usize,
         leaf_point: &[F],
     ) -> Result<Vec<F>, OpeningsError> {
-        if let Self::Packed = self {
-            return Ok(leaf_point.to_vec());
-        }
         let invalid = |message: String| OpeningsError::InvalidBatch(message);
         match polynomial {
             JoltCommittedPolynomial::InstructionRa(_)
             | JoltCommittedPolynomial::BytecodeRa(_)
             | JoltCommittedPolynomial::RamRa(_)
-            | JoltCommittedPolynomial::UnsignedIncChunk(_) => {
+            | JoltCommittedPolynomial::UnsignedIncChunk(_)
+            | JoltCommittedPolynomial::UnsignedIncMsb => {
                 if leaf_point.len() < chunk_width {
                     return Err(invalid(format!(
                         "{polynomial:?} leaf point has {} variables, below its \
-                         {chunk_width}-variable symbol block",
+                         {chunk_width}-variable address block",
                         leaf_point.len()
                     )));
                 }
-                let (symbol, cycle) = leaf_point.split_at(chunk_width);
+                let (address, cycle) = leaf_point.split_at(chunk_width);
                 let mut point = Vec::with_capacity(leaf_point.len());
                 point.extend_from_slice(cycle);
-                point.extend_from_slice(symbol);
-                Ok(point)
-            }
-            JoltCommittedPolynomial::UnsignedIncMsb => {
-                let mut point = Vec::with_capacity(leaf_point.len() + chunk_width);
-                point.extend_from_slice(leaf_point);
-                point.extend(std::iter::repeat_n(F::zero(), chunk_width - 1));
-                point.push(F::one());
+                point.extend_from_slice(address);
                 Ok(point)
             }
             other => Err(invalid(format!(
@@ -146,15 +134,62 @@ impl WJoltStrategy {
             ))),
         }
     }
+}
 
-    /// The trivial single-slot packing a [`Self::Grouped`] member object
-    /// presents to the joint opening (the member is its own whole domain —
-    /// no prefix bits).
-    pub fn member_packing(
-        &self,
-        polynomial: JoltCommittedPolynomial,
-        member_arity: usize,
-    ) -> Result<PrefixPacking<JoltCommittedPolynomial>, OpeningsError> {
-        PrefixPacking::new([(polynomial, member_arity)])
+fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
+    hasher.update((value as u64).to_le_bytes());
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn shape(log_t: usize) -> WJoltShape {
+        WJoltShape {
+            ra_layout: JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
+            log_t,
+            log_k_chunk: 8,
+        }
+    }
+
+    #[test]
+    fn native_layout_is_uniform_and_digest_bound() {
+        let WJoltLayoutPlan {
+            members,
+            member_arity,
+        } = W_JOLT_LAYOUT.plan(&shape(5)).unwrap();
+        assert_eq!(member_arity, 13);
+        assert_eq!(
+            members.last(),
+            Some(&JoltCommittedPolynomial::UnsignedIncMsb)
+        );
+
+        let digest = W_JOLT_LAYOUT.layout_digest(&shape(5)).unwrap();
+        assert_ne!(digest, [0; 32]);
+        assert_ne!(digest, W_JOLT_LAYOUT.layout_digest(&shape(6)).unwrap());
+    }
+
+    #[test]
+    fn every_member_uses_the_same_point_permutation() {
+        let leaf = (0..5).map(Fr::from_u64).collect::<Vec<_>>();
+        let expected = [2, 3, 4, 0, 1]
+            .into_iter()
+            .map(Fr::from_u64)
+            .collect::<Vec<_>>();
+        for polynomial in [
+            JoltCommittedPolynomial::InstructionRa(0),
+            JoltCommittedPolynomial::BytecodeRa(0),
+            JoltCommittedPolynomial::RamRa(0),
+            JoltCommittedPolynomial::UnsignedIncChunk(0),
+            JoltCommittedPolynomial::UnsignedIncMsb,
+        ] {
+            assert_eq!(
+                W_JOLT_LAYOUT.member_point(polynomial, 2, &leaf).unwrap(),
+                expected
+            );
+        }
     }
 }

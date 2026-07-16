@@ -4,6 +4,8 @@ pub mod batch;
 pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod committed_reduction_cycle_phase;
+#[cfg(feature = "akita")]
+pub mod fused_inc_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_ra_virtualization;
 pub mod outputs;

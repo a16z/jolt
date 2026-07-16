@@ -23,3 +23,54 @@ mod verify;
 
 pub use outputs::{Stage8Output, Stage8ZkOutput};
 pub use verify::verify;
+
+/// Metadata Stage 8 must enforce before dispatching a native Wjolt opening.
+#[cfg(feature = "akita")]
+pub trait WJoltCommitmentMetadata {
+    fn is_one_hot_backend(&self) -> bool;
+    fn layout_digest(&self) -> [u8; 32];
+    fn num_vars(&self) -> usize;
+    fn poly_count(&self) -> usize;
+}
+
+#[cfg(feature = "akita")]
+impl WJoltCommitmentMetadata for jolt_akita::AkitaCommitment {
+    fn is_one_hot_backend(&self) -> bool {
+        self.backend_flavor() == jolt_akita::AkitaBackendFlavor::OneHot
+    }
+
+    fn layout_digest(&self) -> [u8; 32] {
+        self.layout_digest()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars()
+    }
+
+    fn poly_count(&self) -> usize {
+        self.poly_count()
+    }
+}
+
+/// Shape metadata for the verifier-owned Wjolt setup.
+#[cfg(feature = "akita")]
+pub trait WJoltSetupMetadata {
+    fn max_num_vars(&self) -> usize;
+    fn max_num_polys_per_commitment_group(&self) -> usize;
+    fn default_layout_digest(&self) -> [u8; 32];
+}
+
+#[cfg(feature = "akita")]
+impl WJoltSetupMetadata for jolt_akita::AkitaVerifierSetup {
+    fn max_num_vars(&self) -> usize {
+        self.max_num_vars()
+    }
+
+    fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group()
+    }
+
+    fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest()
+    }
+}

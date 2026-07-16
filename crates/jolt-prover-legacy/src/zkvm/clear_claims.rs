@@ -637,9 +637,10 @@ mod packed {
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
         self, BytecodeChunkReconstructionOutputClaims,
     };
-    use jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::{
-        self, ChunkReconstructionOutputClaims,
+    use jolt_claims::protocols::jolt::lattice::relations::fused_inc_claim_reduction::{
+        self, FusedIncClaimReductionOutputClaims,
     };
+    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
     use jolt_claims::protocols::jolt::lattice::relations::inc_virtualization::{
         self, IncVirtualizationOutputClaims,
     };
@@ -790,6 +791,9 @@ mod packed {
             instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
                 committed_instruction_ra,
             },
+            fused_inc_claim_reduction: FusedIncClaimReductionOutputClaims {
+                fused_inc: claims.require(fused_inc_claim_reduction::fused_inc_reduced_opening())?,
+            },
             trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
             untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),
             bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
@@ -830,12 +834,10 @@ mod packed {
             });
         }
 
-        let chunks = indexed_family(claims, |index| {
-            chunk_reconstruction::reconstructed_chunk_opening(index)
-        });
+        let chunks = indexed_family(claims, lattice_hamming::reduced_unsigned_inc_chunk_opening);
         if chunks.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: chunk_reconstruction::reconstructed_chunk_opening(0),
+                id: lattice_hamming::reduced_unsigned_inc_chunk_opening(0),
             });
         }
 
@@ -844,10 +846,9 @@ mod packed {
                 instruction_ra,
                 bytecode_ra,
                 ram_ra,
-            },
-            chunk_reconstruction: ChunkReconstructionOutputClaims {
-                chunks,
-                msb: claims.require(chunk_reconstruction::reconstructed_msb_opening())?,
+                unsigned_inc_chunks: chunks,
+                unsigned_inc_msb: claims
+                    .require(lattice_hamming::reduced_unsigned_inc_msb_opening())?,
             },
             trusted_advice: advice_address_phase_claim_from_openings(
                 claims,

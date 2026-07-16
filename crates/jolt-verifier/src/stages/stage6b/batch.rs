@@ -32,6 +32,8 @@ use super::committed_reduction_cycle_phase::{
     bytecode_reduction_weights, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
+#[cfg(feature = "akita")]
+use super::fused_inc_claim_reduction::FusedIncClaimReduction;
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -313,6 +315,11 @@ impl<F: Field> Stage6bSumchecks<F> {
                 registers_val_evaluation_cycle,
             )
         };
+        #[cfg(feature = "akita")]
+        let fused_inc_claim_reduction = FusedIncClaimReduction::new(
+            trace_dimensions,
+            inc_virtualization.output_points.fused_inc().to_vec(),
+        );
 
         let trusted_advice = trusted_advice_layout
             .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
@@ -339,6 +346,8 @@ impl<F: Field> Stage6bSumchecks<F> {
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
+            #[cfg(feature = "akita")]
+            fused_inc_claim_reduction,
             trusted_advice,
             untrusted_advice,
             bytecode_reduction,

@@ -5,18 +5,33 @@
 //! stage 8 final batched opening. Owns the shared opening-point derivation and the
 //! `EqBooleanity` / `EqVirtualization` public-value computation.
 
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
+#[cfg(feature = "akita")]
+pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
+#[cfg(not(feature = "akita"))]
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{
     HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     HammingWeightClaimReductionOutputClaims,
 };
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{
-    geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions,
+    HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
+};
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::{
     HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
+#[cfg(feature = "akita")]
+pub use lattice_hamming::{
+    LatticeHammingWeightClaimReductionInputClaims as HammingWeightClaimReductionInputClaims,
+    LatticeHammingWeightClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
+};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::Stage6bOutputClaims;
@@ -39,6 +54,12 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
             .clone(),
         bytecode_virtualization: cycle_phase.bytecode_read_raf.bytecode_ra.clone(),
         ram_virtualization: cycle_phase.ram_ra_virtualization.ram_ra.clone(),
+        #[cfg(feature = "akita")]
+        unsigned_inc_booleanity: cycle_phase.booleanity.unsigned_inc_chunks.clone(),
+        #[cfg(feature = "akita")]
+        unsigned_inc_msb_booleanity: cycle_phase.booleanity.unsigned_inc_msb,
+        #[cfg(feature = "akita")]
+        fused_inc: cycle_phase.fused_inc_claim_reduction.fused_inc,
     }
 }
 
@@ -47,7 +68,7 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
 /// RAM) order: the leading `log_k_chunk` coordinates of each stage-6b RA
 /// virtualization opening point.
 pub fn stage7_hamming_virtualization_address_points<F: Field>(
-    dimensions: HammingWeightClaimReductionDimensions,
+    dimensions: HammingDimensions,
     instruction_ra_points: &[Vec<F>],
     bytecode_ra_points: &[Vec<F>],
     ram_ra_points: &[Vec<F>],
@@ -80,8 +101,8 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
 }
 
 pub struct HammingWeightClaimReduction<F: Field> {
-    symbolic: relations::claim_reductions::hamming_weight::ClaimReduction,
-    dimensions: HammingWeightClaimReductionDimensions,
+    symbolic: HammingSymbolic,
+    dimensions: HammingDimensions,
     /// The shared cycle suffix appended to every produced opening point (the
     /// stage-6 booleanity cycle point).
     r_cycle: Vec<F>,
@@ -94,13 +115,13 @@ pub struct HammingWeightClaimReduction<F: Field> {
 
 impl<F: Field> HammingWeightClaimReduction<F> {
     pub fn new(
-        dimensions: HammingWeightClaimReductionDimensions,
+        dimensions: HammingDimensions,
         r_cycle: Vec<F>,
         r_address: Vec<F>,
         virtualization_points: Vec<Vec<F>>,
     ) -> Self {
         Self {
-            symbolic: relations::claim_reductions::hamming_weight::ClaimReduction::new(dimensions),
+            symbolic: HammingSymbolic::new(dimensions),
             dimensions,
             r_cycle,
             r_address,
@@ -145,7 +166,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
-    type Symbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
+    type Symbolic = HammingSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -156,15 +177,27 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &HammingWeightClaimReductionInputClaims<Vec<F>>,
     ) -> Result<HammingWeightClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        let opening_point = self
-            .dimensions
-            .opening_point(sumcheck_point, &self.r_cycle)
-            .map_err(public_input_failed)?;
+        if sumcheck_point.len() != self.dimensions.log_k_chunk {
+            return Err(public_input_failed(format!(
+                "HammingWeight challenge length mismatch: expected {}, got {}",
+                self.dimensions.log_k_chunk,
+                sumcheck_point.len()
+            )));
+        }
+        let mut opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        opening_point.extend_from_slice(&self.r_cycle);
         let layout = self.dimensions.layout;
         Ok(HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![opening_point.clone(); layout.instruction()],
             bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
-            ram_ra: vec![opening_point; layout.ram()],
+            ram_ra: vec![opening_point.clone(); layout.ram()],
+            #[cfg(feature = "akita")]
+            unsigned_inc_chunks: vec![
+                opening_point.clone();
+                self.dimensions.chunking().chunk_count()
+            ],
+            #[cfg(feature = "akita")]
+            unsigned_inc_msb: opening_point,
         })
     }
 
@@ -191,6 +224,33 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 try_eq_mle(rho_rev, point).map_err(public_input_failed)
             }
+            HammingWeightClaimReductionPublic::IdentityAtAddress => {
+                #[cfg(feature = "akita")]
+                {
+                    let mut value = F::zero();
+                    let mut weight = F::one();
+                    for challenge in rho_rev.iter().rev() {
+                        value += weight * *challenge;
+                        weight = weight + weight;
+                    }
+                    Ok(value)
+                }
+                #[cfg(not(feature = "akita"))]
+                {
+                    Err(VerifierError::MissingStageClaimDerived { id: *id })
+                }
+            }
         }
     }
 }
+
+#[cfg(not(feature = "akita"))]
+pub(crate) type HammingDimensions =
+    jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
+#[cfg(feature = "akita")]
+pub(crate) type HammingDimensions = lattice_hamming::LatticeHammingWeightClaimReductionDimensions;
+
+#[cfg(not(feature = "akita"))]
+type HammingSymbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
+#[cfg(feature = "akita")]
+type HammingSymbolic = lattice_hamming::LatticeHammingWeightClaimReduction;

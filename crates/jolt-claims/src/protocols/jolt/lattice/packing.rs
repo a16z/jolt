@@ -1,12 +1,9 @@
-//! The packed-witness semantics in one place: the canonical packing
-//! registration.
+//! Canonical auxiliary-object packings and the native Wjolt member registry.
 //!
 //! `jolt-openings::PrefixPacking` is the single source of truth for slot
-//! assignment — [`proof_packing`]/[`precommitted_packing`] register the
-//! canonical polynomial orderings with it and hand back the packing object
-//! itself; this module never does its own offset arithmetic. A packing is
-//! keyed by [`JoltCommittedPolynomial`] directly: every logical polynomial
-//! of a packed witness is a (lattice-mode) committed polynomial.
+//! assignment within auxiliary advice and committed-program objects. Wjolt is
+//! not prefix-packed: [`wjolt_members`] returns the exact ordered members of
+//! its native same-point one-hot commitment group.
 
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_openings::PrefixPacking;
@@ -20,14 +17,13 @@ use super::geometry::{
     byte_num_vars, word_byte_num_vars, LatticeGeometryError, UnsignedIncChunking,
 };
 
-/// Shape of the per-proof packed commitment (`W_jolt`): the canonical
-/// committed jolt data — `Ra` families, unsigned-inc chunks, msb — as slots
-/// of one packed witness, so a single Akita opening covers the whole set
-/// (Akita has no commitment homomorphism to RLC separate commitments with).
+/// Shape of the per-proof native commitment group (`W_jolt`): the canonical
+/// committed Jolt data — `Ra` families, unsigned-inc chunks, and MSB — as
+/// uniform one-hot members opened together at one point.
 /// Advice byte columns are their own commitment objects
 /// ([`advice_bytes_packing`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProofPackingShape {
+pub struct WJoltShape {
     pub ra_layout: JoltRaPolynomialLayout,
     pub log_t: usize,
     /// Shared one-hot chunk size: the address bits of each `Ra` family and
@@ -50,12 +46,15 @@ pub struct PrecommittedPackingShape {
     pub program_image_log_words: Option<usize>,
 }
 
-/// Registers the canonical per-proof polynomial ordering and returns the
-/// packing.
-pub fn proof_packing(
-    shape: &ProofPackingShape,
-) -> Result<PrefixPacking<JoltCommittedPolynomial>, LatticeGeometryError> {
-    Ok(PrefixPacking::new(proof_polynomials(shape)?)?)
+/// Returns the canonical ordered native one-hot members of Wjolt.
+pub fn wjolt_members(
+    shape: &WJoltShape,
+) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
+    let chunking = UnsignedIncChunking::new(shape.log_k_chunk)?;
+    let mut polynomials = shape.ra_layout.committed_polynomials().collect::<Vec<_>>();
+    polynomials.extend((0..chunking.chunk_count()).map(JoltCommittedPolynomial::UnsignedIncChunk));
+    polynomials.push(JoltCommittedPolynomial::UnsignedIncMsb);
+    Ok(polynomials)
 }
 
 /// Registers the canonical precommitted polynomial ordering and returns the
@@ -79,29 +78,6 @@ pub fn advice_bytes_packing(
         JoltCommittedPolynomial::advice_bytes(kind),
         word_byte_num_vars(word_vars),
     )])?)
-}
-
-fn proof_polynomials(
-    shape: &ProofPackingShape,
-) -> Result<Vec<(JoltCommittedPolynomial, usize)>, LatticeGeometryError> {
-    let chunking = UnsignedIncChunking::new(shape.log_k_chunk)?;
-    let one_hot_vars = shape.log_k_chunk + shape.log_t;
-
-    let mut polynomials = Vec::new();
-    polynomials.extend(
-        shape
-            .ra_layout
-            .committed_polynomials()
-            .map(|polynomial| (polynomial, one_hot_vars)),
-    );
-    polynomials.extend((0..chunking.chunk_count()).map(|index| {
-        (
-            JoltCommittedPolynomial::UnsignedIncChunk(index),
-            one_hot_vars,
-        )
-    }));
-    polynomials.push((JoltCommittedPolynomial::UnsignedIncMsb, shape.log_t));
-    Ok(polynomials)
 }
 
 fn precommitted_polynomials(
@@ -159,8 +135,8 @@ fn precommitted_polynomials(
 mod tests {
     use super::*;
 
-    fn proof_shape() -> ProofPackingShape {
-        ProofPackingShape {
+    fn wjolt_shape() -> WJoltShape {
+        WJoltShape {
             ra_layout: JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
             log_t: 5,
             log_k_chunk: 8,
@@ -177,22 +153,16 @@ mod tests {
     }
 
     #[test]
-    fn proof_packing_covers_every_committed_lattice_polynomial() {
-        let packing = proof_packing(&proof_shape()).unwrap();
+    fn wjolt_members_cover_every_committed_lattice_polynomial() {
+        let members = wjolt_members(&wjolt_shape()).unwrap();
 
         // 4 Ra polynomials + 8 inc chunks + msb.
-        assert_eq!(packing.iter().count(), 4 + 8 + 1);
+        assert_eq!(members.len(), 4 + 8 + 1);
+        assert_eq!(members[0], JoltCommittedPolynomial::InstructionRa(0));
+        assert!(members.contains(&JoltCommittedPolynomial::UnsignedIncChunk(7)));
         assert_eq!(
-            packing[&JoltCommittedPolynomial::InstructionRa(0)].num_vars,
-            13
-        );
-        assert_eq!(
-            packing[&JoltCommittedPolynomial::UnsignedIncChunk(7)].num_vars,
-            13
-        );
-        assert_eq!(
-            packing[&JoltCommittedPolynomial::UnsignedIncMsb].num_vars,
-            5
+            members.last(),
+            Some(&JoltCommittedPolynomial::UnsignedIncMsb)
         );
     }
 
@@ -210,13 +180,13 @@ mod tests {
     }
 
     #[test]
-    fn proof_packing_rejects_invalid_chunk_widths() {
-        let shape = ProofPackingShape {
+    fn wjolt_members_reject_invalid_chunk_widths() {
+        let shape = WJoltShape {
             log_k_chunk: 7,
-            ..proof_shape()
+            ..wjolt_shape()
         };
         assert_eq!(
-            proof_packing(&shape),
+            wjolt_members(&shape),
             Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width: 7 })
         );
     }

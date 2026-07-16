@@ -5,7 +5,7 @@ pub mod bytecode;
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub mod bytecode_reconstruction;
 #[cfg(all(feature = "prover", feature = "akita"))]
-pub mod chunk_reconstruction;
+pub mod fused_inc_claim_reduction;
 pub mod hamming_weight;
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub mod inc_virtualization;
@@ -35,9 +35,7 @@ pub use bytecode_reconstruction::{
     BytecodeReconstructionSumcheckParams, BytecodeReconstructionSumcheckProver,
 };
 #[cfg(all(feature = "prover", feature = "akita"))]
-pub use chunk_reconstruction::{
-    ChunkReconstructionSumcheckParams, ChunkReconstructionSumcheckProver,
-};
+pub use fused_inc_claim_reduction::{FusedIncClaimReductionParams, FusedIncClaimReductionProver};
 #[cfg(feature = "prover")]
 pub use hamming_weight::HammingWeightClaimReductionProver;
 pub use hamming_weight::{HammingWeightClaimReductionParams, HammingWeightClaimReductionVerifier};

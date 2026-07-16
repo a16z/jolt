@@ -9,11 +9,9 @@
 //!   opening, while the ZK arm combines the commitments and checks
 //!   `PCS::verify_zk`, handing its pieces to BlindFold. Statement assembly
 //!   lives in [`super::homomorphic`].
-//! - **Packed** (`akita`): the reconstruction sumcheck phase settles every
-//!   virtualized word/chunk claim against its committed one-hot
-//!   decomposition, then the joint packed opening (one cross-object
-//!   reduction sumcheck, one PCS opening per commitment object) discharges
-//!   the leaf claims. Statement assembly lives in [`super::packed`].
+//! - **Akita**: Wjolt's uniform one-hot members open natively at one point;
+//!   auxiliary advice/program objects use the generic packed-opening
+//!   reduction. Statement assembly lives in [`super::packed`].
 
 #[cfg(not(feature = "akita"))]
 use super::homomorphic::{final_opening_entries, require_commitment_layout};
@@ -224,13 +222,13 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + super::WJoltCommitmentMetadata,
+    PCS::VerifierSetup: super::WJoltSetupMetadata,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    // The reconstruction phase settles every virtualized word/chunk claim
-    // against its committed one-hot decomposition, producing the packed leaf
-    // claims...
+    // The reconstruction phase settles auxiliary word/chunk claims against
+    // their committed one-hot decompositions.
     let reconstruction = super::reconstruction::verify(
         checked,
         proof.stages.reconstruction_sumcheck_proof.as_ref(),
@@ -240,9 +238,8 @@ where
         stage7.clear()?,
     )?;
 
-    // ...which the joint packed opening consumes: one cross-object reduction
-    // sumcheck over every commitment object's statement, then one PCS opening
-    // per object.
+    // Wjolt then opens natively at its shared point; reconstruction leaves are
+    // discharged by separate auxiliary packed openings.
     super::packed::verify(
         formula_dimensions,
         proof.one_hot_config,

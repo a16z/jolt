@@ -28,13 +28,18 @@ pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 /// opening proof at the unified point.
 #[cfg(not(feature = "akita"))]
 pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
-/// The final-opening discharge on the `akita` build: the joint cross-object
-/// reduction plus one PCS opening per commitment object.
+/// The Akita Wjolt opening is native and same-point. Only auxiliary packed
+/// objects retain the generic reduction proof.
 #[cfg(feature = "akita")]
-pub type JointOpeningProof<PCS> = jolt_openings::PackedOpeningProof<
-    <PCS as CommitmentScheme>::Field,
-    <PCS as CommitmentScheme>::Proof,
->;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AkitaJointOpeningProof<F, P> {
+    pub w_jolt: P,
+    pub auxiliary: Option<jolt_openings::PackedOpeningProof<F, P>>,
+}
+
+#[cfg(feature = "akita")]
+pub type JointOpeningProof<PCS> =
+    AkitaJointOpeningProof<<PCS as CommitmentScheme>::Field, <PCS as CommitmentScheme>::Proof>;
 
 #[expect(
     non_snake_case,

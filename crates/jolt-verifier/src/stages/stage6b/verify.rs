@@ -8,6 +8,11 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "akita")]
+use super::fused_inc_claim_reduction::{
+    input_points_from_upstream as fused_inc_input_points_from_upstream,
+    input_values_from_upstream as fused_inc_input_values_from_upstream,
+};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
@@ -149,6 +154,8 @@ where
         },
         #[cfg(not(feature = "akita"))]
         inc_claim_reduction: IncClaimReductionChallenges { gamma: inc_gamma },
+        #[cfg(feature = "akita")]
+        fused_inc_claim_reduction: NoChallenges::default(),
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -173,6 +180,8 @@ where
         stage2.batch_output_points(),
         stage4.output_points(),
         stage5.output_points(),
+        #[cfg(feature = "akita")]
+        inc_virtualization,
     );
 
     // No zk protocol exists over the packed axis, so the committed arm (and its
@@ -267,6 +276,8 @@ where
         &stage2.output_values,
         stage4,
         &stage5.output_values,
+        #[cfg(feature = "akita")]
+        inc_virtualization,
     )?;
     let cycle_points = sumchecks.run_clear(
         &input_values,
@@ -390,6 +401,8 @@ fn stage6b_input_values_from_upstream<F: Field>(
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5OutputClaims<F>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::stage6a::inc_virtualization::IncVirtualizationOutput<F>,
 ) -> Result<Stage6bInputClaims<F>, VerifierError> {
     Ok(Stage6bInputClaims {
         bytecode_read_raf: BytecodeReadRafInputClaims {
@@ -409,6 +422,8 @@ fn stage6b_input_values_from_upstream<F: Field>(
             &stage4.output_values,
             stage5,
         ),
+        #[cfg(feature = "akita")]
+        fused_inc_claim_reduction: fused_inc_input_values_from_upstream(inc_virtualization),
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -451,6 +466,8 @@ fn stage6b_input_points_from_upstream<F: Field>(
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::stage6a::inc_virtualization::IncVirtualizationOutput<F>,
 ) -> Stage6bInputPoints<F> {
     Stage6bInputPoints {
         ram_ra_virtualization: ram_ra_virtualization_input_points_from_upstream(stage5),
@@ -459,6 +476,8 @@ fn stage6b_input_points_from_upstream<F: Field>(
         ),
         #[cfg(not(feature = "akita"))]
         inc_claim_reduction: inc_claim_reduction_input_points_from_upstream(stage2, stage4, stage5),
+        #[cfg(feature = "akita")]
+        fused_inc_claim_reduction: fused_inc_input_points_from_upstream(inc_virtualization),
         ..sumchecks.empty_input_points()
     }
 }
@@ -506,6 +525,8 @@ fn append_opening_claims<F, T>(
         .append_openings(transcript);
     #[cfg(not(feature = "akita"))]
     claims.inc_claim_reduction.append_openings(transcript);
+    #[cfg(feature = "akita")]
+    claims.fused_inc_claim_reduction.append_openings(transcript);
     // The optional members single-source their per-field Fiat-Shamir order from the
     // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
     // struct, so it absorbs exactly its own kind's opening.
@@ -528,6 +549,8 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;
     use super::super::bytecode_read_raf::BytecodeReadRafOutputClaims;
+    #[cfg(feature = "akita")]
+    use super::super::fused_inc_claim_reduction::FusedIncClaimReductionOutputClaims;
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
@@ -543,8 +566,8 @@ mod tests {
 
     /// Per-mode sample claims with sentinel values in the canonical append
     /// order: base interleaves the inc member after the RA virtualizations;
-    /// akita replaces it with the lattice booleanity's chunk and msb cells
-    /// (struct field order, directly after `ram_ra`).
+    /// Akita replaces it with the lattice booleanity chunk/MSB cells and the
+    /// separate fused-increment reduction output.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(not(feature = "akita"))]
         let (booleanity, last) = (
@@ -564,7 +587,7 @@ mod tests {
                 unsigned_inc_chunks: vec![fr(6)],
                 unsigned_inc_msb: fr(7),
             },
-            10,
+            11,
         );
         #[cfg(not(feature = "akita"))]
         let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
@@ -585,6 +608,8 @@ mod tests {
                 instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
                     committed_instruction_ra: vec![instruction_ra_virt],
                 },
+                #[cfg(feature = "akita")]
+                fused_inc_claim_reduction: FusedIncClaimReductionOutputClaims { fused_inc: fr(11) },
                 #[cfg(not(feature = "akita"))]
                 inc_claim_reduction: IncClaimReductionOutputClaims {
                     ram_inc: fr(9),

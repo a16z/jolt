@@ -162,12 +162,11 @@ where
     Ok(())
 }
 
-/// The packed (akita) verification path: the same stage spine, with the
+/// The Akita verification path: the same stage spine, with the
 /// inc-virtualization phase opening the stage-6 region, the reconstruction
-/// phase opening the stage-8 region, and the joint packed opening (one
-/// cross-object reduction sumcheck, then one PCS opening per commitment
-/// object) in place of the homomorphic RLC batch. No homomorphism bounds —
-/// and no zk tail, since no zk protocol exists over the packed axis.
+/// phase producing auxiliary leaves, a native same-point Wjolt opening, and
+/// separate packed openings for auxiliary objects in place of the homomorphic
+/// RLC batch. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -178,7 +177,8 @@ pub fn verify<F, PCS, VC, T>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + stage8::WJoltCommitmentMetadata,
+    PCS::VerifierSetup: stage8::WJoltSetupMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -261,7 +261,6 @@ where
         &mut transcript,
         &stage4,
         &stage6b,
-        &inc_virtualization,
     )?;
     let stage8 = stage8::verify(
         &checked,
@@ -993,10 +992,9 @@ mod tests {
             #[cfg(not(feature = "akita"))]
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
-            joint_opening_proof: jolt_openings::PackedOpeningProof {
-                round_polynomials: Vec::new(),
-                evaluations: Vec::new(),
-                openings: Vec::new(),
+            joint_opening_proof: crate::proof::AkitaJointOpeningProof {
+                w_jolt: (),
+                auxiliary: None,
             },
             untrusted_advice_commitment: None,
             claims,
@@ -1176,6 +1174,9 @@ mod tests {
                     stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                         committed_instruction_ra: Vec::new(),
                     },
+                #[cfg(feature = "akita")]
+                fused_inc_claim_reduction:
+                    stage6b::outputs::FusedIncClaimReductionOutputClaims { fused_inc: zero },
                 #[cfg(not(feature = "akita"))]
                 inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                     ram_inc: zero,
@@ -1192,12 +1193,10 @@ mod tests {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
-                    },
-                #[cfg(feature = "akita")]
-                chunk_reconstruction:
-                    jolt_claims::protocols::jolt::lattice::relations::chunk_reconstruction::ChunkReconstructionOutputClaims {
-                        chunks: Vec::new(),
-                        msb: zero,
+                        #[cfg(feature = "akita")]
+                        unsigned_inc_chunks: Vec::new(),
+                        #[cfg(feature = "akita")]
+                        unsigned_inc_msb: zero,
                     },
                 trusted_advice: None,
                 untrusted_advice: None,
