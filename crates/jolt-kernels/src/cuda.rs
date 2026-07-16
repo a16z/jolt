@@ -46,6 +46,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/bytecode_cycle_sparse.cu"),
     include_str!("cuda/raf_q_scatter.cu"),
     include_str!("cuda/ram_derive.cu"),
+    include_str!("cuda/i128_to_mont.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/prefix_combine.cu"),
@@ -119,6 +120,8 @@ pub struct CudaKernelContext {
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
     u64_to_mont: CudaFunction,
+    #[expect(dead_code, reason = "used once the i128_to_mont body + wiring land")]
+    i128_to_mont: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
@@ -955,6 +958,7 @@ impl CudaKernelContext {
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
             u64_to_mont: module.load_function("u64_to_mont")?,
+            i128_to_mont: module.load_function("i128_to_mont")?,
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
@@ -3153,6 +3157,11 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
         Ok(out)
+    }
+
+    pub fn i128_to_mont(&self, values: &[i128]) -> Result<DeviceFrVec, CudaError> {
+        let _ = values;
+        Err(CudaError::Unsupported)
     }
 
     pub fn batched_bind(
@@ -6167,6 +6176,22 @@ mod tests {
 
             let c = ctx();
             let got = c.u64_to_mont(&values).unwrap();
+            prop_assert_eq!(got.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn i128_to_mont_matches_cpu(mut values in prop::collection::vec(any::<i128>(), 0..300)) {
+            values.push(0);
+            values.push(1);
+            values.push(-1);
+            values.push(i128::MAX);
+            values.push(i128::MIN);
+            values.push(u64::MAX as i128);
+            values.push(-(u64::MAX as i128));
+            let expected: Vec<Fr> = values.iter().map(|&v| Fr::from_i128(v)).collect();
+
+            let c = ctx();
+            let got = c.i128_to_mont(&values).unwrap();
             prop_assert_eq!(got.to_host().unwrap(), expected);
         }
 
