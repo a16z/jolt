@@ -120,7 +120,6 @@ pub struct CudaKernelContext {
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
     u64_to_mont: CudaFunction,
-    #[expect(dead_code, reason = "used once the i128_to_mont body + wiring land")]
     i128_to_mont: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
@@ -3160,8 +3159,48 @@ impl CudaKernelContext {
     }
 
     pub fn i128_to_mont(&self, values: &[i128]) -> Result<DeviceFrVec, CudaError> {
-        let _ = values;
-        Err(CudaError::Unsupported)
+        let n = values.len();
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(n * LIMBS)?,
+            len: n,
+            staging: self.staging.clone(),
+        };
+        if n == 0 {
+            return Ok(out);
+        }
+        let mut abs_lo = Vec::with_capacity(n);
+        let mut abs_hi = Vec::with_capacity(n);
+        let mut neg = Vec::with_capacity(n);
+        for &v in values {
+            let mag = v.unsigned_abs();
+            abs_lo.push(mag as u64);
+            abs_hi.push((mag >> 64) as u64);
+            neg.push(u8::from(v < 0));
+        }
+        let abs_lo_dev = self.upload_u64_slice(&abs_lo)?;
+        let abs_hi_dev = self.upload_u64_slice(&abs_hi)?;
+        let neg_dev = self.upload_u8_slice(&neg)?;
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.i128_to_mont.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out.buf)
+            .arg(&abs_lo_dev)
+            .arg(&abs_hi_dev)
+            .arg(&neg_dev)
+            .arg(&n_arg);
+        // SAFETY: each thread i reads abs_lo[i]/abs_hi[i] (the u128 magnitude) and neg[i], writing
+        // out[i*LIMBS..] = mont(|v|) negated when neg[i]; out holds n * LIMBS u64s, inputs hold n.
+        // No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
     }
 
     pub fn batched_bind(
