@@ -161,6 +161,7 @@ pub struct CudaKernelContext {
     staging: PinnedStaging,
     resident_witness: ResidentCache,
     resident_committed: CommittedCache,
+    resident_stage3: ResidentStage3Cache,
 }
 
 pub struct DeviceFrVec {
@@ -621,6 +622,33 @@ fn lock_committed(cache: &CommittedCache) -> MutexGuard<'_, Vec<ResidentWitness>
     cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+pub struct ResidentStage3Trace {
+    pub unexpanded_pc: CudaSlice<u64>,
+    pub rs1_value: CudaSlice<u64>,
+    pub rs2_value: CudaSlice<u64>,
+    pub rd_write_value: CudaSlice<u64>,
+    pub imm_abs_lo: CudaSlice<u64>,
+    pub imm_abs_hi: CudaSlice<u64>,
+    pub imm_neg: CudaSlice<u8>,
+    pub right_operand_is_rs2: CudaSlice<u64>,
+    pub right_operand_is_imm: CudaSlice<u64>,
+    pub left_operand_is_rs1: CudaSlice<u64>,
+    pub left_operand_is_pc: CudaSlice<u64>,
+    pub len: usize,
+}
+
+struct ResidentStage3Entry {
+    ptr: usize,
+    len: usize,
+    trace: Arc<ResidentStage3Trace>,
+}
+
+type ResidentStage3Cache = Arc<Mutex<Option<ResidentStage3Entry>>>;
+
+fn lock_resident_stage3(cache: &ResidentStage3Cache) -> MutexGuard<'_, Option<ResidentStage3Entry>> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -1010,6 +1038,7 @@ impl CudaKernelContext {
             staging: Arc::new(Mutex::new(PinnedPool::default())),
             resident_witness: Arc::new(Mutex::new(None)),
             resident_committed: Arc::new(Mutex::new(Vec::new())),
+            resident_stage3: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1201,6 +1230,51 @@ impl CudaKernelContext {
             buf: buf.clone(),
         });
         Ok(buf)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub fn resident_stage3_trace(
+        &self,
+        key_ptr: usize,
+        len: usize,
+        unexpanded_pc: &[u64],
+        rs1_value: &[u64],
+        rs2_value: &[u64],
+        rd_write_value: &[u64],
+        imm_abs_lo: &[u64],
+        imm_abs_hi: &[u64],
+        imm_neg: &[u8],
+        right_operand_is_rs2: &[u64],
+        right_operand_is_imm: &[u64],
+        left_operand_is_rs1: &[u64],
+        left_operand_is_pc: &[u64],
+    ) -> Result<Arc<ResidentStage3Trace>, CudaError> {
+        let mut cache = lock_resident_stage3(&self.resident_stage3);
+        if let Some(entry) = cache.as_ref() {
+            if entry.ptr == key_ptr && entry.len == len {
+                return Ok(entry.trace.clone());
+            }
+        }
+        let trace = Arc::new(ResidentStage3Trace {
+            unexpanded_pc: self.upload_u64_slice(unexpanded_pc)?,
+            rs1_value: self.upload_u64_slice(rs1_value)?,
+            rs2_value: self.upload_u64_slice(rs2_value)?,
+            rd_write_value: self.upload_u64_slice(rd_write_value)?,
+            imm_abs_lo: self.upload_u64_slice(imm_abs_lo)?,
+            imm_abs_hi: self.upload_u64_slice(imm_abs_hi)?,
+            imm_neg: self.upload_u8_slice(imm_neg)?,
+            right_operand_is_rs2: self.upload_u64_slice(right_operand_is_rs2)?,
+            right_operand_is_imm: self.upload_u64_slice(right_operand_is_imm)?,
+            left_operand_is_rs1: self.upload_u64_slice(left_operand_is_rs1)?,
+            left_operand_is_pc: self.upload_u64_slice(left_operand_is_pc)?,
+            len,
+        });
+        *cache = Some(ResidentStage3Entry {
+            ptr: key_ptr,
+            len,
+            trace: trace.clone(),
+        });
+        Ok(trace)
     }
 
     pub fn resident_committed_clone(&self, poly: &[Fr]) -> Result<DeviceFrVec, CudaError> {

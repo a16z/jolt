@@ -2704,30 +2704,58 @@ fn instruction_input_factors<F: Field>(cycles: &[Stage3Cycle]) -> InstructionInp
 }
 
 #[cfg(feature = "cuda")]
+fn resident_stage3_trace(
+    cycles: &[Stage3Cycle],
+) -> Option<std::sync::Arc<crate::cuda::ResidentStage3Trace>> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let bool_col = |f: fn(&Stage3Cycle) -> bool| -> Vec<u64> {
+        cycles.par_iter().map(|c| u64::from(f(c))).collect()
+    };
+    let u64_col = |f: fn(&Stage3Cycle) -> u64| -> Vec<u64> { cycles.par_iter().map(f).collect() };
+    let (imm_abs_lo, (imm_abs_hi, imm_neg)): (Vec<u64>, (Vec<u64>, Vec<u8>)) = cycles
+        .par_iter()
+        .map(|c| {
+            let mag = c.imm.unsigned_abs();
+            (mag as u64, ((mag >> 64) as u64, u8::from(c.imm < 0)))
+        })
+        .unzip();
+    ctx.resident_stage3_trace(
+        cycles.as_ptr() as usize,
+        cycles.len(),
+        &u64_col(|c| c.unexpanded_pc),
+        &u64_col(|c| c.rs1_value),
+        &u64_col(|c| c.rs2_value),
+        &u64_col(|c| c.rd_write_value),
+        &imm_abs_lo,
+        &imm_abs_hi,
+        &imm_neg,
+        &bool_col(|c| c.right_operand_is_rs2),
+        &bool_col(|c| c.right_operand_is_imm),
+        &bool_col(|c| c.left_operand_is_rs1),
+        &bool_col(|c| c.left_operand_is_pc),
+    )
+    .ok()
+}
+
+#[cfg(feature = "cuda")]
 fn cuda_instruction_input_state<F: Field>(
     cycles: &[Stage3Cycle],
     gamma: F,
     split_point: &[F],
     outputs: Vec<FactorOutput>,
 ) -> Option<SumOfProductsState<F>> {
-    use rayon::prelude::*;
     let ctx = crate::cuda::shared_ctx()?;
-    let bool_col = |f: fn(&Stage3Cycle) -> bool| -> Vec<u64> {
-        cycles.par_iter().map(|c| u64::from(f(c))).collect()
-    };
-    let u64_col = |f: fn(&Stage3Cycle) -> u64| -> Vec<u64> {
-        cycles.par_iter().map(f).collect()
-    };
-    let imm: Vec<i128> = cycles.par_iter().map(|c| c.imm).collect();
+    let t = resident_stage3_trace(cycles)?;
     let factors = vec![
-        ctx.u64_to_mont(&bool_col(|c| c.right_operand_is_rs2)).ok()?,
-        ctx.u64_to_mont(&u64_col(|c| c.rs2_value)).ok()?,
-        ctx.u64_to_mont(&bool_col(|c| c.right_operand_is_imm)).ok()?,
-        ctx.i128_to_mont(&imm).ok()?,
-        ctx.u64_to_mont(&bool_col(|c| c.left_operand_is_rs1)).ok()?,
-        ctx.u64_to_mont(&u64_col(|c| c.rs1_value)).ok()?,
-        ctx.u64_to_mont(&bool_col(|c| c.left_operand_is_pc)).ok()?,
-        ctx.u64_to_mont(&u64_col(|c| c.unexpanded_pc)).ok()?,
+        ctx.u64_to_mont_dev(&t.right_operand_is_rs2, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs2_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.right_operand_is_imm, t.len).ok()?,
+        ctx.i128_to_mont_dev(&t.imm_abs_lo, &t.imm_abs_hi, &t.imm_neg, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.left_operand_is_rs1, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs1_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.left_operand_is_pc, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.unexpanded_pc, t.len).ok()?,
     ];
     let split_point_fr = crate::cuda::as_fr_slice(split_point)?;
     let cuda = cuda::CudaSumOfProductsState::from_device_factors(
@@ -2773,13 +2801,12 @@ fn cuda_registers_state<F: Field>(
     split_point: &[F],
     outputs: Vec<FactorOutput>,
 ) -> Option<SumOfProductsState<F>> {
-    use rayon::prelude::*;
     let ctx = crate::cuda::shared_ctx()?;
-    let u64_col = |f: fn(&Stage3Cycle) -> u64| -> Vec<u64> { cycles.par_iter().map(f).collect() };
+    let t = resident_stage3_trace(cycles)?;
     let factors = vec![
-        ctx.u64_to_mont(&u64_col(|c| c.rd_write_value)).ok()?,
-        ctx.u64_to_mont(&u64_col(|c| c.rs1_value)).ok()?,
-        ctx.u64_to_mont(&u64_col(|c| c.rs2_value)).ok()?,
+        ctx.u64_to_mont_dev(&t.rd_write_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs1_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs2_value, t.len).ok()?,
     ];
     let split_point_fr = crate::cuda::as_fr_slice(split_point)?;
     let cuda = cuda::CudaSumOfProductsState::from_device_factors(
