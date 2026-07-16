@@ -3159,8 +3159,29 @@ impl CudaKernelContext {
     }
 
     pub fn u64_to_mont_dev(&self, in_dev: &CudaSlice<u64>, n: usize) -> Result<DeviceFrVec, CudaError> {
-        let _ = (&in_dev, n);
-        Err(CudaError::Unsupported)
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(n.max(1) * LIMBS)?,
+            len: n,
+            staging: self.staging.clone(),
+        };
+        if n == 0 {
+            return Ok(out);
+        }
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.u64_to_mont.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch.arg(&mut out.buf).arg(in_dev).arg(&n_arg);
+        // SAFETY: each thread i reads in_dev[i] (a resident u64 column, >= n elements) and writes the
+        // Montgomery form to out[i*LIMBS..]; out holds n * LIMBS u64s. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
     }
 
     pub fn i128_to_mont(&self, values: &[i128]) -> Result<DeviceFrVec, CudaError> {
@@ -3215,8 +3236,34 @@ impl CudaKernelContext {
         neg: &CudaSlice<u8>,
         n: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let _ = (&abs_lo, &abs_hi, &neg, n);
-        Err(CudaError::Unsupported)
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(n.max(1) * LIMBS)?,
+            len: n,
+            staging: self.staging.clone(),
+        };
+        if n == 0 {
+            return Ok(out);
+        }
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.i128_to_mont.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out.buf)
+            .arg(abs_lo)
+            .arg(abs_hi)
+            .arg(neg)
+            .arg(&n_arg);
+        // SAFETY: each thread i reads resident abs_lo[i]/abs_hi[i] (u128 magnitude) and neg[i], writing
+        // out[i*LIMBS..] = mont(|v|) negated when neg[i]; all inputs hold >= n, out holds n * LIMBS.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
     }
 
     pub fn batched_bind(
