@@ -18,6 +18,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/mul.cu"),
     include_str!("cuda/fma.cu"),
     include_str!("cuda/bind.cu"),
+    include_str!("cuda/bind_many.cu"),
     include_str!("cuda/eq_double.cu"),
     include_str!("cuda/lt_double.cu"),
     include_str!("cuda/rd_wa_gather.cu"),
@@ -99,6 +100,8 @@ pub struct CudaKernelContext {
     mul: CudaFunction,
     fma: CudaFunction,
     bind: CudaFunction,
+    #[expect(dead_code, reason = "used once the bind_many body + wiring land")]
+    bind_many: CudaFunction,
     eq_double: CudaFunction,
     lt_double: CudaFunction,
     raf_q_scatter: CudaFunction,
@@ -933,6 +936,7 @@ impl CudaKernelContext {
             mul: module.load_function("mul_kernel")?,
             fma: module.load_function("fma_kernel")?,
             bind: module.load_function("bind_kernel")?,
+            bind_many: module.load_function("bind_many_kernel")?,
             eq_double: module.load_function("eq_double")?,
             lt_double: module.load_function("lt_double")?,
             raf_q_scatter: module.load_function("raf_q_scatter")?,
@@ -3246,6 +3250,11 @@ impl CudaKernelContext {
 
         std::mem::swap(values, scratch);
         Ok(())
+    }
+
+    pub fn bind_many(&self, polys: &mut [DeviceFrVec], challenge: Fr) -> Result<(), CudaError> {
+        let _ = (&polys, challenge);
+        Err(CudaError::Unsupported)
     }
 
     pub fn bind_high_to_low(
@@ -6207,6 +6216,43 @@ mod tests {
             let mut scratch = c.upload(&[]).unwrap();
             c.batched_bind(&mut values, &mut scratch, num_buffers, challenge).unwrap();
             prop_assert_eq!(values.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn bind_many_matches_cpu(
+            log_half in 0usize..10,
+            num_polys in 1usize..6,
+            challenge in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            let half = 1usize << log_half;
+            let buf_len = half * 2;
+            let polys: Vec<Vec<Fr>> = (0..num_polys)
+                .map(|p| {
+                    (0..buf_len)
+                        .map(|i| seed + Fr::from_u64((p * buf_len + i + 1) as u64))
+                        .collect()
+                })
+                .collect();
+
+            let mut scratch = Vec::new();
+            let expected: Vec<Vec<Fr>> = polys
+                .iter()
+                .map(|poly| {
+                    let mut bound = poly.clone();
+                    crate::dense::bind_dense_evals_reuse(&mut bound, &mut scratch, challenge);
+                    bound
+                })
+                .collect();
+
+            let c = ctx();
+            let mut got: Vec<DeviceFrVec> =
+                polys.iter().map(|poly| c.upload(poly).unwrap()).collect();
+            c.bind_many(&mut got, challenge).unwrap();
+
+            for (g, e) in got.iter().zip(&expected) {
+                prop_assert_eq!(&g.to_host().unwrap(), e);
+            }
         }
 
         #[test]
