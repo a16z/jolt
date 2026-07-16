@@ -25,6 +25,16 @@
 //! - [`Fq`] — BN254 base field element
 //! - [`WideAccumulator`] — 9-limb deferred Montgomery reduction
 //!
+//! # Solinas types (feature `solinas`)
+//!
+//! The Solinas backend provides optimized 32-, 64-, and 128-bit prime fields,
+//! extension fields, packed NEON/AVX2/AVX-512 implementations, unreduced
+//! accumulators, and smooth-domain FFT helpers. Akita adopts these types
+//! directly in its cutover to `jolt-field`. Until that cutover lands, the
+//! temporary `akita` feature retains the legacy adapter for the pre-cutover
+//! `akita-field` types; it is a bootstrap edge, not the target architecture,
+//! and is removed in the final migration PR.
+//!
 //! # Multi-precision arithmetic
 //!
 //! - [`Limbs<N>`] — fixed-width limb array for unreduced arithmetic
@@ -39,6 +49,7 @@ mod canonical_bytes;
 mod canonical_u64;
 mod field;
 mod field_core;
+mod field_error;
 mod fixed_byte_size;
 mod fixed_bytes;
 mod from_primitive_int;
@@ -51,6 +62,8 @@ mod reducing_bytes;
 mod ring_core;
 mod signed_product_accumulator;
 mod small_scalar_accumulator;
+#[cfg(feature = "solinas")]
+mod solinas_traits;
 mod transcript_challenge;
 mod with_accumulator;
 
@@ -61,6 +74,7 @@ pub use canonical_bytes::CanonicalBytes;
 pub use canonical_u64::CanonicalU64;
 pub use field::{Field, OptimizedMul};
 pub use field_core::FieldCore;
+pub use field_error::FieldError;
 pub use fixed_byte_size::FixedByteSize;
 pub use fixed_bytes::FixedBytes;
 pub use from_primitive_int::FromPrimitiveInt;
@@ -68,6 +82,7 @@ pub use invertible::Invertible;
 pub use montgomery_constants::MontgomeryConstants;
 pub use mul_pow_2::MulPow2;
 pub use mul_primitive_int::MulPrimitiveInt;
+pub use num_traits::{One, Zero};
 pub use random_sampling::RandomSampling;
 pub use reducing_bytes::ReducingBytes;
 pub use ring_core::RingCore;
@@ -77,6 +92,10 @@ pub use signed_product_accumulator::{
 pub use small_scalar_accumulator::{
     NaiveSignedScalarAccumulator, SignedScalarAccumulator, WithSmallScalarAccumulator,
 };
+#[cfg(feature = "solinas")]
+pub use solinas_traits::{
+    BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField, SmoothFftField,
+};
 pub use transcript_challenge::TranscriptChallenge;
 pub use with_accumulator::WithAccumulator;
 
@@ -84,6 +103,37 @@ pub mod limbs;
 pub use limbs::Limbs;
 
 pub mod signed;
+
+#[cfg(feature = "solinas")]
+mod ext;
+#[cfg(feature = "solinas")]
+pub mod fft;
+#[cfg(feature = "solinas")]
+pub mod packed;
+#[cfg(feature = "solinas")]
+pub mod parallel;
+#[cfg(feature = "solinas")]
+mod prime;
+#[cfg(feature = "solinas")]
+pub mod unreduced;
+
+#[cfg(feature = "solinas")]
+pub use ext::lift::{
+    canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
+    ExtField, FrobeniusExtField, LiftBase, MulBase, MulBaseUnreduced,
+};
+#[cfg(feature = "solinas")]
+pub use ext::{
+    Ext2, FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend, NegOneNr, TwoNr,
+};
+#[cfg(feature = "solinas")]
+pub use prime::{
+    is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec, Fp128, Fp32,
+    Fp64, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
+    Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195,
+    Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
+    PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+};
 
 #[cfg(feature = "bn254")]
 pub mod arkworks;
