@@ -47,6 +47,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/raf_q_scatter.cu"),
     include_str!("cuda/ram_derive.cu"),
     include_str!("cuda/i128_to_mont.cu"),
+    include_str!("cuda/stage2_product_factors.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/prefix_combine.cu"),
@@ -121,6 +122,8 @@ pub struct CudaKernelContext {
     ram_rw_cycle_bind: CudaFunction,
     u64_to_mont: CudaFunction,
     i128_to_mont: CudaFunction,
+    #[expect(dead_code, reason = "used once the stage2_product_factors body + wiring land")]
+    stage2_product_factors: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
@@ -653,6 +656,21 @@ fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+pub struct Stage2ProductFactorInputs<'a> {
+    pub left_input: &'a CudaSlice<u64>,
+    pub should_branch_lookup_output: &'a CudaSlice<u64>,
+    pub jump_flag: &'a CudaSlice<u8>,
+    pub right_input_abs_lo: &'a CudaSlice<u64>,
+    pub right_input_abs_hi: &'a CudaSlice<u64>,
+    pub right_input_neg: &'a CudaSlice<u8>,
+    pub should_branch_flag: &'a CudaSlice<u8>,
+    pub not_next_noop: &'a CudaSlice<u8>,
+    pub w0: Fr,
+    pub w1: Fr,
+    pub w2: Fr,
+    pub len: usize,
+}
+
 pub struct FusedOuterInputs<'a> {
     pub eq_evals: &'a DeviceFrVec,
     pub scale: Fr,
@@ -986,6 +1004,7 @@ impl CudaKernelContext {
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
             u64_to_mont: module.load_function("u64_to_mont")?,
             i128_to_mont: module.load_function("i128_to_mont")?,
+            stage2_product_factors: module.load_function("stage2_product_factors")?,
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
@@ -3338,6 +3357,14 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
         Ok(out)
+    }
+
+    pub fn stage2_product_factors(
+        &self,
+        inputs: Stage2ProductFactorInputs<'_>,
+    ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
+        let _ = &inputs;
+        Err(CudaError::Unsupported)
     }
 
     pub fn batched_bind(
@@ -6369,6 +6396,68 @@ mod tests {
             let c = ctx();
             let got = c.i128_to_mont(&values).unwrap();
             prop_assert_eq!(got.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn stage2_product_factors_matches_cpu(
+            n in 1usize..400,
+            seed in fr_strategy(),
+        ) {
+            use jolt_field::Field;
+            let left_input: Vec<u64> = (0..n).map(|i| (i as u64).wrapping_mul(0x9e37_79b1)).collect();
+            let sblo: Vec<u64> = (0..n).map(|i| (i as u64).wrapping_mul(0x85eb_ca6b) ^ 7).collect();
+            let jump: Vec<u8> = (0..n).map(|i| u8::from(i % 3 == 0)).collect();
+            let right_input: Vec<i128> = (0..n)
+                .map(|i| (i as i128) * if i % 2 == 0 { 0x1_0000_0001i128 } else { -3 })
+                .collect();
+            let sbf: Vec<u8> = (0..n).map(|i| u8::from(i % 4 == 1)).collect();
+            let nnn: Vec<u8> = (0..n).map(|i| u8::from(i % 5 != 0)).collect();
+            let w0 = seed + Fr::from_u64(11);
+            let w1 = seed + Fr::from_u64(22);
+            let w2 = seed + Fr::from_u64(33);
+
+            let mut exp_left = Vec::with_capacity(n);
+            let mut exp_right = Vec::with_capacity(n);
+            for i in 0..n {
+                let l = w0.mul_u64(left_input[i])
+                    + w1.mul_u64(sblo[i])
+                    + if jump[i] == 1 { w2 } else { Fr::zero() };
+                let r = w0.mul_i128(right_input[i])
+                    + if sbf[i] == 1 { w1 } else { Fr::zero() }
+                    + if nnn[i] == 1 { w2 } else { Fr::zero() };
+                exp_left.push(l);
+                exp_right.push(r);
+            }
+
+            let mut ri_lo = Vec::with_capacity(n);
+            let mut ri_hi = Vec::with_capacity(n);
+            let mut ri_neg = Vec::with_capacity(n);
+            for &v in &right_input {
+                let mag = v.unsigned_abs();
+                ri_lo.push(mag as u64);
+                ri_hi.push((mag >> 64) as u64);
+                ri_neg.push(u8::from(v < 0));
+            }
+
+            let c = ctx();
+            let (left_dev, right_dev) = c
+                .stage2_product_factors(Stage2ProductFactorInputs {
+                    left_input: &c.upload_u64_slice(&left_input).unwrap(),
+                    should_branch_lookup_output: &c.upload_u64_slice(&sblo).unwrap(),
+                    jump_flag: &c.upload_u8_slice(&jump).unwrap(),
+                    right_input_abs_lo: &c.upload_u64_slice(&ri_lo).unwrap(),
+                    right_input_abs_hi: &c.upload_u64_slice(&ri_hi).unwrap(),
+                    right_input_neg: &c.upload_u8_slice(&ri_neg).unwrap(),
+                    should_branch_flag: &c.upload_u8_slice(&sbf).unwrap(),
+                    not_next_noop: &c.upload_u8_slice(&nnn).unwrap(),
+                    w0,
+                    w1,
+                    w2,
+                    len: n,
+                })
+                .unwrap();
+            prop_assert_eq!(left_dev.to_host().unwrap(), exp_left);
+            prop_assert_eq!(right_dev.to_host().unwrap(), exp_right);
         }
 
         #[test]
