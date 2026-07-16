@@ -3274,6 +3274,10 @@ dependencies = [
  "ark-std 0.5.0",
  "criterion",
  "num-traits",
+ "p3-baby-bear",
+ "p3-field",
+ "p3-koala-bear",
+ "p3-mersenne-31",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
@@ -4452,6 +4456,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "p3-baby-bear"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bc665d4650710aedd2424a59d88c19cb94d85375defc87bf6264d4be25ae6fa"
+dependencies = [
+ "p3-challenger",
+ "p3-field",
+ "p3-mds",
+ "p3-monty-31",
+ "p3-poseidon1",
+ "p3-poseidon2",
+ "p3-symmetric",
+ "rand 0.10.1",
+]
+
+[[package]]
 name = "p3-challenger"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4544,6 +4564,27 @@ dependencies = [
  "p3-symmetric",
  "p3-util",
  "rand 0.10.1",
+]
+
+[[package]]
+name = "p3-mersenne-31"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "012351fb727ba404175ea1cc159fb6234fa370ce9399317ba04d38ca43e55bfa"
+dependencies = [
+ "itertools 0.14.0",
+ "num-bigint",
+ "p3-challenger",
+ "p3-dft",
+ "p3-field",
+ "p3-matrix",
+ "p3-mds",
+ "p3-poseidon2",
+ "p3-symmetric",
+ "p3-util",
+ "paste",
+ "rand 0.10.1",
+ "serde",
 ]
 
 [[package]]

@@ -42,8 +42,17 @@ allocative = ["dep:allocative"]
 ark-std = { workspace = true }
 rand_chacha = { workspace = true }
 criterion = { workspace = true }
+p3-field = "=0.5.3"
+p3-mersenne-31 = "=0.5.3"
+p3-baby-bear = "=0.5.3"
+p3-koala-bear = "=0.5.3"
 
 [[bench]]
 name = "field_arith"
 harness = false
 required-features = ["bn254"]
+
+[[bench]]
+name = "solinas_field_arith"
+harness = false
+required-features = ["bn254", "solinas", "parallel"]

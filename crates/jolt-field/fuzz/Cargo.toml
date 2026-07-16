@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-field = { path = ".." }
+jolt-field = { path = "..", default-features = false, features = ["bn254", "solinas"] }
 num-traits = "0.2"
 
 [[bin]]
@@ -32,4 +32,9 @@ doc = false
 [[bin]]
 name = "wide_accumulator_merge"
 path = "fuzz_targets/wide_accumulator_merge.rs"
+doc = false
+
+[[bin]]
+name = "solinas_field_arith"
+path = "fuzz_targets/solinas_field_arith.rs"
 doc = false
