@@ -40,6 +40,25 @@ jobs:
       - name: taplo fmt --check
         run: taplo fmt --check
 
+  field-stack:
+    name: Shared field feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Require one jolt-field identity (bootstrap akita-field pin allowed)
+        run: scripts/check-shared-field-identity.sh
+      - name: Check no backend
+        run: cargo check -p jolt-field --no-default-features
+      - name: Check BN254 backend
+        run: cargo check -p jolt-field --no-default-features --features bn254
+      - name: Test Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas --cargo-quiet
+      - name: Check combined backends
+        run: cargo check -p jolt-field --no-default-features --features bn254,solinas
+
   clippy:
     runs-on: ubuntu-latest
     steps:
