@@ -3430,6 +3430,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-kernels"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "rayon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
@@ -3531,6 +3551,30 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-prover"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-kernels",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-prover-legacy",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "postcard",
+ "thiserror 2.0.18",
+ "tracer",
 ]
 
 [[package]]
@@ -3716,6 +3760,7 @@ dependencies = [
  "jolt-verifier-derive",
  "num-traits",
  "postcard",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

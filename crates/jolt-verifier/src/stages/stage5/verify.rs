@@ -36,8 +36,9 @@ use crate::{
 /// Assemble the stage-5 consumed openings from the upstream clear outputs into the
 /// generated `Stage5InputClaims` aggregate. This is the single place the stage's
 /// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
-/// wires which upstream opening feeds which downstream input.
-fn stage5_input_values_from_upstream<F: Field>(
+/// wires which upstream opening feeds which downstream input. Public because the
+/// prover's stage-5 recipe builds its batch inputs through the same wiring.
+pub fn stage5_input_values_from_upstream<F: Field>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
 ) -> Stage5InputClaims<F> {
@@ -51,7 +52,7 @@ fn stage5_input_values_from_upstream<F: Field>(
 /// Assemble the stage-5 consumed opening *points* from the upstream output-points
 /// aggregates. ZK-agnostic: both the clear and ZK stage-2/stage-4 outputs expose
 /// these, so the same wiring builds the input points in either mode.
-fn stage5_input_points_from_upstream<F: Field>(
+pub fn stage5_input_points_from_upstream<F: Field>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
 ) -> Stage5InputPoints<F> {

@@ -50,9 +50,9 @@ impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<F> {
     }
 }
 
-/// The RAM output-check sumcheck: a degree-one output that pins `Val_final` on
-/// the I/O region (via `EqIoMask`) and offsets by the masked I/O value; no
-/// input claim.
+/// The RAM output-check sumcheck: pins `Val_final` against the committed
+/// public I/O value on the I/O region — `eq · mask · (val_final − val_io)` —
+/// with each derived leaf one multilinear; no input claim.
 pub struct OutputCheck {
     shape: ReadWriteDimensions,
 }
@@ -88,8 +88,12 @@ impl SymbolicSumcheck for OutputCheck {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        derived(RamOutputCheckPublic::EqIoMask) * opening(ram_val_final())
-            + derived(RamOutputCheckPublic::NegEqIoMaskValIo)
+        derived(RamOutputCheckPublic::EqAddress)
+            * derived(RamOutputCheckPublic::IoMask)
+            * opening(ram_val_final())
+            - derived(RamOutputCheckPublic::EqAddress)
+                * derived(RamOutputCheckPublic::IoMask)
+                * derived(RamOutputCheckPublic::ValIo)
     }
 }
 
@@ -108,8 +112,9 @@ mod tests {
         let relation = OutputCheck::new(read_write_dimensions());
 
         let val_final = Fr::from_u64(7);
-        let eq_io_mask = Fr::from_u64(11);
-        let neg_eq_io_mask_val_io = -Fr::from_u64(13);
+        let eq_address = Fr::from_u64(11);
+        let io_mask = Fr::from_u64(13);
+        let val_io = Fr::from_u64(17);
         let zero = Fr::from_u64(0);
 
         let input = relation
@@ -122,16 +127,15 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::EqIoMask) => eq_io_mask,
-                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::NegEqIoMaskValIo) => {
-                    neg_eq_io_mask_val_io
-                }
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::EqAddress) => eq_address,
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::IoMask) => io_mask,
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::ValIo) => val_io,
                 _ => zero,
             },
         );
 
         assert_eq!(input, zero);
-        assert_eq!(output, eq_io_mask * val_final + neg_eq_io_mask_val_io);
+        assert_eq!(output, eq_address * io_mask * (val_final - val_io));
     }
 
     #[test]

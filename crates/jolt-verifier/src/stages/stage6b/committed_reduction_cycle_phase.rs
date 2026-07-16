@@ -359,7 +359,7 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
 /// vectors into the public [`BytecodeReductionWeights`] (the per-chunk `r_bc`
 /// weights and the gamma-folded lane weights) consumed by the bytecode
 /// claim-reduction cycle and address phases.
-pub(crate) fn bytecode_reduction_weights<F: Field>(
+pub fn bytecode_reduction_weights<F: Field>(
     layout: &BytecodeClaimReductionLayout,
     lane_inputs: BytecodeLaneWeightInputs<'_, F>,
     bytecode_r_address: &[F],

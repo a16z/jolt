@@ -14,6 +14,7 @@ pub use preprocessing::{
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 pub use verifier::{
-    absorb_transcript_commitments, absorb_transcript_preamble, validate_inputs_from_parts, verify,
-    verify_until_stage1, CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,
+    absorb_committed_program_commitments, absorb_transcript_commitments,
+    absorb_transcript_preamble, validate_inputs_from_parts, verify, verify_until_stage1,
+    CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,
 };

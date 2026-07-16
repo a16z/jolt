@@ -18,3 +18,4 @@ extend-exclude = ["patches/*.patch"]
 "nto" = "nto"
 "useed" = "useed"
 "sseed" = "sseed"
+"mis" = "mis"

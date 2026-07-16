@@ -99,8 +99,9 @@ pub enum RamRafEvaluationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamOutputCheckPublic {
-    EqIoMask,
-    NegEqIoMaskValIo,
+    EqAddress,
+    IoMask,
+    ValIo,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -214,9 +215,17 @@ pub enum SpartanProductVirtualizationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SpartanOuterPublic {
-    QuadraticCoefficient { left: usize, right: usize },
-    LinearCoefficient(usize),
-    ConstantCoefficient,
+    /// `LK(τ_high, r₀) · eq(τ_low, ·)` — the uni-skip kernel times the cycle eq.
+    TauKernel,
+    /// The `Az` linear-form weight of R1CS input column `i` (linear in the
+    /// stream variable).
+    AzWeight(usize),
+    /// The `Bz` linear-form weight of R1CS input column `i`.
+    BzWeight(usize),
+    /// The `Az` linear form's public-column contribution.
+    AzConstant,
+    /// The `Bz` linear form's public-column contribution.
+    BzConstant,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -580,10 +589,6 @@ impl JoltOpeningId {
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
 pub enum JoltDerivedId {
-    TraceLength,
-    PaddedTraceLength,
-    BytecodeLength,
-    MemorySize,
     RamReadWrite(RamReadWritePublic),
     RamValCheck(RamValCheckPublic),
     RamRafEvaluation(RamRafEvaluationPublic),
@@ -608,16 +613,21 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
-    #[from(ignore)]
-    PublicInput(usize),
-    #[from(ignore)]
-    PublicOutput(usize),
     IncVirtualization(IncVirtualizationPublic),
     UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
     ProgramImageReconstruction(ProgramImageReconstructionPublic),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
+    /// Test-only derived id for toy relations that define their own
+    /// `derive_output_term`. Gated on `any(test, feature = "test-utils")`
+    /// rather than `test` alone because `cfg(test)` is per-crate: a downstream
+    /// crate's tests (the naive prover's toy relation foremost) see this crate
+    /// compiled without `cfg(test)` and reach the variant via the feature.
+    /// Kept LAST so toggling the feature cannot shift the discriminants of
+    /// real variants across feature-unified builds.
+    #[cfg(any(test, feature = "test-utils"))]
+    Test,
 }
 
 #[cfg(test)]

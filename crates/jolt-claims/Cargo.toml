@@ -11,6 +11,7 @@ workspace = true
 [features]
 default = []
 field-inline = []
+test-utils = []
 
 [dependencies]
 derive_more.workspace = true

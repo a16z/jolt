@@ -32,6 +32,16 @@ pub struct ChallengeDrawError {
     pub populated: usize,
 }
 
+/// A produced opening's value could not be resolved while assembling a claims
+/// struct from an id-keyed source. Surfaced by
+/// [`OutputClaims::from_opening_values`] for a plain (non-`Option`) field whose
+/// declared id the source cannot answer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
+#[error("no value for produced opening {id:?}")]
+pub struct MissingOpeningValue<O: core::fmt::Debug> {
+    pub id: O,
+}
+
 /// Canonical encoders and the output-formula resolver for a relation's
 /// *produced* opening-claim struct.
 ///
@@ -74,6 +84,21 @@ pub trait OutputClaims<F: Field, O = JoltOpeningId> {
     /// output `Expr`. Returns `None` for ids this struct does not carry (callers
     /// turn that into a `MissingOpeningClaim` error).
     fn resolve_output(&self, id: &O) -> Option<F>;
+
+    /// Assemble this claims struct from an id-keyed value source — the inverse
+    /// of [`resolve_output`](Self::resolve_output). Each field's declared
+    /// opening id is resolved through `resolve` in field declaration order: a
+    /// `Vec` family consumes indices `0, 1, ...` for as long as `resolve`
+    /// answers, an `Option` field is present iff its id resolves, and a plain
+    /// field whose id does not resolve is an error. This is how generic code
+    /// (the naive reference prover foremost) builds typed claim structs
+    /// without naming fields.
+    fn from_opening_values(
+        resolve: impl FnMut(&O) -> Option<F>,
+    ) -> Result<Self, MissingOpeningValue<O>>
+    where
+        Self: Sized,
+        O: core::fmt::Debug;
 }
 
 /// The input-formula resolver for a relation's *consumed* opening-claim struct

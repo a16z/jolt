@@ -44,16 +44,16 @@ pub fn outer_remainder_input_values_from_uniskip_output<F: Field>(
     }
 }
 
-/// The expanded quadratic-form coefficients, indexed for O(1) resolution. Built
-/// once from [`JoltSpartanOuterRemainder::public_coefficients`] in the constructor
-/// so `derive_output_term` (called ~`n² + n + 1` times per proof) never rebuilds the
-/// `JoltSpartanOuterRemainder` matrix work.
+/// The factored-form constituents, indexed for O(1) resolution. Built once
+/// from [`JoltSpartanOuterRemainder::public_coefficients`] in the constructor
+/// so `derive_output_term` (called ~`2n + 3` times per proof) never rebuilds
+/// the `JoltSpartanOuterRemainder` matrix work.
 struct OuterRemainderCoefficients<F> {
-    variable_count: usize,
-    /// Row-major `quadratic[left * variable_count + right]`.
-    quadratic: Vec<F>,
-    linear: Vec<F>,
-    constant: F,
+    tau_kernel: F,
+    az_weights: Vec<F>,
+    bz_weights: Vec<F>,
+    az_constant: F,
+    bz_constant: F,
 }
 
 impl<F: Field> OuterRemainderCoefficients<F> {
@@ -61,39 +61,36 @@ impl<F: Field> OuterRemainderCoefficients<F> {
         variable_count: usize,
         coefficients: Vec<(JoltSpartanOuterPublic, F)>,
     ) -> Self {
-        let mut quadratic = vec![F::zero(); variable_count * variable_count];
-        let mut linear = vec![F::zero(); variable_count];
-        let mut constant = F::zero();
+        let mut tau_kernel = F::zero();
+        let mut az_weights = vec![F::zero(); variable_count];
+        let mut bz_weights = vec![F::zero(); variable_count];
+        let mut az_constant = F::zero();
+        let mut bz_constant = F::zero();
         for (id, value) in coefficients {
             match id {
-                JoltSpartanOuterPublic::QuadraticCoefficient { left, right } => {
-                    quadratic[left * variable_count + right] = value;
-                }
-                JoltSpartanOuterPublic::LinearCoefficient(index) => {
-                    linear[index] = value;
-                }
-                JoltSpartanOuterPublic::ConstantCoefficient => {
-                    constant = value;
-                }
+                JoltSpartanOuterPublic::TauKernel => tau_kernel = value,
+                JoltSpartanOuterPublic::AzWeight(index) => az_weights[index] = value,
+                JoltSpartanOuterPublic::BzWeight(index) => bz_weights[index] = value,
+                JoltSpartanOuterPublic::AzConstant => az_constant = value,
+                JoltSpartanOuterPublic::BzConstant => bz_constant = value,
             }
         }
         Self {
-            variable_count,
-            quadratic,
-            linear,
-            constant,
+            tau_kernel,
+            az_weights,
+            bz_weights,
+            az_constant,
+            bz_constant,
         }
     }
 
     fn resolve(&self, id: SpartanOuterPublic) -> Option<F> {
         match id {
-            SpartanOuterPublic::QuadraticCoefficient { left, right } => self
-                .quadratic
-                .get(left * self.variable_count + right)
-                .filter(|_| left < self.variable_count && right < self.variable_count)
-                .copied(),
-            SpartanOuterPublic::LinearCoefficient(index) => self.linear.get(index).copied(),
-            SpartanOuterPublic::ConstantCoefficient => Some(self.constant),
+            SpartanOuterPublic::TauKernel => Some(self.tau_kernel),
+            SpartanOuterPublic::AzWeight(index) => self.az_weights.get(index).copied(),
+            SpartanOuterPublic::BzWeight(index) => self.bz_weights.get(index).copied(),
+            SpartanOuterPublic::AzConstant => Some(self.az_constant),
+            SpartanOuterPublic::BzConstant => Some(self.bz_constant),
         }
     }
 }

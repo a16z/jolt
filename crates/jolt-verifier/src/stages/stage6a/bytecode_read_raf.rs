@@ -89,17 +89,27 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     symbolic: relations::bytecode::ReadRafAddressPhase,
-    /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, else 0.
-    num_val_stages: usize,
+    /// Committed-program mode stages the `BytecodeValStage` wire claims.
+    committed_program: bool,
     _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
-    pub fn new(dimensions: BytecodeReadRafDimensions, num_val_stages: usize) -> Self {
+    pub fn new(dimensions: BytecodeReadRafDimensions, committed_program: bool) -> Self {
         Self {
             symbolic: relations::bytecode::ReadRafAddressPhase::new(dimensions),
-            num_val_stages,
+            committed_program,
             _field: core::marker::PhantomData,
+        }
+    }
+
+    /// The staged `BytecodeValStage` wire-claim count: all
+    /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, none in full mode.
+    fn num_val_stages(&self) -> usize {
+        if self.committed_program {
+            bytecode_reduction::NUM_BYTECODE_VAL_STAGES
+        } else {
+            0
         }
     }
 }
@@ -117,7 +127,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
         // constraining fold happens in stage 6b's bytecode claim reduction.
         let mut openings = self.symbolic().expected_output_openings::<F>();
         openings
-            .extend((0..self.num_val_stages).map(bytecode_reduction::bytecode_val_stage_opening));
+            .extend((0..self.num_val_stages()).map(bytecode_reduction::bytecode_val_stage_opening));
         openings
     }
 
@@ -131,7 +141,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
         let r_address = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(BytecodeReadRafAddressPhaseOutputClaims {
             intermediate: r_address.clone(),
-            val_stages: vec![r_address; self.num_val_stages],
+            val_stages: vec![r_address; self.num_val_stages()],
         })
     }
 }
@@ -156,7 +166,7 @@ mod tests {
     #[test]
     fn default_draw_challenges_matches_inline_bytecode_address_gammas() {
         let relation =
-            BytecodeReadRafAddressPhase::<Fr>::new(BytecodeReadRafDimensions::new(3, 4, 2), 0);
+            BytecodeReadRafAddressPhase::<Fr>::new(BytecodeReadRafDimensions::new(3, 4, 2), false);
 
         // Inline: six `challenge_scalar_powers(..)`, each contributing its
         // degree-1 power.

@@ -591,3 +591,73 @@ fn zk_wrong_transcript_domain_rejected() {
         "ZK: wrong transcript domain must be rejected"
     );
 }
+
+/// Hints from a shared commitment grid are ragged: a polynomial narrower than
+/// the grid streams fewer rows than a grid-spanning one. `combine_hints` pads
+/// the narrow hint with identity rows (the zero-embedding's missing rows), so
+/// the combined hint must open the RLC of the wide polynomial with the
+/// zero-extended narrow one.
+#[test]
+fn ragged_hint_combination_verifies() {
+    let wide_vars = 6;
+    let narrow_vars = 4;
+    let mut rng = ChaCha20Rng::seed_from_u64(88);
+    let prover_setup = DoryScheme::setup_prover(wide_vars);
+    let verifier_setup = DoryScheme::setup_verifier(wide_vars);
+
+    let wide = Polynomial::<Fr>::random(wide_vars, &mut rng);
+    let narrow = Polynomial::<Fr>::random(narrow_vars, &mut rng);
+
+    let (wide_commit, wide_hint) = DoryScheme::commit(wide.evaluations(), &prover_setup).unwrap();
+
+    // Commit the narrow polynomial at the wide grid's row width, as the
+    // shared-grid witness commitment does — fewer hint rows than the wide.
+    let row_width = 1usize << wide_vars.div_ceil(2);
+    let mut partial = DoryScheme::begin(&prover_setup);
+    for chunk in narrow.evaluations().chunks(row_width) {
+        DoryScheme::feed(&mut partial, chunk, &prover_setup);
+    }
+    let (narrow_commit, narrow_hint) = DoryScheme::finish_with_hint(partial, &prover_setup);
+
+    let c1 = <Fr as RandomSampling>::random(&mut rng);
+    let c2 = <Fr as RandomSampling>::random(&mut rng);
+    let combined_commitment = DoryScheme::combine(&[wide_commit, narrow_commit], &[c1, c2]);
+    let combined_hint = DoryScheme::combine_hints(vec![wide_hint, narrow_hint], &[c1, c2]);
+
+    // The joint polynomial: wide + zero-embedded (low-index prefix) narrow.
+    let mut narrow_embedded = narrow.evaluations().to_vec();
+    narrow_embedded.resize(1 << wide_vars, Fr::from_u64(0));
+    let joint = Polynomial::new(
+        wide.evaluations()
+            .iter()
+            .zip(&narrow_embedded)
+            .map(|(w, n)| c1 * *w + c2 * *n)
+            .collect::<Vec<_>>(),
+    );
+    let point: Vec<Fr> = (0..wide_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let eval = joint.evaluate(&point);
+
+    let mut pt = Blake2bTranscript::new(b"ragged-hints");
+    let proof = DoryScheme::open(
+        &joint,
+        &point,
+        eval,
+        &prover_setup,
+        Some(combined_hint),
+        &mut pt,
+    )
+    .unwrap();
+
+    let mut vt = Blake2bTranscript::new(b"ragged-hints");
+    DoryScheme::verify(
+        &combined_commitment,
+        &point,
+        eval,
+        &proof,
+        &verifier_setup,
+        &mut vt,
+    )
+    .expect("ragged hint combination must verify");
+}

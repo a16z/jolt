@@ -143,36 +143,25 @@ impl SymbolicSumcheck for OuterRemainder {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let mut output = JoltExpr::zero();
-
-        for (left_index, left_variable) in self.shape.variables().iter().copied().enumerate() {
-            for (right_index, right_variable) in self.shape.variables().iter().copied().enumerate()
-            {
-                output = output
-                    + derived(JoltDerivedId::from(
-                        SpartanOuterPublic::QuadraticCoefficient {
-                            left: left_index,
-                            right: right_index,
-                        },
-                    )) * opening(outer_opening(left_variable))
-                        * opening(outer_opening(right_variable));
-            }
+        // The factored quadratic form `tau_kernel · Az · Bz` with each linear
+        // form expanded over its per-column weights — every derived leaf one
+        // multilinear (the weights are linear in the stream variable).
+        let mut az = JoltExpr::zero();
+        let mut bz = JoltExpr::zero();
+        for (index, variable) in self.shape.variables().iter().copied().enumerate() {
+            az = az
+                + derived(JoltDerivedId::from(SpartanOuterPublic::AzWeight(index)))
+                    * opening(outer_opening(variable));
+            bz = bz
+                + derived(JoltDerivedId::from(SpartanOuterPublic::BzWeight(index)))
+                    * opening(outer_opening(variable));
+        }
+        if self.shape.include_affine_terms() {
+            az = az + derived(JoltDerivedId::from(SpartanOuterPublic::AzConstant));
+            bz = bz + derived(JoltDerivedId::from(SpartanOuterPublic::BzConstant));
         }
 
-        if self.shape.include_linear_terms() {
-            for (index, variable) in self.shape.variables().iter().copied().enumerate() {
-                output = output
-                    + derived(JoltDerivedId::from(SpartanOuterPublic::LinearCoefficient(
-                        index,
-                    ))) * opening(outer_opening(variable));
-            }
-        }
-
-        if self.shape.include_constant_term() {
-            output = output + derived(JoltDerivedId::from(SpartanOuterPublic::ConstantCoefficient));
-        }
-
-        output
+        derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
     }
 }
 
@@ -198,7 +187,6 @@ mod tests {
                 JoltVirtualPolynomial::LookupOutput,
             ],
             true,
-            true,
         ) {
             Some(dimensions) => dimensions,
             None => unreachable!("test Spartan outer dimensions should be valid"),
@@ -212,12 +200,6 @@ mod tests {
         let az_constant = Fr::from_u64(19);
         let bz_constant = Fr::from_u64(23);
 
-        // Expand exactly as `public_coefficients` does.
-        let quadratic = |left: usize, right: usize| tau_kernel * az[left] * bz[right];
-        let linear =
-            |index: usize| tau_kernel * (az[index] * bz_constant + az_constant * bz[index]);
-        let constant = tau_kernel * az_constant * bz_constant;
-
         let output = relation.output_expression::<Fr>().evaluate(
             |id| match *id {
                 id if id == outer_opening(JoltVirtualPolynomial::PC) => openings[0],
@@ -226,14 +208,11 @@ mod tests {
             },
             |_| Fr::from_u64(0),
             |id| match *id {
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::QuadraticCoefficient {
-                    left,
-                    right,
-                }) => quadratic(left, right),
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::LinearCoefficient(index)) => {
-                    linear(index)
-                }
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::ConstantCoefficient) => constant,
+                JoltDerivedId::SpartanOuter(SpartanOuterPublic::TauKernel) => tau_kernel,
+                JoltDerivedId::SpartanOuter(SpartanOuterPublic::AzWeight(index)) => az[index],
+                JoltDerivedId::SpartanOuter(SpartanOuterPublic::BzWeight(index)) => bz[index],
+                JoltDerivedId::SpartanOuter(SpartanOuterPublic::AzConstant) => az_constant,
+                JoltDerivedId::SpartanOuter(SpartanOuterPublic::BzConstant) => bz_constant,
                 _ => Fr::from_u64(0),
             },
         );

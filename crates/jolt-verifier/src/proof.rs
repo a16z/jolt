@@ -69,32 +69,25 @@ where
 pub struct JoltCommitments<C> {
     pub rd_inc: C,
     pub ram_inc: C,
-    pub ra: JoltRaCommitments<C>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JoltRaCommitments<C> {
-    pub instruction: Vec<C>,
-    pub ram: Vec<C>,
-    pub bytecode: Vec<C>,
-}
-
-impl<C> JoltRaCommitments<C> {
-    pub fn new(instruction: Vec<C>, ram: Vec<C>, bytecode: Vec<C>) -> Self {
-        Self {
-            instruction,
-            ram,
-            bytecode,
-        }
-    }
+    pub instruction_ra: Vec<C>,
+    pub ram_ra: Vec<C>,
+    pub bytecode_ra: Vec<C>,
 }
 
 impl<C> JoltCommitments<C> {
-    pub fn new(rd_inc: C, ram_inc: C, ra: JoltRaCommitments<C>) -> Self {
+    pub fn new(
+        rd_inc: C,
+        ram_inc: C,
+        instruction_ra: Vec<C>,
+        ram_ra: Vec<C>,
+        bytecode_ra: Vec<C>,
+    ) -> Self {
         Self {
             rd_inc,
             ram_inc,
-            ra,
+            instruction_ra,
+            ram_ra,
+            bytecode_ra,
         }
     }
 }
