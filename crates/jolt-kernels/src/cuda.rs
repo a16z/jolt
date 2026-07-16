@@ -3158,6 +3158,11 @@ impl CudaKernelContext {
         Ok(out)
     }
 
+    pub fn u64_to_mont_dev(&self, in_dev: &CudaSlice<u64>, n: usize) -> Result<DeviceFrVec, CudaError> {
+        let _ = (&in_dev, n);
+        Err(CudaError::Unsupported)
+    }
+
     pub fn i128_to_mont(&self, values: &[i128]) -> Result<DeviceFrVec, CudaError> {
         let n = values.len();
         let mut out = DeviceFrVec {
@@ -3201,6 +3206,17 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
         Ok(out)
+    }
+
+    pub fn i128_to_mont_dev(
+        &self,
+        abs_lo: &CudaSlice<u64>,
+        abs_hi: &CudaSlice<u64>,
+        neg: &CudaSlice<u8>,
+        n: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let _ = (&abs_lo, &abs_hi, &neg, n);
+        Err(CudaError::Unsupported)
     }
 
     pub fn batched_bind(
@@ -6231,6 +6247,45 @@ mod tests {
 
             let c = ctx();
             let got = c.i128_to_mont(&values).unwrap();
+            prop_assert_eq!(got.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn u64_to_mont_dev_matches_cpu(mut values in prop::collection::vec(any::<u64>(), 0..300)) {
+            values.push(0);
+            values.push(u64::MAX);
+            values.push(1);
+            let expected: Vec<Fr> = values.iter().map(|&v| Fr::from_u64(v)).collect();
+
+            let c = ctx();
+            let dev = c.upload_u64_slice(&values).unwrap();
+            let got = c.u64_to_mont_dev(&dev, values.len()).unwrap();
+            prop_assert_eq!(got.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn i128_to_mont_dev_matches_cpu(mut values in prop::collection::vec(any::<i128>(), 0..300)) {
+            values.push(0);
+            values.push(-1);
+            values.push(i128::MIN);
+            values.push(u64::MAX as i128);
+            let expected: Vec<Fr> = values.iter().map(|&v| Fr::from_i128(v)).collect();
+
+            let mut abs_lo = Vec::with_capacity(values.len());
+            let mut abs_hi = Vec::with_capacity(values.len());
+            let mut neg = Vec::with_capacity(values.len());
+            for &v in &values {
+                let mag = v.unsigned_abs();
+                abs_lo.push(mag as u64);
+                abs_hi.push((mag >> 64) as u64);
+                neg.push(u8::from(v < 0));
+            }
+
+            let c = ctx();
+            let abs_lo_dev = c.upload_u64_slice(&abs_lo).unwrap();
+            let abs_hi_dev = c.upload_u64_slice(&abs_hi).unwrap();
+            let neg_dev = c.upload_u8_slice(&neg).unwrap();
+            let got = c.i128_to_mont_dev(&abs_lo_dev, &abs_hi_dev, &neg_dev, values.len()).unwrap();
             prop_assert_eq!(got.to_host().unwrap(), expected);
         }
 
