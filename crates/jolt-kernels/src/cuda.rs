@@ -122,7 +122,6 @@ pub struct CudaKernelContext {
     ram_rw_cycle_bind: CudaFunction,
     u64_to_mont: CudaFunction,
     i128_to_mont: CudaFunction,
-    #[expect(dead_code, reason = "used once the stage2_product_factors body + wiring land")]
     stage2_product_factors: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
@@ -3363,8 +3362,50 @@ impl CudaKernelContext {
         &self,
         inputs: Stage2ProductFactorInputs<'_>,
     ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
-        let _ = &inputs;
-        Err(CudaError::Unsupported)
+        let n = inputs.len;
+        let make = |stream: &Arc<CudaStream>, buf, len| DeviceFrVec {
+            stream: stream.clone(),
+            buf,
+            len,
+            staging: self.staging.clone(),
+        };
+        let mut left = make(&self.stream, self.stream.alloc_zeros(n.max(1) * LIMBS)?, n);
+        let mut right = make(&self.stream, self.stream.alloc_zeros(n.max(1) * LIMBS)?, n);
+        if n == 0 {
+            return Ok((left, right));
+        }
+        let w0 = self.stream.clone_htod(&fr_to_limbs(inputs.w0))?;
+        let w1 = self.stream.clone_htod(&fr_to_limbs(inputs.w1))?;
+        let w2 = self.stream.clone_htod(&fr_to_limbs(inputs.w2))?;
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.stage2_product_factors.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut left.buf)
+            .arg(&mut right.buf)
+            .arg(inputs.left_input)
+            .arg(inputs.should_branch_lookup_output)
+            .arg(inputs.jump_flag)
+            .arg(inputs.right_input_abs_lo)
+            .arg(inputs.right_input_abs_hi)
+            .arg(inputs.right_input_neg)
+            .arg(inputs.should_branch_flag)
+            .arg(inputs.not_next_noop)
+            .arg(&w0)
+            .arg(&w1)
+            .arg(&w2)
+            .arg(&n_arg);
+        // SAFETY: one thread per cycle i reads the resident raw columns + 3 mont weights and writes
+        // left_out[i] = w0*mont(left_input) + w1*mont(sblo) + (jump?w2) and right_out[i] =
+        // w0*mont(+-|ri|) + (should_branch?w1) + (not_next_noop?w2); each buffer holds >= n elements.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok((left, right))
     }
 
     pub fn batched_bind(
