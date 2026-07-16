@@ -12,10 +12,11 @@ use serde::{Deserialize, Serialize};
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
     domain_size, invalid_batch, one_hot_polynomial, serialize_akita, sparse_unit_polynomial,
-    transparent_zk_error, AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendHint,
-    AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotBackendScheme, AkitaProverHint,
-    AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_LOG_K,
+    transparent_zk_error, validate_one_hot_k, AkitaBackendCommitment, AkitaBackendDensePoly,
+    AkitaBackendHint, AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField,
+    AkitaHidingCommitment, AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotK16BackendScheme,
+    AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
+    AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 
@@ -53,7 +54,7 @@ impl AkitaScheme {
         Self::commit_dense_backend(setup, layout_digest, num_vars, dense)
     }
 
-    /// Commits a group of row-major `K = 256` one-hot polynomials through the
+    /// Commits a group of row-major one-hot polynomials through the
     /// backend's one-hot flavor as one commitment object whose members are
     /// opened together at a shared point.
     pub fn commit_one_hot_group(
@@ -75,19 +76,30 @@ impl AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                one_hot_polynomial(polynomial)?.ok_or_else(|| {
-                    invalid_batch(
-                        "Akita one-hot commitment group requires row-major K=256 one-hot \
-                         polynomials",
-                    )
+                one_hot_polynomial(polynomial, setup.one_hot_k())?.ok_or_else(|| {
+                    invalid_batch(format!(
+                        "Akita one-hot commitment group requires row-major K={} one-hot polynomials",
+                        setup.one_hot_k()
+                    ))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let (backend_commitment, backend_hint) =
-            AkitaOneHotBackendScheme::commit(backend_prover_setup, &backend_polynomials, &stack)
-                .map_err(commit_failed)?;
+        let (backend_commitment, backend_hint) = match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                &backend_polynomials,
+                &stack,
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                &backend_polynomials,
+                &stack,
+            ),
+            _ => unreachable!("one-hot K is validated during setup"),
+        }
+        .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
             num_vars,
@@ -133,6 +145,14 @@ impl AkitaScheme {
             layout_digest,
             num_vars,
             poly_count: polynomials.len(),
+            one_hot_k: match polynomials.backend_flavor() {
+                crate::adapters::AkitaBackendFlavor::Full => 0,
+                crate::adapters::AkitaBackendFlavor::OneHot => {
+                    polynomials.one_hot_k().ok_or_else(|| {
+                        invalid_batch("Akita one-hot commitment group must not be empty")
+                    })?
+                }
+            },
             backend_coeff_len: backend_commitment.0.coeff_len(),
             serialized_backend_bytes: serialize_akita(&backend_commitment)?,
         };
@@ -184,6 +204,8 @@ impl CommitmentScheme for AkitaScheme {
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
         let invalid_setup =
             |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
+        let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
+            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) = if params
             .one_hot_only
         {
@@ -208,8 +230,9 @@ impl CommitmentScheme for AkitaScheme {
             one_hot_backend_prover_setup,
             prepared_one_hot_backend_setup,
             one_hot_backend_verifier_setup,
-        ) = if params.max_num_vars >= AKITA_ONE_HOT_LOG_K {
-            let backend_prover_setup = AkitaOneHotBackendScheme::setup_prover(
+        ) = if params.max_num_vars >= one_hot_log_k {
+            let backend_prover_setup = crate::adapters::one_hot_setup_prover(
+                params.one_hot_k,
                 params.max_num_vars,
                 params.max_num_polys_per_commitment_group,
             )
@@ -218,7 +241,7 @@ impl CommitmentScheme for AkitaScheme {
                 .prepare_setup(&backend_prover_setup)
                 .map_err(|err| invalid_setup(&err))?;
             let backend_verifier_setup =
-                AkitaOneHotBackendScheme::setup_verifier(&backend_prover_setup);
+                crate::adapters::one_hot_setup_verifier(params.one_hot_k, &backend_prover_setup)?;
             (
                 Some(std::sync::Arc::new(backend_prover_setup)),
                 Some(std::sync::Arc::new(prepared_backend_setup)),
@@ -231,6 +254,7 @@ impl CommitmentScheme for AkitaScheme {
             max_num_vars: params.max_num_vars,
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
+            one_hot_k: params.one_hot_k,
             backend_cache: Default::default(),
         };
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
@@ -252,16 +276,24 @@ impl CommitmentScheme for AkitaScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        if let Some(one_hot) = one_hot_polynomial(poly)? {
+        if let Some(one_hot) = one_hot_polynomial(poly, setup.one_hot_k())? {
             let num_vars = akita_prover::RootPolyMeta::num_vars(&one_hot);
             Self::validate_commit_shape(setup, num_vars, 1)?;
             let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
             let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-            let (backend_commitment, backend_hint) = AkitaOneHotBackendScheme::commit(
-                backend_prover_setup,
-                std::slice::from_ref(&one_hot),
-                &stack,
-            )
+            let (backend_commitment, backend_hint) = match setup.one_hot_k() {
+                AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                    backend_prover_setup,
+                    std::slice::from_ref(&one_hot),
+                    &stack,
+                ),
+                AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                    backend_prover_setup,
+                    std::slice::from_ref(&one_hot),
+                    &stack,
+                ),
+                _ => unreachable!("one-hot K is validated during setup"),
+            }
             .map_err(commit_failed)?;
             return Self::package_commitment(
                 setup.default_layout_digest(),
@@ -489,6 +521,7 @@ mod tests {
             max_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
             default_layout_digest: [7; 32],
+            one_hot_k: AKITA_ONE_HOT_K256,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -524,6 +557,78 @@ mod tests {
             AkitaBackendFlavor::Full,
         );
         assert_ne!(baseline.state(), digest_transcript.state());
+
+        let mut changed_k = changed_digest;
+        changed_k.one_hot_k = AKITA_ONE_HOT_K16;
+        let mut k_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
+        append_verifier_setup(&mut k_transcript, &changed_k, AkitaBackendFlavor::Full);
+        assert_ne!(digest_transcript.state(), k_transcript.state());
+    }
+
+    fn one_hot_roundtrip(one_hot_k: usize) {
+        let num_vars = one_hot_k.ilog2() as usize + 2;
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+            num_vars, 1, [4; 32], one_hot_k,
+        ))
+        .unwrap();
+        let polynomial = OneHotPolynomial::new(one_hot_k, vec![Some(0), Some(1), None, Some(3)]);
+        let (commitment, hint) = AkitaScheme::commit_one_hot_group(
+            &prover_setup,
+            [4; 32],
+            std::slice::from_ref(&polynomial),
+        )
+        .unwrap();
+        assert_eq!(commitment.one_hot_k(), one_hot_k);
+
+        let point = vec![AkitaField::from_u64(3); num_vars];
+        let value = polynomial.evaluate(&point);
+        let statement = vec![VerifierOpeningClaim {
+            commitment: commitment.clone(),
+            evaluation: EvaluationClaim::new(point, value),
+        }];
+        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            statement.clone(),
+            vec![&polynomial],
+            hint,
+            &mut prover_transcript,
+        )
+        .unwrap();
+        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+        <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &statement,
+            &proof,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+        let mut wrong_k_statement = statement;
+        wrong_k_statement[0].commitment.one_hot_k = if one_hot_k == AKITA_ONE_HOT_K16 {
+            AKITA_ONE_HOT_K256
+        } else {
+            AKITA_ONE_HOT_K16
+        };
+        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+        let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &wrong_k_statement,
+            &proof,
+            &mut verifier_transcript,
+        )
+        .expect_err("commitment K must match verifier setup K");
+    }
+
+    #[test]
+    fn one_hot_k16_roundtrip() {
+        one_hot_roundtrip(AKITA_ONE_HOT_K16);
+    }
+
+    #[test]
+    fn one_hot_k256_roundtrip() {
+        one_hot_roundtrip(AKITA_ONE_HOT_K256);
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup
@@ -744,7 +849,7 @@ mod flavor_bench {
     #[test]
     #[ignore = "release-only setup-split probe, run explicitly"]
     fn setup_cost_split_by_flavor() {
-        use crate::adapters::{AkitaBackendScheme, AkitaOneHotBackendScheme};
+        use crate::adapters::{AkitaBackendScheme, AkitaOneHotK256BackendScheme};
         let num_vars: usize = std::env::var("BENCH_VARS")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -758,7 +863,7 @@ mod flavor_bench {
         eprintln!("full setup ({num_vars},{polys}): {:.2?}", start.elapsed());
         drop(full);
         let start = Instant::now();
-        let one_hot = AkitaOneHotBackendScheme::setup_prover(num_vars, polys).unwrap();
+        let one_hot = AkitaOneHotK256BackendScheme::setup_prover(num_vars, polys).unwrap();
         eprintln!(
             "one-hot setup ({num_vars},{polys}): {:.2?}",
             start.elapsed()
@@ -803,7 +908,7 @@ mod flavor_bench {
         if !skip_one_hot {
             let start = Instant::now();
             let (prover_setup, verifier_setup) =
-                AkitaScheme::setup(AkitaSetupParams::one_hot_only(cell_vars, slots, [1; 32]))
+                AkitaScheme::setup(AkitaSetupParams::one_hot_only(cell_vars, slots, [1; 32], K))
                     .unwrap();
             eprintln!(
                 "one-hot setup ({cell_vars} vars, {slots} polys): {:.2?}",

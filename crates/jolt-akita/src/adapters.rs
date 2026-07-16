@@ -18,17 +18,17 @@ use tracing::info_span;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
-pub(crate) type AkitaOneHotConfig = akita_config::proof_optimized::fp128::D64OneHot;
+pub(crate) type AkitaOneHotK16Config = akita_config::proof_optimized::fp128::D64OneHotK16;
+pub(crate) type AkitaOneHotK256Config = akita_config::proof_optimized::fp128::D64OneHot;
 pub(crate) const AKITA_D: usize = AkitaConfig::D;
-/// One-hot chunk size baked into the `D64OneHot` preset.
-pub const AKITA_ONE_HOT_K: usize = 256;
-pub(crate) const AKITA_ONE_HOT_LOG_K: usize = AKITA_ONE_HOT_K.ilog2() as usize;
-const _: () = assert!(AKITA_ONE_HOT_K.is_power_of_two());
+pub const AKITA_ONE_HOT_K16: usize = 16;
+pub const AKITA_ONE_HOT_K256: usize = 256;
 
 pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtField;
 
 pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
-pub(crate) type AkitaOneHotBackendScheme = AkitaCommitmentScheme<AkitaOneHotConfig>;
+pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK16Config>;
+pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
 pub(crate) type AkitaBackendCommitment = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
 pub(crate) type AkitaBackendProof = AkitaBackendBatchProof<AkitaField, AkitaBackendExtField>;
@@ -49,6 +49,7 @@ pub struct AkitaSetupParams {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
+    pub(crate) one_hot_k: usize,
     /// When set, only the one-hot flavor's backend setup is built — the
     /// full-flavor setup for the same shape is large and slow, and a packed
     /// one-hot commitment object never touches it.
@@ -65,6 +66,7 @@ impl AkitaSetupParams {
             max_num_vars,
             max_num_polys_per_commitment_group,
             default_layout_digest,
+            one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
         }
     }
@@ -76,13 +78,19 @@ impl AkitaSetupParams {
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
         default_layout_digest: AkitaLayoutDigest,
+        one_hot_k: usize,
     ) -> Self {
         Self {
             max_num_vars,
             max_num_polys_per_commitment_group,
             default_layout_digest,
+            one_hot_k,
             one_hot_only: true,
         }
+    }
+
+    pub fn one_hot_k(&self) -> usize {
+        self.one_hot_k
     }
 }
 
@@ -106,6 +114,10 @@ impl AkitaProverSetup {
 
     pub fn default_layout_digest(&self) -> [u8; 32] {
         self.verifier.default_layout_digest
+    }
+
+    pub fn one_hot_k(&self) -> usize {
+        self.verifier.one_hot_k
     }
 
     pub(crate) fn full_backend(
@@ -137,16 +149,17 @@ impl AkitaProverSetup {
 }
 
 /// The verifier setup is pure shape: the backend keys are a deterministic
-/// function of `(max_num_vars, max_num_polys_per_commitment_group)` over a
-/// fixed internal seed, so they are never serialized or transcript-absorbed —
-/// [`append_verifier_setup`] binds the shape and both sides derive the same
-/// keys from it.
+/// function of `(max_num_vars, max_num_polys_per_commitment_group, one_hot_k)`
+/// over a fixed internal seed, so they are never serialized or
+/// transcript-absorbed — [`append_verifier_setup`] binds these parameters and
+/// both sides derive the same keys from them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
+    pub(crate) one_hot_k: usize,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
@@ -162,6 +175,10 @@ impl AkitaVerifierSetup {
 
     pub fn default_layout_digest(&self) -> [u8; 32] {
         self.default_layout_digest
+    }
+
+    pub fn one_hot_k(&self) -> usize {
+        self.one_hot_k
     }
 
     /// Primes the lazy key cache with freshly built backend keys, so
@@ -214,15 +231,17 @@ impl AkitaVerifierSetup {
                 Ok(AkitaBackendScheme::setup_verifier(&prover_setup))
             }
             AkitaBackendFlavor::OneHot => {
-                if self.max_num_vars < AKITA_ONE_HOT_LOG_K {
+                let log_k = validate_one_hot_k(self.one_hot_k)?;
+                if self.max_num_vars < log_k {
                     return Err(invalid_batch("Akita verifier setup has no one-hot backend"));
                 }
-                let prover_setup = AkitaOneHotBackendScheme::setup_prover(
+                let prover_setup = one_hot_setup_prover(
+                    self.one_hot_k,
                     self.max_num_vars,
                     self.max_num_polys_per_commitment_group,
                 )
                 .map_err(|err| invalid_setup(&err))?;
-                Ok(AkitaOneHotBackendScheme::setup_verifier(&prover_setup))
+                one_hot_setup_verifier(self.one_hot_k, &prover_setup)
             }
         }
     }
@@ -265,6 +284,7 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append(&U64Word(AKITA_D as u64));
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
+    transcript.append(&U64Word(setup.one_hot_k as u64));
     transcript.append_bytes(&setup.default_layout_digest);
 }
 
@@ -310,6 +330,7 @@ pub struct AkitaCommitment {
     pub(crate) layout_digest: AkitaLayoutDigest,
     pub(crate) num_vars: usize,
     pub(crate) poly_count: usize,
+    pub(crate) one_hot_k: usize,
     /// Field-coefficient count of the serialized backend commitment — the
     /// deserialization context [`akita_types::Commitment`] requires.
     pub(crate) backend_coeff_len: usize,
@@ -332,6 +353,10 @@ impl AkitaCommitment {
     pub fn poly_count(&self) -> usize {
         self.poly_count
     }
+
+    pub fn one_hot_k(&self) -> usize {
+        self.one_hot_k
+    }
 }
 
 impl AppendToTranscript for AkitaCommitment {
@@ -341,6 +366,7 @@ impl AppendToTranscript for AkitaCommitment {
         transcript.append_bytes(&self.layout_digest);
         transcript.append(&U64Word(self.num_vars as u64));
         transcript.append(&U64Word(self.poly_count as u64));
+        transcript.append(&U64Word(self.one_hot_k as u64));
         transcript.append(&U64Word(self.backend_coeff_len as u64));
         transcript.append(&LabelWithCount(
             b"akita_commitment_bytes",
@@ -428,6 +454,15 @@ impl AkitaHintPolynomials {
             Self::SparseUnit(polys) => polys.len(),
         }
     }
+
+    pub(crate) fn one_hot_k(&self) -> Option<usize> {
+        match self {
+            Self::OneHot(polys) => polys
+                .first()
+                .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
+            Self::Dense(_) | Self::SparseUnit(_) => None,
+        }
+    }
 }
 
 /// `2^num_vars`, or `None` when it does not fit in `usize`.
@@ -457,12 +492,13 @@ pub(crate) fn backend_stack<'a>(
 
 pub(crate) fn one_hot_polynomial<P>(
     polynomial: &P,
+    one_hot_k: usize,
 ) -> Result<Option<AkitaBackendOneHotPoly>, OpeningsError>
 where
     P: MultilinearPoly<AkitaField> + ?Sized,
 {
     if !polynomial.is_one_hot()
-        || polynomial.one_hot_k() != Some(AKITA_ONE_HOT_K)
+        || polynomial.one_hot_k() != Some(one_hot_k)
         || polynomial.one_hot_index_order() != Some(OneHotIndexOrder::RowMajor)
     {
         return Ok(None);
@@ -471,9 +507,47 @@ where
     let indices = polynomial
         .one_hot_indices()
         .ok_or_else(|| invalid_batch("Jolt one-hot polynomial did not expose its indices"))?;
-    AkitaBackendOneHotPoly::new(AKITA_ONE_HOT_K, AKITA_D, indices.to_vec())
+    let _ = validate_one_hot_k(one_hot_k)?;
+    AkitaBackendOneHotPoly::new(one_hot_k, AKITA_D, indices.to_vec())
         .map(Some)
         .map_err(akita_error)
+}
+
+pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsError> {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => Ok(4),
+        AKITA_ONE_HOT_K256 => Ok(8),
+        _ => Err(invalid_batch(format!(
+            "Akita one-hot chunk size must be 16 or 256, got {one_hot_k}"
+        ))),
+    }
+}
+
+pub(crate) fn one_hot_setup_prover(
+    one_hot_k: usize,
+    max_num_vars: usize,
+    max_num_polys: usize,
+) -> Result<AkitaBackendProverSetup, akita_pcs::AkitaError> {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_prover(max_num_vars, max_num_polys),
+        AKITA_ONE_HOT_K256 => {
+            AkitaOneHotK256BackendScheme::setup_prover(max_num_vars, max_num_polys)
+        }
+        _ => unreachable!("one-hot K is validated before backend setup"),
+    }
+}
+
+pub(crate) fn one_hot_setup_verifier(
+    one_hot_k: usize,
+    prover_setup: &AkitaBackendProverSetup,
+) -> Result<AkitaBackendVerifier, OpeningsError> {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => Ok(AkitaOneHotK16BackendScheme::setup_verifier(prover_setup)),
+        AKITA_ONE_HOT_K256 => Ok(AkitaOneHotK256BackendScheme::setup_verifier(prover_setup)),
+        _ => Err(invalid_batch(format!(
+            "Akita one-hot chunk size must be 16 or 256, got {one_hot_k}"
+        ))),
+    }
 }
 
 pub(crate) fn sparse_unit_polynomial(

@@ -606,7 +606,12 @@ impl AkitaPackedProver<'_> {
         let layout_digest = W_JOLT_LAYOUT
             .layout_digest(&wjolt_shape)
             .expect("canonical Wjolt layout digest must exist");
-        jolt_akita::AkitaSetupParams::one_hot_only(shape.num_vars, shape.num_polys, layout_digest)
+        jolt_akita::AkitaSetupParams::one_hot_only(
+            shape.num_vars,
+            shape.num_polys,
+            layout_digest,
+            1 << self.one_hot_params.log_k_chunk,
+        )
     }
 
     fn wjolt_shape(&self) -> WJoltShape {
@@ -1766,8 +1771,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
+        let setup_params = prover.wjolt_setup_params();
+        assert_eq!(setup_params.one_hot_k(), 16);
         let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.wjolt_setup_params()).unwrap();
+            <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
         let proof = prover
             .prove_packed(&object_setup, None, None)
             .expect("packed prover should produce a verifier-native proof");
@@ -2077,9 +2084,11 @@ mod committed_tests {
         );
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
+        let setup_params = prover.wjolt_setup_params();
+        eprintln!("Wjolt one-hot K: {}", setup_params.one_hot_k());
         let setup_start = Instant::now();
         let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.wjolt_setup_params()).unwrap();
+            <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
         eprintln!("akita setup: {:.2?}", setup_start.elapsed());
 
         let prove_start = Instant::now();

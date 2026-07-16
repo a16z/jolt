@@ -47,6 +47,7 @@ fn validate_wjolt_metadata<C, S>(
     canonical_digest: [u8; 32],
     member_arity: usize,
     member_count: usize,
+    one_hot_k: usize,
 ) -> Result<(), VerifierError>
 where
     C: WJoltCommitmentMetadata,
@@ -56,6 +57,11 @@ where
         return Err(batch_failed(
             "Wjolt commitment must use Akita's one-hot backend",
         ));
+    }
+    if commitment.one_hot_k() != one_hot_k || setup.one_hot_k() != one_hot_k {
+        return Err(batch_failed(format!(
+            "Wjolt commitment/setup one-hot chunk size must equal canonical K={one_hot_k}"
+        )));
     }
     if commitment.layout_digest() != canonical_digest {
         return Err(batch_failed(
@@ -178,6 +184,7 @@ where
         canonical_digest,
         *member_arity,
         members.len(),
+        1 << chunk_width,
     )?;
     let leaves = leaf_claims(stage7, reconstruction);
     let mut common_point: Option<Vec<PCS::Field>> = None;
@@ -516,6 +523,7 @@ mod tests {
         digest: [u8; 32],
         num_vars: usize,
         poly_count: usize,
+        one_hot_k: usize,
     }
 
     impl WJoltCommitmentMetadata for CommitmentMetadata {
@@ -534,6 +542,10 @@ mod tests {
         fn poly_count(&self) -> usize {
             self.poly_count
         }
+
+        fn one_hot_k(&self) -> usize {
+            self.one_hot_k
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -541,6 +553,7 @@ mod tests {
         digest: [u8; 32],
         num_vars: usize,
         poly_count: usize,
+        one_hot_k: usize,
     }
 
     impl WJoltSetupMetadata for SetupMetadata {
@@ -554,6 +567,10 @@ mod tests {
 
         fn default_layout_digest(&self) -> [u8; 32] {
             self.digest
+        }
+
+        fn one_hot_k(&self) -> usize {
+            self.one_hot_k
         }
     }
 
@@ -569,13 +586,15 @@ mod tests {
             digest,
             num_vars: 12,
             poly_count: 17,
+            one_hot_k: 256,
         };
         let setup = SetupMetadata {
             digest,
             num_vars: 12,
             poly_count: 17,
+            one_hot_k: 256,
         };
-        assert!(validate_wjolt_metadata(&commitment, &setup, digest, 12, 17).is_ok());
+        assert!(validate_wjolt_metadata(&commitment, &setup, digest, 12, 17, 256).is_ok());
 
         for invalid in [
             CommitmentMetadata {
@@ -594,8 +613,12 @@ mod tests {
                 poly_count: 18,
                 ..commitment
             },
+            CommitmentMetadata {
+                one_hot_k: 16,
+                ..commitment
+            },
         ] {
-            assert!(validate_wjolt_metadata(&invalid, &setup, digest, 12, 17).is_err());
+            assert!(validate_wjolt_metadata(&invalid, &setup, digest, 12, 17, 256).is_err());
         }
         for invalid in [
             SetupMetadata {
@@ -610,8 +633,12 @@ mod tests {
                 poly_count: 18,
                 ..setup
             },
+            SetupMetadata {
+                one_hot_k: 16,
+                ..setup
+            },
         ] {
-            assert!(validate_wjolt_metadata(&commitment, &invalid, digest, 12, 17).is_err());
+            assert!(validate_wjolt_metadata(&commitment, &invalid, digest, 12, 17, 256).is_err());
         }
     }
 

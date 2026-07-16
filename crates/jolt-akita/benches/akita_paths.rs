@@ -51,7 +51,7 @@ use akita_types::{
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K,
+    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
@@ -256,11 +256,11 @@ fn deterministic_point<F: Field>(num_vars: usize) -> Vec<F> {
 }
 
 fn sparse_one_hot(num_vars: usize) -> OneHotPolynomial {
-    let rows = (1usize << num_vars) / AKITA_ONE_HOT_K;
+    let rows = (1usize << num_vars) / AKITA_ONE_HOT_K256;
     let indices = (0..rows)
-        .map(|row| Some(((row * 17 + 3) % AKITA_ONE_HOT_K) as u8))
+        .map(|row| Some(((row * 17 + 3) % AKITA_ONE_HOT_K256) as u8))
         .collect();
-    OneHotPolynomial::new(AKITA_ONE_HOT_K, indices)
+    OneHotPolynomial::new(AKITA_ONE_HOT_K256, indices)
 }
 
 fn materialize_sparse<F: Field>(poly: &OneHotPolynomial) -> Polynomial<F> {
@@ -295,7 +295,7 @@ fn materialize_packed(
 }
 
 fn make_backend_one_hot_poly(poly: &OneHotPolynomial) -> BackendOneHotPoly {
-    BackendOneHotPoly::new(AKITA_ONE_HOT_K, AKITA_D, poly.indices().to_vec())
+    BackendOneHotPoly::new(AKITA_ONE_HOT_K256, AKITA_D, poly.indices().to_vec())
         .expect("valid one-hot backend polynomial")
 }
 

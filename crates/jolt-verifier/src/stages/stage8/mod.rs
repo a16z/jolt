@@ -31,6 +31,7 @@ pub trait WJoltCommitmentMetadata {
     fn layout_digest(&self) -> [u8; 32];
     fn num_vars(&self) -> usize;
     fn poly_count(&self) -> usize;
+    fn one_hot_k(&self) -> usize;
 }
 
 #[cfg(feature = "akita")]
@@ -50,6 +51,10 @@ impl WJoltCommitmentMetadata for jolt_akita::AkitaCommitment {
     fn poly_count(&self) -> usize {
         self.poly_count()
     }
+
+    fn one_hot_k(&self) -> usize {
+        self.one_hot_k()
+    }
 }
 
 /// Shape metadata for the verifier-owned Wjolt setup.
@@ -58,6 +63,7 @@ pub trait WJoltSetupMetadata {
     fn max_num_vars(&self) -> usize;
     fn max_num_polys_per_commitment_group(&self) -> usize;
     fn default_layout_digest(&self) -> [u8; 32];
+    fn one_hot_k(&self) -> usize;
 }
 
 #[cfg(feature = "akita")]
@@ -72,5 +78,9 @@ impl WJoltSetupMetadata for jolt_akita::AkitaVerifierSetup {
 
     fn default_layout_digest(&self) -> [u8; 32] {
         self.default_layout_digest()
+    }
+
+    fn one_hot_k(&self) -> usize {
+        self.one_hot_k()
     }
 }
