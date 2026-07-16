@@ -2089,6 +2089,11 @@ mod committed_tests {
         let setup_start = Instant::now();
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
+        eprintln!(
+            "Wjolt schedule shape: ({}, {})",
+            object_setup.max_num_vars(),
+            object_setup.max_num_polys_per_commitment_group()
+        );
         eprintln!("akita setup: {:.2?}", setup_start.elapsed());
 
         let prove_start = Instant::now();

@@ -274,12 +274,12 @@ dory = { package = "dory-pcs", version = "0.4.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-config = { git = "https://github.com/quangvdao/akita.git", rev = "6b6b5845ac5bbd1cbc9ab25f3adc9f241a1ed398", default-features = false }
-akita-field = { git = "https://github.com/quangvdao/akita.git", rev = "6b6b5845ac5bbd1cbc9ab25f3adc9f241a1ed398", default-features = false }
-akita-pcs = { git = "https://github.com/quangvdao/akita.git", rev = "6b6b5845ac5bbd1cbc9ab25f3adc9f241a1ed398", default-features = false }
-akita-prover = { git = "https://github.com/quangvdao/akita.git", rev = "6b6b5845ac5bbd1cbc9ab25f3adc9f241a1ed398", default-features = false }
-akita-transcript = { git = "https://github.com/quangvdao/akita.git", rev = "6b6b5845ac5bbd1cbc9ab25f3adc9f241a1ed398", default-features = false }
-akita-types = { git = "https://github.com/quangvdao/akita.git", rev = "6b6b5845ac5bbd1cbc9ab25f3adc9f241a1ed398", default-features = false }
+akita-config = { git = "https://github.com/quangvdao/akita.git", rev = "cf5cd3cb14b3f71cba4530439e63eefeedd22607", default-features = false }
+akita-field = { git = "https://github.com/quangvdao/akita.git", rev = "cf5cd3cb14b3f71cba4530439e63eefeedd22607", default-features = false }
+akita-pcs = { git = "https://github.com/quangvdao/akita.git", rev = "cf5cd3cb14b3f71cba4530439e63eefeedd22607", default-features = false }
+akita-prover = { git = "https://github.com/quangvdao/akita.git", rev = "cf5cd3cb14b3f71cba4530439e63eefeedd22607", default-features = false }
+akita-transcript = { git = "https://github.com/quangvdao/akita.git", rev = "cf5cd3cb14b3f71cba4530439e63eefeedd22607", default-features = false }
+akita-types = { git = "https://github.com/quangvdao/akita.git", rev = "cf5cd3cb14b3f71cba4530439e63eefeedd22607", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
