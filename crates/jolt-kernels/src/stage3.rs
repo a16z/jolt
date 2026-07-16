@@ -1724,6 +1724,28 @@ impl<F: Field> SumOfProductsState<F> {
         }
     }
 
+    #[cfg(feature = "cuda")]
+    fn new_cuda(
+        kind: SumOfProductsKind,
+        cuda: cuda::CudaSumOfProductsState,
+        split_eq: Option<SplitEqState<F>>,
+        terms: Vec<ProductTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        deferred_outputs: Vec<DeferredOutput<F>>,
+    ) -> Self {
+        Self {
+            kind,
+            factors: Vec::new(),
+            factor_scratch: Vec::new(),
+            split_eq,
+            terms,
+            outputs,
+            deferred_outputs,
+            point: Vec::new(),
+            cuda: Some(cuda),
+        }
+    }
+
     fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
         #[cfg(feature = "cuda")]
         if let Some(cuda) = &self.cuda {
@@ -2307,6 +2329,15 @@ fn instruction_input_state<F: Field>(
     let cycles = stage3_cycles(inputs, claim.num_rounds)?;
     let eq_point = store.point("stage3.input.stage2.product_virtual.LeftInstructionInput")?;
     let gamma = store.scalar("stage3.instruction_input.gamma")?;
+    let outputs = instruction_input_outputs();
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(state) =
+            cuda_instruction_input_state(cycles, gamma, eq_point, outputs.clone())
+        {
+            return Ok(state);
+        }
+    }
     let (
         right_operand_is_rs2,
         rs2_value,
@@ -2341,52 +2372,56 @@ fn instruction_input_state<F: Field>(
             ProductTerm { coefficient: gamma },
             ProductTerm { coefficient: gamma },
         ],
-        vec![
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
-                oracle: "InstructionFlagLeftOperandIsRs1Value",
-                factor: 4,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.Rs1Value",
-                oracle: "Rs1Value",
-                factor: 5,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
-                oracle: "InstructionFlagLeftOperandIsPC",
-                factor: 6,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.UnexpandedPC",
-                oracle: "UnexpandedPC",
-                factor: 7,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
-                oracle: "InstructionFlagRightOperandIsRs2Value",
-                factor: 0,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.Rs2Value",
-                oracle: "Rs2Value",
-                factor: 1,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
-                oracle: "InstructionFlagRightOperandIsImm",
-                factor: 2,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.Imm",
-                oracle: "Imm",
-                factor: 3,
-            },
-        ],
+        outputs,
         Vec::new(),
         backend,
         eq_point,
     ))
+}
+
+fn instruction_input_outputs() -> Vec<FactorOutput> {
+    vec![
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+            oracle: "InstructionFlagLeftOperandIsRs1Value",
+            factor: 4,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.Rs1Value",
+            oracle: "Rs1Value",
+            factor: 5,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+            oracle: "InstructionFlagLeftOperandIsPC",
+            factor: 6,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.UnexpandedPC",
+            oracle: "UnexpandedPC",
+            factor: 7,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+            oracle: "InstructionFlagRightOperandIsRs2Value",
+            factor: 0,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.Rs2Value",
+            oracle: "Rs2Value",
+            factor: 1,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+            oracle: "InstructionFlagRightOperandIsImm",
+            factor: 2,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.Imm",
+            oracle: "Imm",
+            factor: 3,
+        },
+    ]
 }
 
 fn registers_state<F: Field>(
@@ -2654,6 +2689,54 @@ fn instruction_input_factors<F: Field>(cycles: &[Stage3Cycle]) -> InstructionInp
         left_operand_is_pc,
         unexpanded_pc,
     )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_instruction_input_state<F: Field>(
+    cycles: &[Stage3Cycle],
+    gamma: F,
+    split_point: &[F],
+    outputs: Vec<FactorOutput>,
+) -> Option<SumOfProductsState<F>> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let bool_col = |f: fn(&Stage3Cycle) -> bool| -> Vec<u64> {
+        cycles.par_iter().map(|c| u64::from(f(c))).collect()
+    };
+    let u64_col = |f: fn(&Stage3Cycle) -> u64| -> Vec<u64> {
+        cycles.par_iter().map(f).collect()
+    };
+    let imm: Vec<i128> = cycles.par_iter().map(|c| c.imm).collect();
+    let factors = vec![
+        ctx.u64_to_mont(&bool_col(|c| c.right_operand_is_rs2)).ok()?,
+        ctx.u64_to_mont(&u64_col(|c| c.rs2_value)).ok()?,
+        ctx.u64_to_mont(&bool_col(|c| c.right_operand_is_imm)).ok()?,
+        ctx.i128_to_mont(&imm).ok()?,
+        ctx.u64_to_mont(&bool_col(|c| c.left_operand_is_rs1)).ok()?,
+        ctx.u64_to_mont(&u64_col(|c| c.rs1_value)).ok()?,
+        ctx.u64_to_mont(&bool_col(|c| c.left_operand_is_pc)).ok()?,
+        ctx.u64_to_mont(&u64_col(|c| c.unexpanded_pc)).ok()?,
+    ];
+    let split_point_fr = crate::cuda::as_fr_slice(split_point)?;
+    let cuda = cuda::CudaSumOfProductsState::from_device_factors(
+        cuda::CudaGruenKind::InstructionInput { gamma: crate::cuda::into_fr(gamma)? },
+        factors,
+        split_point_fr,
+        None,
+    )?;
+    Some(SumOfProductsState::new_cuda(
+        SumOfProductsKind::InstructionInput,
+        cuda,
+        Some(SplitEqState::new_low_to_high(split_point, None)),
+        vec![
+            ProductTerm { coefficient: F::one() },
+            ProductTerm { coefficient: F::one() },
+            ProductTerm { coefficient: gamma },
+            ProductTerm { coefficient: gamma },
+        ],
+        outputs,
+        Vec::new(),
+    ))
 }
 
 fn register_factors<F: Field>(cycles: &[Stage3Cycle]) -> RegisterFactors<F> {

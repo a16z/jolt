@@ -38,7 +38,17 @@ impl CudaSumOfProductsState {
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let device_factors = ctx.upload_many(factors).ok()?;
-        let scratch = (0..factors.len())
+        Self::from_device_factors(kind, device_factors, split_point, split_scaling)
+    }
+
+    pub(crate) fn from_device_factors(
+        kind: CudaGruenKind,
+        device_factors: Vec<DeviceFrVec>,
+        split_point: &[Fr],
+        split_scaling: Option<Fr>,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let scratch = (0..device_factors.len())
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
         let split_eq = CudaSplitEqState::new_low_to_high(ctx, split_point, split_scaling).ok()?;
