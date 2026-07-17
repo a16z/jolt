@@ -128,7 +128,6 @@ pub struct CudaKernelContext {
     stage2_product_factors: CudaFunction,
     scatter_add_eq: CudaFunction,
     ram_output_factors: CudaFunction,
-    #[expect(dead_code, reason = "used once the instruction_lookup_q body + wiring land")]
     instruction_lookup_q: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
@@ -3615,8 +3614,53 @@ impl CudaKernelContext {
         &self,
         inputs: InstructionLookupQInputs<'_>,
     ) -> Result<DeviceFrVec, CudaError> {
-        let _ = inputs;
-        Err(CudaError::Unsupported)
+        let prefix_len = inputs.prefix_len;
+        let mut q = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(prefix_len.max(1) * LIMBS)?,
+            len: prefix_len,
+            staging: self.staging.clone(),
+        };
+        if prefix_len == 0 || inputs.suffix_len == 0 {
+            return Ok(q);
+        }
+        let g1 = self.stream.clone_htod(&fr_to_limbs(inputs.gamma))?;
+        let g2 = self.stream.clone_htod(&fr_to_limbs(inputs.gamma_sqr))?;
+        let g3 = self.stream.clone_htod(&fr_to_limbs(inputs.gamma_cub))?;
+        let g4 = self.stream.clone_htod(&fr_to_limbs(inputs.gamma_quart))?;
+        let prefix_len_arg = prefix_len as u64;
+        let suffix_len_arg = inputs.suffix_len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((prefix_len as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.instruction_lookup_q.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut q.buf)
+            .arg(inputs.lookup_output)
+            .arg(inputs.left_lookup_operand)
+            .arg(inputs.right_lookup_operand_lo)
+            .arg(inputs.right_lookup_operand_hi)
+            .arg(inputs.left_instruction_input)
+            .arg(inputs.right_instruction_input_abs_lo)
+            .arg(inputs.right_instruction_input_abs_hi)
+            .arg(inputs.right_instruction_input_neg)
+            .arg(&inputs.eq_suffix.buf)
+            .arg(&g1)
+            .arg(&g2)
+            .arg(&g3)
+            .arg(&g4)
+            .arg(&prefix_len_arg)
+            .arg(&suffix_len_arg);
+        // SAFETY: one thread per x_lo < prefix_len accumulates q[x_lo] = sum over x_hi of
+        // eq_suffix[x_hi] * (mont(c0) + g1*mont(c1) + g2*mont(c2) + g3*mont(c3) + g4*mont(+-|c4|)),
+        // reading cycle column idx = x_lo + x_hi*prefix_len; each raw column and eq_suffix hold
+        // >= prefix_len*suffix_len and >= suffix_len elements respectively, q holds prefix_len Fr.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(q)
     }
 
     pub fn batched_bind(
