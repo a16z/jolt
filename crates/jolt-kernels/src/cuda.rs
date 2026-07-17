@@ -49,6 +49,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/i128_to_mont.cu"),
     include_str!("cuda/stage2_product_factors.cu"),
     include_str!("cuda/scatter_add_eq.cu"),
+    include_str!("cuda/ram_output_factors.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/prefix_combine.cu"),
@@ -125,6 +126,8 @@ pub struct CudaKernelContext {
     i128_to_mont: CudaFunction,
     stage2_product_factors: CudaFunction,
     scatter_add_eq: CudaFunction,
+    #[expect(dead_code, reason = "used once the ram_output_factors body + wiring land")]
+    ram_output_factors: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
@@ -1034,6 +1037,7 @@ impl CudaKernelContext {
             i128_to_mont: module.load_function("i128_to_mont")?,
             stage2_product_factors: module.load_function("stage2_product_factors")?,
             scatter_add_eq: module.load_function("scatter_add_eq")?,
+            ram_output_factors: module.load_function("ram_output_factors")?,
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
@@ -3488,6 +3492,17 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(reduce_cfg) }?;
         self.stream.synchronize()?;
         Ok(out)
+    }
+
+    pub fn ram_output_factors(
+        &self,
+        final_ram: &CudaSlice<u64>,
+        io_start: usize,
+        io_end: usize,
+        k: usize,
+    ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
+        let _ = (final_ram, io_start, io_end, k);
+        Err(CudaError::Unsupported)
     }
 
     pub fn stage2_product_factors(
@@ -6569,6 +6584,44 @@ mod tests {
             let c = ctx();
             let got = c.i128_to_mont(&values).unwrap();
             prop_assert_eq!(got.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn ram_output_factors_matches_cpu(
+            log_k in 1usize..12,
+            io_a in 0usize..4096,
+            io_b in 0usize..4096,
+            seed in 0u64..1000,
+        ) {
+            use num_traits::{One, Zero};
+            let k = 1usize << log_k;
+            let io_start = io_a.min(io_b).min(k);
+            let io_end = io_a.max(io_b).min(k);
+            let final_ram: Vec<u64> = (0..k)
+                .map(|i| {
+                    if (i as u64 + seed).is_multiple_of(3) {
+                        0
+                    } else {
+                        (i as u64).wrapping_mul(seed + 1)
+                    }
+                })
+                .collect();
+
+            let mut exp_io = vec![Fr::zero(); k];
+            let mut exp_diff = vec![Fr::zero(); k];
+            for (i, &final_value) in final_ram.iter().enumerate() {
+                if i >= io_start && i < io_end {
+                    exp_io[i] = Fr::one();
+                } else if final_value != 0 {
+                    exp_diff[i] = Fr::from_u64(final_value);
+                }
+            }
+
+            let c = ctx();
+            let final_dev = c.upload_u64_slice(&final_ram).unwrap();
+            let (io_mask, diff) = c.ram_output_factors(&final_dev, io_start, io_end, k).unwrap();
+            prop_assert_eq!(io_mask.to_host().unwrap(), exp_io);
+            prop_assert_eq!(diff.to_host().unwrap(), exp_diff);
         }
 
         #[test]
