@@ -2977,15 +2977,29 @@ fn ram_output_state<'a, F: Field>(
     let k = 1usize << ram.log_k;
     require_operand_count("stage2.ram.final_ram", k, ram.final_ram.len())?;
     let r_address = store.point("stage2.ram_output.r_address")?;
-    let eq = EqPolynomial::<F>::evals(r_address, None);
-    let mut io_mask = vec![F::zero(); k];
-    let mut diff = vec![F::zero(); k];
+
     let mut nonzero_final_ram = Vec::new();
-    for index in 0..k {
-        let final_value = ram.final_ram[index];
+    for (index, &final_value) in ram.final_ram.iter().enumerate() {
         if final_value != 0 {
             nonzero_final_ram.push((index, final_value));
         }
+    }
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_output_state(ram, r_address, &layout, k) {
+            return Ok(RamOutputState {
+                dense: DenseInstanceState::new_with_device_factors(cuda),
+                final_ram: ram.final_ram,
+                nonzero_final_ram,
+            });
+        }
+    }
+
+    let eq = EqPolynomial::<F>::evals(r_address, None);
+    let mut io_mask = vec![F::zero(); k];
+    let mut diff = vec![F::zero(); k];
+    for (index, &final_value) in ram.final_ram.iter().enumerate() {
         if index >= layout.io_start && index < layout.io_end {
             io_mask[index] = F::one();
         } else if final_value != 0 {
@@ -2997,6 +3011,22 @@ fn ram_output_state<'a, F: Field>(
         final_ram: ram.final_ram,
         nonzero_final_ram,
     })
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_ram_output_state<F: Field>(
+    ram: &Stage2RamData<'_>,
+    r_address: &[F],
+    layout: &Stage2RamOutputLayout,
+    k: usize,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let eq = ctx.eq_evals(crate::cuda::as_fr_slice(r_address)?, None).ok()?;
+    let final_dev = ctx.upload_u64_slice(ram.final_ram).ok()?;
+    let (io_mask, diff) = ctx
+        .ram_output_factors(&final_dev, layout.io_start, layout.io_end, k)
+        .ok()?;
+    cuda::CudaDenseState::from_device_factors(vec![eq, io_mask, diff])
 }
 
 #[derive(Clone, Debug)]
