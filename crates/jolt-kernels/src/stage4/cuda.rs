@@ -160,21 +160,53 @@ impl CudaSparseRegistersState {
         gamma2: F,
         trace_rounds: usize,
     ) -> Option<Self> {
-        let _ = (
-            rows,
-            cols,
-            prev_val,
-            next_val,
-            rs1_flag,
-            rs2_flag,
-            rd_flag,
-            rd_inc,
-            trace_point,
-            gamma,
-            gamma2,
-            trace_rounds,
-        );
-        None
+        let ctx = crate::cuda::shared_ctx()?;
+        let n = rows.len();
+
+        let prev_dev = ctx.upload_u64_slice(prev_val).ok()?;
+        let next_dev = ctx.upload_u64_slice(next_val).ok()?;
+        let val = ctx.u64_to_mont_dev(&prev_dev, n).ok()?;
+        let prev = ctx.u64_to_mont_dev(&prev_dev, n).ok()?;
+        let next = ctx.u64_to_mont_dev(&next_dev, n).ok()?;
+
+        let rs1_u64: Vec<u64> = rs1_flag.iter().map(|&f| u64::from(f)).collect();
+        let rs2_u64: Vec<u64> = rs2_flag.iter().map(|&f| u64::from(f)).collect();
+        let rd_u64: Vec<u64> = rd_flag.iter().map(|&f| u64::from(f)).collect();
+        let rs1_dev = ctx.upload_u64_slice(&rs1_u64).ok()?;
+        let rs2_dev = ctx.upload_u64_slice(&rs2_u64).ok()?;
+        let rd_dev = ctx.upload_u64_slice(&rd_u64).ok()?;
+
+        let rd_wa = ctx.u64_to_mont_dev(&rd_dev, n).ok()?;
+
+        let mut read_ra = ctx.u64_to_mont_dev(&rs1_dev, n).ok()?;
+        ctx.mul_scalar(&mut read_ra, crate::cuda::into_fr(gamma)?).ok()?;
+        let mut rs2_term = ctx.u64_to_mont_dev(&rs2_dev, n).ok()?;
+        ctx.mul_scalar(&mut rs2_term, crate::cuda::into_fr(gamma2)?).ok()?;
+        ctx.add(&mut read_ra, &rs2_term).ok()?;
+
+        let entries = SparseRegisterEntries {
+            val,
+            read_ra,
+            rd_wa,
+            prev_val: prev,
+            next_val: next,
+        };
+        let eq_cycle = crate::split_eq::CudaSplitEqState::new_low_to_high(
+            ctx,
+            crate::cuda::as_fr_slice(trace_point)?,
+            None,
+        )
+        .ok()?;
+        let (schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
+        Some(Self {
+            entries,
+            rd_inc: ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
+            rd_inc_scratch: ctx.upload(&[]).ok()?,
+            eq_cycle,
+            schedules,
+            final_cols,
+            round: 0,
+        })
     }
 
     pub(crate) fn round_poly_q(&self) -> Option<[Fr; 2]> {
