@@ -2277,6 +2277,58 @@ struct InstructionLookupPhase1<F: Field> {
     cuda: Option<Box<cuda::CudaDenseState>>,
 }
 
+#[cfg(feature = "cuda")]
+fn cuda_instruction_lookup_phase1<F: Field>(
+    cycles: &[Stage2InstructionLookupCycle],
+    r_lo: &[F],
+    r_hi: &[F],
+    gamma_powers: [F; 4],
+) -> Option<cuda::CudaDenseState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let prefix_len = 1usize << r_lo.len();
+    let suffix_len = 1usize << r_hi.len();
+
+    let lookup_output: Vec<u64> = cycles.par_iter().map(|c| c.lookup_output).collect();
+    let left_lookup_operand: Vec<u64> = cycles.par_iter().map(|c| c.left_lookup_operand).collect();
+    let (rlo, rhi): (Vec<u64>, Vec<u64>) = cycles
+        .par_iter()
+        .map(|c| (c.right_lookup_operand as u64, (c.right_lookup_operand >> 64) as u64))
+        .unzip();
+    let left_instruction_input: Vec<u64> =
+        cycles.par_iter().map(|c| c.left_instruction_input).collect();
+    let (ri_lo, (ri_hi, ri_neg)): (Vec<u64>, (Vec<u64>, Vec<u8>)) = cycles
+        .par_iter()
+        .map(|c| {
+            let mag = c.right_instruction_input.unsigned_abs();
+            (mag as u64, ((mag >> 64) as u64, u8::from(c.right_instruction_input < 0)))
+        })
+        .unzip();
+
+    let p = ctx.eq_evals(crate::cuda::as_fr_slice(r_lo)?, None).ok()?;
+    let eq_suffix = ctx.eq_evals(crate::cuda::as_fr_slice(r_hi)?, None).ok()?;
+    let q = ctx
+        .instruction_lookup_q(crate::cuda::InstructionLookupQInputs {
+            lookup_output: &ctx.upload_u64_slice(&lookup_output).ok()?,
+            left_lookup_operand: &ctx.upload_u64_slice(&left_lookup_operand).ok()?,
+            right_lookup_operand_lo: &ctx.upload_u64_slice(&rlo).ok()?,
+            right_lookup_operand_hi: &ctx.upload_u64_slice(&rhi).ok()?,
+            left_instruction_input: &ctx.upload_u64_slice(&left_instruction_input).ok()?,
+            right_instruction_input_abs_lo: &ctx.upload_u64_slice(&ri_lo).ok()?,
+            right_instruction_input_abs_hi: &ctx.upload_u64_slice(&ri_hi).ok()?,
+            right_instruction_input_neg: &ctx.upload_u8_slice(&ri_neg).ok()?,
+            eq_suffix: &eq_suffix,
+            gamma: crate::cuda::into_fr(gamma_powers[0])?,
+            gamma_sqr: crate::cuda::into_fr(gamma_powers[1])?,
+            gamma_cub: crate::cuda::into_fr(gamma_powers[2])?,
+            gamma_quart: crate::cuda::into_fr(gamma_powers[3])?,
+            prefix_len,
+            suffix_len,
+        })
+        .ok()?;
+    cuda::CudaDenseState::from_device_factors(vec![p, q])
+}
+
 impl<F: Field> InstructionLookupPhase1<F> {
     fn new(
         cycles: &[Stage2InstructionLookupCycle],
@@ -2285,9 +2337,23 @@ impl<F: Field> InstructionLookupPhase1<F> {
         backend: &'static str,
     ) -> Self {
         let (r_hi, r_lo) = r_spartan.split_at(r_spartan.len() / 2);
+        let prefix_len = 1usize << r_lo.len();
+
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" {
+            if let Some(cuda) = cuda_instruction_lookup_phase1(cycles, r_lo, r_hi, gamma_powers) {
+                return Self {
+                    p: Vec::new(),
+                    q: Vec::new(),
+                    challenges: Vec::new(),
+                    p_len: prefix_len,
+                    cuda: Some(Box::new(cuda)),
+                };
+            }
+        }
+
         let p = EqPolynomial::<F>::evals(r_lo, None);
         let eq_suffix = EqPolynomial::<F>::evals(r_hi, None);
-        let prefix_len = p.len();
         let q = (0..prefix_len)
             .into_par_iter()
             .map(|x_lo| {
