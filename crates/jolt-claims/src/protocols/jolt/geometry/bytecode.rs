@@ -12,6 +12,7 @@ use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltCommittedPolynomial, JoltExpr,
     JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
+use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use super::dimensions::JoltFormulaPointError;
 use super::error::require_len;
 use super::instruction::{imm, instruction_raf_flag, lookup_table_flag, unexpanded_pc};
@@ -193,7 +194,7 @@ impl<F: Field> BytecodeReadRafPublicValues<F> {
 /// vals in base mode, six in lattice mode (the store stage).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafCommittedPublicValues<F: Field> {
-    pub stage_cycle_eqs: Vec<F>,
+    pub stage_cycle_eqs: [F; NUM_BYTECODE_VAL_STAGES],
     pub spartan_outer_raf: F,
     pub spartan_shift_raf: F,
     pub entry: F,
@@ -219,7 +220,7 @@ pub struct BytecodeReadRafCommittedEvaluationInputs<'a, F> {
     pub r_cycle: &'a [F],
     /// One cycle point per staged val (five base, six lattice — the sixth is
     /// the `IncVirtualization` store point).
-    pub stage_cycle_points: Vec<&'a [F]>,
+    pub stage_cycle_points: [&'a [F]; NUM_BYTECODE_VAL_STAGES],
     pub entry_bytecode_index: usize,
 }
 
@@ -231,9 +232,7 @@ where
 {
     let stage_cycle_eqs = inputs
         .stage_cycle_points
-        .iter()
-        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle))
-        .collect::<Vec<_>>();
+        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle));
     let (spartan_outer_raf, spartan_shift_raf, entry) = read_raf_raf_entry_publics(
         inputs.r_address,
         inputs.r_cycle,
@@ -322,12 +321,12 @@ where
     }
 }
 
-/// Every bytecode row's five staged values plus its store circuit flag (the
-/// lattice sixth-stage selector, folded like a stage value by the lattice
-/// read-raf consumers).
+/// Every bytecode row's staged values: the five gamma-folded stages, plus
+/// (lattice) the store circuit flag as the sixth staged value, folded like
+/// the others by the read-raf consumers.
 pub fn read_raf_stage_values<F>(
     inputs: BytecodeReadRafStageValueInputs<'_, F>,
-) -> Vec<([F; 5], bool)>
+) -> Vec<[F; NUM_BYTECODE_VAL_STAGES]>
 where
     F: Field,
 {
@@ -379,9 +378,12 @@ where
     );
     let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
 
+    // The base monolith publics carry the five gamma'd stages only; the
+    // lattice sixth (store) row value never flows through this path, so the
+    // zip below is deliberately driven by the five-slot accumulator.
     let mut stage_values = [F::zero(); 5];
     for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
-        let (row_values, _) = read_raf_row_values::<F>(
+        let row_values = read_raf_row_values::<F>(
             instruction,
             &register_eq.read_write,
             &register_eq.val_evaluation,
@@ -434,7 +436,7 @@ fn read_raf_row_values<F>(
     stage3_gammas: &[F],
     stage4_gammas: &[F],
     stage5_gammas: &[F],
-) -> ([F; 5], bool)
+) -> [F; NUM_BYTECODE_VAL_STAGES]
 where
     F: Field,
 {
@@ -501,10 +503,18 @@ where
         stage5 += stage5_gammas[2 + table.index()];
     }
 
-    (
-        [stage1, stage2, stage3, stage4, stage5],
-        circuit_flags[CircuitFlags::Store],
-    )
+    #[cfg(not(feature = "akita"))]
+    {
+        [stage1, stage2, stage3, stage4, stage5]
+    }
+    // The lattice sixth stage: the store circuit flag as a raw staged value
+    // (the `IncVirtualization` destination selector), folded against
+    // `eq(r_address)` like the five gamma'd stages by the read-raf consumers.
+    #[cfg(feature = "akita")]
+    {
+        let store = F::from_u64(u64::from(circuit_flags[CircuitFlags::Store]));
+        [stage1, stage2, stage3, stage4, stage5, store]
+    }
 }
 
 fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
