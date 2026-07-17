@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-6b RAM Hamming-weight booleanity slot.
 pub trait RamHammingBooleanityProver<F: Field> {
@@ -18,5 +18,5 @@ pub trait RamHammingBooleanityProver<F: Field> {
         stage1_cycle_binding: &[F],
         challenges: &NoChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>>;
 }

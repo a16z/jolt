@@ -10,7 +10,7 @@ use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-5 RAM RA claim-reduction slot.
 pub trait RamRaClaimReductionProver<F: Field> {
@@ -22,5 +22,5 @@ pub trait RamRaClaimReductionProver<F: Field> {
         input_points: &RamRaClaimReductionInputClaims<Vec<F>>,
         challenges: &RamRaClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRaClaimReduction<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaClaimReduction<F>>>, KernelError<F>>;
 }

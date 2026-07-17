@@ -21,7 +21,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
 use crate::ram_hamming_booleanity::RamHammingBooleanityProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RamHammingBooleanityProver<F> for ReferenceBackend {
     fn prepare(
@@ -31,7 +31,8 @@ impl<F: Field> RamHammingBooleanityProver<F> for ReferenceBackend {
         stage1_cycle_binding: &[F],
         challenges: &NoChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>>
+    {
         if stage1_cycle_binding.len() != trace_dimensions.log_t() {
             return Err(KernelError::InvariantViolation {
                 reason: "stage-1 cycle binding has the wrong variable count",

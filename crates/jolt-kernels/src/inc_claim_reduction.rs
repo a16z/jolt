@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-6b increment claim-reduction slot. The four cycle points are the
 /// upstream sources in relation order: RAM read-write, RAM val-check,
@@ -20,5 +20,5 @@ pub trait IncClaimReductionProver<F: Field> {
         cycle_points: &[Vec<F>; 4],
         challenges: &IncClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = IncClaimReduction<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>>;
 }

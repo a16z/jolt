@@ -48,7 +48,7 @@ use jolt_witness::protocols::jolt_vm::Stage5InstructionReadRafRow;
 
 use super::views::eq_table;
 use crate::instruction_read_raf::InstructionReadRafProver;
-use crate::{KernelError, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, ProofSession, ReferenceBackend, SumcheckKernel, SumcheckKernelError};
 
 /// Address variables bound per phase. Fixed at 8 (the legacy prover picks 8
 /// or 16 by trace size, but the emitted polynomials are identical — see the
@@ -64,7 +64,7 @@ impl<F: Field> InstructionReadRafProver<F> for ReferenceBackend {
         r_reduction: &[F],
         rows: Vec<Stage5InstructionReadRafRow>,
         challenges: &InstructionReadRafChallenges<F>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         Ok(Box::new(InstructionReadRafKernel::new(
             dimensions,
             r_reduction,
@@ -133,7 +133,6 @@ struct CycleTables<F: Field> {
 }
 
 pub struct InstructionReadRafKernel<F: Field> {
-    relation: InstructionReadRaf<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
@@ -215,7 +214,6 @@ impl<F: Field> InstructionReadRafKernel<F> {
         }
 
         let mut kernel = Self {
-            relation: InstructionReadRaf::new(dimensions),
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
@@ -621,23 +619,21 @@ impl<F: Field> InstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> ProveSumcheck<F> for InstructionReadRafKernel<F> {
+impl<F: Field> SumcheckKernel<F> for InstructionReadRafKernel<F> {
     type Relation = InstructionReadRaf<F>;
 
-    fn relation(&self) -> &InstructionReadRaf<F> {
-        &self.relation
-    }
-
-    fn output_claims(&mut self) -> Result<InstructionReadRafOutputClaims<F>, KernelError<F>> {
+    fn output_claims(
+        &mut self,
+    ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
-            return Err(KernelError::NotFullyBound {
+            return Err(SumcheckKernelError::NotFullyBound {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
         let tables = self
             .cycle_tables
             .as_ref()
-            .ok_or(KernelError::InvariantViolation {
+            .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "cycle tables absent after full binding",
             })?;
 

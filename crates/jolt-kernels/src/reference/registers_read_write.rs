@@ -25,7 +25,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table, tile};
 use crate::registers_read_write::RegistersReadWriteProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RegistersReadWriteProver<F> for ReferenceBackend {
     fn prepare(
@@ -35,7 +35,7 @@ impl<F: Field> RegistersReadWriteProver<F> for ReferenceBackend {
         r_cycle: &[F],
         challenges: &RegistersReadWriteChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
         if dimensions.phase1_num_rounds() != dimensions.log_t() {
             return Err(KernelError::Unsupported {

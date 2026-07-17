@@ -8,7 +8,7 @@ use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-4 RAM value-check slot.
 pub trait RamValCheckProver<F: Field> {
@@ -26,5 +26,5 @@ pub trait RamValCheckProver<F: Field> {
         r_cycle: &[F],
         challenges: &RamValCheckChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamValCheck<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>>;
 }

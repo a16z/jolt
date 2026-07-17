@@ -22,7 +22,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
 use crate::registers_claim_reduction::RegistersClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RegistersClaimReductionProver<F> for ReferenceBackend {
     fn prepare(
@@ -32,7 +32,7 @@ impl<F: Field> RegistersClaimReductionProver<F> for ReferenceBackend {
         product_uniskip_tau_low: &[F],
         challenges: &RegistersClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
     {
         let ids = [
             rd_write_value_reduced(),

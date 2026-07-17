@@ -23,8 +23,9 @@ pub use jolt_verifier_derive::SumcheckBatch;
 use std::collections::BTreeSet;
 
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId};
-use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_claims::{MissingOpeningValue, SymbolicSumcheck};
+use jolt_field::{Field, FieldCore};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_transcript::Transcript;
 
 use crate::VerifierError;
@@ -323,6 +324,141 @@ where
             |id| self.derive_output_term(id, input_points, output_points, challenges),
         )
     }
+}
+
+/// Extraction/self-check failures a [`SumcheckKernel`] can surface: the
+/// kernel-side error vocabulary the generated prove drivers name. Deliberately
+/// small — compute-level failures (witness access, geometry) belong to the
+/// kernel crate's own error type, which wraps this one; only the failures the
+/// *typed extraction seam* can produce live here.
+#[derive(Debug, thiserror::Error)]
+pub enum SumcheckKernelError<F: FieldCore> {
+    /// Relation-level failures (claim wiring, point derivation): kernels run
+    /// the verifier's own relation methods as hard self-checks.
+    #[error(transparent)]
+    Verifier(#[from] VerifierError),
+
+    #[error(transparent)]
+    MissingOpeningValue(#[from] MissingOpeningValue<JoltOpeningId>),
+
+    /// Final values were requested before every round was bound.
+    #[error("final table values requested with {remaining} unbound rounds")]
+    NotFullyBound { remaining: usize },
+
+    /// A bound derived table's final value disagrees with the verifier's
+    /// `derive_output_term` at the bound point — the hand-written table
+    /// resolver drifted from the relation's scalar path.
+    #[error("derived table {id:?} bound to {got}, but derive_output_term gives {expected}")]
+    DerivedTableDrift {
+        id: JoltDerivedId,
+        expected: F,
+        got: F,
+    },
+
+    /// A contract the kernel's inputs or internal state must uphold was
+    /// violated — a bug, never a capability gap.
+    #[error("kernel invariant violated: {reason}")]
+    InvariantViolation { reason: &'static str },
+}
+
+/// The typed prove-side counterpart of a batch member: pairs the object-safe
+/// [`ProveRounds`] round interface (what the engine's round loop consumes)
+/// with the member's [`ConcreteSumcheck`] relation, so the generated stage
+/// drivers can extract typed output claims after the loop.
+///
+/// Homed here (not in the kernel crate) so the generated `prove_clear`
+/// drivers can name it: `jolt-verifier` cannot depend on the kernel crate,
+/// which sits above it. Kernels do NOT own a relation instance — the stage's
+/// relation is the single source of geometry, threaded back in through
+/// [`validate_derived_tables`](Self::validate_derived_tables) — so batch and
+/// kernel geometry cannot diverge.
+pub trait SumcheckKernel<F: Field>: ProveRounds<F>
+where
+    SumcheckInputClaims<F, Self::Relation>: InputClaims<F>,
+    SumcheckOutputClaims<F, Self::Relation>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, Self::Relation>: SumcheckChallenges<F, JoltChallengeId>,
+{
+    type Relation: ConcreteSumcheck<F>;
+
+    /// Extract the member's typed produced-opening values from its fully
+    /// bound state. Call after the engine's round loop has ingested every
+    /// challenge.
+    fn output_claims(
+        &mut self,
+    ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>>;
+
+    /// Cross-check any hand-materialized `Derived` leaf tables against the
+    /// verifier's `derive_output_term` at the bound point. Call after the
+    /// engine's round loop has ingested every challenge; the generated
+    /// drivers run it on every member before the aggregate final-claim check,
+    /// so a drifted table is attributed to its id rather than surfacing as a
+    /// coarse final-claim mismatch. Kernels without derived tables keep the
+    /// no-op default.
+    ///
+    /// `relation` must be the STAGE's relation instance — the one whose
+    /// `derive_opening_points` already ran (some relations capture their
+    /// bound point there) and whose `expected_final_claim` the driver checks
+    /// against — not a kernel-internal copy.
+    fn validate_derived_tables(
+        &self,
+        _relation: &Self::Relation,
+        _input_points: &SumcheckInputPoints<F, Self::Relation>,
+        _output_points: &SumcheckOutputPoints<F, Self::Relation>,
+        _challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
+    ) -> Result<(), SumcheckKernelError<F>> {
+        Ok(())
+    }
+}
+
+/// One batch member's prepare-time protocol inputs, bundled: the stage's
+/// relation instance (the typed request — geometry and points live on it, so
+/// kernels read accessors instead of restated constructor arguments) plus the
+/// member's consumed claim values, consumed opening points, and drawn
+/// challenges. All four are pure functions of the relation and the upstream
+/// carriers, which is what lets the generated driver construct the bundle
+/// mechanically per member. Backend context (session, witness) is compute
+/// plumbing, not protocol input — it stays outside, as positional arguments
+/// of the preparer.
+pub struct ProverInputs<'a, F, R>
+where
+    F: Field,
+    R: ConcreteSumcheck<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+{
+    pub relation: &'a R,
+    pub claims: &'a SumcheckInputClaims<F, R>,
+    pub points: &'a SumcheckInputPoints<F, R>,
+    pub challenges: &'a ConcreteSumcheckChallenges<F, R>,
+}
+
+/// The error home shared by every [`PrepareSumcheck`] impl on one preparer:
+/// a single associated error type carrying the `From` bounds the generated
+/// drivers need, so a driver bounded on several member relations has one
+/// unambiguous `Self::Error`.
+pub trait SumcheckPreparer<F: Field> {
+    type Error: From<VerifierError> + From<SumcheckError<F>> + From<SumcheckKernelError<F>>;
+}
+
+/// The dependency-inverted preparer bound the generated `prove_clear` drivers
+/// name, one implementation per member relation: mint the boxed
+/// [`SumcheckKernel`] that proves `R` from the member's [`ProverInputs`].
+/// `jolt-prover` implements it for every relation on a small context struct
+/// that forwards the bundle to its backend's slots — the only place backend
+/// field names are spelled.
+pub trait PrepareSumcheck<F, R>: SumcheckPreparer<F>
+where
+    F: Field,
+    R: ConcreteSumcheck<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+{
+    fn prepare(
+        &mut self,
+        inputs: ProverInputs<'_, F, R>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, Self::Error>;
 }
 
 /// One member's absorbed opening scalars: its claims' `canonical_order`-aligned

@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-3 registers claim-reduction slot.
 pub trait RegistersClaimReductionProver<F: Field> {
@@ -18,5 +18,5 @@ pub trait RegistersClaimReductionProver<F: Field> {
         product_uniskip_tau_low: &[F],
         challenges: &RegistersClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>;
 }

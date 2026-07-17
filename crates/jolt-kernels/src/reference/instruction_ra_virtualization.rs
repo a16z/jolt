@@ -22,7 +22,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, eq_table};
 use crate::instruction_ra_virtualization::InstructionRaVirtualizationProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> InstructionRaVirtualizationProver<F> for ReferenceBackend {
     fn prepare(
@@ -34,7 +34,7 @@ impl<F: Field> InstructionRaVirtualizationProver<F> for ReferenceBackend {
         committed_chunk_bits: usize,
         challenges: &InstructionRaVirtualizationChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {
         let relation = InstructionRaVirtualization::new(
             dimensions,

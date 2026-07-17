@@ -49,7 +49,10 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, eq_table};
 use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel,
+    SumcheckKernelError,
+};
 
 impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
     fn prepare(
@@ -62,7 +65,7 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
         bytecode_indices: Vec<usize>,
         entry_bytecode_index: usize,
         challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
             dimensions,
@@ -255,18 +258,14 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveSumcheck<F> for BytecodeReadRafAddressKernel<F> {
+impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
-
-    fn relation(&self) -> &BytecodeReadRafAddressPhase<F> {
-        &self.relation
-    }
 
     fn output_claims(
         &mut self,
-    ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, KernelError<F>> {
+    ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
-            return Err(KernelError::NotFullyBound {
+            return Err(SumcheckKernelError::NotFullyBound {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
@@ -303,7 +302,8 @@ impl<F: Field> BytecodeReadRafCycleProver<F> for ReferenceBackend {
         stage_values_at_r_address: [F; 5],
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
+    {
         let cycles = 1usize << dimensions.log_t();
         // The table fold feeds only `expected_output`, which the kernel's
         // relation copy never runs (the recipe's own batch instance does).

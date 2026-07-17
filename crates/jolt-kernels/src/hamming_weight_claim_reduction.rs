@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeight
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-7 Hamming-weight claim-reduction slot. `r_cycle` and `r_address`
 /// are the stage-6b booleanity opening point's splits; `virtualization_points`
@@ -27,5 +27,5 @@ pub trait HammingWeightClaimReductionProver<F: Field> {
         virtualization_points: &[Vec<F>],
         challenges: &HammingWeightClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>;
 }

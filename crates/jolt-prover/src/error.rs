@@ -1,5 +1,5 @@
 use jolt_field::FieldCore;
-use jolt_kernels::KernelError;
+use jolt_kernels::{KernelError, SumcheckKernelError};
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
@@ -19,6 +19,10 @@ pub enum ProverError<F: FieldCore> {
 
     #[error(transparent)]
     Kernel(#[from] KernelError<F>),
+
+    /// Extraction/self-check failures from the typed kernel seam.
+    #[error(transparent)]
+    SumcheckKernel(#[from] SumcheckKernelError<F>),
 
     #[error(transparent)]
     Witness(#[from] jolt_witness::WitnessError),

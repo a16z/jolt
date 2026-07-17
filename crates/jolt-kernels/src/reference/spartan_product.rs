@@ -36,7 +36,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
 use crate::spartan_product::{SpartanProductInstance, SpartanProductProver};
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> SpartanProductProver<F> for ReferenceBackend {
     fn prepare(
@@ -136,7 +136,7 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
         self: Box<Self>,
         tau_high: F,
         uniskip_challenge: F,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
         let this = *self;
         let cycles = 1usize << this.log_t;
         let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)?;

@@ -24,7 +24,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::dense_view;
 use crate::spartan_shift::SpartanShiftProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> SpartanShiftProver<F> for ReferenceBackend {
     fn prepare(
@@ -35,7 +35,7 @@ impl<F: Field> SpartanShiftProver<F> for ReferenceBackend {
         product_remainder_point: &[F],
         challenges: &SpartanShiftChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = SpartanShift<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = SpartanShift<F>>>, KernelError<F>> {
         let ids = [
             unexpanded_pc_shift(),
             pc_shift(),

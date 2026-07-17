@@ -26,7 +26,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{cycle_fold, eq_table};
 use crate::hamming_weight_claim_reduction::HammingWeightClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
     fn prepare(
@@ -38,7 +38,7 @@ impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
         virtualization_points: &[Vec<F>],
         challenges: &HammingWeightClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {
         if r_address.len() != dimensions.log_k_chunk
             || virtualization_points.len() != dimensions.layout.total()

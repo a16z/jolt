@@ -39,7 +39,10 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, dense_view, eq_table};
 use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel,
+    SumcheckKernelError,
+};
 
 impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
     fn prepare(
@@ -50,7 +53,7 @@ impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
         reference_cycle: &[F],
         gamma: F,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
         Ok(Box::new(BooleanityAddressKernel::new(
             dimensions,
@@ -224,16 +227,14 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveSumcheck<F> for BooleanityAddressKernel<F> {
+impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     type Relation = BooleanityAddressPhase<F>;
 
-    fn relation(&self) -> &BooleanityAddressPhase<F> {
-        &self.relation
-    }
-
-    fn output_claims(&mut self) -> Result<BooleanityAddressPhaseOutputClaims<F>, KernelError<F>> {
+    fn output_claims(
+        &mut self,
+    ) -> Result<BooleanityAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
-            return Err(KernelError::NotFullyBound {
+            return Err(SumcheckKernelError::NotFullyBound {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
@@ -262,7 +263,7 @@ impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
         reference_cycle: &[F],
         challenges: &BooleanityCyclePhaseChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = Booleanity<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
         let relation = Booleanity::new(
             dimensions,
             r_address.to_vec(),

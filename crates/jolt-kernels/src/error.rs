@@ -2,6 +2,7 @@ use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId
 use jolt_claims::MissingOpeningValue;
 use jolt_field::FieldCore;
 use jolt_sumcheck::SumcheckError;
+use jolt_verifier::stages::relations::SumcheckKernelError;
 use jolt_verifier::VerifierError;
 use jolt_witness::WitnessError;
 use thiserror::Error;
@@ -25,6 +26,11 @@ pub enum KernelError<F: FieldCore> {
 
     #[error(transparent)]
     MissingOpeningValue(#[from] MissingOpeningValue<JoltOpeningId>),
+
+    /// Extraction/self-check failures from the typed kernel seam
+    /// (`SumcheckKernel::{output_claims, validate_derived_tables}`).
+    #[error(transparent)]
+    SumcheckKernel(#[from] SumcheckKernelError<F>),
 
     #[error(transparent)]
     CenteredDomain(#[from] jolt_poly::lagrange::CenteredIntegerDomainError),

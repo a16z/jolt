@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-2 product slot: factory for a prepared product-virtualization
 /// instance.
@@ -31,5 +31,5 @@ pub trait SpartanProductInstance<F: Field> {
         self: Box<Self>,
         tau_high: F,
         uniskip_challenge: F,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = ProductRemainder<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>>;
 }

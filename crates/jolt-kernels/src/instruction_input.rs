@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-3 instruction input-virtualization slot.
 pub trait InstructionInputProver<F: Field> {
@@ -18,5 +18,5 @@ pub trait InstructionInputProver<F: Field> {
         product_remainder_point: &[F],
         challenges: &InstructionInputChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionInput<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>>;
 }

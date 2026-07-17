@@ -23,7 +23,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
 use crate::inc_claim_reduction::IncClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> IncClaimReductionProver<F> for ReferenceBackend {
     fn prepare(
@@ -33,7 +33,7 @@ impl<F: Field> IncClaimReductionProver<F> for ReferenceBackend {
         cycle_points: &[Vec<F>; 4],
         challenges: &IncClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
         for point in cycle_points {
             if point.len() != trace_dimensions.log_t() {
                 return Err(KernelError::InvariantViolation {

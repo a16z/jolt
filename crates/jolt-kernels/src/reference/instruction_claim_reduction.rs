@@ -26,7 +26,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
 use crate::instruction_claim_reduction::InstructionClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> InstructionClaimReductionProver<F> for ReferenceBackend {
     fn prepare(
@@ -36,7 +36,7 @@ impl<F: Field> InstructionClaimReductionProver<F> for ReferenceBackend {
         tau_low: &[F],
         challenges: &InstructionClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {
         let ids = [
             lookup_output_reduced(),

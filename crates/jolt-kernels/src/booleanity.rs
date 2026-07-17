@@ -9,7 +9,7 @@ use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-6a booleanity address-phase slot. `reference_address` and
 /// `reference_cycle` are the little-endian reference points carried in
@@ -23,7 +23,7 @@ pub trait BooleanityAddressProver<F: Field> {
         reference_cycle: &[F],
         gamma: F,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>;
 }
 
 /// The stage-6b booleanity cycle-phase slot: a naive member — the cycle
@@ -47,5 +47,5 @@ pub trait BooleanityCycleProver<F: Field> {
         reference_cycle: &[F],
         challenges: &BooleanityCyclePhaseChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = Booleanity<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>>;
 }

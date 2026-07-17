@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-2 RAM read/write-checking slot.
 pub trait RamReadWriteProver<F: Field> {
@@ -19,5 +19,5 @@ pub trait RamReadWriteProver<F: Field> {
         tau_low: &[F],
         challenges: &RamReadWriteChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>;
 }

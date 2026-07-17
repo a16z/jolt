@@ -28,7 +28,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
 use crate::ram_output_check::RamOutputCheckProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RamOutputCheckProver<F> for ReferenceBackend {
     fn prepare(
@@ -39,7 +39,7 @@ impl<F: Field> RamOutputCheckProver<F> for ReferenceBackend {
         output_address_challenges: &[F],
         public_memory: PublicIoMemory,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamOutputCheck<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamOutputCheck<F>>>, KernelError<F>> {
         if dimensions.output_check_rounds() != ram_log_k {
             return Err(KernelError::Unsupported {
                 reason: "reference RAM output check supports only the default read-write config \

@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-3 Spartan-shift slot.
 pub trait SpartanShiftProver<F: Field> {
@@ -19,5 +19,5 @@ pub trait SpartanShiftProver<F: Field> {
         product_remainder_point: &[F],
         challenges: &SpartanShiftChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = SpartanShift<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = SpartanShift<F>>>, KernelError<F>>;
 }

@@ -11,7 +11,7 @@ use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-6a bytecode read+RAF address-phase slot. The typed relation data
 /// is the per-row stage-value table (the verifier's `read_raf_stage_values`
@@ -33,7 +33,7 @@ pub trait BytecodeReadRafAddressProver<F: Field> {
         bytecode_indices: Vec<usize>,
         entry_bytecode_index: usize,
         challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>;
 }
 
 /// The stage-6b bytecode read+RAF cycle-phase slot: a naive member driven
@@ -59,5 +59,5 @@ pub trait BytecodeReadRafCycleProver<F: Field> {
         stage_values_at_r_address: [F; 5],
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>;
 }

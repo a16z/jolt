@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-1 slot: factory for a prepared Spartan-outer instance.
 pub trait SpartanOuterProver<F: Field> {
@@ -28,5 +28,5 @@ pub trait SpartanOuterInstance<F: Field> {
     fn into_remainder(
         self: Box<Self>,
         uniskip_challenge: F,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = OuterRemainder<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>>;
 }

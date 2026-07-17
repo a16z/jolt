@@ -6,7 +6,7 @@ use jolt_field::Field;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::protocols::jolt_vm::Stage5InstructionReadRafRow;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-5 instruction read+RAF slot. The typed relation data is the
 /// per-cycle lookup rows (index bits, table selection, operand interleaving)
@@ -20,5 +20,5 @@ pub trait InstructionReadRafProver<F: Field> {
         r_reduction: &[F],
         rows: Vec<Stage5InstructionReadRafRow>,
         challenges: &InstructionReadRafChallenges<F>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionReadRaf<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>>;
 }

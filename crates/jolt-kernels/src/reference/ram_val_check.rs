@@ -26,7 +26,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, dense_view};
 use crate::ram_val_check::RamValCheckProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RamValCheckProver<F> for ReferenceBackend {
     fn prepare(
@@ -39,7 +39,7 @@ impl<F: Field> RamValCheckProver<F> for ReferenceBackend {
         r_cycle: &[F],
         challenges: &RamValCheckChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamValCheck<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
         // The address-bound `ra` slice, folded from the full `(K × T)` grid.
         let ra_folded = address_fold(
             witness,

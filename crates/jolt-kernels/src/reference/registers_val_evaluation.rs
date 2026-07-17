@@ -23,7 +23,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, dense_view};
 use crate::registers_val_evaluation::RegistersValEvaluationProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RegistersValEvaluationProver<F> for ReferenceBackend {
     fn prepare(
@@ -33,7 +33,7 @@ impl<F: Field> RegistersValEvaluationProver<F> for ReferenceBackend {
         registers_val_point: &[F],
         challenges: &NoChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
     {
         if registers_val_point.len() != REGISTER_ADDRESS_BITS + trace_dimensions.log_t() {
             return Err(KernelError::InvariantViolation {

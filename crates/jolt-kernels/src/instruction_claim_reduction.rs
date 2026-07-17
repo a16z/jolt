@@ -8,7 +8,7 @@ use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaim
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-2 instruction claim-reduction slot.
 pub trait InstructionClaimReductionProver<F: Field> {
@@ -19,5 +19,5 @@ pub trait InstructionClaimReductionProver<F: Field> {
         tau_low: &[F],
         challenges: &InstructionClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>;
 }

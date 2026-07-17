@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRa
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-6b instruction RA virtualization slot.
 pub trait InstructionRaVirtualizationProver<F: Field> {
@@ -24,5 +24,5 @@ pub trait InstructionRaVirtualizationProver<F: Field> {
         committed_chunk_bits: usize,
         challenges: &InstructionRaVirtualizationChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>;
 }

@@ -26,7 +26,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::cycle_fold;
 use crate::ram_raf_evaluation::RamRafEvaluationProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RamRafEvaluationProver<F> for ReferenceBackend {
     fn prepare(
@@ -38,7 +38,7 @@ impl<F: Field> RamRafEvaluationProver<F> for ReferenceBackend {
         lowest_address: u64,
         tau_low: &[F],
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
         if dimensions.raf_evaluation_rounds() != ram_log_k {
             return Err(KernelError::Unsupported {
                 reason: "reference RAM RAF evaluation supports only the default read-write config \

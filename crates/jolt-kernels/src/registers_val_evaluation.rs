@@ -7,7 +7,7 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluat
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{KernelError, ProofSession, ProveSumcheck};
+use crate::{KernelError, ProofSession, SumcheckKernel};
 
 /// The stage-5 registers value-evaluation slot.
 pub trait RegistersValEvaluationProver<F: Field> {
@@ -18,5 +18,5 @@ pub trait RegistersValEvaluationProver<F: Field> {
         registers_val_point: &[F],
         challenges: &NoChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>;
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>;
 }

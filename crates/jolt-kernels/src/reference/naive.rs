@@ -17,7 +17,7 @@
 //!
 //! Two self-checks pin it: the engine's running-claim check
 //! (`s(0) + s(1) == previous_claim`, re-checked per member here), and
-//! [`validate_derived_tables`](crate::ProveSumcheck::validate_derived_tables)
+//! [`validate_derived_tables`](crate::SumcheckKernel::validate_derived_tables)
 //! — each bound `Derived` table's final value must equal `derive_output_term`
 //! at the bound point, tying the hand-materialized tables to the verifier's
 //! scalar path. The stage recipes run it on every member after the round
@@ -38,7 +38,7 @@ use jolt_verifier::VerifierError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{KernelError, ProveSumcheck};
+use crate::{KernelError, SumcheckKernel, SumcheckKernelError};
 
 /// See the module docs. Construct with every leaf table the relation's output
 /// expression references; [`new`](Self::new) validates coverage and sizes so
@@ -149,11 +149,17 @@ where
         self.rounds_bound += 1;
     }
 
-    fn require_fully_bound(&self) -> Result<(), KernelError<F>> {
+    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         match self.remaining_rounds() {
             0 => Ok(()),
-            remaining => Err(KernelError::NotFullyBound { remaining }),
+            remaining => Err(SumcheckKernelError::NotFullyBound { remaining }),
         }
+    }
+
+    /// The kernel-held relation instance (dropped from the kernel trait; the
+    /// stage's instance is the source of truth for the drivers).
+    pub fn relation(&self) -> &R {
+        &self.relation
     }
 }
 
@@ -246,7 +252,7 @@ where
     }
 }
 
-impl<F, R> ProveSumcheck<F> for NaiveSumcheckProver<F, R>
+impl<F, R> SumcheckKernel<F> for NaiveSumcheckProver<F, R>
 where
     F: Field,
     R: ConcreteSumcheck<F>,
@@ -256,17 +262,13 @@ where
 {
     type Relation = R;
 
-    fn relation(&self) -> &R {
-        &self.relation
-    }
-
-    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, KernelError<F>> {
+    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         let opening_tables = &self.opening_tables;
         SumcheckOutputClaims::<F, R>::from_opening_values(|id| {
             opening_tables.get(id).map(|table| table.evals()[0])
         })
-        .map_err(KernelError::from)
+        .map_err(SumcheckKernelError::from)
     }
 
     /// The `Derived`-leaf cross-check: each bound table's final value must
@@ -281,7 +283,7 @@ where
         input_points: &SumcheckInputPoints<F, R>,
         output_points: &SumcheckOutputPoints<F, R>,
         challenges: &ConcreteSumcheckChallenges<F, R>,
-    ) -> Result<(), KernelError<F>> {
+    ) -> Result<(), SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         for (id, table) in &self.derived_tables {
             let expected =
@@ -292,7 +294,7 @@ where
                 };
             let got = table.evals()[0];
             if got != expected {
-                return Err(KernelError::DerivedTableDrift {
+                return Err(SumcheckKernelError::DerivedTableDrift {
                     id: *id,
                     expected,
                     got,
@@ -331,7 +333,7 @@ mod tests {
     use jolt_verifier::VerifierError;
 
     use super::NaiveSumcheckProver;
-    use crate::{KernelError, ProveSumcheck};
+    use crate::{KernelError, SumcheckKernel, SumcheckKernelError};
 
     const TOY_RELATION: JoltRelationId = JoltRelationId::RegistersValEvaluation;
 
@@ -679,7 +681,7 @@ mod tests {
                 &output_points,
                 &challenges
             ),
-            Err(KernelError::DerivedTableDrift {
+            Err(SumcheckKernelError::DerivedTableDrift {
                 id: JoltDerivedId::Test,
                 ..
             }),

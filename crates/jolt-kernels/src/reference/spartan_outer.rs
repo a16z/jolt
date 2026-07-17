@@ -35,7 +35,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, replicate_stream_lsb, stream_pair_lsb};
 use crate::spartan_outer::{SpartanOuterInstance, SpartanOuterProver};
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> SpartanOuterProver<F> for ReferenceBackend {
     fn prepare(
@@ -166,7 +166,7 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
     fn into_remainder(
         self: Box<Self>,
         uniskip_challenge: F,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
         let this = *self;
         let kernel = centered_lagrange_kernel::<F>(
             OUTER_UNISKIP_DOMAIN_SIZE,

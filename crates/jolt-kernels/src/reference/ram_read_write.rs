@@ -23,7 +23,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table, tile};
 use crate::ram_read_write::RamReadWriteProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> RamReadWriteProver<F> for ReferenceBackend {
     fn prepare(
@@ -34,7 +34,8 @@ impl<F: Field> RamReadWriteProver<F> for ReferenceBackend {
         tau_low: &[F],
         challenges: &RamReadWriteChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>> {
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>
+    {
         if dimensions.phase1_num_rounds() != dimensions.log_t() {
             return Err(KernelError::Unsupported {
                 reason: "reference RAM read-write checking supports only the default \

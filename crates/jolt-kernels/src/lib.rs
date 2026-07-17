@@ -55,11 +55,13 @@ pub mod registers_val_evaluation;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
-mod sumcheck;
 
 pub use backend::{JoltBackend, ProofSession};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
+/// Re-exported from `jolt-verifier` (its home since the generated prove
+/// drivers must name it); the kernel crate keeps the path for downstream
+/// stability.
+pub use jolt_verifier::stages::relations::{SumcheckKernel, SumcheckKernelError};
 pub use reference::naive::NaiveSumcheckProver;
 pub use reference::ReferenceBackend;
-pub use sumcheck::ProveSumcheck;
