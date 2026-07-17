@@ -50,6 +50,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/stage2_product_factors.cu"),
     include_str!("cuda/scatter_add_eq.cu"),
     include_str!("cuda/ram_output_factors.cu"),
+    include_str!("cuda/instruction_lookup_q.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/prefix_combine.cu"),
@@ -127,6 +128,8 @@ pub struct CudaKernelContext {
     stage2_product_factors: CudaFunction,
     scatter_add_eq: CudaFunction,
     ram_output_factors: CudaFunction,
+    #[expect(dead_code, reason = "used once the instruction_lookup_q body + wiring land")]
+    instruction_lookup_q: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
@@ -701,6 +704,24 @@ pub struct Stage2ProductFactorInputs<'a> {
     pub len: usize,
 }
 
+pub struct InstructionLookupQInputs<'a> {
+    pub lookup_output: &'a CudaSlice<u64>,
+    pub left_lookup_operand: &'a CudaSlice<u64>,
+    pub right_lookup_operand_lo: &'a CudaSlice<u64>,
+    pub right_lookup_operand_hi: &'a CudaSlice<u64>,
+    pub left_instruction_input: &'a CudaSlice<u64>,
+    pub right_instruction_input_abs_lo: &'a CudaSlice<u64>,
+    pub right_instruction_input_abs_hi: &'a CudaSlice<u64>,
+    pub right_instruction_input_neg: &'a CudaSlice<u8>,
+    pub eq_suffix: &'a DeviceFrVec,
+    pub gamma: Fr,
+    pub gamma_sqr: Fr,
+    pub gamma_cub: Fr,
+    pub gamma_quart: Fr,
+    pub prefix_len: usize,
+    pub suffix_len: usize,
+}
+
 pub struct FusedOuterInputs<'a> {
     pub eq_evals: &'a DeviceFrVec,
     pub scale: Fr,
@@ -1037,6 +1058,7 @@ impl CudaKernelContext {
             stage2_product_factors: module.load_function("stage2_product_factors")?,
             scatter_add_eq: module.load_function("scatter_add_eq")?,
             ram_output_factors: module.load_function("ram_output_factors")?,
+            instruction_lookup_q: module.load_function("instruction_lookup_q")?,
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
@@ -3587,6 +3609,14 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
         Ok((left, right))
+    }
+
+    pub fn instruction_lookup_q(
+        &self,
+        inputs: InstructionLookupQInputs<'_>,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let _ = inputs;
+        Err(CudaError::Unsupported)
     }
 
     pub fn batched_bind(
@@ -6749,6 +6779,87 @@ mod tests {
                 .unwrap();
             prop_assert_eq!(left_dev.to_host().unwrap(), exp_left);
             prop_assert_eq!(right_dev.to_host().unwrap(), exp_right);
+        }
+
+        #[test]
+        fn instruction_lookup_q_matches_cpu(
+            log_prefix in 1usize..8,
+            log_suffix in 1usize..8,
+            seed in fr_strategy(),
+        ) {
+            use jolt_field::Field;
+            use num_traits::Zero;
+            let prefix_len = 1usize << log_prefix;
+            let suffix_len = 1usize << log_suffix;
+            let n = prefix_len * suffix_len;
+
+            let lookup_output: Vec<u64> = (0..n).map(|i| (i as u64).wrapping_mul(0x9e37_79b1)).collect();
+            let left_lookup_operand: Vec<u64> = (0..n).map(|i| (i as u64).wrapping_mul(0x85eb_ca6b) ^ 5).collect();
+            let right_lookup_operand: Vec<u128> = (0..n)
+                .map(|i| (i as u128).wrapping_mul(0x1_0000_000b) ^ 0x3ff)
+                .collect();
+            let left_instruction_input: Vec<u64> = (0..n).map(|i| (i as u64).wrapping_mul(0xc2b2_ae35)).collect();
+            let right_instruction_input: Vec<i128> = (0..n)
+                .map(|i| (i as i128) * if i % 2 == 0 { 0x1_0000_0001i128 } else { -7 })
+                .collect();
+
+            let eq_suffix: Vec<Fr> = (0..suffix_len)
+                .map(|x| seed + Fr::from_u64((x + 1) as u64))
+                .collect();
+            let gamma = seed + Fr::from_u64(3);
+            let gamma_sqr = gamma.square();
+            let gamma_cub = gamma_sqr * gamma;
+            let gamma_quart = gamma_sqr.square();
+
+            let combine = |i: usize| -> Fr {
+                Fr::from_u64(lookup_output[i])
+                    + gamma * Fr::from_u64(left_lookup_operand[i])
+                    + gamma_sqr * Fr::from_u128(right_lookup_operand[i])
+                    + gamma_cub * Fr::from_u64(left_instruction_input[i])
+                    + gamma_quart * Fr::from_i128(right_instruction_input[i])
+            };
+            let mut expected = vec![Fr::zero(); prefix_len];
+            for (x_lo, q) in expected.iter_mut().enumerate() {
+                for (x_hi, &weight) in eq_suffix.iter().enumerate() {
+                    *q += weight * combine(x_lo + x_hi * prefix_len);
+                }
+            }
+
+            let mut rlo = Vec::with_capacity(n);
+            let mut rhi = Vec::with_capacity(n);
+            let mut ri_lo = Vec::with_capacity(n);
+            let mut ri_hi = Vec::with_capacity(n);
+            let mut ri_neg = Vec::with_capacity(n);
+            for i in 0..n {
+                rlo.push(right_lookup_operand[i] as u64);
+                rhi.push((right_lookup_operand[i] >> 64) as u64);
+                let mag = right_instruction_input[i].unsigned_abs();
+                ri_lo.push(mag as u64);
+                ri_hi.push((mag >> 64) as u64);
+                ri_neg.push(u8::from(right_instruction_input[i] < 0));
+            }
+
+            let c = ctx();
+            let q_dev = c
+                .instruction_lookup_q(InstructionLookupQInputs {
+                    lookup_output: &c.upload_u64_slice(&lookup_output).unwrap(),
+                    left_lookup_operand: &c.upload_u64_slice(&left_lookup_operand).unwrap(),
+                    right_lookup_operand_lo: &c.upload_u64_slice(&rlo).unwrap(),
+                    right_lookup_operand_hi: &c.upload_u64_slice(&rhi).unwrap(),
+                    left_instruction_input: &c.upload_u64_slice(&left_instruction_input).unwrap(),
+                    right_instruction_input_abs_lo: &c.upload_u64_slice(&ri_lo).unwrap(),
+                    right_instruction_input_abs_hi: &c.upload_u64_slice(&ri_hi).unwrap(),
+                    right_instruction_input_neg: &c.upload_u8_slice(&ri_neg).unwrap(),
+                    eq_suffix: &c.upload(&eq_suffix).unwrap(),
+                    gamma,
+                    gamma_sqr,
+                    gamma_cub,
+                    gamma_quart,
+                    prefix_len,
+                    suffix_len,
+                })
+                .unwrap();
+            prop_assert_eq!(q_dev.to_host().unwrap(), expected);
         }
 
         #[test]
