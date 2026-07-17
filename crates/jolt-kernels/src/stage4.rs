@@ -1740,6 +1740,124 @@ fn build_cuda_sparse_registers<F: Field>(
 }
 
 #[cfg(feature = "cuda")]
+struct SparseRegisterRawColumns {
+    rows: Vec<usize>,
+    cols: Vec<u8>,
+    prev_val: Vec<u64>,
+    next_val: Vec<u64>,
+    rs1_flag: Vec<u8>,
+    rs2_flag: Vec<u8>,
+    rd_flag: Vec<u8>,
+}
+
+#[cfg(feature = "cuda")]
+fn sparse_register_raw_columns(
+    register_count: usize,
+    accesses: &[Stage4RegisterAccess],
+) -> Result<SparseRegisterRawColumns, Stage4KernelError> {
+    let mut out = SparseRegisterRawColumns {
+        rows: Vec::with_capacity(accesses.len() * 3),
+        cols: Vec::with_capacity(accesses.len() * 3),
+        prev_val: Vec::with_capacity(accesses.len() * 3),
+        next_val: Vec::with_capacity(accesses.len() * 3),
+        rs1_flag: Vec::with_capacity(accesses.len() * 3),
+        rs2_flag: Vec::with_capacity(accesses.len() * 3),
+        rd_flag: Vec::with_capacity(accesses.len() * 3),
+    };
+    for (row, access) in accesses.iter().enumerate() {
+        let start = out.cols.len();
+        let find = |cols: &[u8], col: u8| cols[start..].iter().position(|&c| c == col).map(|p| start + p);
+
+        if let Some(rs1) = access.rs1 {
+            validate_register_address(register_count, rs1.address)?;
+            let col = sparse_register_col(rs1.address)?;
+            out.rows.push(row);
+            out.cols.push(col);
+            out.prev_val.push(rs1.value);
+            out.next_val.push(rs1.value);
+            out.rs1_flag.push(1);
+            out.rs2_flag.push(0);
+            out.rd_flag.push(0);
+        }
+        if let Some(rs2) = access.rs2 {
+            validate_register_address(register_count, rs2.address)?;
+            let col = sparse_register_col(rs2.address)?;
+            if let Some(idx) = find(&out.cols, col) {
+                out.rs2_flag[idx] = 1;
+            } else {
+                out.rows.push(row);
+                out.cols.push(col);
+                out.prev_val.push(rs2.value);
+                out.next_val.push(rs2.value);
+                out.rs1_flag.push(0);
+                out.rs2_flag.push(1);
+                out.rd_flag.push(0);
+            }
+        }
+        if let Some(rd) = access.rd {
+            validate_register_address(register_count, rd.address)?;
+            let col = sparse_register_col(rd.address)?;
+            if let Some(idx) = find(&out.cols, col) {
+                out.rd_flag[idx] = 1;
+                out.next_val[idx] = rd.post_value;
+            } else {
+                out.rows.push(row);
+                out.cols.push(col);
+                out.prev_val.push(rd.pre_value);
+                out.next_val.push(rd.post_value);
+                out.rs1_flag.push(0);
+                out.rs2_flag.push(0);
+                out.rd_flag.push(1);
+            }
+        }
+
+        let mut order: Vec<usize> = (start..out.cols.len()).collect();
+        order.sort_by_key(|&i| out.cols[i]);
+        apply_permutation(&mut out.rows, start, &order);
+        apply_permutation(&mut out.cols, start, &order);
+        apply_permutation(&mut out.prev_val, start, &order);
+        apply_permutation(&mut out.next_val, start, &order);
+        apply_permutation(&mut out.rs1_flag, start, &order);
+        apply_permutation(&mut out.rs2_flag, start, &order);
+        apply_permutation(&mut out.rd_flag, start, &order);
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "cuda")]
+fn apply_permutation<T: Copy>(values: &mut [T], start: usize, order: &[usize]) {
+    let reordered: Vec<T> = order.iter().map(|&i| values[i]).collect();
+    values[start..].copy_from_slice(&reordered);
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_sparse_registers_from_raw<F: Field>(
+    register_count: usize,
+    accesses: &[Stage4RegisterAccess],
+    rd_inc: &[F],
+    trace_point: &[F],
+    gamma: F,
+    gamma2: F,
+    trace_rounds: usize,
+) -> Result<Option<cuda::CudaSparseRegistersState>, Stage4KernelError> {
+    let raw = sparse_register_raw_columns(register_count, accesses)?;
+    Ok(cuda::CudaSparseRegistersState::new_from_raw(
+        &raw.rows,
+        &raw.cols,
+        &raw.prev_val,
+        &raw.next_val,
+        &raw.rs1_flag,
+        &raw.rs2_flag,
+        &raw.rd_flag,
+        rd_inc,
+        trace_point,
+        gamma,
+        gamma2,
+        trace_rounds,
+    ))
+}
+
+#[cfg(feature = "cuda")]
 fn build_cuda_dense_state<F: Field>(
     factors: &[Vec<F>],
     terms: &[DenseTerm<F>],
@@ -2001,6 +2119,48 @@ impl<F: Field> SparseRegistersState<F> {
     ) -> Result<Self, Stage4KernelError> {
         require_operand_count("stage4.registers.accesses", trace_len, accesses.len())?;
         require_operand_count("stage4.registers.RdInc", trace_len, rd_inc.len())?;
+
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" && trace_len > 1 {
+            if let Some(cuda) = cuda_sparse_registers_from_raw(
+                register_count,
+                accesses,
+                rd_inc,
+                trace_point,
+                gamma,
+                gamma2,
+                log2_exact(trace_len, "stage4.trace_len")?,
+            )? {
+                let mut rs2_reads = Vec::new();
+                for (row, access) in accesses.iter().enumerate() {
+                    if let Some(rs2) = access.rs2 {
+                        rs2_reads.push((row, rs2.address));
+                    }
+                }
+                return Ok(Self {
+                    register_count,
+                    trace_len,
+                    current_trace_len: trace_len,
+                    entries: Vec::new(),
+                    entry_scratch: Vec::new(),
+                    rs2_reads,
+                    eq_cycle: SplitEqState::new_low_to_high(trace_point, None),
+                    rd_inc: Vec::new(),
+                    rd_inc_scratch: Vec::new(),
+                    gamma,
+                    gamma2,
+                    active_scale,
+                    bound_point: Vec::with_capacity(
+                        log2_exact(register_count, "stage4.register_count")?
+                            + log2_exact(trace_len, "stage4.trace_len")?,
+                    ),
+                    dense: None,
+                    backend,
+                    cuda: Some(cuda),
+                });
+            }
+        }
+
         let mut entries = Vec::with_capacity(accesses.len().saturating_mul(3));
         let mut rs2_reads = Vec::with_capacity(accesses.len());
         for (row, access) in accesses.iter().enumerate() {
