@@ -190,14 +190,14 @@ pub struct JoltCpuProver<
     pub advice: JoltAdvice<F, PCS>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the prover state here between stages.
-    advice_reduction_prover_trusted: Option<AdviceClaimReductionProver<F>>,
+    pub(crate) advice_reduction_prover_trusted: Option<AdviceClaimReductionProver<F>>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the prover state here between stages.
-    advice_reduction_prover_untrusted: Option<AdviceClaimReductionProver<F>>,
+    pub(crate) advice_reduction_prover_untrusted: Option<AdviceClaimReductionProver<F>>,
     /// Bytecode claim reduction spans stages 6b and 7 in committed mode.
-    bytecode_reduction_prover: Option<BytecodeClaimReductionProver<F>>,
+    pub(crate) bytecode_reduction_prover: Option<BytecodeClaimReductionProver<F>>,
     /// Program-image claim reduction spans stages 6b and 7 in committed mode.
-    program_image_reduction_prover: Option<ProgramImageClaimReductionProver<F>>,
+    pub(crate) program_image_reduction_prover: Option<ProgramImageClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -582,6 +582,9 @@ impl<
         (proof, debug_info)
     }
 
+    // The akita build replaces this with the packed prove path (the base
+    // proof shape does not exist under that feature).
+    #[cfg(not(feature = "akita"))]
     #[expect(
         clippy::type_complexity,
         reason = "prover API returns the verifier proof plus existing debug payload"
@@ -608,7 +611,7 @@ impl<
         Ok((proof, debug_info))
     }
 
-    fn prove_batched_sumcheck(
+    pub(crate) fn prove_batched_sumcheck(
         &mut self,
         instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
     ) -> (
@@ -849,7 +852,7 @@ impl<
         reason = "stage proof functions return protocol artifacts separately"
     )]
     #[tracing::instrument(skip_all)]
-    fn prove_stage1(
+    pub(crate) fn prove_stage1(
         &mut self,
     ) -> (
         UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
@@ -891,7 +894,7 @@ impl<
         reason = "stage proof functions return protocol artifacts separately"
     )]
     #[tracing::instrument(skip_all)]
-    fn prove_stage2(
+    pub(crate) fn prove_stage2(
         &mut self,
     ) -> (
         UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
@@ -1005,7 +1008,7 @@ impl<
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage3(
+    pub(crate) fn prove_stage3(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
@@ -1075,7 +1078,7 @@ impl<
         (sumcheck_proof, r_stage3)
     }
     #[tracing::instrument(skip_all)]
-    fn prove_stage4(
+    pub(crate) fn prove_stage4(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
@@ -1161,7 +1164,7 @@ impl<
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage5(
+    pub(crate) fn prove_stage5(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
@@ -1392,7 +1395,7 @@ impl<
         if self.preprocessing.is_committed_mode() {
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
-                bytecode_read_raf_params.stage_gammas(),
+                &bytecode_read_raf_params.stage_gammas(),
                 self.preprocessing.shared.bytecode_size(),
                 bytecode_chunk_count,
                 precommitted_scheduling_reference,
@@ -2603,7 +2606,10 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>> Serial
 {
 }
 
-#[cfg(test)]
+// The base e2e/unit suite exercises the base prove pipeline, which does not
+// exist under the akita feature (one PIOP per binary); the akita tests land
+// with the packed prove path.
+#[cfg(all(test, not(feature = "akita")))]
 mod tests {
     // Force-link inline crates so their `inventory::submit!` entries are retained by the linker.
     extern crate jolt_inlines_keccak256;
@@ -3303,6 +3309,86 @@ mod tests {
             .prove()
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
+    }
+
+    /// Timed sha2-chain prove+verify over the base Dory stack — the
+    /// comparison twin of `sha2_chain_akita_perf` (`PERF_LOG_T` selects the
+    /// padded trace target, default 2^20). Ignored: release-only perf
+    /// harness, run explicitly and never concurrently with other jobs.
+    #[test]
+    #[ignore = "release-only perf harness"]
+    #[serial]
+    fn sha2_chain_dory_perf() {
+        use std::time::Instant;
+
+        const CYCLES_PER_SHA256: f64 = 3396.0;
+        let log_t: usize = std::env::var("PERF_LOG_T")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(20);
+        let max_trace = 1usize << log_t;
+        let iters = std::cmp::max(1, (max_trace as f64 * 0.9 / CYCLES_PER_SHA256) as u32);
+        let inputs = [
+            postcard::to_stdvec(&[5u8; 32]).unwrap(),
+            postcard::to_stdvec(&iters).unwrap(),
+        ]
+        .concat();
+        // PERF_TRACE=1 dumps a Perfetto (chrome) trace of the run to the
+        // repo-root benchmark-runs/perfetto_traces/ directory.
+        let _trace_guard = std::env::var("PERF_TRACE").ok().map(|_| {
+            use tracing_subscriber::prelude::*;
+            let dir = format!(
+                "{}/../../benchmark-runs/perfetto_traces",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            std::fs::create_dir_all(&dir).ok();
+            let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+                .include_args(true)
+                .file(format!("{dir}/sha2-2exp{log_t}-dory.json"))
+                .build();
+            tracing_subscriber::registry().with(chrome_layer).init();
+            guard
+        });
+
+        eprintln!("sha2-chain: {iters} iterations, target 2^{log_t}");
+
+        DoryGlobals::reset();
+        let mut program = host::Program::new("sha2-chain-guest");
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            max_trace,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        eprintln!(
+            "trace length: {} (padded 2^{})",
+            prover.trace.len(),
+            prover.trace.len().next_power_of_two().ilog2()
+        );
+        let io_device = prover.program_io.clone();
+        let prove_start = Instant::now();
+        let (proof, _) = prover.prove().expect("dory prover should produce a proof");
+        eprintln!("dory prove: {:.2?}", prove_start.elapsed());
+        let verify_start = Instant::now();
+        verify_verifier_proof(&prover_preprocessing, proof, io_device, None);
+        eprintln!("dory verify: {:.2?}", verify_start.elapsed());
     }
 
     #[test]

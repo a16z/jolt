@@ -1,3 +1,5 @@
+#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+pub mod akita;
 #[cfg(not(feature = "akita"))]
 pub mod commitments;
 #[cfg(not(feature = "akita"))]

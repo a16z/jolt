@@ -46,6 +46,37 @@ pub enum CommittedPolynomial {
     UntrustedAdvice,
     /// Program image (initial RAM image) polynomial for committed program mode.
     ProgramImageInit,
+    /// One-hot chunk column `j` of the fused unsigned increment stream
+    /// (lattice/packed mode only; a slot of the packed witness `W`).
+    UnsignedIncChunk(usize),
+    /// Boolean msb column of the fused unsigned increment stream
+    /// (lattice/packed mode only; a slot of the packed witness `W`).
+    UnsignedIncMsb,
+    /// One-hot register selector `(chunk, lane)` of the precommitted
+    /// bytecode decomposition (lattice/packed mode; a `W_prog` slot). Lane
+    /// order is rs1, rs2, rd.
+    BytecodeRegisterSelector(usize, usize),
+    /// Boolean circuit-flag column `(chunk, flag)` of the precommitted
+    /// bytecode decomposition (lattice/packed mode; a `W_prog` slot).
+    BytecodeCircuitFlag(usize, usize),
+    /// Boolean instruction-flag column `(chunk, flag)` of the precommitted
+    /// bytecode decomposition (lattice/packed mode; a `W_prog` slot).
+    BytecodeInstructionFlag(usize, usize),
+    /// One-hot lookup-table selector of a precommitted bytecode chunk
+    /// (lattice/packed mode; a `W_prog` slot).
+    BytecodeLookupSelector(usize),
+    /// Boolean RAF flag column of a precommitted bytecode chunk
+    /// (lattice/packed mode; a `W_prog` slot).
+    BytecodeRafFlag(usize),
+    /// Byte one-hot decomposition of a chunk's unexpanded PCs
+    /// (lattice/packed mode; a `W_prog` slot).
+    BytecodeUnexpandedPcBytes(usize),
+    /// Byte one-hot decomposition of a chunk's canonical immediate field
+    /// bytes (lattice/packed mode; a `W_prog` slot).
+    BytecodeImmBytes(usize),
+    /// Byte one-hot decomposition of the program image words
+    /// (lattice/packed mode; a `W_prog` slot).
+    ProgramImageBytes,
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -139,6 +170,18 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeChunk(_) => {
                 panic!("Precommitted polynomials should not use streaming witness generation")
             }
+            CommittedPolynomial::BytecodeRegisterSelector(..)
+            | CommittedPolynomial::BytecodeCircuitFlag(..)
+            | CommittedPolynomial::BytecodeInstructionFlag(..)
+            | CommittedPolynomial::BytecodeLookupSelector(_)
+            | CommittedPolynomial::BytecodeRafFlag(_)
+            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
+            | CommittedPolynomial::BytecodeImmBytes(_)
+            | CommittedPolynomial::ProgramImageBytes
+            | CommittedPolynomial::UnsignedIncChunk(_)
+            | CommittedPolynomial::UnsignedIncMsb => {
+                panic!("Lattice columns commit through the packed witness, not per-polynomial streaming")
+            }
         }
     }
 
@@ -222,11 +265,65 @@ impl CommittedPolynomial {
                     one_hot_params.k_chunk,
                 ))
             }
+            #[cfg(feature = "prover")]
+            CommittedPolynomial::UnsignedIncChunk(i) => {
+                let one_hot_params = one_hot_params.unwrap();
+                let width = one_hot_params.log_k_chunk;
+                let addresses: Vec<_> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        Some(
+                            crate::zkvm::packed_witness::FusedIncCycle::from_cycle(cycle)
+                                .chunk_hot_lane_bits(width, *i) as u8,
+                        )
+                    })
+                    .collect();
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
+                    addresses,
+                    one_hot_params.k_chunk,
+                ))
+            }
+            #[cfg(feature = "prover")]
+            CommittedPolynomial::UnsignedIncMsb => {
+                let coeffs: Vec<u8> = trace
+                    .par_iter()
+                    .map(|cycle| {
+                        u8::from(
+                            crate::zkvm::packed_witness::FusedIncCycle::from_cycle(cycle).msb(),
+                        )
+                    })
+                    .collect();
+                coeffs.into()
+            }
             CommittedPolynomial::TrustedAdvice
             | CommittedPolynomial::UntrustedAdvice
             | CommittedPolynomial::ProgramImageInit
             | CommittedPolynomial::BytecodeChunk(_) => {
                 panic!("Precommitted polynomials should not use generate_witness")
+            }
+            #[cfg(feature = "prover")]
+            CommittedPolynomial::BytecodeRegisterSelector(..)
+            | CommittedPolynomial::BytecodeCircuitFlag(..)
+            | CommittedPolynomial::BytecodeInstructionFlag(..)
+            | CommittedPolynomial::BytecodeLookupSelector(_)
+            | CommittedPolynomial::BytecodeRafFlag(_)
+            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
+            | CommittedPolynomial::BytecodeImmBytes(_)
+            | CommittedPolynomial::ProgramImageBytes => {
+                panic!("W_prog sub-columns commit through the packed precommitted witness, not generate_witness")
+            }
+            #[cfg(not(feature = "prover"))]
+            CommittedPolynomial::BytecodeRegisterSelector(..)
+            | CommittedPolynomial::BytecodeCircuitFlag(..)
+            | CommittedPolynomial::BytecodeInstructionFlag(..)
+            | CommittedPolynomial::BytecodeLookupSelector(_)
+            | CommittedPolynomial::BytecodeRafFlag(_)
+            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
+            | CommittedPolynomial::BytecodeImmBytes(_)
+            | CommittedPolynomial::ProgramImageBytes
+            | CommittedPolynomial::UnsignedIncChunk(_)
+            | CommittedPolynomial::UnsignedIncMsb => {
+                panic!("Lattice columns require the prover feature")
             }
         }
     }
@@ -235,7 +332,8 @@ impl CommittedPolynomial {
         match self {
             CommittedPolynomial::InstructionRa(_)
             | CommittedPolynomial::BytecodeRa(_)
-            | CommittedPolynomial::RamRa(_) => Some(one_hot_params.k_chunk),
+            | CommittedPolynomial::RamRa(_)
+            | CommittedPolynomial::UnsignedIncChunk(_) => Some(one_hot_params.k_chunk),
             _ => None,
         }
     }
@@ -287,4 +385,7 @@ pub enum VirtualPolynomial {
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
     ProgramImageInitContributionRw,
+    /// The gamma-batched RamInc/RdInc stream of the lattice mode; its
+    /// destination selector is the existing `OpFlags(Store)` flag.
+    FusedInc,
 }

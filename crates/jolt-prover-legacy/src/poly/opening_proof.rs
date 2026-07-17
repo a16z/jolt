@@ -166,6 +166,23 @@ pub enum SumcheckId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
+    /// Lattice/packed mode: the fused-inc virtualization phase between
+    /// stage 5 and the stage-6 address phase.
+    IncVirtualization,
+    /// Lattice/packed mode: aligns the fused increment with stage 6b.
+    FusedIncClaimReduction,
+    /// Lattice/packed mode: the untrusted-advice byte reconstruction of the
+    /// stage-8 reconstruction phase.
+    UntrustedAdviceReconstruction,
+    /// Lattice/packed mode: the trusted-advice byte reconstruction of the
+    /// stage-8 reconstruction phase.
+    TrustedAdviceReconstruction,
+    /// Lattice/packed mode: the bytecode chunk reconstruction of the
+    /// stage-8 reconstruction phase.
+    BytecodeChunkReconstruction,
+    /// Lattice/packed mode: the program-image byte reconstruction of the
+    /// stage-8 reconstruction phase.
+    ProgramImageReconstruction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
@@ -476,6 +493,28 @@ where
     pub fn get_opening(&self, key: OpeningId) -> F {
         let key = self.resolve_alias(key);
         self.openings.get(&key).unwrap().1
+    }
+
+    /// Non-panicking variant of
+    /// [`OpeningAccumulator::get_committed_polynomial_opening`], for callers
+    /// that turn a missing opening into a protocol error instead of a panic
+    /// (the packed stage-8 statement assembly).
+    pub fn try_get_committed_polynomial_opening(
+        &self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let requested = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
+        let key = self.resolve_alias(requested);
+        let (point, claim) = self.openings.get(&key)?;
+        #[cfg(test)]
+        {
+            let mut committed_openings = self.appended_committed_openings.borrow_mut();
+            if let Some(index) = committed_openings.iter().position(|id| id == &key) {
+                committed_openings.remove(index);
+            }
+        }
+        Some((point.clone(), *claim))
     }
 
     fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
