@@ -1621,7 +1621,6 @@ struct InstructionReadRafStage5State<F: Field> {
     read_prefix_checkpoints: Vec<PrefixEval<F>>,
     cycle_state: Option<InstructionReadRafCycleState<F>>,
     outputs: Vec<InstructionReadRafOutputPlan>,
-    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
     backend: &'static str,
     #[cfg(feature = "cuda")]
     cuda_address: Option<cuda::CudaAddressPhaseState>,
@@ -2234,6 +2233,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         #[cfg(not(feature = "cuda"))]
         let cuda_raf: Option<[Vec<F>; 5]> = None;
 
+        #[cfg_attr(not(feature = "cuda"), expect(clippy::unnecessary_literal_unwrap))]
         let [mut raf_shift_half_q, raf_left_q, raf_right_q, mut raf_shift_full_q, raf_identity_q] =
             cuda_raf.unwrap_or_else(|| self.build_raf_q_cpu(poly_len, suffix_len, suffix_mask));
 
@@ -2429,10 +2429,10 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         #[cfg(not(feature = "cuda"))]
         let device_round: Option<()> = None;
 
-        if let Some(round_state) = device_round {
+        if let Some(_round_state) = device_round {
             #[cfg(feature = "cuda")]
             {
-                let (left, right, identity) = round_state
+                let (left, right, identity) = _round_state
                     .operand_checkpoints()
                     .unwrap_or_else(|_| std::process::abort());
                 self.left_operand_checkpoint =
@@ -2441,7 +2441,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                     crate::cuda::fr_into::<F>(right).unwrap_or_else(|| std::process::abort());
                 self.identity_checkpoint =
                     crate::cuda::fr_into::<F>(identity).unwrap_or_else(|| std::process::abort());
-                let read_first = round_state
+                let read_first = _round_state
                     .read_prefix_first(NUM_PREFIXES)
                     .unwrap_or_else(|_| std::process::abort());
                 self.read_prefix_checkpoints = read_first

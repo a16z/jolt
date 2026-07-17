@@ -2320,6 +2320,7 @@ struct BytecodeReadRafStage6State<F: Field> {
     active_scale: F,
     degree_bound: usize,
     phase: BytecodeReadRafPhase,
+    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
     backend: &'static str,
     #[cfg(feature = "cuda")]
     cuda: Option<cuda::CudaBytecodeReadRafState>,
@@ -2801,10 +2802,10 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn init_cycle_phase(&mut self) {
-        let stages = BYTECODE_READ_RAF_STAGE_COUNT;
         #[cfg(feature = "cuda")]
         let device_bound: Option<([F; BYTECODE_READ_RAF_STAGE_COUNT], F)> =
             self.cuda.as_ref().and_then(|cuda| {
+                let stages = BYTECODE_READ_RAF_STAGE_COUNT;
                 let mut values = [F::zero(); BYTECODE_READ_RAF_STAGE_COUNT];
                 for (stage, value) in values.iter_mut().enumerate() {
                     *value = crate::cuda::fr_into::<F>(cuda.factor_first(stages + stage)?.ok()?)?;
@@ -2816,6 +2817,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         #[cfg(not(feature = "cuda"))]
         let device_bound: Option<([F; BYTECODE_READ_RAF_STAGE_COUNT], F)> = None;
 
+        #[cfg_attr(not(feature = "cuda"), expect(clippy::unnecessary_literal_unwrap))]
         let (bound_stage_values, bound_entry_expected) = device_bound.unwrap_or_else(|| {
             let values = std::array::from_fn(|stage| {
                 self.stage_values[stage]

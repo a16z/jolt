@@ -1971,7 +1971,6 @@ struct SparseRegistersState<F: Field> {
     active_scale: F,
     bound_point: Vec<F>,
     dense: Option<DenseStage4State<F>>,
-    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
     backend: &'static str,
     #[cfg(feature = "cuda")]
     cuda: Option<cuda::CudaSparseRegistersState>,
