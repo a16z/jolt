@@ -536,11 +536,15 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
         self.dimensions.sumcheck_rounds()
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
         let evals = if self.rounds_bound < self.address_bits() {
             self.address_message().to_vec()
         } else {
@@ -557,7 +561,13 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> InstructionReadRafKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if self.rounds_bound < self.address_bits() {
             for table in &mut self.prefix_tables {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);

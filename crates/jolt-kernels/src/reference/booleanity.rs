@@ -143,16 +143,40 @@ impl<F: Field> BooleanityAddressKernel<F> {
     }
 }
 
+impl<F: Field> BooleanityAddressKernel<F> {
+    fn bind(&mut self, challenge: F) {
+        let one_minus_sqr = (F::one() - challenge) * (F::one() - challenge);
+        let challenge_sqr = challenge * challenge;
+        for table in &mut self.linear {
+            table.bind_with_order(challenge, BindingOrder::LowToHigh);
+        }
+        for table in &mut self.squared {
+            let half = table.len() / 2;
+            for k in 0..half {
+                table[k] = one_minus_sqr * table[2 * k] + challenge_sqr * table[2 * k + 1];
+            }
+            table.truncate(half);
+        }
+        self.eq_address
+            .bind_with_order(challenge, BindingOrder::LowToHigh);
+        self.rounds_bound += 1;
+    }
+}
+
 impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
         let half = self.eq_address.evals().len() / 2;
         let mut evals = [F::zero(); 4];
         for (c, eval) in evals.iter_mut().enumerate() {
@@ -194,22 +218,8 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
-        let one_minus_sqr = (F::one() - challenge) * (F::one() - challenge);
-        let challenge_sqr = challenge * challenge;
-        for table in &mut self.linear {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
-        for table in &mut self.squared {
-            let half = table.len() / 2;
-            for k in 0..half {
-                table[k] = one_minus_sqr * table[2 * k] + challenge_sqr * table[2 * k + 1];
-            }
-            table.truncate(half);
-        }
-        self.eq_address
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.rounds_bound += 1;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind);
         Ok(())
     }
 }

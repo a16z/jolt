@@ -139,6 +139,16 @@ where
         self.relation.rounds() - self.rounds_bound
     }
 
+    fn bind_tables(&mut self, challenge: F) {
+        for table in self.opening_tables.values_mut() {
+            table.bind_with_order(challenge, self.binding_order);
+        }
+        for table in self.derived_tables.values_mut() {
+            table.bind_with_order(challenge, self.binding_order);
+        }
+        self.rounds_bound += 1;
+    }
+
     fn require_fully_bound(&self) -> Result<(), KernelError<F>> {
         match self.remaining_rounds() {
             0 => Ok(()),
@@ -159,11 +169,15 @@ where
         self.relation.rounds()
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind_tables(challenge);
+        }
         let half = (1usize << self.remaining_rounds()) / 2;
         let degree = self.relation.degree();
         let expression = self.relation.symbolic().output_expression::<F>();
@@ -226,14 +240,8 @@ where
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
-        for table in self.opening_tables.values_mut() {
-            table.bind_with_order(challenge, self.binding_order);
-        }
-        for table in self.derived_tables.values_mut() {
-            table.bind_with_order(challenge, self.binding_order);
-        }
-        self.rounds_bound += 1;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind_tables(bind);
         Ok(())
     }
 }

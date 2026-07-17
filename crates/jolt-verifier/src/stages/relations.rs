@@ -1507,16 +1507,30 @@ mod engine_twin_tests {
         }
     }
 
+    impl DenseMember {
+        fn bind(&mut self, challenge: Fr) {
+            let half = self.evals.len() / 2;
+            for i in 0..half {
+                self.evals[i] = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
+            }
+            self.evals.truncate(half);
+        }
+    }
+
     impl ProveRounds<Fr> for DenseMember {
         fn num_rounds(&self) -> usize {
             self.num_rounds
         }
 
-        fn compute_message(
+        fn prove_round(
             &mut self,
+            bind: Option<Fr>,
             _round: usize,
             previous_claim: Fr,
         ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+            if let Some(challenge) = bind {
+                self.bind(challenge);
+            }
             let half = self.evals.len() / 2;
             let eval_0: Fr = self.evals[..half].iter().copied().sum();
             let eval_1: Fr = self.evals[half..].iter().copied().sum();
@@ -1524,16 +1538,8 @@ mod engine_twin_tests {
             Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
         }
 
-        fn ingest_challenge(
-            &mut self,
-            challenge: Fr,
-            _round: usize,
-        ) -> Result<(), SumcheckError<Fr>> {
-            let half = self.evals.len() / 2;
-            for i in 0..half {
-                self.evals[i] = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
-            }
-            self.evals.truncate(half);
+        fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
+            self.bind(bind);
             Ok(())
         }
     }

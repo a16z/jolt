@@ -1137,16 +1137,32 @@ impl DenseMember {
     }
 }
 
+impl DenseMember {
+    /// The separate-pass bind: a full write pass over the tables, distinct
+    /// from the eval pass in `prove_round`.
+    fn bind(&mut self, challenge: F) {
+        let half = self.evals.len() / 2;
+        for i in 0..half {
+            self.evals[i] = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
+        }
+        self.evals.truncate(half);
+    }
+}
+
 impl crate::prover::ProveRounds<F> for DenseMember {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
         let half = self.evals.len() / 2;
         let eval_0: F = self.evals[..half].iter().copied().sum();
         let eval_1: F = self.evals[half..].iter().copied().sum();
@@ -1154,14 +1170,113 @@ impl crate::prover::ProveRounds<F> for DenseMember {
         Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind);
+        Ok(())
+    }
+}
+
+/// A dense member exercising the fused contract for real: on each
+/// `prove_round` the pending bind and the round evaluation happen in ONE pass
+/// over the table (each pair is bound and immediately accumulated), never
+/// leaving a fully bound intermediate table behind.
+struct FusedDenseMember {
+    evals: Vec<F>,
+    num_rounds: usize,
+}
+
+impl crate::prover::ProveRounds<F> for FusedDenseMember {
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            let half = self.evals.len() / 2;
+            let quarter = half / 2;
+            let mut eval_0 = F::from_u64(0);
+            let mut eval_1 = F::from_u64(0);
+            for i in 0..half {
+                let bound = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
+                self.evals[i] = bound;
+                if i < quarter {
+                    eval_0 += bound;
+                } else {
+                    eval_1 += bound;
+                }
+            }
+            self.evals.truncate(half);
+            assert_eq!(eval_0 + eval_1, previous_claim);
+            return Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]));
+        }
+        let half = self.evals.len() / 2;
+        let eval_0: F = self.evals[..half].iter().copied().sum();
+        let eval_1: F = self.evals[half..].iter().copied().sum();
+        assert_eq!(eval_0 + eval_1, previous_claim);
+        Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         let half = self.evals.len() / 2;
         for i in 0..half {
-            self.evals[i] = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
+            self.evals[i] = self.evals[i] + bind * (self.evals[i + half] - self.evals[i]);
         }
         self.evals.truncate(half);
         Ok(())
     }
+}
+
+/// A member fusing bind and eval into one table pass must be byte-identical
+/// to the reference member that binds and evaluates separately: same wire
+/// proof, same challenges, same final claims, same transcript state.
+#[test]
+fn fused_bind_eval_member_byte_matches_separate_passes() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+
+    let num_rounds = 4;
+    let sum = F::from_u64(90210);
+    let prove = |member: &mut dyn ProveRounds<F>| {
+        let mut transcript = Blake2bTranscript::new(b"fused-vs-separate");
+        let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+        recorder.absorb_input_claims(&[sum], &mut transcript);
+        let coefficient: F = transcript.challenge_scalar();
+        let prelude = BatchPrelude::new(
+            vec![BatchMember {
+                input_claim: sum,
+                coefficient,
+                rounds: num_rounds,
+                offset: 0,
+            }],
+            num_rounds,
+            1,
+        );
+        let mut members: Vec<&mut dyn ProveRounds<F>> = vec![member];
+        let proved = prove_batch(&prelude, &mut members, &mut recorder, &mut transcript).unwrap();
+        let recorded = recorder
+            .finish(&proved.member_claims, &mut transcript)
+            .unwrap();
+        (proved, recorded.proof, transcript.state())
+    };
+
+    let mut separate = DenseMember::with_sum(num_rounds, sum, 41);
+    let mut fused = FusedDenseMember {
+        evals: separate.evals.clone(),
+        num_rounds,
+    };
+    let (separate_proved, separate_proof, separate_state) = prove(&mut separate);
+    let (fused_proved, fused_proof, fused_state) = prove(&mut fused);
+
+    assert_eq!(separate_proved, fused_proved);
+    assert_eq!(separate_proof, fused_proof);
+    assert_eq!(separate.final_eval(), fused.evals[0]);
+    assert_eq!(separate_state, fused_state);
 }
 
 fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {

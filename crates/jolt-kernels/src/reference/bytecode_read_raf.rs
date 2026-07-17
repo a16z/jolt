@@ -189,16 +189,35 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
     }
 }
 
+impl<F: Field> BytecodeReadRafAddressKernel<F> {
+    fn bind(&mut self, challenge: F) {
+        for table in self.pushforwards.iter_mut().chain(self.values.iter_mut()) {
+            table.bind_with_order(challenge, BindingOrder::LowToHigh);
+        }
+        self.int_table
+            .bind_with_order(challenge, BindingOrder::LowToHigh);
+        self.entry_trace
+            .bind_with_order(challenge, BindingOrder::LowToHigh);
+        self.entry_expected
+            .bind_with_order(challenge, BindingOrder::LowToHigh);
+        self.rounds_bound += 1;
+    }
+}
+
 impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
         let half = self.entry_trace.evals().len() / 2;
         let mut evals = [F::zero(); 3];
         for (c, eval) in evals.iter_mut().enumerate() {
@@ -230,17 +249,8 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
-        for table in self.pushforwards.iter_mut().chain(self.values.iter_mut()) {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
-        self.int_table
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.entry_trace
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.entry_expected
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.rounds_bound += 1;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind);
         Ok(())
     }
 }

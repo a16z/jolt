@@ -100,6 +100,31 @@ impl<F: Field> PrecommittedReductionKernel<F> {
     }
 }
 
+impl<F: Field> PrecommittedReductionKernel<F> {
+    /// Bind the challenge squeezed for member-local `round`: on an active
+    /// round bind every table, on an inactive one fold the halving into the
+    /// running `scale` instead.
+    fn bind_round(&mut self, challenge: F, round: usize) {
+        if !self.is_active_round(round) {
+            self.scale *= self.two_inv;
+            self.scale_inv += self.scale_inv;
+            return;
+        }
+        let half = self.value.len() / 2;
+        let bind = |table: &mut Vec<F>| {
+            for j in 0..half {
+                table[j] = table[2 * j] + challenge * (table[2 * j + 1] - table[2 * j]);
+            }
+            table.truncate(half);
+        };
+        bind(&mut self.value);
+        bind(&mut self.eq);
+        for table in &mut self.aux {
+            bind(table);
+        }
+    }
+}
+
 impl<F: Field> ProveRounds<F> for PrecommittedReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         if self.in_cycle_phase {
@@ -109,11 +134,18 @@ impl<F: Field> ProveRounds<F> for PrecommittedReductionKernel<F> {
         }
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            // The pending challenge belongs to the previous round; the member
+            // is head-aligned and consulted every round of its window, so
+            // `bind` is `Some` exactly when `round >= 1`.
+            self.bind_round(challenge, round - 1);
+        }
         if !self.is_active_round(round) {
             return Ok(UnivariatePoly::new(vec![previous_claim * self.two_inv]));
         }
@@ -140,24 +172,9 @@ impl<F: Field> ProveRounds<F> for PrecommittedReductionKernel<F> {
         ]))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, round: usize) -> Result<(), SumcheckError<F>> {
-        if !self.is_active_round(round) {
-            self.scale *= self.two_inv;
-            self.scale_inv += self.scale_inv;
-            return Ok(());
-        }
-        let half = self.value.len() / 2;
-        let bind = |table: &mut Vec<F>| {
-            for j in 0..half {
-                table[j] = table[2 * j] + challenge * (table[2 * j + 1] - table[2 * j]);
-            }
-            table.truncate(half);
-        };
-        bind(&mut self.value);
-        bind(&mut self.eq);
-        for table in &mut self.aux {
-            bind(table);
-        }
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        let last_round = self.num_rounds() - 1;
+        self.bind_round(bind, last_round);
         Ok(())
     }
 }
