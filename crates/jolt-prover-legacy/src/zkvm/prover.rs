@@ -3364,7 +3364,22 @@ mod tests {
             max_trace,
         )
         .unwrap();
+        let setup_start = Instant::now();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        eprintln!("dory prover preprocessing: {:.2?}", setup_start.elapsed());
+        // `DoryCommitmentScheme::setup_prover` initializes this in production,
+        // but deliberately skips it in test binaries because unrelated tests
+        // construct differently-sized setups in one process. This isolated
+        // release harness must mirror the production verifier configuration.
+        let pairing_cache_start = Instant::now();
+        DoryGlobals::init_prepared_cache(
+            &prover_preprocessing.generators.g1_vec,
+            &prover_preprocessing.generators.g2_vec,
+        );
+        eprintln!(
+            "dory prepared-pairing cache: {:.2?}",
+            pairing_cache_start.elapsed()
+        );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -3386,8 +3401,20 @@ mod tests {
         let prove_start = Instant::now();
         let (proof, _) = prover.prove().expect("dory prover should produce a proof");
         eprintln!("dory prove: {:.2?}", prove_start.elapsed());
+        let verifier_preprocessing_start = Instant::now();
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
+        eprintln!(
+            "dory verifier preprocessing: {:.2?}",
+            verifier_preprocessing_start.elapsed()
+        );
         let verify_start = Instant::now();
-        verify_verifier_proof(&prover_preprocessing, proof, io_device, None);
+        jolt_verifier::verify::<
+            jolt_field::Fr,
+            jolt_dory::DoryScheme,
+            jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
+            jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+        >(&verifier_preprocessing, &io_device, &proof, None)
+        .expect("canonical verifier rejected prover-native proof");
         eprintln!("dory verify: {:.2?}", verify_start.elapsed());
     }
 

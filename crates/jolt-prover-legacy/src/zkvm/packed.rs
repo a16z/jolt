@@ -2204,8 +2204,13 @@ mod committed_tests {
             .expect("packed prover should produce a verifier-native proof");
         eprintln!("akita prove: {:.2?}", prove_start.elapsed());
 
+        let verifier_preprocessing_start = Instant::now();
         let verifier_preprocessing =
             akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
+        eprintln!(
+            "akita verifier preprocessing: {:.2?}",
+            verifier_preprocessing_start.elapsed()
+        );
         let verify_start = Instant::now();
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
             &verifier_preprocessing,
