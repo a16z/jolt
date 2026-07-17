@@ -126,7 +126,6 @@ pub struct CudaKernelContext {
     i128_to_mont: CudaFunction,
     stage2_product_factors: CudaFunction,
     scatter_add_eq: CudaFunction,
-    #[expect(dead_code, reason = "used once the ram_output_factors body + wiring land")]
     ram_output_factors: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
@@ -3501,8 +3500,43 @@ impl CudaKernelContext {
         io_end: usize,
         k: usize,
     ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
-        let _ = (final_ram, io_start, io_end, k);
-        Err(CudaError::Unsupported)
+        let mut io_mask = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(k.max(1) * LIMBS)?,
+            len: k,
+            staging: self.staging.clone(),
+        };
+        let mut diff = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(k.max(1) * LIMBS)?,
+            len: k,
+            staging: self.staging.clone(),
+        };
+        if k == 0 {
+            return Ok((io_mask, diff));
+        }
+        let io_start_arg = io_start as u64;
+        let io_end_arg = io_end as u64;
+        let k_arg = k as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((k as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.ram_output_factors.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut io_mask.buf)
+            .arg(&mut diff.buf)
+            .arg(final_ram)
+            .arg(&io_start_arg)
+            .arg(&io_end_arg)
+            .arg(&k_arg);
+        // SAFETY: thread i<k writes io_mask[i]=mont(1) when io_start<=i<io_end, else
+        // diff[i]=mont(final_ram[i]) when nonzero; io_mask/diff hold k Fr, final_ram holds >= k u64.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok((io_mask, diff))
     }
 
     pub fn stage2_product_factors(
