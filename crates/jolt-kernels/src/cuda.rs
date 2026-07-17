@@ -164,6 +164,7 @@ pub struct CudaKernelContext {
     resident_witness: ResidentCache,
     resident_committed: CommittedCache,
     resident_stage3: ResidentStage3Cache,
+    resident_stage2_product: ResidentStage2ProductCache,
 }
 
 pub struct DeviceFrVec {
@@ -651,6 +652,32 @@ fn lock_resident_stage3(cache: &ResidentStage3Cache) -> MutexGuard<'_, Option<Re
     cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+pub struct ResidentStage2ProductTrace {
+    pub left_input: CudaSlice<u64>,
+    pub should_branch_lookup_output: CudaSlice<u64>,
+    pub jump_flag: CudaSlice<u8>,
+    pub right_input_abs_lo: CudaSlice<u64>,
+    pub right_input_abs_hi: CudaSlice<u64>,
+    pub right_input_neg: CudaSlice<u8>,
+    pub should_branch_flag: CudaSlice<u8>,
+    pub not_next_noop: CudaSlice<u8>,
+    pub len: usize,
+}
+
+struct ResidentStage2ProductEntry {
+    ptr: usize,
+    len: usize,
+    trace: Arc<ResidentStage2ProductTrace>,
+}
+
+type ResidentStage2ProductCache = Arc<Mutex<Option<ResidentStage2ProductEntry>>>;
+
+fn lock_resident_stage2_product(
+    cache: &ResidentStage2ProductCache,
+) -> MutexGuard<'_, Option<ResidentStage2ProductEntry>> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -1057,6 +1084,7 @@ impl CudaKernelContext {
             resident_witness: Arc::new(Mutex::new(None)),
             resident_committed: Arc::new(Mutex::new(Vec::new())),
             resident_stage3: Arc::new(Mutex::new(None)),
+            resident_stage2_product: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1288,6 +1316,45 @@ impl CudaKernelContext {
             len,
         });
         *cache = Some(ResidentStage3Entry {
+            ptr: key_ptr,
+            len,
+            trace: trace.clone(),
+        });
+        Ok(trace)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub fn resident_stage2_product_trace(
+        &self,
+        key_ptr: usize,
+        len: usize,
+        left_input: &[u64],
+        should_branch_lookup_output: &[u64],
+        jump_flag: &[u8],
+        right_input_abs_lo: &[u64],
+        right_input_abs_hi: &[u64],
+        right_input_neg: &[u8],
+        should_branch_flag: &[u8],
+        not_next_noop: &[u8],
+    ) -> Result<Arc<ResidentStage2ProductTrace>, CudaError> {
+        let mut cache = lock_resident_stage2_product(&self.resident_stage2_product);
+        if let Some(entry) = cache.as_ref() {
+            if entry.ptr == key_ptr && entry.len == len {
+                return Ok(entry.trace.clone());
+            }
+        }
+        let trace = Arc::new(ResidentStage2ProductTrace {
+            left_input: self.upload_u64_slice(left_input)?,
+            should_branch_lookup_output: self.upload_u64_slice(should_branch_lookup_output)?,
+            jump_flag: self.upload_u8_slice(jump_flag)?,
+            right_input_abs_lo: self.upload_u64_slice(right_input_abs_lo)?,
+            right_input_abs_hi: self.upload_u64_slice(right_input_abs_hi)?,
+            right_input_neg: self.upload_u8_slice(right_input_neg)?,
+            should_branch_flag: self.upload_u8_slice(should_branch_flag)?,
+            not_next_noop: self.upload_u8_slice(not_next_noop)?,
+            len,
+        });
+        *cache = Some(ResidentStage2ProductEntry {
             ptr: key_ptr,
             len,
             trace: trace.clone(),

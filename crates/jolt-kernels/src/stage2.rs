@@ -2669,6 +2669,68 @@ impl<F: Field> RamOutputState<'_, F> {
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::product_remainder_state")]
+#[cfg(feature = "cuda")]
+fn cuda_product_remainder_state<F: Field>(
+    cycles: &[Stage2ProductVirtualCycle],
+    weights: &[F],
+    tau_low: &[F],
+    lagrange_tau_r0: F,
+) -> Option<crate::stage3::cuda::CudaSumOfProductsState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let left_input: Vec<u64> = cycles.par_iter().map(|c| c.instruction_left_input).collect();
+    let sblo: Vec<u64> = cycles.par_iter().map(|c| c.should_branch_lookup_output).collect();
+    let jump: Vec<u8> = cycles.par_iter().map(|c| u8::from(c.jump_flag)).collect();
+    let (ri_lo, (ri_hi, ri_neg)): (Vec<u64>, (Vec<u64>, Vec<u8>)) = cycles
+        .par_iter()
+        .map(|c| {
+            let mag = c.instruction_right_input.unsigned_abs();
+            (mag as u64, ((mag >> 64) as u64, u8::from(c.instruction_right_input < 0)))
+        })
+        .unzip();
+    let sbf: Vec<u8> = cycles.par_iter().map(|c| u8::from(c.should_branch_flag)).collect();
+    let nnn: Vec<u8> = cycles.par_iter().map(|c| u8::from(c.not_next_noop)).collect();
+
+    let t = ctx
+        .resident_stage2_product_trace(
+            cycles.as_ptr() as usize,
+            cycles.len(),
+            &left_input,
+            &sblo,
+            &jump,
+            &ri_lo,
+            &ri_hi,
+            &ri_neg,
+            &sbf,
+            &nnn,
+        )
+        .ok()?;
+    let (left, right) = ctx
+        .stage2_product_factors(crate::cuda::Stage2ProductFactorInputs {
+            left_input: &t.left_input,
+            should_branch_lookup_output: &t.should_branch_lookup_output,
+            jump_flag: &t.jump_flag,
+            right_input_abs_lo: &t.right_input_abs_lo,
+            right_input_abs_hi: &t.right_input_abs_hi,
+            right_input_neg: &t.right_input_neg,
+            should_branch_flag: &t.should_branch_flag,
+            not_next_noop: &t.not_next_noop,
+            w0: crate::cuda::into_fr(weights[0])?,
+            w1: crate::cuda::into_fr(weights[1])?,
+            w2: crate::cuda::into_fr(weights[2])?,
+            len: t.len,
+        })
+        .ok()?;
+    let tau_low_fr = crate::cuda::as_fr_slice(tau_low)?;
+    let scaling = crate::cuda::into_fr(lagrange_tau_r0)?;
+    crate::stage3::cuda::CudaSumOfProductsState::from_device_factors(
+        crate::stage3::cuda::CudaGruenKind::Product,
+        vec![left, right],
+        tau_low_fr,
+        Some(scaling),
+    )
+}
+
 fn product_remainder_state<'a, F: Field>(
     _claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'a, F>,
@@ -2715,50 +2777,48 @@ fn product_remainder_state<'a, F: Field>(
         PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE,
         r0,
     );
-    let mut left = vec![F::zero(); cycles.len()];
-    let mut right = vec![F::zero(); cycles.len()];
-    left.par_iter_mut()
-        .zip(right.par_iter_mut())
-        .zip(cycles.par_iter())
-        .for_each(|((left, right), cycle)| {
-            *left = weights[0].mul_u64(cycle.instruction_left_input)
-                + weights[1].mul_u64(cycle.should_branch_lookup_output)
-                + if cycle.jump_flag {
-                    weights[2]
-                } else {
-                    F::zero()
-                };
-            *right = weights[0].mul_i128(cycle.instruction_right_input)
-                + if cycle.should_branch_flag {
-                    weights[1]
-                } else {
-                    F::zero()
-                }
-                + if cycle.not_next_noop {
-                    weights[2]
-                } else {
-                    F::zero()
-                };
-        });
     #[cfg(feature = "cuda")]
     let cuda = if backend == "cuda" {
-        crate::cuda::as_fr_slice(&left).and_then(|left_fr| {
-            let right_fr = crate::cuda::as_fr_slice(&right)?;
-            let tau_low_fr = crate::cuda::as_fr_slice(tau_low)?;
-            let scaling = crate::cuda::into_fr(lagrange_tau_r0)?;
-            crate::stage3::cuda::CudaSumOfProductsState::new(
-                crate::stage3::cuda::CudaGruenKind::Product,
-                &[left_fr, right_fr],
-                tau_low_fr,
-                Some(scaling),
-            )
-            .map(Box::new)
-        })
+        cuda_product_remainder_state(cycles, &weights, tau_low, lagrange_tau_r0).map(Box::new)
     } else {
         None
     };
     #[cfg(not(feature = "cuda"))]
     let _ = backend;
+
+    #[cfg(feature = "cuda")]
+    let build_host = cuda.is_none();
+    #[cfg(not(feature = "cuda"))]
+    let build_host = true;
+
+    let (mut left, mut right) = (Vec::new(), Vec::new());
+    if build_host {
+        left = vec![F::zero(); cycles.len()];
+        right = vec![F::zero(); cycles.len()];
+        left.par_iter_mut()
+            .zip(right.par_iter_mut())
+            .zip(cycles.par_iter())
+            .for_each(|((left, right), cycle)| {
+                *left = weights[0].mul_u64(cycle.instruction_left_input)
+                    + weights[1].mul_u64(cycle.should_branch_lookup_output)
+                    + if cycle.jump_flag {
+                        weights[2]
+                    } else {
+                        F::zero()
+                    };
+                *right = weights[0].mul_i128(cycle.instruction_right_input)
+                    + if cycle.should_branch_flag {
+                        weights[1]
+                    } else {
+                        F::zero()
+                    }
+                    + if cycle.not_next_noop {
+                        weights[2]
+                    } else {
+                        F::zero()
+                    };
+            });
+    }
 
     Ok(ProductRemainderState {
         cycles,
