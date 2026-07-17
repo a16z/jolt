@@ -147,18 +147,52 @@ impl CudaRamReadWriteState {
         r_cycle: &[F],
         gamma: F,
     ) -> Option<Self> {
-        let _ = (
-            rows,
-            cols,
-            filtered_read,
-            filtered_write,
-            all_read,
-            all_write,
-            initial_ram,
-            r_cycle,
-            gamma,
-        );
-        None
+        let ctx = crate::cuda::shared_ctx()?;
+        let log_t = r_cycle.len();
+        let log_k = initial_ram.len().trailing_zeros() as usize;
+        let n = filtered_read.len();
+
+        let (cycle_rounds, cycle_final_cols) = build_schedules(rows, cols, log_t);
+        let address_rounds = build_address_schedules(&cycle_final_cols, log_k);
+        let cycle_schedules = upload_schedules(ctx, &cycle_rounds)?;
+        let address_schedules = upload_schedules(ctx, &address_rounds)?;
+        let cycle_eq =
+            CudaSplitEqState::new_low_to_high(ctx, crate::cuda::as_fr_slice(r_cycle)?, None).ok()?;
+
+        let filtered_read_dev = ctx.upload_u64_slice(filtered_read).ok()?;
+        let filtered_write_dev = ctx.upload_u64_slice(filtered_write).ok()?;
+        let val_coeff = ctx.u64_to_mont_dev(&filtered_read_dev, n).ok()?;
+        let prev_val = ctx.u64_to_mont_dev(&filtered_read_dev, n).ok()?;
+        let next_val = ctx.u64_to_mont_dev(&filtered_write_dev, n).ok()?;
+
+        let ones_dev = ctx.upload_u64_slice(&vec![1u64; n]).ok()?;
+        let ra_coeff = ctx.u64_to_mont_dev(&ones_dev, n).ok()?;
+
+        let all_read_dev = ctx.upload_u64_slice(all_read).ok()?;
+        let all_write_dev = ctx.upload_u64_slice(all_write).ok()?;
+        let all_read_mont = ctx.u64_to_mont_dev(&all_read_dev, all_read.len()).ok()?;
+        let mut inc = ctx.u64_to_mont_dev(&all_write_dev, all_write.len()).ok()?;
+        ctx.sub(&mut inc, &all_read_mont).ok()?;
+
+        let initial_ram_dev = ctx.upload_u64_slice(initial_ram).ok()?;
+        let val_init = ctx.u64_to_mont_dev(&initial_ram_dev, initial_ram.len()).ok()?;
+
+        Some(Self {
+            val_coeff,
+            ra_coeff,
+            prev_val,
+            next_val,
+            inc,
+            inc_scratch: ctx.upload(&[]).ok()?,
+            val_init,
+            val_init_scratch: ctx.upload(&[]).ok()?,
+            cycle_eq,
+            cycle_schedules,
+            address_schedules,
+            gamma: crate::cuda::into_fr(gamma)?,
+            log_t,
+            round: 0,
+        })
     }
 
     pub(crate) fn round_poly<F: jolt_field::Field>(
