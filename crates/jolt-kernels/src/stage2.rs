@@ -2698,6 +2698,42 @@ fn build_cuda_ram_read_write<F: Field>(
 }
 
 #[cfg(feature = "cuda")]
+fn cuda_ram_read_write_from_raw<F: Field>(
+    ram: &Stage2RamData<'_>,
+    r_cycle: &[F],
+    gamma: F,
+) -> Option<cuda::CudaRamReadWriteState> {
+    use rayon::prelude::*;
+    let all_read: Vec<u64> = ram.accesses.par_iter().map(|a| a.read_value).collect();
+    let all_write: Vec<u64> = ram.accesses.par_iter().map(|a| a.write_value).collect();
+
+    let mut rows = Vec::new();
+    let mut cols = Vec::new();
+    let mut filtered_read = Vec::new();
+    let mut filtered_write = Vec::new();
+    for (row, access) in ram.accesses.iter().enumerate() {
+        if let Some(col) = access.remapped_address {
+            rows.push(row);
+            cols.push(col);
+            filtered_read.push(access.read_value);
+            filtered_write.push(access.write_value);
+        }
+    }
+
+    cuda::CudaRamReadWriteState::new_from_raw(
+        &rows,
+        &cols,
+        &filtered_read,
+        &filtered_write,
+        &all_read,
+        &all_write,
+        ram.initial_ram,
+        r_cycle,
+        gamma,
+    )
+}
+
+#[cfg(feature = "cuda")]
 fn cuda_final<F: Field>(
     value: Result<Fr, crate::cuda::CudaError>,
 ) -> Result<F, Stage2KernelError> {
@@ -3150,6 +3186,27 @@ impl<F: Field> RamReadWriteState<F> {
         require_operand_count("stage2.ram.accesses", t, ram.accesses.len())?;
         require_operand_count("stage2.ram.initial_ram", k, ram.initial_ram.len())?;
         let gamma = store.scalar("stage2.ram_read_write.gamma")?;
+
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" {
+            if let Some(cuda) = cuda_ram_read_write_from_raw(ram, r_cycle, gamma) {
+                return Ok(Self {
+                    gamma,
+                    log_t,
+                    round: 0,
+                    cycle_eq: SplitEqState::new_low_to_high(r_cycle, None),
+                    cycle_entries: Vec::new(),
+                    address_entries: Vec::new(),
+                    address_scratch: Vec::new(),
+                    inc: Vec::new(),
+                    inc_scratch: Vec::new(),
+                    val_init: Vec::new(),
+                    val_init_scratch: Vec::new(),
+                    cuda: Some(Box::new(cuda)),
+                });
+            }
+        }
+
         let mut cycle_entries = Vec::with_capacity(ram.accesses.len());
         let mut inc = Vec::with_capacity(t);
         for (row, access) in ram.accesses.iter().enumerate() {

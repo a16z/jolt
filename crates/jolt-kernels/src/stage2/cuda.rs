@@ -135,7 +135,6 @@ impl CudaRamReadWriteState {
     }
 
     #[expect(clippy::too_many_arguments)]
-    #[cfg_attr(not(test), expect(dead_code, reason = "used once new_from_raw wiring lands"))]
     pub(crate) fn new_from_raw<F: jolt_field::Field>(
         rows: &[usize],
         cols: &[usize],
