@@ -9,40 +9,33 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
-use jolt_claims::protocols::jolt::geometry::instruction::{
-    committed_instruction_ra, InstructionRaVirtualizationDimensions,
-};
-use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationChallenges;
+use jolt_claims::protocols::jolt::geometry::instruction::committed_instruction_ra;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, eq_table};
-use crate::instruction_ra_virtualization::InstructionRaVirtualizationProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> InstructionRaVirtualizationProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: InstructionRaVirtualizationDimensions,
-        instruction_r_address: &[F],
-        instruction_r_cycle: &[F],
-        committed_chunk_bits: usize,
-        challenges: &InstructionRaVirtualizationChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {
-        let relation = InstructionRaVirtualization::new(
-            dimensions,
-            instruction_r_address.to_vec(),
-            instruction_r_cycle.to_vec(),
-            committed_chunk_bits,
-        );
-
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let instruction_r_address = relation.instruction_address();
+        let instruction_r_cycle = relation.instruction_read_raf_cycle();
+        let committed_chunk_bits = relation.committed_chunk_bits();
         let chunks = committed_address_chunks(instruction_r_address, committed_chunk_bits);
         if chunks.len() != dimensions.num_committed_ra_polys() {
             return Err(KernelError::InvariantViolation {
@@ -68,7 +61,7 @@ impl<F: Field> InstructionRaVirtualizationProver<F> for ReferenceBackend {
 
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

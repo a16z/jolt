@@ -11,35 +11,35 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
-use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic, TraceDimensions};
-use jolt_claims::NoChallenges;
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
-use crate::ram_hamming_booleanity::RamHammingBooleanityProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RamHammingBooleanityProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        stage1_cycle_binding: &[F],
-        challenges: &NoChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, RamHammingBooleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let trace_dimensions = relation.trace_dimensions();
+        let stage1_cycle_binding = relation.stage1_cycle_binding();
         if stage1_cycle_binding.len() != trace_dimensions.log_t() {
             return Err(KernelError::InvariantViolation {
                 reason: "stage-1 cycle binding has the wrong variable count",
             });
         }
-        let relation = RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding.to_vec());
-
         let opening_tables = BTreeMap::from([(
             ram_hamming_weight(),
             Polynomial::new(dense_view(witness, ram_hamming_weight())?),
@@ -52,7 +52,7 @@ impl<F: Field> RamHammingBooleanityProver<F> for ReferenceBackend {
 
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

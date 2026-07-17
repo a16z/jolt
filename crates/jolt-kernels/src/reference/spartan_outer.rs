@@ -243,7 +243,7 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
 
         let relation = OuterRemainder::new(dimensions, this.tau, uniskip_challenge);
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
+            &relation,
             &NoChallenges::default(),
             opening_tables,
             derived_tables,

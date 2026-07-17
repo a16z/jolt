@@ -71,6 +71,12 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> InstructionClaimReduction<F> {
+    pub fn tau_low(&self) -> &[F] {
+        &self.tau_low
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
     type Symbolic = relations::claim_reductions::instruction::ClaimReduction;
 

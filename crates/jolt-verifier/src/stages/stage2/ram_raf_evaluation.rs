@@ -67,6 +67,24 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RamRafEvaluation<F> {
+    pub fn read_write_dimensions(&self) -> ReadWriteDimensions {
+        self.read_write_dimensions
+    }
+
+    pub fn ram_log_k(&self) -> usize {
+        self.ram_log_k
+    }
+
+    pub fn lowest_address(&self) -> u64 {
+        self.lowest_address
+    }
+
+    pub fn tau_low(&self) -> &[F] {
+        &self.tau_low
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
     type Symbolic = relations::ram::RafEvaluation;
 

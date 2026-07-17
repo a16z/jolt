@@ -17,7 +17,7 @@ use super::precommitted_reduction::{permute_tables, PrecommittedReductionKernel}
 use super::views::eq_table;
 use crate::committed_program::program_image_words_padded;
 use crate::precommitted_reduction::PrecommittedReductionProver;
-use crate::program_image_claim_reduction::ProgramImageClaimReduction;
+use crate::precommitted_reduction::ProgramImageClaimReduction;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F: Field> ProgramImageClaimReduction<F> for ReferenceBackend {

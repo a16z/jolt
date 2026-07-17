@@ -105,6 +105,20 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RamOutputCheck<F> {
+    pub fn read_write_dimensions(&self) -> ReadWriteDimensions {
+        self.read_write_dimensions
+    }
+
+    pub fn output_address_challenges(&self) -> &[F] {
+        &self.output_address_challenges
+    }
+
+    pub fn public_memory(&self) -> &PublicIoMemory {
+        &self.public_memory
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
     type Symbolic = relations::ram::OutputCheck;
 

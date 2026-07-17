@@ -14,28 +14,29 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     is_first_in_sequence_shift, is_noop_shift, is_virtual_shift, pc_shift, unexpanded_pc_shift,
 };
-use jolt_claims::protocols::jolt::relations::spartan::SpartanShiftChallenges;
-use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic, TraceDimensions};
+use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, EqPlusOnePolynomial, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::dense_view;
-use crate::spartan_shift::SpartanShiftProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> SpartanShiftProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, SpartanShift<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        product_uniskip_tau_low: &[F],
-        product_remainder_point: &[F],
-        challenges: &SpartanShiftChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, SpartanShift<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = SpartanShift<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let product_uniskip_tau_low = relation.product_uniskip_tau_low();
+        let product_remainder_point = relation.product_remainder_opening_point();
         let ids = [
             unexpanded_pc_shift(),
             pc_shift(),
@@ -58,14 +59,9 @@ impl<F: Field> SpartanShiftProver<F> for ReferenceBackend {
             ),
         ]);
 
-        let relation = SpartanShift::new(
-            trace_dimensions,
-            product_uniskip_tau_low.to_vec(),
-            product_remainder_point.to_vec(),
-        );
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

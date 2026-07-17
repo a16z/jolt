@@ -23,13 +23,12 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhaseChallenges;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, ProverInputs};
 use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims,
 };
@@ -38,10 +37,10 @@ use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, dense_view, eq_table};
-use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
+use crate::booleanity::BooleanityAddressProver;
 use crate::{
-    KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel,
-    SumcheckKernelError,
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend,
+    SumcheckKernel, SumcheckKernelError,
 };
 
 impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
@@ -253,23 +252,18 @@ impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: BooleanityDimensions,
-        r_address: &[F],
-        reference_address: &[F],
-        reference_cycle: &[F],
-        challenges: &BooleanityCyclePhaseChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
-        let relation = Booleanity::new(
-            dimensions,
-            r_address.to_vec(),
-            reference_address.to_vec(),
-            reference_cycle.to_vec(),
-        );
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let r_address = relation.r_address();
+        let reference_address = relation.reference_address();
+        let reference_cycle = relation.reference_cycle();
 
         let mut opening_tables = BTreeMap::new();
         for opening in dimensions.layout.openings(JoltRelationId::Booleanity) {
@@ -299,7 +293,7 @@ impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
 
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

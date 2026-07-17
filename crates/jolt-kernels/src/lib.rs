@@ -24,39 +24,20 @@
 //! The commitment kernel streams PCS commitments of the committed witness
 //! polynomials over the proof's shared embedding grid.
 
-pub mod advice_claim_reduction;
 mod backend;
 pub mod booleanity;
-pub mod bytecode_claim_reduction;
 pub mod bytecode_read_raf;
 mod commitment;
 pub mod committed_program;
 mod error;
-pub mod hamming_weight_claim_reduction;
-pub mod inc_claim_reduction;
-pub mod instruction_claim_reduction;
-pub mod instruction_input;
-pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 pub mod opening;
 pub mod precommitted_reduction;
-pub mod program_image_claim_reduction;
-pub mod ram_hamming_booleanity;
-pub mod ram_output_check;
-pub mod ram_ra_claim_reduction;
-pub mod ram_ra_virtualization;
-pub mod ram_raf_evaluation;
-pub mod ram_read_write;
-pub mod ram_val_check;
 pub mod reference;
-pub mod registers_claim_reduction;
-pub mod registers_read_write;
-pub mod registers_val_evaluation;
 pub mod spartan_outer;
 pub mod spartan_product;
-pub mod spartan_shift;
 
-pub use backend::{JoltBackend, ProofSession};
+pub use backend::{JoltBackend, PrepareKernel, ProofSession};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 /// Re-exported from `jolt-verifier` (its home since the generated prove

@@ -10,6 +10,7 @@
 
 mod config;
 mod error;
+mod preparer;
 mod preprocessing;
 mod prover;
 pub mod stages;
@@ -17,5 +18,6 @@ pub mod stages;
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession};
+pub use preparer::BackendPreparer;
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
 pub use prover::prove;

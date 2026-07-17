@@ -1,11 +1,14 @@
-//! The booleanity slots: the stage-6a address phase and the stage-6b
-//! cycle phase.
+//! The booleanity address-phase (stage 6a) slot. Bespoke: the reference
+//! points and gamma are stage-level pre-batch draws carried in
+//! `Stage6aCarriedChallenges` — neither the relation instance nor its
+//! (empty) challenge struct carries them, so the slot cannot be served by
+//! the universal `PrepareKernel`. (The stage-6b cycle phase CAN: its
+//! relation carries every input, so it lives behind
+//! `JoltBackend::booleanity_cycle`.)
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhaseChallenges;
 use jolt_field::Field;
 use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
-use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
@@ -24,28 +27,4 @@ pub trait BooleanityAddressProver<F: Field> {
         gamma: F,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>;
-}
-
-/// The stage-6b booleanity cycle-phase slot: a naive member — the cycle
-/// `Expr` references each checked opening squared (`x·x − x`), which the
-/// pointwise interpreter handles against one table per opening. Each opening
-/// table is the address fold of the committed one-hot grid at the 6a bound
-/// address point; the `EqAddressCycle` derived table is the (fixed) address
-/// eq factor times the reference-cycle eq table (the carried little-endian
-/// reference used verbatim, per the address-phase convention).
-pub trait BooleanityCycleProver<F: Field> {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the relation's construction data"
-    )]
-    fn prepare(
-        &self,
-        session: &mut ProofSession,
-        dimensions: BooleanityDimensions,
-        r_address: &[F],
-        reference_address: &[F],
-        reference_cycle: &[F],
-        challenges: &BooleanityCyclePhaseChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>>;
 }

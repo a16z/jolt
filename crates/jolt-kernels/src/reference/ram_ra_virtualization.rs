@@ -9,39 +9,32 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
-use jolt_claims::protocols::jolt::geometry::ram::{
-    committed_ram_ra, RamRaVirtualizationDimensions,
-};
+use jolt_claims::protocols::jolt::geometry::ram::committed_ram_ra;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
-use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, eq_table};
-use crate::ram_ra_virtualization::RamRaVirtualizationProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RamRaVirtualizationProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: RamRaVirtualizationDimensions,
-        ram_reduced_address: &[F],
-        ram_reduced_cycle: &[F],
-        committed_chunk_bits: usize,
-        challenges: &NoChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
-        let relation = RamRaVirtualization::new(
-            dimensions,
-            ram_reduced_address.to_vec(),
-            ram_reduced_cycle.to_vec(),
-            committed_chunk_bits,
-        );
-
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let ram_reduced_address = relation.ram_reduced_address();
+        let ram_reduced_cycle = relation.ram_reduced_cycle();
+        let committed_chunk_bits = relation.committed_chunk_bits();
         let chunks = committed_address_chunks(ram_reduced_address, committed_chunk_bits);
         if chunks.len() != dimensions.num_committed_ra_polys() {
             return Err(KernelError::InvariantViolation {
@@ -67,7 +60,7 @@ impl<F: Field> RamRaVirtualizationProver<F> for ReferenceBackend {
 
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

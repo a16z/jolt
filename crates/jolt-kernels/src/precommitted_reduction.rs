@@ -1,11 +1,79 @@
-//! The shared precommitted claim-reduction member: the two-phase (stage-6b
-//! cycle phase → stage-7 address phase) instance trait the advice,
-//! committed-bytecode, and program-image reduction slots return.
+//! The precommitted claim-reduction family: the two-phase (stage-6b cycle
+//! phase → stage-7 address phase) instance trait and the advice,
+//! committed-bytecode, and program-image slot traits that return it.
 
+use jolt_claims::protocols::jolt::{
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
+    ProgramImageClaimReductionLayout,
+};
 use jolt_field::Field;
+use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::ProveRounds;
+use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
+use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
+use jolt_witness::WitnessProvider;
 
-use crate::KernelError;
+use crate::{KernelError, ProofSession};
+
+/// The advice claim-reduction slot: the stage-4 opening evaluation and the
+/// stage-6b/7 reduction member share it because both are the advice
+/// polynomial's protocol duties (there is exactly one advice oracle read
+/// path).
+pub trait AdviceClaimReduction<F: Field> {
+    /// Evaluate the advice polynomial at `point` (big-endian) — the value the
+    /// stage-4 RAM value-check stages under `@RamValCheck` for this kind.
+    fn evaluate(
+        &self,
+        session: &mut ProofSession,
+        kind: JoltAdviceKind,
+        point: &[F],
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<F, KernelError<F>>;
+
+    /// Build the two-phase reduction member for `kind`. `r_val` is the staged
+    /// stage-4 opening point (big-endian, `advice_vars` long) the eq table is
+    /// built from.
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        kind: JoltAdviceKind,
+        layout: &AdviceClaimReductionLayout,
+        r_val: &[F],
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>>;
+}
+
+/// The committed-bytecode claim-reduction slot (reduces the five staged
+/// `BytecodeValStage(i)` claims into per-chunk `BytecodeChunk(i)` openings).
+/// `weights` are the public chunk/lane weights the recipe built with the
+/// verifier's own promoted `bytecode_reduction_weights`; `bytecode` is the
+/// prover-retained full bytecode the chunk grids materialize from.
+pub trait BytecodeClaimReduction<F: Field> {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        layout: &BytecodeClaimReductionLayout,
+        weights: &BytecodeReductionWeights<F>,
+        bytecode: &[JoltInstructionRow],
+    ) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>>;
+}
+
+/// The program-image claim-reduction slot (reduces the stage-4
+/// `ProgramImageInitContributionRw` contribution into a final
+/// `ProgramImageInit` opening over the shared precommitted schedule).
+/// `r_addr_rw` is the stage-2 RAM read-write address point (the staged
+/// contribution's point); `bytecode_words` the prover-retained RAM-remapped
+/// image words; `start_index` the image block's RAM word offset.
+pub trait ProgramImageClaimReduction<F: Field> {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        layout: &ProgramImageClaimReductionLayout,
+        r_addr_rw: &[F],
+        start_index: usize,
+        bytecode_words: &[u64],
+    ) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>>;
+}
 
 /// One precommitted reduction member, spanning stages 6b and 7: the stage-6b
 /// recipe drives the cycle phase and stages the handoff claim, then hands the

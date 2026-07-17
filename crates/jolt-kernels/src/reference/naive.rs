@@ -25,7 +25,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
+use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId};
 use jolt_claims::{InputClaims, OutputClaims, Source, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
@@ -51,7 +51,12 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
-    relation: R,
+    /// The relation's geometry and summand, captured at construction — the
+    /// kernel borrows the stage's relation instance and owns no copy, so
+    /// batch/kernel geometry divergence is unrepresentable.
+    rounds: usize,
+    degree: usize,
+    expression: JoltExpr<F>,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
     /// construction, so the round loop reads plain `Sync` data (the typed
     /// `Challenges` struct carries no `Sync` bound and stays with the
@@ -61,6 +66,7 @@ where
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
     binding_order: BindingOrder,
     rounds_bound: usize,
+    _relation: core::marker::PhantomData<fn() -> R>,
 }
 
 impl<F, R> NaiveSumcheckProver<F, R>
@@ -81,7 +87,7 @@ where
     /// legacy prover requires matching its choice (e.g. the Spartan outer
     /// remainder binds `LowToHigh`).
     pub fn new(
-        relation: R,
+        relation: &R,
         challenges: &ConcreteSumcheckChallenges<F, R>,
         opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
         derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
@@ -99,8 +105,9 @@ where
                 })
             }
         };
+        let expression = relation.symbolic().output_expression::<F>();
         let mut challenge_values = BTreeMap::new();
-        for term in &relation.symbolic().output_expression::<F>().terms {
+        for term in &expression.terms {
             for factor in &term.factors {
                 match factor {
                     Source::Opening(id) => {
@@ -126,17 +133,20 @@ where
         }
 
         Ok(Self {
-            relation,
+            rounds: relation.rounds(),
+            degree: relation.degree(),
+            expression,
             challenge_values,
             opening_tables,
             derived_tables,
             binding_order,
             rounds_bound: 0,
+            _relation: core::marker::PhantomData,
         })
     }
 
     fn remaining_rounds(&self) -> usize {
-        self.relation.rounds() - self.rounds_bound
+        self.rounds - self.rounds_bound
     }
 
     fn bind_tables(&mut self, challenge: F) {
@@ -155,12 +165,6 @@ where
             remaining => Err(SumcheckKernelError::NotFullyBound { remaining }),
         }
     }
-
-    /// The kernel-held relation instance (dropped from the kernel trait; the
-    /// stage's instance is the source of truth for the drivers).
-    pub fn relation(&self) -> &R {
-        &self.relation
-    }
 }
 
 impl<F, R> ProveRounds<F> for NaiveSumcheckProver<F, R>
@@ -172,7 +176,7 @@ where
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     fn num_rounds(&self) -> usize {
-        self.relation.rounds()
+        self.rounds
     }
 
     fn prove_round(
@@ -185,8 +189,8 @@ where
             self.bind_tables(challenge);
         }
         let half = (1usize << self.remaining_rounds()) / 2;
-        let degree = self.relation.degree();
-        let expression = self.relation.symbolic().output_expression::<F>();
+        let degree = self.degree;
+        let expression = &self.expression;
         let opening_tables = &self.opening_tables;
         let derived_tables = &self.derived_tables;
         let challenge_values = &self.challenge_values;
@@ -540,7 +544,7 @@ mod tests {
         );
 
         let mut naive = NaiveSumcheckProver::new(
-            relation,
+            &relation,
             &challenges,
             opening_tables,
             derived_tables,
@@ -560,13 +564,12 @@ mod tests {
         let input_points = ToyInputs {
             total: vec![Fr::from_u64(9); ROUNDS],
         };
-        let output_points = naive
-            .relation()
+        let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
         let output_claims = naive.output_claims().unwrap();
         naive
-            .validate_derived_tables(naive.relation(), &input_points, &output_points, &challenges)
+            .validate_derived_tables(&relation, &input_points, &output_points, &challenges)
             .unwrap();
 
         // The assembled claims cover exactly the expression's openings (the
@@ -582,8 +585,7 @@ mod tests {
             ],
         );
 
-        let expected = naive
-            .relation()
+        let expected = relation
             .expected_output(&input_points, &output_claims, &output_points, &challenges)
             .unwrap();
         assert_eq!(coefficient * expected, proved.final_claim);
@@ -657,7 +659,7 @@ mod tests {
         );
         let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
         let mut naive = NaiveSumcheckProver::new(
-            relation,
+            &relation,
             &challenges,
             opening_tables,
             derived_tables,
@@ -670,17 +672,11 @@ mod tests {
         let input_points = ToyInputs {
             total: vec![Fr::from_u64(9); ROUNDS],
         };
-        let output_points = naive
-            .relation()
+        let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
         assert!(matches!(
-            naive.validate_derived_tables(
-                naive.relation(),
-                &input_points,
-                &output_points,
-                &challenges
-            ),
+            naive.validate_derived_tables(&relation, &input_points, &output_points, &challenges),
             Err(SumcheckKernelError::DerivedTableDrift {
                 id: JoltDerivedId::Test,
                 ..
@@ -702,7 +698,7 @@ mod tests {
         };
         assert!(matches!(
             NaiveSumcheckProver::new(
-                relation,
+                &relation,
                 &challenges().unwrap(),
                 incomplete,
                 derived_tables(&reference_point()),
@@ -720,7 +716,7 @@ mod tests {
         };
         assert!(matches!(
             NaiveSumcheckProver::new(
-                relation,
+                &relation,
                 &challenges().unwrap(),
                 mis_sized,
                 derived_tables(&reference_point()),

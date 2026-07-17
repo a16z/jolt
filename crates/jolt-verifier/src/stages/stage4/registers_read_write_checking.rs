@@ -69,6 +69,12 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RegistersReadWriteChecking<F> {
+    pub fn register_dimensions(&self) -> ReadWriteDimensions {
+        self.register_dimensions
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
     type Symbolic = relations::registers::ReadWriteChecking;
 

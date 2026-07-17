@@ -73,6 +73,16 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RamRaClaimReduction<F> {
+    pub fn trace_dimensions(&self) -> TraceDimensions {
+        self.trace_dimensions
+    }
+
+    pub fn ram_log_k(&self) -> usize {
+        self.ram_log_k
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
     type Symbolic = relations::ram::RaClaimReduction;
 

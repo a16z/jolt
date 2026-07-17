@@ -57,6 +57,16 @@ impl<F: Field> SpartanShift<F> {
     }
 }
 
+impl<F: Field> SpartanShift<F> {
+    pub fn product_uniskip_tau_low(&self) -> &[F] {
+        &self.product_uniskip_tau_low
+    }
+
+    pub fn product_remainder_opening_point(&self) -> &[F] {
+        &self.product_remainder_opening_point
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
     type Symbolic = relations::spartan::Shift;
 

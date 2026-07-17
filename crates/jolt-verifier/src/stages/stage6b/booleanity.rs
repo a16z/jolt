@@ -56,6 +56,24 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> Booleanity<F> {
+    pub fn dimensions(&self) -> BooleanityDimensions {
+        self.dimensions
+    }
+
+    pub fn r_address(&self) -> &[F] {
+        &self.r_address
+    }
+
+    pub fn reference_address(&self) -> &[F] {
+        &self.reference_address
+    }
+
+    pub fn reference_cycle(&self) -> &[F] {
+        &self.reference_cycle
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
     type Symbolic = relations::booleanity::BooleanityCyclePhase;
 

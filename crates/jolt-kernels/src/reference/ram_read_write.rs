@@ -13,29 +13,30 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::ram::{ram_inc, ram_ra, ram_val};
-use jolt_claims::protocols::jolt::relations::ram::RamReadWriteChallenges;
-use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table, tile};
-use crate::ram_read_write::RamReadWriteProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RamReadWriteProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: ReadWriteDimensions,
-        ram_log_k: usize,
-        tau_low: &[F],
-        challenges: &RamReadWriteChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, RamReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let ram_log_k = relation.ram_log_k();
+        let tau_low = relation.product_tau_low();
         if dimensions.phase1_num_rounds() != dimensions.log_t() {
             return Err(KernelError::Unsupported {
                 reason: "reference RAM read-write checking supports only the default \
@@ -59,10 +60,9 @@ impl<F: Field> RamReadWriteProver<F> for ReferenceBackend {
             Polynomial::new(tile(&eq_table(tau_low), copies)),
         )]);
 
-        let relation = RamReadWriteChecking::new(dimensions, ram_log_k, tau_low.to_vec());
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

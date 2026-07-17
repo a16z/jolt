@@ -57,6 +57,12 @@ impl<F: Field> InstructionInput<F> {
     }
 }
 
+impl<F: Field> InstructionInput<F> {
+    pub fn product_remainder_opening_point(&self) -> &[F] {
+        &self.product_remainder_opening_point
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
     type Symbolic = relations::instruction::InputVirtualization;
 

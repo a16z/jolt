@@ -193,7 +193,7 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
             this.tau_low,
         );
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
+            &relation,
             &NoChallenges::default(),
             opening_tables,
             derived_tables,

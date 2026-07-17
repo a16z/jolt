@@ -14,6 +14,7 @@ use jolt_sumcheck::{
     prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::{
@@ -79,25 +80,33 @@ where
 
     let mut shift = backend.spartan_shift.prepare(
         session,
-        trace_dimensions,
-        &product_tau_low,
-        &product_remainder_point,
-        &challenges.shift,
         witness,
+        ProverInputs {
+            relation: &sumchecks.shift,
+            claims: &inputs.shift,
+            points: &input_points.shift,
+            challenges: &challenges.shift,
+        },
     )?;
     let mut instruction_input = backend.instruction_input.prepare(
         session,
-        trace_dimensions,
-        &product_remainder_point,
-        &challenges.instruction_input,
         witness,
+        ProverInputs {
+            relation: &sumchecks.instruction_input,
+            claims: &inputs.instruction_input,
+            points: &input_points.instruction_input,
+            challenges: &challenges.instruction_input,
+        },
     )?;
     let mut registers_claim_reduction = backend.registers_claim_reduction.prepare(
         session,
-        trace_dimensions,
-        &product_tau_low,
-        &challenges.registers_claim_reduction,
         witness,
+        ProverInputs {
+            relation: &sumchecks.registers_claim_reduction,
+            claims: &inputs.registers_claim_reduction,
+            points: &input_points.registers_claim_reduction,
+            challenges: &challenges.registers_claim_reduction,
+        },
     )?;
 
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![

@@ -25,7 +25,7 @@ use jolt_sumcheck::{
     SumcheckRecorder,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, ProverInputs};
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::outputs::{
@@ -173,36 +173,44 @@ where
 
     let mut ram_read_write = backend.ram_read_write.prepare(
         session,
-        read_write_dimensions,
-        log_k,
-        &tau_low,
-        &challenges.ram_read_write,
         witness,
+        ProverInputs {
+            relation: &sumchecks.ram_read_write,
+            claims: &inputs.ram_read_write,
+            points: &input_points.ram_read_write,
+            challenges: &challenges.ram_read_write,
+        },
     )?;
     let mut product_remainder = product.into_remainder(tau_high, uniskip_challenge)?;
     let mut instruction_claim_reduction = backend.instruction_claim_reduction.prepare(
         session,
-        trace_dimensions,
-        &tau_low,
-        &challenges.instruction_claim_reduction,
         witness,
+        ProverInputs {
+            relation: &sumchecks.instruction_claim_reduction,
+            claims: &inputs.instruction_claim_reduction,
+            points: &input_points.instruction_claim_reduction,
+            challenges: &challenges.instruction_claim_reduction,
+        },
     )?;
     let mut ram_raf_evaluation = backend.ram_raf_evaluation.prepare(
         session,
-        read_write_dimensions,
-        raf_dimensions,
-        log_k,
-        lowest_address,
-        &tau_low,
         witness,
+        ProverInputs {
+            relation: &sumchecks.ram_raf_evaluation,
+            claims: &inputs.ram_raf_evaluation,
+            points: &input_points.ram_raf_evaluation,
+            challenges: &challenges.ram_raf_evaluation,
+        },
     )?;
     let mut ram_output_check = backend.ram_output_check.prepare(
         session,
-        read_write_dimensions,
-        log_k,
-        &output_address_challenges,
-        public_memory,
         witness,
+        ProverInputs {
+            relation: &sumchecks.ram_output_check,
+            claims: &inputs.ram_output_check,
+            points: &input_points.ram_output_check,
+            challenges: &challenges.ram_output_check,
+        },
     )?;
 
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![

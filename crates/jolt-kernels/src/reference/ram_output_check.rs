@@ -17,29 +17,31 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
-use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic, ReadWriteDimensions};
-use jolt_claims::NoChallenges;
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_program::preprocess::PublicIoMemory;
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
-use crate::ram_output_check::RamOutputCheckProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RamOutputCheckProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: ReadWriteDimensions,
-        ram_log_k: usize,
-        output_address_challenges: &[F],
-        public_memory: PublicIoMemory,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, RamOutputCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamOutputCheck<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let dimensions = relation.read_write_dimensions();
+        let output_address_challenges = relation.output_address_challenges();
+        let ram_log_k = output_address_challenges.len();
+        let public_memory = relation.public_memory();
         if dimensions.output_check_rounds() != ram_log_k {
             return Err(KernelError::Unsupported {
                 reason: "reference RAM output check supports only the default read-write config \
@@ -88,14 +90,9 @@ impl<F: Field> RamOutputCheckProver<F> for ReferenceBackend {
             ),
         ]);
 
-        let relation = RamOutputCheck::new(
-            dimensions,
-            output_address_challenges.to_vec(),
-            public_memory,
-        );
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            &NoChallenges::default(),
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

@@ -61,6 +61,12 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RegistersValEvaluation<F> {
+    pub fn trace_dimensions(&self) -> TraceDimensions {
+        self.trace_dimensions
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
     type Symbolic = relations::registers::ValEvaluation;
 

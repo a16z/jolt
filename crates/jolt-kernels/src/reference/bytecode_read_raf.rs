@@ -27,9 +27,7 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::bytecode::{bytecode_ra, BytecodeReadRafDimensions};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::bytecode_val_stage_opening;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
-use jolt_claims::protocols::jolt::relations::bytecode::{
-    BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafCyclePhaseCommittedChallenges,
-};
+use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -37,21 +35,19 @@ use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, ProverInputs};
 use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
 };
-use jolt_verifier::stages::stage6b::bytecode_read_raf::{
-    BytecodeReadRafCycle, BytecodeReadRafCycleInputs,
-};
+use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, eq_table};
-use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
+use crate::bytecode_read_raf::BytecodeReadRafAddressProver;
 use crate::{
-    KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel,
-    SumcheckKernelError,
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend,
+    SumcheckKernel, SumcheckKernelError,
 };
 
 impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
@@ -290,31 +286,25 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> BytecodeReadRafCycleProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: BytecodeReadRafDimensions,
-        r_address: &[F],
-        stage_cycle_points: &[Vec<F>; 5],
-        entry_bytecode_index: usize,
-        committed_chunk_bits: usize,
-        stage_values_at_r_address: [F; 5],
-        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let r_address = relation.r_address();
+        let stage_cycle_points = relation.stage_cycle_points();
+        let entry_bytecode_index = relation.entry_bytecode_index();
+        let committed_chunk_bits = relation.committed_chunk_bits();
+        // The address-only stage-value fold, off the relation: full mode
+        // computed it at construction; committed mode's constants ARE the
+        // stage-6a staged raw values.
+        let stage_values_at_r_address = relation.stage_values_at_r_address()?;
         let cycles = 1usize << dimensions.log_t();
-        // The table fold feeds only `expected_output`, which the kernel's
-        // relation copy never runs (the recipe's own batch instance does).
-        let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
-            dimensions,
-            r_address: r_address.to_vec(),
-            stage_cycle_points: stage_cycle_points.clone(),
-            entry_bytecode_index,
-            committed_chunk_bits,
-            table_fold: None,
-        })?;
 
         let chunks = committed_address_chunks(r_address, committed_chunk_bits);
         if chunks.len() != dimensions.num_committed_ra_polys() {
@@ -371,7 +361,7 @@ impl<F: Field> BytecodeReadRafCycleProver<F> for ReferenceBackend {
 
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

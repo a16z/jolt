@@ -22,8 +22,8 @@ use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 
 use super::precommitted_reduction::{permute_tables, PrecommittedReductionKernel};
 use super::views::eq_table;
-use crate::bytecode_claim_reduction::BytecodeClaimReduction;
 use crate::committed_program::{build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle};
+use crate::precommitted_reduction::BytecodeClaimReduction;
 use crate::precommitted_reduction::PrecommittedReductionProver;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 

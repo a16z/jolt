@@ -45,6 +45,16 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RamHammingBooleanity<F> {
+    pub fn trace_dimensions(&self) -> TraceDimensions {
+        self.trace_dimensions
+    }
+
+    pub fn stage1_cycle_binding(&self) -> &[F] {
+        &self.stage1_cycle_binding
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
     type Symbolic = relations::ram::HammingBooleanity;
 

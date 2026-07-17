@@ -147,6 +147,24 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> HammingWeightClaimReduction<F> {
+    pub fn dimensions(&self) -> HammingWeightClaimReductionDimensions {
+        self.dimensions
+    }
+
+    pub fn r_cycle(&self) -> &[F] {
+        &self.r_cycle
+    }
+
+    pub fn r_address(&self) -> &[F] {
+        &self.r_address
+    }
+
+    pub fn virtualization_points(&self) -> &[Vec<F>] {
+        &self.virtualization_points
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     type Symbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
 

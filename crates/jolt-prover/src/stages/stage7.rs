@@ -22,6 +22,7 @@ use jolt_sumcheck::{
     prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::advice_address_phase::{
@@ -30,7 +31,6 @@ use jolt_verifier::stages::stage7::advice_address_phase::{
 use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhaseOutputClaims, ProgramImageReductionAddressPhaseOutputClaims,
 };
-use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::stage7_hamming_virtualization_address_points;
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
 use jolt_verifier::{CheckedInputs, VerifierError};
@@ -91,16 +91,6 @@ where
         config.one_hot_config.committed_chunk_bits(),
     );
 
-    let booleanity_opening = stage6b.output_points.booleanity_opening_point().ok_or(
-        ProverError::InvariantViolation {
-            reason: "stage-6b booleanity produced no opening point",
-        },
-    )?;
-    let (booleanity_r_address, booleanity_r_cycle) =
-        booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
-    let virtualization_points =
-        stage7_hamming_virtualization_address_points(hamming_dimensions, &stage6b.output_points)?;
-
     let sumchecks = build_stage7_sumchecks(
         hamming_dimensions,
         precommitted,
@@ -118,12 +108,13 @@ where
 
     let mut hamming = backend.hamming_weight_claim_reduction.prepare(
         session,
-        hamming_dimensions,
-        booleanity_r_cycle,
-        booleanity_r_address,
-        &virtualization_points,
-        &challenges.hamming_weight_claim_reduction,
         witness,
+        ProverInputs {
+            relation: &sumchecks.hamming_weight_claim_reduction,
+            claims: &inputs.hamming_weight_claim_reduction,
+            points: &input_points.hamming_weight_claim_reduction,
+            challenges: &challenges.hamming_weight_claim_reduction,
+        },
     )?;
 
     // The precommitted address phases: the stage-6b kernel objects,

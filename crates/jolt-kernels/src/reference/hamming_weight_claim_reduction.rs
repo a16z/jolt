@@ -13,33 +13,34 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
-use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use jolt_claims::protocols::jolt::{
     HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{cycle_fold, eq_table};
-use crate::hamming_weight_claim_reduction::HammingWeightClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: HammingWeightClaimReductionDimensions,
-        r_cycle: &[F],
-        r_address: &[F],
-        virtualization_points: &[Vec<F>],
-        challenges: &HammingWeightClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let r_cycle = relation.r_cycle();
+        let r_address = relation.r_address();
+        let virtualization_points = relation.virtualization_points();
         if r_address.len() != dimensions.log_k_chunk
             || virtualization_points.len() != dimensions.layout.total()
         {
@@ -47,13 +48,6 @@ impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
                 reason: "hamming reduction reference point shapes disagree with the layout",
             });
         }
-        let relation = HammingWeightClaimReduction::new(
-            dimensions,
-            r_cycle.to_vec(),
-            r_address.to_vec(),
-            virtualization_points.to_vec(),
-        );
-
         let mut opening_tables = BTreeMap::new();
         for opening in dimensions
             .layout
@@ -83,7 +77,7 @@ impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
 
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

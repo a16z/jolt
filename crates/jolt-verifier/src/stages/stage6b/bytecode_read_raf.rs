@@ -410,6 +410,67 @@ impl<F: Field> BytecodeReadRafCycle<F> {
     }
 }
 
+impl<F: Field> BytecodeReadRafCycle<F> {
+    pub fn dimensions(&self) -> BytecodeReadRafDimensions {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation.dimensions,
+            BytecodeReadRafCycleVariant::Committed(relation) => relation.dimensions,
+        }
+    }
+
+    pub fn r_address(&self) -> &[F] {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => &relation.r_address,
+            BytecodeReadRafCycleVariant::Committed(relation) => &relation.r_address,
+        }
+    }
+
+    pub fn stage_cycle_points(&self) -> &[Vec<F>; 5] {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => &relation.stage_cycle_points,
+            BytecodeReadRafCycleVariant::Committed(relation) => &relation.stage_cycle_points,
+        }
+    }
+
+    pub fn entry_bytecode_index(&self) -> usize {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation.entry_bytecode_index,
+            BytecodeReadRafCycleVariant::Committed(relation) => relation.entry_bytecode_index,
+        }
+    }
+
+    pub fn committed_chunk_bits(&self) -> usize {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation.committed_chunk_bits,
+            BytecodeReadRafCycleVariant::Committed(relation) => relation.committed_chunk_bits,
+        }
+    }
+
+    /// The address-only bytecode-table fold at `r_address` — the constant
+    /// `BytecodeValStage` values the cycle kernel's tables carry. Full mode
+    /// computes the fold at construction (clear only); committed mode's
+    /// constants ARE the stage-6a staged raw values.
+    pub fn stage_values_at_r_address(&self) -> Result<[F; 5], VerifierError> {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation
+                .stage_values_at_r_address
+                .ok_or_else(|| public_input_failed("bytecode table fold is unavailable")),
+            BytecodeReadRafCycleVariant::Committed(relation) => {
+                let staged: &[F] = &relation.val_stages;
+                let mut stage_values = [F::zero(); 5];
+                if staged.len() != stage_values.len() {
+                    return Err(public_input_failed(format!(
+                        "expected 5 staged bytecode val stages, got {}",
+                        staged.len()
+                    )));
+                }
+                stage_values.copy_from_slice(staged);
+                Ok(stage_values)
+            }
+        }
+    }
+}
+
 /// INVARIANT: this impl anchors `Symbolic` on the *committed* cycle symbolic for
 /// both variants. That is sound because the two symbolics share `Inputs` /
 /// `Outputs` / `rounds` / `degree` / `input_expression` (they differ only in the

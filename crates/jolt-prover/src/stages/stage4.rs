@@ -22,6 +22,7 @@ use jolt_sumcheck::{
     prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::{
@@ -89,7 +90,7 @@ where
         }
         .into());
     }
-    let (r_address, r_cycle_ram) = ram_read_write_opening_point.split_at(log_k);
+    let (r_address, _r_cycle_ram) = ram_read_write_opening_point.split_at(log_k);
     if ram_output_check_opening_point != r_address {
         return Err(ProverError::InvariantViolation {
             reason: "stage-2 RAM val and val_final opening points disagree",
@@ -181,23 +182,25 @@ where
     let (batch, coefficients) =
         sumchecks.begin_batch(&inputs, &challenges, &mut recorder, transcript)?;
 
-    let r_cycle_registers = &input_points.registers_read_write.rd_write_value;
     let mut registers_read_write = backend.registers_read_write.prepare(
         session,
-        register_dimensions,
-        r_cycle_registers,
-        &challenges.registers_read_write,
         witness,
+        ProverInputs {
+            relation: &sumchecks.registers_read_write,
+            claims: &inputs.registers_read_write,
+            points: &input_points.registers_read_write,
+            challenges: &challenges.registers_read_write,
+        },
     )?;
     let mut ram_val_check = backend.ram_val_check.prepare(
         session,
-        trace_dimensions,
-        log_k,
-        init_structure.decomposition(),
-        r_address,
-        r_cycle_ram,
-        &challenges.ram_val_check,
         witness,
+        ProverInputs {
+            relation: &sumchecks.ram_val_check,
+            claims: &inputs.ram_val_check,
+            points: &input_points.ram_val_check,
+            challenges: &challenges.ram_val_check,
+        },
     )?;
 
     let mut members: Vec<&mut dyn ProveRounds<F>> =

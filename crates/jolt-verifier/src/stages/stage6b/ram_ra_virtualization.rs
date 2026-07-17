@@ -79,6 +79,24 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RamRaVirtualization<F> {
+    pub fn dimensions(&self) -> RamRaVirtualizationDimensions {
+        self.dimensions
+    }
+
+    pub fn ram_reduced_address(&self) -> &[F] {
+        &self.ram_reduced_address
+    }
+
+    pub fn ram_reduced_cycle(&self) -> &[F] {
+        &self.ram_reduced_cycle
+    }
+
+    pub fn committed_chunk_bits(&self) -> usize {
+        self.committed_chunk_bits
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
     type Symbolic = relations::ram::RaVirtualization;
 

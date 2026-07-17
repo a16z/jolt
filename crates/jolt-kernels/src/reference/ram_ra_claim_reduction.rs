@@ -12,30 +12,30 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_ra_claim_reduction;
-use jolt_claims::protocols::jolt::relations::ram::{
-    RamRaClaimReductionChallenges, RamRaClaimReductionInputClaims,
-};
-use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaClaimReductionPublic, TraceDimensions};
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaClaimReductionPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, eq_table};
-use crate::ram_ra_claim_reduction::RamRaClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RamRaClaimReductionProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        ram_log_k: usize,
-        input_points: &RamRaClaimReductionInputClaims<Vec<F>>,
-        challenges: &RamRaClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, RamRaClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaClaimReduction<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let trace_dimensions = relation.trace_dimensions();
+        let ram_log_k = relation.ram_log_k();
+        let input_points = inputs.points;
         let expected_len = ram_log_k + trace_dimensions.log_t();
         for point in [
             input_points.raf(),
@@ -76,10 +76,9 @@ impl<F: Field> RamRaClaimReductionProver<F> for ReferenceBackend {
             ),
         ]);
 
-        let relation = RamRaClaimReduction::new(trace_dimensions, ram_log_k);
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

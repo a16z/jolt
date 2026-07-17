@@ -14,30 +14,29 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::{
     left_instruction_input_reduced, left_lookup_operand_reduced, lookup_output_reduced,
     right_instruction_input_reduced, right_lookup_operand_reduced,
 };
-use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionChallenges;
-use jolt_claims::protocols::jolt::{
-    InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
-};
+use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
-use crate::instruction_claim_reduction::InstructionClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> InstructionClaimReductionProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        tau_low: &[F],
-        challenges: &InstructionClaimReductionChallenges<F>,
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        inputs: ProverInputs<'_, F, InstructionClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let tau_low = relation.tau_low();
         let ids = [
             lookup_output_reduced(),
             left_lookup_operand_reduced(),
@@ -54,10 +53,9 @@ impl<F: Field> InstructionClaimReductionProver<F> for ReferenceBackend {
             Polynomial::new(eq_table(tau_low)),
         )]);
 
-        let relation = InstructionClaimReduction::new(trace_dimensions, tau_low.to_vec());
         Ok(Box::new(NaiveSumcheckProver::new(
             relation,
-            challenges,
+            inputs.challenges,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

@@ -21,7 +21,7 @@ use super::precommitted_reduction::{
     lsb_permutation, permute_challenges, permute_coefficients, PrecommittedReductionKernel,
 };
 use super::views::{dense_view, eq_table};
-use crate::advice_claim_reduction::AdviceClaimReduction;
+use crate::precommitted_reduction::AdviceClaimReduction;
 use crate::precommitted_reduction::PrecommittedReductionProver;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 

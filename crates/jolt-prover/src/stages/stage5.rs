@@ -23,6 +23,7 @@ use jolt_sumcheck::{
     prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
@@ -113,18 +114,23 @@ where
     )?;
     let mut ram_ra_claim_reduction = backend.ram_ra_claim_reduction.prepare(
         session,
-        trace_dimensions,
-        log_k,
-        &input_points.ram_ra_claim_reduction,
-        &challenges.ram_ra_claim_reduction,
         witness,
+        ProverInputs {
+            relation: &sumchecks.ram_ra_claim_reduction,
+            claims: &inputs.ram_ra_claim_reduction,
+            points: &input_points.ram_ra_claim_reduction,
+            challenges: &challenges.ram_ra_claim_reduction,
+        },
     )?;
     let mut registers_val_evaluation = backend.registers_val_evaluation.prepare(
         session,
-        trace_dimensions,
-        &input_points.registers_val_evaluation.registers_val,
-        &challenges.registers_val_evaluation,
         witness,
+        ProverInputs {
+            relation: &sumchecks.registers_val_evaluation,
+            claims: &inputs.registers_val_evaluation,
+            points: &input_points.registers_val_evaluation,
+            challenges: &challenges.registers_val_evaluation,
+        },
     )?;
 
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![

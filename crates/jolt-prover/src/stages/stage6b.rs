@@ -16,9 +16,6 @@
 //! is a multiple of the committed chunk width).
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::bytecode::{
-    read_raf_stage_values, BytecodeReadRafStageValueInputs,
-};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeLaneWeightInputs;
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     JoltFormulaDimensions, REGISTER_ADDRESS_BITS,
@@ -31,11 +28,11 @@ use jolt_kernels::precommitted_reduction::PrecommittedReductionProver;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{
     prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -333,93 +330,65 @@ where
     let (batch, coefficients) =
         sumchecks.begin_batch(&inputs, &cycle_challenges, &mut recorder, transcript)?;
 
-    // The address-only stage-value fold, once, for the bytecode kernel's
-    // constant `BytecodeValStage` tables (the recipe's relation instance
-    // recomputes the same fold internally for `expected_final_claim`). In
-    // committed mode the constants ARE the stage-6a staged raw values — the
-    // same quantities the fold computes.
-    let stage_values_at_r_address = if precommitted.bytecode.is_some() {
-        let staged = &stage6a.output_values.bytecode_read_raf.val_stages;
-        let mut stage_values = [F::zero(); 5];
-        if staged.len() != stage_values.len() {
-            return Err(ProverError::InvariantViolation {
-                reason: "stage 6a staged the wrong number of bytecode val stages",
-            });
-        }
-        stage_values.copy_from_slice(staged);
-        stage_values
-    } else {
-        let row_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
-            bytecode: &program.bytecode.bytecode,
-            register_read_write_point: &registers_read_write_point[..REGISTER_ADDRESS_BITS],
-            register_val_evaluation_point: &registers_val_evaluation_point[..REGISTER_ADDRESS_BITS],
-            stage1_gammas: &stage_gammas[0],
-            stage2_gammas: &stage_gammas[1],
-            stage3_gammas: &stage_gammas[2],
-            stage4_gammas: &stage_gammas[3],
-            stage5_gammas: &stage_gammas[4],
-        });
-        let eq_address = EqPolynomial::new(bytecode_r_address.clone()).evaluations();
-        let mut stage_values = [F::zero(); 5];
-        for (row, eq) in row_values.into_iter().zip(eq_address) {
-            for (stage_value, row_value) in stage_values.iter_mut().zip(row) {
-                *stage_value += row_value * eq;
-            }
-        }
-        stage_values
-    };
-
     let mut bytecode_read_raf = backend.bytecode_read_raf_cycle.prepare(
         session,
-        formula_dimensions.bytecode_read_raf,
-        &bytecode_r_address,
-        &stage_cycle_points,
-        entry_bytecode_index,
-        chunk_bits,
-        stage_values_at_r_address,
-        &cycle_challenges.bytecode_read_raf,
         witness,
+        ProverInputs {
+            relation: &sumchecks.bytecode_read_raf,
+            claims: &inputs.bytecode_read_raf,
+            points: &input_points.bytecode_read_raf,
+            challenges: &cycle_challenges.bytecode_read_raf,
+        },
     )?;
     let mut booleanity = backend.booleanity_cycle.prepare(
         session,
-        booleanity_dimensions,
-        &booleanity_r_address,
-        &carried.booleanity_reference_address,
-        &carried.booleanity_reference_cycle,
-        &cycle_challenges.booleanity,
         witness,
+        ProverInputs {
+            relation: &sumchecks.booleanity,
+            claims: &inputs.booleanity,
+            points: &input_points.booleanity,
+            challenges: &cycle_challenges.booleanity,
+        },
     )?;
     let mut ram_hamming_booleanity = backend.ram_hamming_booleanity.prepare(
         session,
-        trace_dimensions,
-        &stage1_cycle_binding,
-        &cycle_challenges.ram_hamming_booleanity,
         witness,
+        ProverInputs {
+            relation: &sumchecks.ram_hamming_booleanity,
+            claims: &inputs.ram_hamming_booleanity,
+            points: &input_points.ram_hamming_booleanity,
+            challenges: &cycle_challenges.ram_hamming_booleanity,
+        },
     )?;
     let mut ram_ra_virtualization = backend.ram_ra_virtualization.prepare(
         session,
-        formula_dimensions.ram_ra_virtualization,
-        ram_reduced_address,
-        ram_reduced_cycle,
-        chunk_bits,
-        &cycle_challenges.ram_ra_virtualization,
         witness,
+        ProverInputs {
+            relation: &sumchecks.ram_ra_virtualization,
+            claims: &inputs.ram_ra_virtualization,
+            points: &input_points.ram_ra_virtualization,
+            challenges: &cycle_challenges.ram_ra_virtualization,
+        },
     )?;
     let mut instruction_ra_virtualization = backend.instruction_ra_virtualization.prepare(
         session,
-        formula_dimensions.instruction_ra_virtualization,
-        &stage5.instruction_r_address,
-        stage5.output_points.instruction_r_cycle(),
-        chunk_bits,
-        &cycle_challenges.instruction_ra_virtualization,
         witness,
+        ProverInputs {
+            relation: &sumchecks.instruction_ra_virtualization,
+            claims: &inputs.instruction_ra_virtualization,
+            points: &input_points.instruction_ra_virtualization,
+            challenges: &cycle_challenges.instruction_ra_virtualization,
+        },
     )?;
     let mut inc_claim_reduction = backend.inc_claim_reduction.prepare(
         session,
-        trace_dimensions,
-        &inc_cycle_points,
-        &cycle_challenges.inc_claim_reduction,
         witness,
+        ProverInputs {
+            relation: &sumchecks.inc_claim_reduction,
+            claims: &inputs.inc_claim_reduction,
+            points: &input_points.inc_claim_reduction,
+            challenges: &cycle_challenges.inc_claim_reduction,
+        },
     )?;
 
     let prepare_advice =

@@ -54,6 +54,12 @@ impl<F: Field> RegistersClaimReduction<F> {
     }
 }
 
+impl<F: Field> RegistersClaimReduction<F> {
+    pub fn product_uniskip_tau_low(&self) -> &[F] {
+        &self.product_uniskip_tau_low
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
     type Symbolic = relations::claim_reductions::registers::ClaimReduction;
 
