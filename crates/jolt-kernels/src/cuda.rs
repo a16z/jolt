@@ -48,6 +48,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/ram_derive.cu"),
     include_str!("cuda/i128_to_mont.cu"),
     include_str!("cuda/stage2_product_factors.cu"),
+    include_str!("cuda/scatter_add_eq.cu"),
     include_str!("cuda/raf_weight_phase_update.cu"),
     include_str!("cuda/suffix_mle.cu"),
     include_str!("cuda/prefix_combine.cu"),
@@ -123,6 +124,8 @@ pub struct CudaKernelContext {
     u64_to_mont: CudaFunction,
     i128_to_mont: CudaFunction,
     stage2_product_factors: CudaFunction,
+    #[expect(dead_code, reason = "used once the scatter_add_eq body + wiring land")]
+    scatter_add_eq: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
@@ -1031,6 +1034,7 @@ impl CudaKernelContext {
             u64_to_mont: module.load_function("u64_to_mont")?,
             i128_to_mont: module.load_function("i128_to_mont")?,
             stage2_product_factors: module.load_function("stage2_product_factors")?,
+            scatter_add_eq: module.load_function("scatter_add_eq")?,
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
@@ -3423,6 +3427,17 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
         Ok(out)
+    }
+
+    pub fn scatter_add_eq(
+        &self,
+        eq: &DeviceFrVec,
+        addr: &CudaSlice<i32>,
+        trace_len: usize,
+        k: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let _ = (&eq, &addr, trace_len, k);
+        Err(CudaError::Unsupported)
     }
 
     pub fn stage2_product_factors(
@@ -6503,6 +6518,37 @@ mod tests {
 
             let c = ctx();
             let got = c.i128_to_mont(&values).unwrap();
+            prop_assert_eq!(got.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn scatter_add_eq_matches_cpu(
+            log_trace in 1usize..13,
+            log_k in 1usize..10,
+            seed in fr_strategy(),
+        ) {
+            use num_traits::Zero;
+            let trace_len = 1usize << log_trace;
+            let k = 1usize << log_k;
+            let eq: Vec<Fr> = (0..trace_len)
+                .map(|c| seed + Fr::from_u64((c + 1) as u64))
+                .collect();
+            // Mix of in-range addresses and -1 (absent), colliding across cycles.
+            let addr: Vec<i32> = (0..trace_len)
+                .map(|c| if c % 7 == 0 { -1 } else { ((c * 13) % k) as i32 })
+                .collect();
+
+            let mut expected = vec![Fr::zero(); k];
+            for (c, &a) in addr.iter().enumerate() {
+                if a >= 0 {
+                    expected[a as usize] += eq[c];
+                }
+            }
+
+            let c = ctx();
+            let eq_dev = c.upload(&eq).unwrap();
+            let addr_dev = c.upload_i32_slice(&addr).unwrap();
+            let got = c.scatter_add_eq(&eq_dev, &addr_dev, trace_len, k).unwrap();
             prop_assert_eq!(got.to_host().unwrap(), expected);
         }
 
