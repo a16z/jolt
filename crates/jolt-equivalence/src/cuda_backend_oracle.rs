@@ -265,7 +265,7 @@ pub fn run_bolt_prover(
         );
 
     let r1cs_key = fixture.r1cs_key();
-    let data = fixture.stage1_outer_rv64_data(&r1cs_key);
+    let data = fixture.stage1_outer_rv64_data_with_backend(&r1cs_key, "cuda");
     let ram_data = fixture.stage2_ram_data();
 
     let mut staged_transcript =

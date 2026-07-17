@@ -2,7 +2,7 @@ use std::any::Any;
 
 use jolt_field::{Field, Fr};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
-use jolt_poly::{EqPolynomial, UnivariatePoly};
+use jolt_poly::UnivariatePoly;
 
 use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec, FusedOuterInputs, UniskipInputs};
 use crate::dense::bind_dense_evals_reuse_cuda;
@@ -159,13 +159,12 @@ pub fn uniskip_extended_evals_cuda<F: Field>(
     let (b_offsets, b_vars, b_coeffs) = natural_csr(&data.key.matrices.b);
 
     let tau_low = &tau[..tau.len() - 1];
-    let eq_evals = EqPolynomial::new(tau_low.to_vec()).evaluations();
     let num_cycles = 1usize << (data.key.num_cycle_vars());
 
-    let eq_evals = as_fr_slice(&eq_evals)?;
     let witness = as_fr_slice(data.witness)?;
     let a_coeffs = as_fr_slice(&a_coeffs)?;
     let b_coeffs = as_fr_slice(&b_coeffs)?;
+    let eq_evals_dev = ctx.eq_evals(as_fr_slice(tau_low)?, None).ok()?;
 
     let first_rows: Vec<u32> = OUTER_FIRST_GROUP_ROWS.iter().map(|&r| r as u32).collect();
     let second_rows: Vec<u32> = OUTER_SECOND_GROUP_ROWS.iter().map(|&r| r as u32).collect();
@@ -182,7 +181,6 @@ pub fn uniskip_extended_evals_cuda<F: Field>(
     }
 
     let witness_dev = ctx.resident_witness(witness).ok()?;
-    let eq_evals_dev = ctx.upload(eq_evals).ok()?;
     let (row_dots_a, row_dots_b) = ctx
         .compute_row_dots_device(
             &witness_dev,

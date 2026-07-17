@@ -377,6 +377,14 @@ pub struct Stage1OuterR1csData<'a, F: Field> {
 impl<'a, F: Field> Stage1OuterR1csData<'a, F> {
     #[tracing::instrument(skip_all, name = "Stage1OuterR1csData::new")]
     pub fn new(key: &'a R1csKey<F>, witness: &'a [F]) -> Result<Self, Stage1KernelError> {
+        Self::new_with_backend(key, witness, "cpu")
+    }
+
+    pub fn new_with_backend(
+        key: &'a R1csKey<F>,
+        witness: &'a [F],
+        backend: &'static str,
+    ) -> Result<Self, Stage1KernelError> {
         let expected = key.num_cycles * key.num_vars_padded;
         if witness.len() != expected {
             return Err(Stage1KernelError::InvalidInputLength {
@@ -385,10 +393,15 @@ impl<'a, F: Field> Stage1OuterR1csData<'a, F> {
                 actual: witness.len(),
             });
         }
+        let row_dots = if backend == "cuda" {
+            R1csRowDotTable::empty(key.num_cycles, OUTER_EQ_CONSTRAINT_ROWS)
+        } else {
+            R1csRowDotTable::compute_ab_prefix(key, witness, OUTER_EQ_CONSTRAINT_ROWS)
+        };
         Ok(Self {
             key,
             witness,
-            row_dots: R1csRowDotTable::compute_ab_prefix(key, witness, OUTER_EQ_CONSTRAINT_ROWS),
+            row_dots,
         })
     }
 

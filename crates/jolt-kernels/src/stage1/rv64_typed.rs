@@ -99,6 +99,15 @@ impl<'a> Stage1OuterRv64Data<'a> {
         witness: &'a [Fr],
         cycles: &'a [Stage1Rv64Cycle],
     ) -> Result<Self, Stage1KernelError> {
+        Self::new_with_backend(key, witness, cycles, "cpu")
+    }
+
+    pub fn new_with_backend(
+        key: &'a R1csKey<Fr>,
+        witness: &'a [Fr],
+        cycles: &'a [Stage1Rv64Cycle],
+        backend: &'static str,
+    ) -> Result<Self, Stage1KernelError> {
         if cycles.len() != key.num_cycles {
             return Err(Stage1KernelError::InvalidInputLength {
                 input: "rv64_cycles",
@@ -107,7 +116,7 @@ impl<'a> Stage1OuterRv64Data<'a> {
             });
         }
         Ok(Self {
-            field_data: Stage1OuterR1csData::new(key, witness)?,
+            field_data: Stage1OuterR1csData::new_with_backend(key, witness, backend)?,
             cycles,
         })
     }

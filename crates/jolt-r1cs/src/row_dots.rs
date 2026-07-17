@@ -46,6 +46,15 @@ impl<F: Field> R1csRowDotTable<F> {
         }
     }
 
+    pub fn empty(cycle_count: usize, row_count: usize) -> Self {
+        Self {
+            row_count,
+            cycle_count,
+            a: Vec::new(),
+            b: Vec::new(),
+        }
+    }
+
     #[inline]
     pub fn row_count(&self) -> usize {
         self.row_count
