@@ -2525,6 +2525,16 @@ impl<F: Field> DenseInstanceState<F> {
         }
     }
 
+    #[cfg(feature = "cuda")]
+    fn new_with_device_factors(cuda: cuda::CudaDenseState) -> Self {
+        Self {
+            factors: Vec::new(),
+            factor_scratch: Vec::new(),
+            point: Vec::new(),
+            cuda: Some(cuda),
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "Stage2DenseState::round_poly")]
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
         #[cfg(feature = "cuda")]
@@ -2895,15 +2905,17 @@ fn ram_raf_state<F: Field>(
     })?;
     require_operand_count("stage2.ram_raf.num_rounds", ram.log_k, claim.num_rounds)?;
     let r_cycle = store.point("stage2.input.stage1.RamAddress")?;
-    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
-    if ram.accesses.len() != eq_cycle.len() {
-        return Err(Stage2KernelError::InvalidInputLength {
-            input: "stage2.ram.accesses",
-            expected: eq_cycle.len(),
-            actual: ram.accesses.len(),
-        });
-    }
     let k = 1usize << ram.log_k;
+    require_operand_count("stage2.ram.accesses", 1usize << r_cycle.len(), ram.accesses.len())?;
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_raf_state(ram, r_cycle, k) {
+            return Ok(DenseInstanceState::new_with_device_factors(cuda));
+        }
+    }
+
+    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
     let mut ra = vec![F::zero(); k];
     for (access, weight) in ram.accesses.iter().zip(eq_cycle) {
         if let Some(address) = access.remapped_address {
@@ -2921,6 +2933,27 @@ fn ram_raf_state<F: Field>(
         vec![ra, unmap],
         backend,
     ))
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_ram_raf_state<F: Field>(
+    ram: &Stage2RamData<'_>,
+    r_cycle: &[F],
+    k: usize,
+) -> Option<cuda::CudaDenseState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let eq = ctx.eq_evals(crate::cuda::as_fr_slice(r_cycle)?, None).ok()?;
+    let addr: Vec<i32> = ram
+        .accesses
+        .par_iter()
+        .map(|a| a.remapped_address.map_or(-1i32, |x| x as i32))
+        .collect();
+    let addr_dev = ctx.upload_i32_slice(&addr).ok()?;
+    let ra = ctx.scatter_add_eq(&eq, &addr_dev, ram.accesses.len(), k).ok()?;
+    let unmap_raw: Vec<u64> = (0..k as u64).map(|i| ram.start_address + 8 * i).collect();
+    let unmap = ctx.u64_to_mont(&unmap_raw).ok()?;
+    cuda::CudaDenseState::from_device_factors(vec![ra, unmap])
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::ram_output_state")]

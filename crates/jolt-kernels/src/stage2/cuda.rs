@@ -18,8 +18,13 @@ pub(crate) struct CudaDenseState {
 impl CudaDenseState {
     pub(crate) fn new(factors: &[&[Fr]]) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
-        let degree = factors.len();
         let device_factors = ctx.upload_many(factors).ok()?;
+        Self::from_device_factors(device_factors)
+    }
+
+    pub(crate) fn from_device_factors(device_factors: Vec<DeviceFrVec>) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let degree = device_factors.len();
         let scratch = (0..degree)
             .map(|_| ctx.upload(&[]).ok())
             .collect::<Option<Vec<DeviceFrVec>>>()?;
