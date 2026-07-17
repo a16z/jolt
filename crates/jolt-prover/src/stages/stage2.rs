@@ -96,7 +96,7 @@ where
     let mut tau_low = remainder_point
         .get(1..)
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::SpartanProductVirtualization,
+            stage: format!("{:?}", JoltRelationId::SpartanProductVirtualization),
             reason: "Stage 1 remainder challenge vector is empty".to_string(),
         })?
         .to_vec();

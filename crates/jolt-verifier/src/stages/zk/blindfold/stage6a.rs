@@ -39,10 +39,17 @@ where
     // committed and uncommitted cycle-phase relations are distinct types, so pick
     // the active one's rounds here.
     let bytecode_rounds = if bytecode_reduction_layout.is_some() {
-        relations::bytecode::ReadRafCyclePhaseCommitted::new(formula_dimensions.bytecode_read_raf)
-            .rounds()
+        relations::bytecode::ReadRafCyclePhaseCommitted::new((
+            formula_dimensions.bytecode_read_raf,
+            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+        ))
+        .rounds()
     } else {
-        relations::bytecode::ReadRafCyclePhase::new(formula_dimensions.bytecode_read_raf).rounds()
+        relations::bytecode::ReadRafCyclePhase::new((
+            formula_dimensions.bytecode_read_raf,
+            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+        ))
+        .rounds()
     };
 
     add_stage6_publics_and_challenges(

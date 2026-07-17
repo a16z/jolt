@@ -42,7 +42,7 @@ pub struct IncVirtualizationOutputClaims<C> {
     pub store: C,
 }
 
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct IncVirtualizationChallenges<F> {
     #[challenge(IncVirtualizationChallenge::Gamma)]
     pub gamma: F,

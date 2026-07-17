@@ -14,7 +14,7 @@
 use jolt_claims::protocols::jolt::{
     geometry::{
         booleanity::BooleanityDimensions,
-        claim_reductions::bytecode::BytecodeLaneWeightInputs,
+        claim_reductions::bytecode::{BytecodeLaneWeightInputs, NUM_BYTECODE_VAL_STAGES},
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
     },
     JoltAdviceKind, JoltRelationId,
@@ -32,6 +32,9 @@ use super::committed_reduction_cycle_phase::{
     bytecode_reduction_weights, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
+#[cfg(feature = "akita")]
+use super::fused_inc_claim_reduction::FusedIncClaimReduction;
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::outputs::Stage6bSumchecks;
@@ -65,6 +68,8 @@ impl<F: Field> Stage6bSumchecks<F> {
         stage5: &Stage5Output<F, VC::Output>,
         stage6a: &Stage6aOutput<F, VC::Output>,
         eta: Option<F>,
+        #[cfg(feature = "akita")]
+        inc_virtualization: &crate::stages::inc_virtualization::IncVirtualizationOutput<F>,
     ) -> Result<Self, VerifierError>
     where
         PCS: CommitmentScheme<Field = F>,
@@ -129,12 +134,24 @@ impl<F: Field> Stage6bSumchecks<F> {
                 REGISTER_ADDRESS_BITS,
                 JoltRelationId::BytecodeReadRaf,
             )?;
-        let stage_cycle_points = [
+        #[cfg(not(feature = "akita"))]
+        let stage_cycle_points: [Vec<F>; NUM_BYTECODE_VAL_STAGES] = [
             stage1_cycle_binding.iter().rev().copied().collect(),
             stage2_points.product_remainder_point().to_vec(),
             stage3_points.shift_opening_point().to_vec(),
             register_read_write_cycle.to_vec(),
             register_val_evaluation_cycle.to_vec(),
+        ];
+        // The packed sixth cycle point: the `IncVirtualization` phase's bound
+        // point, anchoring the store stage.
+        #[cfg(feature = "akita")]
+        let stage_cycle_points: [Vec<F>; NUM_BYTECODE_VAL_STAGES] = [
+            stage1_cycle_binding.iter().rev().copied().collect(),
+            stage2_points.product_remainder_point().to_vec(),
+            stage3_points.shift_opening_point().to_vec(),
+            register_read_write_cycle.to_vec(),
+            register_val_evaluation_cycle.to_vec(),
+            inc_virtualization.output_points.store().to_vec(),
         ];
         let ram_reduced = stage5_points.ram_reduced_opening_point();
         if ram_reduced.len() != log_k + log_t {
@@ -148,6 +165,7 @@ impl<F: Field> Stage6bSumchecks<F> {
             });
         }
         let (ram_reduced_address, ram_reduced_cycle) = ram_reduced.split_at(log_k);
+        #[cfg(not(feature = "akita"))]
         let (_, ram_read_write_cycle) = stage6_checked_split(
             "Stage 6 RAM read-write opening",
             stage2_points.ram_read_write_point(),
@@ -160,12 +178,15 @@ impl<F: Field> Stage6bSumchecks<F> {
             log_k,
             JoltRelationId::IncClaimReduction,
         )?;
+        #[cfg(not(feature = "akita"))]
         let inc_cycle_points = [
             ram_read_write_cycle.to_vec(),
             ram_val_check_cycle.to_vec(),
             register_read_write_cycle.to_vec(),
             register_val_evaluation_cycle.to_vec(),
         ];
+        #[cfg(feature = "akita")]
+        let _ = ram_val_check_cycle;
         let entry_bytecode_index =
             preprocessing
                 .program
@@ -258,6 +279,15 @@ impl<F: Field> Stage6bSumchecks<F> {
             })?
         };
 
+        #[cfg(feature = "akita")]
+        let booleanity_dimensions =
+            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
+                booleanity_dimensions,
+            )
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?;
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,
@@ -278,14 +308,22 @@ impl<F: Field> Stage6bSumchecks<F> {
             stage5_instruction_cycle.to_vec(),
             proof.one_hot_config.committed_chunk_bits(),
         );
-        let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
-            inc_cycle_points;
-        let inc_claim_reduction = IncClaimReduction::new(
+        #[cfg(not(feature = "akita"))]
+        let inc_claim_reduction = {
+            let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
+                inc_cycle_points;
+            IncClaimReduction::new(
+                trace_dimensions,
+                ram_read_write_cycle,
+                ram_val_check_cycle,
+                registers_read_write_cycle,
+                registers_val_evaluation_cycle,
+            )
+        };
+        #[cfg(feature = "akita")]
+        let fused_inc_claim_reduction = FusedIncClaimReduction::new(
             trace_dimensions,
-            ram_read_write_cycle,
-            ram_val_check_cycle,
-            registers_read_write_cycle,
-            registers_val_evaluation_cycle,
+            inc_virtualization.output_points.fused_inc().to_vec(),
         );
 
         let trusted_advice = trusted_advice_layout
@@ -309,7 +347,10 @@ impl<F: Field> Stage6bSumchecks<F> {
             ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
+            #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
+            #[cfg(feature = "akita")]
+            fused_inc_claim_reduction,
             trusted_advice,
             untrusted_advice,
             bytecode_reduction,
@@ -318,7 +359,7 @@ impl<F: Field> Stage6bSumchecks<F> {
     }
 }
 
-fn stage6_checked_split<'a, F: Field>(
+pub(super) fn stage6_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],
     split_at: usize,

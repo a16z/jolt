@@ -5,16 +5,14 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::{
-    bytecode_read_raf_address_phase_opening, pc_spartan_outer, stage1_claim, stage2_claim,
-    stage3_claim, stage4_claim, stage5_claim, BytecodeReadRafDimensions,
-    BYTECODE_STAGE_GAMMA_COUNTS,
+    bytecode_read_raf_address_phase_opening, read_raf_address_input_fold,
+    BytecodeReadRafDimensions, BYTECODE_STAGE_GAMMA_COUNTS,
 };
-use crate::protocols::jolt::geometry::spartan::pc_shift;
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId,
 };
-use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+use crate::{opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
 /// intermediate, plus (committed-program mode only) the staged `BytecodeValStage`
@@ -192,16 +190,7 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(BytecodeReadRafChallenge::Gamma);
-
-        gamma.clone().pow(7)
-            + stage1_claim()
-            + gamma.clone() * stage2_claim()
-            + gamma.clone().pow(2) * stage3_claim()
-            + gamma.clone().pow(3) * stage4_claim()
-            + gamma.clone().pow(4) * stage5_claim::<F>()
-            + gamma.clone().pow(5) * opening(pc_spartan_outer())
-            + gamma.pow(6) * opening(pc_shift())
+        read_raf_address_input_fold(None)
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {

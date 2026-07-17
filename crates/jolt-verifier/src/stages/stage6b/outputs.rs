@@ -17,6 +17,8 @@ pub use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
     TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
+#[cfg(feature = "akita")]
+pub use super::fused_inc_claim_reduction::FusedIncClaimReductionOutputClaims;
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
@@ -28,6 +30,9 @@ use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
+#[cfg(feature = "akita")]
+use super::fused_inc_claim_reduction::FusedIncClaimReduction;
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::ram_hamming_booleanity::RamHammingBooleanity;
@@ -69,7 +74,12 @@ pub struct Stage6bSumchecks<F: Field> {
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
+    /// Absent on the packed path: the inc claims are virtualized by the
+    /// stage-6a `IncVirtualization` phase instead.
+    #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
+    #[cfg(feature = "akita")]
+    pub fused_inc_claim_reduction: FusedIncClaimReduction<F>,
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
     pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
@@ -86,18 +96,29 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
     pub fn booleanity_opening_point(&self) -> Option<&[F]> {
+        #[cfg(not(feature = "akita"))]
+        let chunk_fallback = None;
+        #[cfg(feature = "akita")]
+        let chunk_fallback = self.booleanity.unsigned_inc_chunks.first();
         self.booleanity
             .instruction_ra
             .first()
             .or_else(|| self.booleanity.bytecode_ra.first())
             .or_else(|| self.booleanity.ram_ra.first())
+            .or(chunk_fallback)
             .map(Vec::as_slice)
     }
 
     /// The increment claim-reduction opening point (the reversed cycle point shared
     /// by the `RamInc`/`RdInc` reduced openings).
+    #[cfg(not(feature = "akita"))]
     pub fn inc_opening_point(&self) -> &[F] {
         &self.inc_claim_reduction.ram_inc
+    }
+
+    #[cfg(feature = "akita")]
+    pub fn fused_inc_opening_point(&self) -> &[F] {
+        self.fused_inc_claim_reduction.fused_inc()
     }
 
     /// The advice cycle-phase opening point for `kind`, present only when that
@@ -159,7 +180,9 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// The total number of produced opening-point cells across every member. This
     /// is the derived, layout-independent claim count; the ZK path subtracts its
     /// runtime bytecode/booleanity point-alias dedup from it to size the committed
-    /// output claims.
+    /// output claims. ZK-only, hence base-only (no zk protocol exists over the
+    /// packed axis).
+    #[cfg(not(feature = "akita"))]
     pub fn point_count(&self) -> usize {
         self.bytecode_read_raf.bytecode_ra.len()
             + self.booleanity.instruction_ra.len()
@@ -210,6 +233,7 @@ fn reversed<F: Field>(point: &[F]) -> Vec<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6bCarriedChallenges<F: Field> {
     pub instruction_ra_gamma: F,
+    #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
     /// Committed program mode only: bytecode claim-reduction batching
     /// challenge (the prover's `eta`).

@@ -170,7 +170,9 @@ where
             reason: "full bytecode preprocessing is unavailable",
         })?;
     let stage_gammas = carried.bytecode_read_raf.stage_gamma_powers();
-    let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
+    // Our fold also returns each row's store flag (consumed by the lattice
+    // path); the base prover needs only the staged values.
+    let stage_values: Vec<_> = read_raf_stage_values(BytecodeReadRafStageValueInputs {
         bytecode: &program.bytecode.bytecode,
         register_read_write_point: &registers_read_write_point[..REGISTER_ADDRESS_BITS],
         register_val_evaluation_point: &registers_val_evaluation_point[..REGISTER_ADDRESS_BITS],
@@ -179,7 +181,10 @@ where
         stage3_gammas: &stage_gammas[2],
         stage4_gammas: &stage_gammas[3],
         stage5_gammas: &stage_gammas[4],
-    });
+    })
+    .into_iter()
+    .map(|(values, _store)| values)
+    .collect();
     let entry_bytecode_index = preprocessing
         .verifier
         .program

@@ -240,13 +240,7 @@ fn prove_example(
             jolt_dory::DoryScheme,
             jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
             jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
-        >(
-            &verifier_preprocessing,
-            &program_io,
-            &jolt_proof,
-            None,
-            cfg!(feature = "zk"),
-        )
+        >(&verifier_preprocessing, &program_io, &jolt_proof, None)
         .unwrap();
     };
 
@@ -313,13 +307,7 @@ fn prove_example_with_trace(
         jolt_dory::DoryScheme,
         jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
         jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
-    >(
-        &verifier_preprocessing,
-        &program_io,
-        &proof,
-        None,
-        cfg!(feature = "zk"),
-    )
+    >(&verifier_preprocessing, &program_io, &proof, None)
     .unwrap();
 
     (prove_duration, proof_size, proof_size, trace.len())

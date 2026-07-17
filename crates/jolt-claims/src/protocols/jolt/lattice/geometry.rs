@@ -18,8 +18,12 @@ pub const UNSIGNED_INC_BITS: usize = 64;
 
 /// Bytecode read-raf val stages in lattice mode: the base stages plus one
 /// carrying the `OpFlags(Store)` opening that `IncVirtualization` consumes as
-/// its destination selector.
+/// its destination selector. Always six; in an akita build the active
+/// `NUM_BYTECODE_VAL_STAGES` already folds the store stage, so it equals this.
+#[cfg(not(feature = "akita"))]
 pub const LATTICE_BYTECODE_VAL_STAGES: usize = NUM_BYTECODE_VAL_STAGES + 1;
+#[cfg(feature = "akita")]
+pub const LATTICE_BYTECODE_VAL_STAGES: usize = NUM_BYTECODE_VAL_STAGES;
 
 /// Bits of one byte value — the hot-value bits of a byte one-hot polynomial.
 pub const BYTE_BITS: usize = 8;

@@ -361,7 +361,7 @@ where
         });
         let eq_address = EqPolynomial::new(bytecode_r_address.clone()).evaluations();
         let mut stage_values = [F::zero(); 5];
-        for (row, eq) in row_values.into_iter().zip(eq_address) {
+        for ((row, _store), eq) in row_values.into_iter().zip(eq_address) {
             for (stage_value, row_value) in stage_values.iter_mut().zip(row) {
                 *stage_value += row_value * eq;
             }

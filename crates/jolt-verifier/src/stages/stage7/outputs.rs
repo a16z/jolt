@@ -131,6 +131,13 @@ pub enum Stage7Output<F: Field, C> {
 }
 
 impl<F: Field, C> Stage7Output<F, C> {
+    pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage7" }),
+        }
+    }
+
     pub fn zk(&self) -> Result<&Stage7ZkOutput<F, C>, crate::VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
@@ -142,10 +149,18 @@ impl<F: Field, C> Stage7Output<F, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "akita"))]
+    use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
+    #[cfg(feature = "akita")]
+    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight::{
+        LatticeHammingWeightClaimReductionDimensions as HammingWeightClaimReductionDimensions,
+        LatticeHammingWeightClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
+    };
     use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
     };
     use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionAddressPhaseOutputClaims;
+    #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::ProgramImageReductionAddressPhaseOutputClaims;
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -166,7 +181,6 @@ mod tests {
     #[expect(clippy::unwrap_used)]
     fn opening_values_follow_canonical_order() {
         use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
-        use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
         use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
         use jolt_claims::protocols::jolt::TracePolynomialOrder;
 
@@ -185,15 +199,18 @@ mod tests {
         )
         .unwrap();
         let hamming_instance = || {
-            HammingWeightClaimReduction::new(
-                HammingWeightClaimReductionDimensions::new(
-                    JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
-                    4,
-                ),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
+            #[cfg(not(feature = "akita"))]
+            let dimensions = HammingWeightClaimReductionDimensions::new(
+                JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
+                4,
+            );
+            #[cfg(feature = "akita")]
+            let dimensions = HammingWeightClaimReductionDimensions::new(
+                JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
+                4,
             )
+            .unwrap();
+            HammingWeightClaimReduction::new(dimensions, Vec::new(), Vec::new(), Vec::new())
         };
         let trusted_instance = || {
             TrustedAdviceAddressPhase::new(
@@ -210,13 +227,29 @@ mod tests {
             )
         };
 
+        // Sentinels are sequential in canonical append order. Under Akita the
+        // hamming reduction itself emits the increment chunk and MSB openings.
+        #[cfg(not(feature = "akita"))]
+        let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
+            (5, 6, 7, 8, 9, 6, 9);
+        #[cfg(feature = "akita")]
+        let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
+            (7, 8, 9, 10, 11, 8, 11);
         let hamming = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![fr(1), fr(2)],
             bytecode_ra: vec![fr(3)],
             ram_ra: vec![fr(4)],
+            #[cfg(feature = "akita")]
+            unsigned_inc_chunks: vec![fr(5)],
+            #[cfg(feature = "akita")]
+            unsigned_inc_msb: fr(6),
         };
-        let trusted_advice = TrustedAdviceAddressPhaseOutputClaims { trusted: fr(5) };
-        let untrusted_advice = UntrustedAdviceAddressPhaseOutputClaims { untrusted: fr(6) };
+        let trusted_advice = TrustedAdviceAddressPhaseOutputClaims {
+            trusted: fr(trusted),
+        };
+        let untrusted_advice = UntrustedAdviceAddressPhaseOutputClaims {
+            untrusted: fr(untrusted),
+        };
 
         let without_committed_sumchecks = Stage7Sumchecks::<Fr> {
             hamming_weight_claim_reduction: hamming_instance(),
@@ -234,7 +267,7 @@ mod tests {
         };
         assert_eq!(
             without_committed_sumchecks.opening_values(&without_committed),
-            (1..=6).map(fr).collect::<Vec<_>>()
+            (1..=plain_last).map(fr).collect::<Vec<_>>()
         );
 
         let with_committed_sumchecks = Stage7Sumchecks::<Fr> {
@@ -257,15 +290,15 @@ mod tests {
             trusted_advice: Some(trusted_advice),
             untrusted_advice: Some(untrusted_advice),
             bytecode_address_phase: Some(BytecodeReductionAddressPhaseOutputClaims {
-                chunks: vec![fr(7), fr(8)],
+                chunks: vec![fr(chunk1), fr(chunk2)],
             }),
             program_image_address_phase: Some(ProgramImageReductionAddressPhaseOutputClaims {
-                program_image: fr(9),
+                program_image: fr(image),
             }),
         };
         assert_eq!(
             with_committed_sumchecks.opening_values(&with_committed),
-            (1..=9).map(fr).collect::<Vec<_>>()
+            (1..=committed_last).map(fr).collect::<Vec<_>>()
         );
     }
 

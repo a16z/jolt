@@ -38,10 +38,8 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
-    // Lattice-mode relations (see protocols/jolt/lattice). Appended so
-    // index-based codecs of base-mode proofs stay stable.
     IncVirtualization,
-    UnsignedIncChunkReconstruction,
+    FusedIncClaimReduction,
     UntrustedAdviceReconstruction,
     TrustedAdviceReconstruction,
     ProgramImageReconstruction,
@@ -143,6 +141,7 @@ pub enum HammingWeightClaimReductionChallenge {
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
     EqVirtualization(usize),
+    IdentityAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -309,19 +308,8 @@ pub enum IncVirtualizationPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UnsignedIncChunkReconstructionChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UnsignedIncChunkReconstructionPublic {
-    /// `eq(r_booleanity_address, r_address)` — reduces the chunk openings
-    /// produced at the booleanity address point to this relation's bound
-    /// address point.
-    EqBooleanityAddress,
-    /// The identity MLE `Σ_bit 2^bit · r_address[bit]` at the bound address
-    /// point — decodes a one-hot chunk opening into its address value.
-    IdentityAtAddress,
+pub enum FusedIncClaimReductionPublic {
+    EqIncVirtualization,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -408,7 +396,6 @@ pub enum JoltChallengeId {
     InstructionReadRaf(InstructionReadRafChallenge),
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
     IncVirtualization(IncVirtualizationChallenge),
-    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionChallenge),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionChallenge),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionChallenge),
 }
@@ -614,7 +601,7 @@ pub enum JoltDerivedId {
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
     IncVirtualization(IncVirtualizationPublic),
-    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
+    FusedIncClaimReduction(FusedIncClaimReductionPublic),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
     ProgramImageReconstruction(ProgramImageReconstructionPublic),

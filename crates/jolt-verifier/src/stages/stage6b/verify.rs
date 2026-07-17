@@ -1,3 +1,4 @@
+use crate::stages::relations::OutputAppend;
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
     BytecodeClaimReductionLayout, JoltRelationId, PrecommittedReductionLayout,
@@ -8,6 +9,18 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "akita")]
+use super::fused_inc_claim_reduction::{
+    input_points_from_upstream as fused_inc_input_points_from_upstream,
+    input_values_from_upstream as fused_inc_input_values_from_upstream,
+};
+#[cfg(not(feature = "akita"))]
+use super::inc_claim_reduction::{
+    inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
+    IncClaimReductionChallenges,
+};
+#[cfg(not(feature = "akita"))]
+use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
 use super::{
     booleanity::{BooleanityCyclePhaseChallenges, BooleanityInputClaims},
     bytecode_read_raf::{BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims},
@@ -17,18 +30,14 @@ use super::{
         untrusted_advice_cycle_phase_input_values_from_upstream,
         BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
     },
-    inc_claim_reduction::{
-        inc_claim_reduction_input_points_from_upstream,
-        inc_claim_reduction_input_values_from_upstream, IncClaimReductionChallenges,
-    },
     instruction_ra_virtualization::{
         instruction_ra_virtualization_input_points_from_upstream,
         instruction_ra_virtualization_input_values_from_upstream,
         InstructionRaVirtualizationChallenges,
     },
     outputs::{
-        Stage6bCarriedChallenges, Stage6bChallenges, Stage6bClearOutput, Stage6bInputClaims,
-        Stage6bInputPoints, Stage6bOutput, Stage6bOutputClaims, Stage6bSumchecks, Stage6bZkOutput,
+        Stage6bChallenges, Stage6bClearOutput, Stage6bInputClaims, Stage6bInputPoints,
+        Stage6bOutput, Stage6bOutputClaims, Stage6bSumchecks,
     },
     ram_hamming_booleanity::RamHammingBooleanityInputClaims,
     ram_ra_virtualization::{
@@ -36,6 +45,8 @@ use super::{
         ram_ra_virtualization_input_values_from_upstream,
     },
 };
+#[cfg(not(feature = "akita"))]
+use crate::stages::zk::committed;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
@@ -47,7 +58,6 @@ use crate::{
         stage4::{Stage4ClearOutput, Stage4Output, Stage4OutputPoints},
         stage5::{Stage5Output, Stage5OutputClaims, Stage5OutputPoints},
         stage6a::{outputs::Stage6aOutputClaims, Stage6aOutput},
-        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -69,6 +79,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
     stage4: &Stage4Output<PCS::Field, VC::Output>,
     stage5: &Stage5Output<PCS::Field, VC::Output>,
     stage6a: &Stage6aOutput<PCS::Field, VC::Output>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::inc_virtualization::IncVirtualizationOutput<PCS::Field>,
 ) -> Result<Stage6bOutput<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -81,9 +93,11 @@ where
     let bytecode_gamma = carried.bytecode_read_raf.gamma;
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
 
-    // Post-6a draws: the instruction-RA virtualization gamma, the increment gamma,
-    // and (committed-program only) the bytecode claim-reduction eta.
+    // Post-6a draws: the instruction-RA virtualization gamma, the increment gamma
+    // (base only — the packed batch has no inc member), and (committed-program
+    // only) the bytecode claim-reduction eta.
     let instruction_ra_gamma = transcript.challenge_scalar();
+    #[cfg(not(feature = "akita"))]
     let inc_gamma = transcript.challenge_scalar();
     let eta = bytecode_reduction_layout
         .is_some()
@@ -91,6 +105,7 @@ where
 
     // The batch is built after the post-6a draws, directly from the upstream stage
     // outputs; `build` derives every mode-agnostic constructor leg internally.
+    #[cfg(not(feature = "akita"))]
     let sumchecks = Stage6bSumchecks::build(
         checked,
         preprocessing,
@@ -103,6 +118,21 @@ where
         stage5,
         stage6a,
         eta,
+    )?;
+    #[cfg(feature = "akita")]
+    let sumchecks = Stage6bSumchecks::build(
+        checked,
+        preprocessing,
+        proof,
+        formula_dimensions,
+        stage1,
+        stage2,
+        stage3,
+        stage4,
+        stage5,
+        stage6a,
+        eta,
+        inc_virtualization,
     )?;
 
     // Hand-assembled (the generated `draw_challenges` is suppressed): the bytecode
@@ -121,7 +151,10 @@ where
         instruction_ra_virtualization: InstructionRaVirtualizationChallenges {
             gamma: instruction_ra_gamma,
         },
+        #[cfg(not(feature = "akita"))]
         inc_claim_reduction: IncClaimReductionChallenges { gamma: inc_gamma },
+        #[cfg(feature = "akita")]
+        fused_inc_claim_reduction: NoChallenges::default(),
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -146,8 +179,13 @@ where
         stage2.batch_output_points(),
         stage4.output_points(),
         stage5.output_points(),
+        #[cfg(feature = "akita")]
+        inc_virtualization,
     );
 
+    // No zk protocol exists over the packed axis, so the committed arm (and its
+    // runtime point-alias dedup arithmetic) is base-only.
+    #[cfg(not(feature = "akita"))]
     if checked.zk {
         let consistency = sumchecks.verify_zk(&proof.stages.stage6b_sumcheck_proof, transcript)?;
         let cycle_points =
@@ -221,34 +259,34 @@ where
         claims.program_image_reduction.as_ref(),
     )?;
 
+    #[cfg(not(feature = "akita"))]
+    validate_cycle_phase_claim_shape(formula_dimensions, claims, bytecode_reduction_layout)?;
+    #[cfg(feature = "akita")]
+    validate_cycle_phase_claim_shape(
+        formula_dimensions,
+        claims,
+        bytecode_reduction_layout,
+        proof.one_hot_config.committed_chunk_bits(),
+    )?;
+
     let input_values = stage6b_input_values_from_upstream(
         &sumchecks,
         claims_6a,
         &stage2.output_values,
         stage4,
         &stage5.output_values,
+        #[cfg(feature = "akita")]
+        inc_virtualization,
     )?;
-    let batch = sumchecks.verify_clear(
+    let cycle_points = sumchecks.verify_clear(
         &input_values,
+        &input_points,
         &cycle_challenges,
+        claims,
         &proof.stages.stage6b_sumcheck_proof,
         transcript,
+        6,
     )?;
-
-    validate_cycle_phase_claim_shape(formula_dimensions, claims, bytecode_reduction_layout)?;
-
-    let cycle_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        claims,
-        &cycle_points,
-        &cycle_challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 6 });
-    }
 
     let booleanity_opening_point = cycle_points
         .booleanity_opening_point()
@@ -283,6 +321,7 @@ fn validate_cycle_phase_claim_shape<F: Field>(
     formula_dimensions: &JoltFormulaDimensions,
     claims: &Stage6bOutputClaims<F>,
     bytecode_reduction_layout: Option<&BytecodeClaimReductionLayout>,
+    #[cfg(feature = "akita")] committed_chunk_bits: usize,
 ) -> Result<(), VerifierError> {
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
@@ -295,6 +334,30 @@ fn validate_cycle_phase_claim_shape<F: Field>(
                 claims.bytecode_read_raf.bytecode_ra.len()
             ),
         });
+    }
+
+    // The packed unsigned-inc chunk claims: one per chunk of the shared
+    // one-hot chunking.
+    #[cfg(feature = "akita")]
+    {
+        let expected_chunks =
+            jolt_claims::protocols::jolt::lattice::geometry::UnsignedIncChunking::new(
+                committed_chunk_bits,
+            )
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?
+            .chunk_count();
+        if claims.booleanity.unsigned_inc_chunks.len() != expected_chunks {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: format!(
+                    "unsigned-inc chunk claim count mismatch: expected {expected_chunks}, got {}",
+                    claims.booleanity.unsigned_inc_chunks.len()
+                ),
+            });
+        }
     }
 
     if let (Some(layout), Some(output_claims)) = (
@@ -335,9 +398,11 @@ fn validate_cycle_phase_claim_shape<F: Field>(
 pub fn stage6b_input_values_from_upstream<F: Field>(
     sumchecks: &Stage6bSumchecks<F>,
     address_claims: &Stage6aOutputClaims<F>,
-    stage2: &Stage2BatchOutputClaims<F>,
+    #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5OutputClaims<F>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::inc_virtualization::IncVirtualizationOutput<F>,
 ) -> Result<Stage6bInputClaims<F>, VerifierError> {
     Ok(Stage6bInputClaims {
         bytecode_read_raf: BytecodeReadRafInputClaims {
@@ -351,11 +416,14 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
         instruction_ra_virtualization: instruction_ra_virtualization_input_values_from_upstream(
             stage5,
         ),
+        #[cfg(not(feature = "akita"))]
         inc_claim_reduction: inc_claim_reduction_input_values_from_upstream(
             stage2,
             &stage4.output_values,
             stage5,
         ),
+        #[cfg(feature = "akita")]
+        fused_inc_claim_reduction: fused_inc_input_values_from_upstream(inc_virtualization),
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -395,16 +463,21 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
 /// the generated `derive_opening_points` requires).
 pub fn stage6b_input_points_from_upstream<F: Field>(
     sumchecks: &Stage6bSumchecks<F>,
-    stage2: &Stage2BatchOutputPoints<F>,
-    stage4: &Stage4OutputPoints<F>,
+    #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
+    #[cfg_attr(feature = "akita", expect(unused_variables))] stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
+    #[cfg(feature = "akita")]
+    inc_virtualization: &crate::stages::inc_virtualization::IncVirtualizationOutput<F>,
 ) -> Stage6bInputPoints<F> {
     Stage6bInputPoints {
         ram_ra_virtualization: ram_ra_virtualization_input_points_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_points_from_upstream(
             stage5,
         ),
+        #[cfg(not(feature = "akita"))]
         inc_claim_reduction: inc_claim_reduction_input_points_from_upstream(stage2, stage4, stage5),
+        #[cfg(feature = "akita")]
+        fused_inc_claim_reduction: fused_inc_input_points_from_upstream(inc_virtualization),
         ..sumchecks.empty_input_points()
     }
 }
@@ -433,10 +506,18 @@ pub fn stage6b_opening_values<F: Field>(
         values.push(*opening_claim);
     }
     values.extend(&claims.booleanity.ram_ra);
+    #[cfg(feature = "akita")]
+    {
+        values.extend(&claims.booleanity.unsigned_inc_chunks);
+        values.push(claims.booleanity.unsigned_inc_msb);
+    }
     values.extend(claims.ram_hamming_booleanity.opening_values());
     values.extend(claims.ram_ra_virtualization.opening_values());
     values.extend(claims.instruction_ra_virtualization.opening_values());
+    #[cfg(not(feature = "akita"))]
     values.extend(claims.inc_claim_reduction.opening_values());
+    #[cfg(feature = "akita")]
+    values.extend(claims.fused_inc_claim_reduction.opening_values());
     // Each advice member is a single-slot per-kind claims struct, so it
     // contributes exactly its own kind's opening.
     if let Some(advice) = &claims.trusted_advice {
@@ -463,15 +544,67 @@ fn append_opening_claims<F, T>(
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
-        transcript.append_labeled(b"opening_claim", &value);
+    // Full relations and the optional members delegate to their derived
+    // `append_openings`, single-sourcing the per-field Fiat-Shamir order from the
+    // `OutputClaims` derive. `booleanity` stays explicit because its `bytecode_ra`
+    // openings are conditionally deduped against the bytecode-read-RAF points.
+    claims.bytecode_read_raf.append_openings(transcript);
+    for opening_claim in &claims.booleanity.instruction_ra {
+        transcript.append_labeled(b"opening_claim", opening_claim);
+    }
+    for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
+        if bytecode_read_raf_points
+            .get(index)
+            .is_some_and(|point| point.as_slice() == booleanity_point)
+        {
+            continue;
+        }
+        transcript.append_labeled(b"opening_claim", opening_claim);
+    }
+    for opening_claim in &claims.booleanity.ram_ra {
+        transcript.append_labeled(b"opening_claim", opening_claim);
+    }
+    #[cfg(feature = "akita")]
+    {
+        for opening_claim in &claims.booleanity.unsigned_inc_chunks {
+            transcript.append_labeled(b"opening_claim", opening_claim);
+        }
+        transcript.append_labeled(b"opening_claim", &claims.booleanity.unsigned_inc_msb);
+    }
+    claims.ram_hamming_booleanity.append_openings(transcript);
+    claims.ram_ra_virtualization.append_openings(transcript);
+    claims
+        .instruction_ra_virtualization
+        .append_openings(transcript);
+    #[cfg(not(feature = "akita"))]
+    claims.inc_claim_reduction.append_openings(transcript);
+    #[cfg(feature = "akita")]
+    claims.fused_inc_claim_reduction.append_openings(transcript);
+    // The optional members single-source their per-field Fiat-Shamir order from the
+    // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
+    // struct, so it absorbs exactly its own kind's opening.
+    if let Some(advice) = &claims.trusted_advice {
+        advice.append_openings(transcript);
+    }
+    if let Some(advice) = &claims.untrusted_advice {
+        advice.append_openings(transcript);
+    }
+    if let Some(reduction) = &claims.bytecode_reduction {
+        reduction.append_openings(transcript);
+    }
+    if let Some(reduction) = &claims.program_image_reduction {
+        reduction.append_openings(transcript);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;
     use super::super::bytecode_read_raf::BytecodeReadRafOutputClaims;
+    #[cfg(feature = "akita")]
+    use super::super::fused_inc_claim_reduction::FusedIncClaimReductionOutputClaims;
+    #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
     use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
@@ -484,34 +617,64 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn sample_claims() -> Stage6bOutputClaims<Fr> {
-        Stage6bOutputClaims {
-            bytecode_read_raf: BytecodeReadRafOutputClaims {
-                bytecode_ra: vec![fr(1), fr(2)],
-            },
-            booleanity: BooleanityOutputClaims {
+    /// Per-mode sample claims with sentinel values in the canonical append
+    /// order: base interleaves the inc member after the RA virtualizations;
+    /// Akita replaces it with the lattice booleanity chunk/MSB cells and the
+    /// separate fused-increment reduction output.
+    fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
+        #[cfg(not(feature = "akita"))]
+        let (booleanity, last) = (
+            BooleanityOutputClaims {
                 instruction_ra: vec![fr(3)],
                 bytecode_ra: vec![fr(4)],
                 ram_ra: vec![fr(5)],
             },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: fr(6),
+            10,
+        );
+        #[cfg(feature = "akita")]
+        let (booleanity, last) = (
+            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
+                instruction_ra: vec![fr(3)],
+                bytecode_ra: vec![fr(4)],
+                ram_ra: vec![fr(5)],
+                unsigned_inc_chunks: vec![fr(6)],
+                unsigned_inc_msb: fr(7),
             },
-            ram_ra_virtualization: RamRaVirtualizationOutputClaims {
-                ram_ra: vec![fr(7)],
+            11,
+        );
+        #[cfg(not(feature = "akita"))]
+        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
+        #[cfg(feature = "akita")]
+        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(8), fr(9), fr(10));
+        (
+            Stage6bOutputClaims {
+                bytecode_read_raf: BytecodeReadRafOutputClaims {
+                    bytecode_ra: vec![fr(1), fr(2)],
+                },
+                booleanity,
+                ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                    ram_hamming_weight: hamming,
+                },
+                ram_ra_virtualization: RamRaVirtualizationOutputClaims {
+                    ram_ra: vec![ram_ra_virt],
+                },
+                instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                    committed_instruction_ra: vec![instruction_ra_virt],
+                },
+                #[cfg(feature = "akita")]
+                fused_inc_claim_reduction: FusedIncClaimReductionOutputClaims { fused_inc: fr(11) },
+                #[cfg(not(feature = "akita"))]
+                inc_claim_reduction: IncClaimReductionOutputClaims {
+                    ram_inc: fr(9),
+                    rd_inc: fr(10),
+                },
+                trusted_advice: None,
+                untrusted_advice: None,
+                bytecode_reduction: None,
+                program_image_reduction: None,
             },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
-                committed_instruction_ra: vec![fr(8)],
-            },
-            inc_claim_reduction: IncClaimReductionOutputClaims {
-                ram_inc: fr(9),
-                rd_inc: fr(10),
-            },
-            trusted_advice: None,
-            untrusted_advice: None,
-            bytecode_reduction: None,
-            program_image_reduction: None,
-        }
+            last,
+        )
     }
 
     /// Locks the stage-6b cycle-phase Fiat-Shamir append order against silent drift.
@@ -521,13 +684,13 @@ mod tests {
     /// the `None` reductions carry absent sentinels to prove they are not appended.
     #[test]
     fn append_opening_claims_follows_canonical_order() {
-        let claims = sample_claims();
+        let (claims, last) = sample_claims();
 
         let mut got = RecordingTranscript::default();
         append_opening_claims(&mut got, &claims, &[], &[]);
 
         let mut want = RecordingTranscript::default();
-        for value in (1..=10).map(fr) {
+        for value in (1..=last).map(fr) {
             want.append_labeled(b"opening_claim", &value);
         }
 
