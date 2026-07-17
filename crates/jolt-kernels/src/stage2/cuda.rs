@@ -134,6 +134,33 @@ impl CudaRamReadWriteState {
         })
     }
 
+    #[expect(clippy::too_many_arguments)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "used once new_from_raw wiring lands"))]
+    pub(crate) fn new_from_raw<F: jolt_field::Field>(
+        rows: &[usize],
+        cols: &[usize],
+        filtered_read: &[u64],
+        filtered_write: &[u64],
+        all_read: &[u64],
+        all_write: &[u64],
+        initial_ram: &[u64],
+        r_cycle: &[F],
+        gamma: F,
+    ) -> Option<Self> {
+        let _ = (
+            rows,
+            cols,
+            filtered_read,
+            filtered_write,
+            all_read,
+            all_write,
+            initial_ram,
+            r_cycle,
+            gamma,
+        );
+        None
+    }
+
     pub(crate) fn round_poly<F: jolt_field::Field>(
         &self,
         previous_claim: F,
@@ -322,6 +349,7 @@ mod tests {
     use crate::split_eq::SplitEqState;
     use crate::stage2::{RamCycleEntry, RamReadWriteState};
     use jolt_field::Field;
+    use num_traits::{One, Zero};
 
     #[test]
     fn ram_rw_full_relation_matches_cpu() {
@@ -389,6 +417,124 @@ mod tests {
         let mut claim = Fr::from_u64(1_234_567);
         let total_rounds = log_t + log_k;
         for round in 0..total_rounds {
+            let expected = cpu.round_poly(round, claim).unwrap();
+            let got: UnivariatePoly<Fr> = device.round_poly(claim).unwrap();
+            assert_eq!(got, expected, "round {round}");
+            let challenge = Fr::from_u64((round + 7) as u64);
+            cpu.ingest_challenge(challenge).unwrap();
+            device.bind(challenge).unwrap();
+            claim = expected.evaluate(challenge);
+        }
+
+        assert_eq!(device.val_eval().unwrap(), cpu.val_eval().unwrap(), "val_eval");
+        assert_eq!(device.ra_eval().unwrap(), cpu.ra_eval().unwrap(), "ra_eval");
+        assert_eq!(device.inc_eval().unwrap(), cpu.inc_eval().unwrap(), "inc_eval");
+    }
+
+    #[test]
+    fn ram_rw_from_raw_matches_cpu() {
+        let log_t = 4usize;
+        let t = 1usize << log_t;
+        let log_k = 3usize;
+        let k = 1usize << log_k;
+        let gamma = Fr::from_u64(9);
+        let r_cycle: Vec<Fr> = (0..log_t).map(|i| Fr::from_u64((i + 3) as u64)).collect();
+
+        // Per-cycle (read, write) and remapped address (None marks a no-op with no column).
+        let raw: [(u64, u64, Option<usize>); 16] = [
+            (3, 5, Some(1)),
+            (7, 7, Some(4)),
+            (2, 9, Some(2)),
+            (0, 4, Some(5)),
+            (1, 1, None),
+            (6, 6, Some(0)),
+            (8, 2, Some(2)),
+            (5, 5, None),
+            (4, 10, Some(7)),
+            (9, 3, Some(2)),
+            (0, 0, None),
+            (11, 6, Some(6)),
+            (2, 2, Some(3)),
+            (13, 1, Some(1)),
+            (7, 12, Some(3)),
+            (5, 0, Some(4)),
+        ];
+        assert_eq!(raw.len(), t);
+        let initial_ram: Vec<u64> = (0..k as u64).map(|i| if i % 2 == 0 { 0 } else { i + 5 }).collect();
+
+        let all_read: Vec<u64> = raw.iter().map(|&(r, _, _)| r).collect();
+        let all_write: Vec<u64> = raw.iter().map(|&(_, w, _)| w).collect();
+
+        let mut rows = Vec::new();
+        let mut cols = Vec::new();
+        let mut filtered_read = Vec::new();
+        let mut filtered_write = Vec::new();
+        for (row, &(read, write, col)) in raw.iter().enumerate() {
+            if let Some(col) = col {
+                rows.push(row);
+                cols.push(col);
+                filtered_read.push(read);
+                filtered_write.push(write);
+            }
+        }
+
+        let cycle_entries: Vec<RamCycleEntry<Fr>> = rows
+            .iter()
+            .zip(&cols)
+            .zip(filtered_read.iter().zip(&filtered_write))
+            .map(|((&row, &col), (&read, &write))| RamCycleEntry {
+                row,
+                col,
+                prev_val: read,
+                next_val: write,
+                val_coeff: Fr::from_u64(read),
+                ra_coeff: Fr::one(),
+            })
+            .collect();
+        let inc: Vec<Fr> = raw
+            .iter()
+            .map(|&(read, write, _)| {
+                if read == write {
+                    Fr::zero()
+                } else {
+                    Fr::from_u64(write) - Fr::from_u64(read)
+                }
+            })
+            .collect();
+        let val_init: Vec<Fr> = initial_ram
+            .iter()
+            .map(|&v| if v == 0 { Fr::zero() } else { Fr::from_u64(v) })
+            .collect();
+
+        let mut cpu = RamReadWriteState {
+            gamma,
+            log_t,
+            round: 0,
+            cycle_eq: SplitEqState::new_low_to_high(&r_cycle, None),
+            cycle_entries,
+            address_entries: Vec::new(),
+            address_scratch: Vec::new(),
+            inc,
+            inc_scratch: Vec::new(),
+            val_init,
+            val_init_scratch: Vec::new(),
+            cuda: None,
+        };
+        let mut device = CudaRamReadWriteState::new_from_raw(
+            &rows,
+            &cols,
+            &filtered_read,
+            &filtered_write,
+            &all_read,
+            &all_write,
+            &initial_ram,
+            &r_cycle,
+            gamma,
+        )
+        .unwrap();
+
+        let mut claim = Fr::from_u64(1_234_567);
+        for round in 0..(log_t + log_k) {
             let expected = cpu.round_poly(round, claim).unwrap();
             let got: UnivariatePoly<Fr> = device.round_poly(claim).unwrap();
             assert_eq!(got, expected, "round {round}");
