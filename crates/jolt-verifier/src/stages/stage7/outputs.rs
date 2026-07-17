@@ -309,7 +309,7 @@ mod tests {
     /// old hand count to the Expr-derived sums.
     #[test]
     #[expect(clippy::unwrap_used)]
-    fn output_shape_member_counts_match_hand_derived_openings() {
+    fn output_shape_column_counts_match_hand_derived_openings() {
         use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::{
             claim_reduction_output_openings, HammingWeightClaimReductionDimensions,
         };

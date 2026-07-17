@@ -11,7 +11,7 @@ use akita_types::{
 };
 use jolt_field::CanonicalBytes;
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
-use jolt_poly::{MultilinearPoly, OneHotIndexOrder, Polynomial};
+use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
@@ -72,7 +72,7 @@ impl AkitaSetupParams {
     }
 
     /// Setup parameters for a commitment object that only ever commits and
-    /// opens through the one-hot flavor (the packed `W_jolt` group): skips
+    /// opens through the one-hot flavor (the packed `OneHotTrace` group): skips
     /// building the full-flavor backend setup of the same shape.
     pub fn one_hot_only(
         max_num_vars: usize,
@@ -551,6 +551,19 @@ where
     AkitaBackendOneHotPoly::new(one_hot_k, AKITA_D, indices.to_vec())
         .map(Some)
         .map_err(akita_error)
+}
+
+pub(crate) fn owned_one_hot_polynomial(
+    polynomial: OneHotPolynomial,
+    one_hot_k: usize,
+) -> Result<AkitaBackendOneHotPoly, OpeningsError> {
+    if polynomial.k() != one_hot_k || polynomial.index_order() != OneHotIndexOrder::RowMajor {
+        return Err(invalid_batch(format!(
+            "Akita owned one-hot polynomial requires row-major K={one_hot_k}"
+        )));
+    }
+    let _ = validate_one_hot_k(one_hot_k)?;
+    AkitaBackendOneHotPoly::new(one_hot_k, AKITA_D, polynomial.into_indices()).map_err(akita_error)
 }
 
 pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsError> {

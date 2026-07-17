@@ -12,10 +12,10 @@ use jolt_akita::schedules::{jolt_fp128_d64_onehot_k16_table, jolt_fp128_d64_oneh
 
 /// Every key of a family grid resolves from its checked-in table (binary
 /// lookup over sorted entries) — no planner-DP fallback for reachable
-/// `W_jolt` shapes. Identity validity is exercised by every akita e2e (an
+/// `OneHotTrace` shapes. Identity validity is exercised by every akita e2e (an
 /// identity mismatch hard-errors instead of falling back).
 #[test]
-fn catalogs_cover_every_reachable_wjolt_shape() {
+fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (table, num_polys, num_vars) in [
         (
             jolt_fp128_d64_onehot_k16_table().expect("K16 catalog is checked in"),

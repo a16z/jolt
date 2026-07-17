@@ -3,7 +3,7 @@
 //! Each config delegates every policy decision (field, ring, decomposition,
 //! SIS profile, chunking) to its upstream proof-optimized preset and
 //! overrides the schedule catalog and setup sizing hooks,
-//! so the generated schedule tables for Jolt's `W_jolt` shapes live in this
+//! so the generated schedule tables for Jolt's `OneHotTrace` shapes live in this
 //! crate (see [`crate::schedules`]) while the planner policy keeps one
 //! upstream owner. The catalog is identity-validated against the config's
 //! policy on every lookup, so a policy/table drift hard-errors instead of
@@ -79,7 +79,7 @@ fn include_scalar_root(
     include_matrix(max_setup_len, params.d_key.row_len(), d_width, "root D")
 }
 
-/// Sizes a production Wjolt setup directly from the checked-in Jolt catalog.
+/// Sizes a production OneHotTrace setup directly from the checked-in Jolt catalog.
 ///
 /// `Some` means the requested maximum shape itself is catalog-backed. Smaller
 /// catalog rows are included because setup matrices are shared prefix views
@@ -237,7 +237,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_wjolt_shapes_use_catalog_setup_sizing() {
+    fn production_one_hot_trace_shapes_use_catalog_setup_sizing() {
         let k16 = crate::schedules::jolt_fp128_d64_onehot_k16_table().unwrap();
         assert!(catalog_setup_envelope::<JoltD64OneHotK16>(k16, 28, 81)
             .unwrap()

@@ -116,7 +116,7 @@ mod flags {
     /// cycle's declared RAM-write access — stores are the only provable
     /// instruction shape that writes RAM; every read-modify-write
     /// instruction lowers into a sequence whose RAM-writing step is a plain
-    /// store. `FusedIncCycle::from_cycle_with_store` debug-asserts the same
+    /// store. `FusedIncValue::from_cycle_with_store` debug-asserts the same
     /// per cycle at witness-generation time.
     #[test]
     fn store_flag_matches_ram_write_access() {

@@ -237,7 +237,7 @@ where
                 ),
             })
         }
-        // The packed committed-program preprocessing (one W_prog commitment
+        // The packed committed-program preprocessing (one ProgramOneHot commitment
         // plus its chunk count) is assembled by the akita prove path.
         #[cfg(feature = "akita")]
         ProverProgramPreprocessing::Committed(_) => {

@@ -1,6 +1,6 @@
 //! Offline generator for the Jolt-owned Akita schedule catalogs.
 //!
-//! Runs akita's planner DP over every `W_jolt` shape reachable from Jolt and
+//! Runs akita's planner DP over every `OneHotTrace` shape reachable from Jolt and
 //! emits the checked-in table modules under `src/schedules/` through the same
 //! `akita_planner::emit` machinery that produces akita's shipped tables.
 //!

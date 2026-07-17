@@ -167,7 +167,7 @@ where
 
 /// The Akita verification path: the same stage spine, with the
 /// inc-virtualization phase opening the stage-6 region, the reconstruction
-/// phase producing auxiliary leaves, a native same-point Wjolt opening, and
+/// phase producing auxiliary leaves, a native same-point OneHotTrace opening, and
 /// separate packed openings for auxiliary objects in place of the homomorphic
 /// RLC batch. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
@@ -180,8 +180,8 @@ pub fn verify<F, PCS, VC, T>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript + stage8::WJoltCommitmentMetadata,
-    PCS::VerifierSetup: stage8::WJoltSetupMetadata,
+    PCS::Output: Clone + AppendToTranscript + stage8::OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -645,8 +645,8 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
 /// polynomial commitments, the optional advice commitments, then the committed
 /// program's preprocessing-held commitments. WARNING: the prover must absorb
 /// identically or the transcripts diverge. On the `akita` build the order is
-/// the canonical commitment-object order: `W_jolt`, untrusted advice, trusted
-/// advice, `W_prog`.
+/// the canonical commitment-object order: `OneHotTrace`, untrusted advice, trusted
+/// advice, `ProgramOneHot`.
 pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -684,8 +684,8 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
             append_length_prefixed(transcript, b"trusted_advice", commitment);
         }
         if let Some(committed) = preprocessing.program.committed() {
-            let commitment = &committed.w_prog_commitment;
-            append_length_prefixed(transcript, b"w_prog_commitment", commitment);
+            let commitment = &committed.program_one_hot_commitment;
+            append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
         }
     }
 }
@@ -1325,7 +1325,7 @@ mod tests {
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
             joint_opening_proof: crate::proof::AkitaJointOpeningProof {
-                w_jolt: (),
+                one_hot_trace: (),
                 auxiliary: None,
             },
             untrusted_advice_commitment: None,

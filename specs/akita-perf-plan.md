@@ -93,7 +93,7 @@ Repeat without pausing between iterations until target or hard-blocked:
 
 > Status 2026-07-16 (post-#1683 distillation, slices A–E of
 > `specs/akita-1683-distillation.md`): the fused-inc pipeline + native
-> W_jolt opening + K16 toggle + jolt-owned schedule catalogs are landed.
+> OneHotTrace opening + K16 toggle + jolt-owned schedule catalogs are landed.
 > Measured at 2^20 sha2-chain, same machine back-to-back:
 > **akita prove 8.19s vs dory 13.64s = 0.60×** (verify 36.8ms vs 610ms;
 > the dory harness lacks the prepared-pairing-cache init, so the verify
@@ -102,7 +102,7 @@ Repeat without pausing between iterations until target or hard-blocked:
 > removal, column-derivation reuse, Hachi-style layout experiment,
 > prepared-setup cache). CAUTION: akita upstream #302 (quantum SIS
 > cutover) made one-hot setup construction ~400× slower (83s at the
-> 2^20 W_jolt shape vs 0.2s pre-#302) — per-shape and cacheable, but the
+> 2^20 OneHotTrace shape vs 0.2s pre-#302) — per-shape and cacheable, but the
 > setup cache (lever 5) is now urgent, and prove-side #302 impact vs
 > machine variance is unattributed (quang's pre-#302 prove was
 > 5.5–6.1s on his machine). Older analysis below and in
@@ -115,7 +115,7 @@ From the original branch's trace analysis. Treat as hypotheses to RE-VALIDATE
 against your own fresh traces, not as a work plan. Ranked by expected size:
 
 1. **STRUCTURAL/FORMAT (the big one** — kernel wins alone were measured
-   insufficient): commit W_jolt as GROUPED strict one-hot columns through the
+   insufficient): commit OneHotTrace as GROUPED strict one-hot columns through the
    akita backend's one-hot flavor + grouped commitment protocol instead of
    today's sparse-unit UNION object. The backend's own flavor bench measured
    one-hot commit+open ≈5.4× cheaper than sparse-unit at equal domain/ones.

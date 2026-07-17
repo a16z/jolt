@@ -50,7 +50,7 @@ use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::instruction::CircuitFlags;
 #[cfg(feature = "prover")]
-use crate::zkvm::packed_witness::FusedIncCycle;
+use crate::zkvm::packed_witness::FusedIncValue;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 const DEGREE_BOUND: usize = 3;
@@ -205,7 +205,7 @@ impl<F: JoltField> IncVirtualizationSumcheckProver<F> {
             .map(|cycle| {
                 // One predicate read for both columns — the selector is the
                 // same Store flag `from_cycle_with_store` keys the delta off.
-                let (fused, store) = FusedIncCycle::from_cycle_with_store(cycle);
+                let (fused, store) = FusedIncValue::from_cycle_with_store(cycle);
                 (fused.delta, u8::from(store))
             })
             .unzip();

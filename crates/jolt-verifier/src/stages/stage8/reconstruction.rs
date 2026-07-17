@@ -1,7 +1,7 @@
 //! The packed reconstruction phase, strictly after stage 7: one batched
 //! sumcheck settling every virtualized word/chunk claim against its committed
 //! one-hot decomposition, producing the packed final claims for the advice
-//! byte columns and the `W_prog` lane columns. Members in canonical
+//! byte columns and the `ProgramOneHot` lane columns. Members in canonical
 //! commitment-object order: untrusted advice, trusted advice, bytecode
 //! chunks, program image. The phase is entirely absent (zero transcript
 //! interaction) when no advice is present and the program is full.

@@ -1,5 +1,5 @@
 //! Semantic integration tests for the lattice module: build concrete one-hot
-//! witness data and check the identities the relations claim — native Wjolt
+//! witness data and check the identities the relations claim — native OneHotTrace
 //! member shape, fused-inc chunk reconstruction, and auxiliary
 //! advice/bytecode/program-image decodes — against real multilinear evaluations.
 
@@ -9,7 +9,9 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::{byte_decode_weight, selector_block_weight};
-use jolt_claims::protocols::jolt::lattice::{wjolt_members, UnsignedIncChunking, WJoltShape};
+use jolt_claims::protocols::jolt::lattice::{
+    one_hot_trace_columns, OneHotTraceShape, UnsignedIncChunking,
+};
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_field::{Fr, FromPrimitiveInt, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
@@ -76,19 +78,19 @@ fn byte_decode_sum(partials: &[Fr], place_bits: usize) -> Fr {
     sum
 }
 
-/// Every Wjolt member is a full `K x T` one-hot polynomial in the canonical
+/// Every OneHotTrace column is a full `K x T` one-hot polynomial in the canonical
 /// native-batch order, including the MSB member at address zero or one.
 #[test]
 #[expect(clippy::unwrap_used)]
-fn wjolt_members_are_uniform_native_one_hot_polynomials() {
+fn one_hot_trace_columns_are_uniform_native_one_hot_polynomials() {
     let log_t = 3;
     let log_k_chunk = 4;
-    let shape = WJoltShape {
+    let shape = OneHotTraceShape {
         ra_layout: JoltRaPolynomialLayout::new(1, 1, 1).unwrap(),
         log_t,
         log_k_chunk,
     };
-    let members = wjolt_members(&shape).unwrap();
+    let members = one_hot_trace_columns(&shape).unwrap();
 
     // Size accounting: 3 Ra + 16 chunk polynomials + the MSB polynomial,
     // all represented as 4-address-bit one-hot matrices over 3 cycle bits.

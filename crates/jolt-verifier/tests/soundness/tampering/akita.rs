@@ -8,7 +8,7 @@
 //!   ([`for_each_scalar_mut`]) fully destructures every aggregate, so a future
 //!   claim wire cannot be added without failing to compile until it is covered.
 //! - A byte-level commitment sweep ([`every_commitment_wire_rejects_perturbation`]):
-//!   every serde leaf of the `W_jolt` (and untrusted-advice) commitment objects
+//!   every serde leaf of the `OneHotTrace` (and untrusted-advice) commitment objects
 //!   — layout digest, declared dimensions, backend flavor, backend bytes — is
 //!   perturbed; a deserialization failure or a verifier rejection both count.
 //! - Proof-shape tampers ([`akita_proof_shape_tampers_reject`],
@@ -89,7 +89,7 @@ use crate::support::akita_fixtures::{
 };
 use crate::support::assert_rejects;
 
-/// The single packed `W_jolt` commitment object type (also the advice object
+/// The single packed `OneHotTrace` commitment object type (also the advice object
 /// type): the concrete `Commitment::Output` of the akita scheme.
 type AkitaCommitment = <AkitaScheme as jolt_crypto::Commitment>::Output;
 
@@ -714,7 +714,7 @@ fn sweep_commitment(
     }
 }
 
-/// Every commitment-object wire — the `W_jolt` layout digest, declared
+/// Every commitment-object wire — the `OneHotTrace` layout digest, declared
 /// dimensions, backend flavor, and backend bytes, plus the untrusted-advice
 /// object when present — rejects a leaf-level perturbation.
 #[test]
