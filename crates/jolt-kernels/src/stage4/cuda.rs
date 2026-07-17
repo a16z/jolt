@@ -144,6 +144,39 @@ impl CudaSparseRegistersState {
         })
     }
 
+    #[expect(clippy::too_many_arguments)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "used once new_from_raw wiring lands"))]
+    pub(crate) fn new_from_raw<F: jolt_field::Field>(
+        rows: &[usize],
+        cols: &[u8],
+        prev_val: &[u64],
+        next_val: &[u64],
+        rs1_flag: &[u8],
+        rs2_flag: &[u8],
+        rd_flag: &[u8],
+        rd_inc: &[F],
+        trace_point: &[F],
+        gamma: F,
+        gamma2: F,
+        trace_rounds: usize,
+    ) -> Option<Self> {
+        let _ = (
+            rows,
+            cols,
+            prev_val,
+            next_val,
+            rs1_flag,
+            rs2_flag,
+            rd_flag,
+            rd_inc,
+            trace_point,
+            gamma,
+            gamma2,
+            trace_rounds,
+        );
+        None
+    }
+
     pub(crate) fn round_poly_q(&self) -> Option<[Fr; 2]> {
         let ctx = crate::cuda::shared_ctx()?;
         let schedule = self.schedules.get(self.round)?;
@@ -220,3 +253,107 @@ fn fr_from_u64s(values: &[u64]) -> Vec<Fr> {
     values.par_iter().map(|&v| Fr::from_u64(v)).collect()
 }
 
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::stage4::{
+        append_sparse_register_entries, SparseRegisterEntry, Stage4RegisterAccess,
+        Stage4RegisterRead, Stage4RegisterWrite,
+    };
+    use jolt_field::Field;
+    use num_traits::One;
+
+    #[test]
+    fn sparse_registers_from_raw_matches_new() {
+        let register_count = 8usize;
+        let trace_rounds = 4usize;
+        let trace_len = 1usize << trace_rounds;
+        let gamma = Fr::from_u64(7);
+        let gamma2 = gamma * gamma;
+        let trace_point: Vec<Fr> =
+            (0..trace_rounds).map(|i| Fr::from_u64((i + 2) as u64)).collect();
+        let rd_inc: Vec<Fr> = (0..trace_len).map(|r| Fr::from_u64((r + 41) as u64)).collect();
+
+        let reg = |seed: usize, salt: usize| (seed.wrapping_mul(2_654_435_761) + salt) % register_count;
+        let accesses: Vec<Stage4RegisterAccess> = (0..trace_len)
+            .map(|row| Stage4RegisterAccess {
+                rs1: (row % 5 != 0).then(|| Stage4RegisterRead {
+                    address: reg(row, 1),
+                    value: (row as u64).wrapping_mul(3) + 1,
+                }),
+                rs2: (row % 3 != 1).then(|| Stage4RegisterRead {
+                    address: reg(row, 2),
+                    value: (row as u64).wrapping_mul(5) + 2,
+                }),
+                rd: (row % 4 != 2).then(|| Stage4RegisterWrite {
+                    address: reg(row, 3),
+                    pre_value: (row as u64).wrapping_mul(7) + 3,
+                    post_value: (row as u64).wrapping_mul(11) + 4,
+                }),
+            })
+            .collect();
+
+        let mut entries: Vec<SparseRegisterEntry<Fr>> = Vec::new();
+        for (row, access) in accesses.iter().enumerate() {
+            append_sparse_register_entries(register_count, row, *access, gamma, gamma2, &mut entries)
+                .unwrap();
+        }
+        let rows: Vec<usize> = entries.iter().map(|e| e.row).collect();
+        let cols: Vec<u8> = entries.iter().map(|e| e.col).collect();
+        let val: Vec<Fr> = entries.iter().map(|e| e.val).collect();
+        let read_ra: Vec<Fr> = entries.iter().map(|e| e.read_ra).collect();
+        let rd_wa: Vec<Fr> = entries.iter().map(|e| e.rd_wa).collect();
+        let prev_val: Vec<u64> = entries.iter().map(|e| e.prev_val).collect();
+        let next_val: Vec<u64> = entries.iter().map(|e| e.next_val).collect();
+
+        let (mut rs1_flag, mut rs2_flag, mut rd_flag) = (Vec::new(), Vec::new(), Vec::new());
+        for e in &entries {
+            let is_rd = e.rd_wa == Fr::one();
+            let has_rs1 = e.read_ra == gamma || e.read_ra == gamma + gamma2;
+            let has_rs2 = e.read_ra == gamma2 || e.read_ra == gamma + gamma2;
+            rs1_flag.push(u8::from(has_rs1));
+            rs2_flag.push(u8::from(has_rs2));
+            rd_flag.push(u8::from(is_rd));
+        }
+
+        let mut from_new = CudaSparseRegistersState::new(
+            &rows, &cols, &val, &read_ra, &rd_wa, &prev_val, &next_val, &rd_inc, &trace_point,
+            trace_rounds,
+        )
+        .unwrap();
+        let mut from_raw = CudaSparseRegistersState::new_from_raw(
+            &rows,
+            &cols,
+            &prev_val,
+            &next_val,
+            &rs1_flag,
+            &rs2_flag,
+            &rd_flag,
+            &rd_inc,
+            &trace_point,
+            gamma,
+            gamma2,
+            trace_rounds,
+        )
+        .unwrap();
+
+        for round in 0..trace_rounds {
+            let expected = from_new.round_poly_q().unwrap();
+            let got = from_raw.round_poly_q().unwrap();
+            assert_eq!(got, expected, "round {round} q");
+            let challenge = Fr::from_u64((round + 9) as u64);
+            from_new.bind(challenge).unwrap();
+            from_raw.bind(challenge).unwrap();
+        }
+
+        assert_eq!(
+            from_raw.rd_inc_first().unwrap(),
+            from_new.rd_inc_first().unwrap(),
+            "rd_inc"
+        );
+        let expected_mat = from_new.materialize::<Fr>(register_count).unwrap();
+        let got_mat = from_raw.materialize::<Fr>(register_count).unwrap();
+        assert_eq!(got_mat, expected_mat, "materialize");
+    }
+}
