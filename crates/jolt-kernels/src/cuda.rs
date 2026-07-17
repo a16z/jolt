@@ -124,7 +124,6 @@ pub struct CudaKernelContext {
     u64_to_mont: CudaFunction,
     i128_to_mont: CudaFunction,
     stage2_product_factors: CudaFunction,
-    #[expect(dead_code, reason = "used once the scatter_add_eq body + wiring land")]
     scatter_add_eq: CudaFunction,
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
@@ -3436,8 +3435,59 @@ impl CudaKernelContext {
         trace_len: usize,
         k: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let _ = (&eq, &addr, trace_len, k);
-        Err(CudaError::Unsupported)
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(k.max(1) * LIMBS)?,
+            len: k,
+            staging: self.staging.clone(),
+        };
+        if trace_len == 0 || k == 0 {
+            return Ok(out);
+        }
+        let num_workers = trace_len.min(256);
+        let mut worker_banks: CudaSlice<u64> = self.stream.alloc_zeros(num_workers * k * LIMBS)?;
+
+        let trace_len_arg = trace_len as u64;
+        let k_arg = k as u64;
+        let num_workers_arg = num_workers as u64;
+        let scatter_cfg = LaunchConfig {
+            grid_dim: ((num_workers as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.scatter_add_eq.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut worker_banks)
+            .arg(&eq.buf)
+            .arg(addr)
+            .arg(&trace_len_arg)
+            .arg(&k_arg)
+            .arg(&num_workers_arg);
+        // SAFETY: worker w strides cycles c=w,w+nw,... adding eq[c] into its private
+        // worker_banks[(addr[c]*num_workers + w)] (transposed [slot][worker]) when addr[c] in [0,k);
+        // worker_banks holds num_workers*k Fr, eq holds >= trace_len, addr holds >= trace_len.
+        let _ = unsafe { launch.launch(scatter_cfg) }?;
+
+        let reduce_block = BLOCK.min((num_workers as u32).max(1).next_power_of_two());
+        let reduce_cfg = LaunchConfig {
+            grid_dim: (k as u32, 1, 1),
+            block_dim: (reduce_block, 1, 1),
+            shared_mem_bytes: reduce_block * LIMBS as u32 * std::mem::size_of::<u64>() as u32,
+        };
+        let k_slots_arg = k as u64;
+        let reduce = self.raf_q_scatter_reduce.clone();
+        let mut launch = self.stream.launch_builder(&reduce);
+        let _ = launch
+            .arg(&mut out.buf)
+            .arg(&worker_banks)
+            .arg(&k_slots_arg)
+            .arg(&num_workers_arg);
+        // SAFETY: one block per slot sums worker_banks[slot][*] across num_workers via shared-mem
+        // tree reduction into out[slot]; out holds k Fr, worker_banks holds num_workers*k Fr.
+        let _ = unsafe { launch.launch(reduce_cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
     }
 
     pub fn stage2_product_factors(
