@@ -668,7 +668,7 @@ where
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: vec![
+                stage_cycle_points: [
                     stage1_cycle.as_slice(),
                     stage2_cycle.as_slice(),
                     stage3_cycle.as_slice(),
