@@ -171,6 +171,7 @@ pub struct CudaKernelContext {
     resident_committed: CommittedCache,
     resident_stage3: ResidentStage3Cache,
     resident_stage2_product: ResidentStage2ProductCache,
+    resident_ram_state: ResidentRamStateCache,
 }
 
 pub struct DeviceFrVec {
@@ -318,6 +319,18 @@ pub(crate) fn shared_ctx() -> Option<&'static CudaKernelContext> {
     use std::sync::OnceLock;
     static CTX: OnceLock<Option<CudaKernelContext>> = OnceLock::new();
     CTX.get_or_init(|| CudaKernelContext::new(0).ok()).as_ref()
+}
+
+pub fn set_shared_resident_ram_state(initial: &[u64], final_ram: &[u64]) {
+    if let Some(ctx) = shared_ctx() {
+        let _ = ctx.set_resident_ram_state(initial, final_ram);
+    }
+}
+
+pub fn clear_shared_resident_ram_state() {
+    if let Some(ctx) = shared_ctx() {
+        ctx.clear_resident_ram_state();
+    }
 }
 
 pub mod xfer_stats {
@@ -681,6 +694,20 @@ type ResidentStage2ProductCache = Arc<Mutex<Option<ResidentStage2ProductEntry>>>
 fn lock_resident_stage2_product(
     cache: &ResidentStage2ProductCache,
 ) -> MutexGuard<'_, Option<ResidentStage2ProductEntry>> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub struct ResidentRamState {
+    pub initial: CudaSlice<u64>,
+    pub final_ram: CudaSlice<u64>,
+    pub len: usize,
+}
+
+type ResidentRamStateCache = Arc<Mutex<Option<Arc<ResidentRamState>>>>;
+
+fn lock_resident_ram_state(
+    cache: &ResidentRamStateCache,
+) -> MutexGuard<'_, Option<Arc<ResidentRamState>>> {
     cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -1112,6 +1139,7 @@ impl CudaKernelContext {
             resident_committed: Arc::new(Mutex::new(Vec::new())),
             resident_stage3: Arc::new(Mutex::new(None)),
             resident_stage2_product: Arc::new(Mutex::new(None)),
+            resident_ram_state: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1303,6 +1331,29 @@ impl CudaKernelContext {
             buf: buf.clone(),
         });
         Ok(buf)
+    }
+
+    pub fn set_resident_ram_state(
+        &self,
+        initial: &[u64],
+        final_ram: &[u64],
+    ) -> Result<Arc<ResidentRamState>, CudaError> {
+        let state = Arc::new(ResidentRamState {
+            initial: self.upload_u64_slice(initial)?,
+            final_ram: self.upload_u64_slice(final_ram)?,
+            len: initial.len(),
+        });
+        let mut cache = lock_resident_ram_state(&self.resident_ram_state);
+        *cache = Some(state.clone());
+        Ok(state)
+    }
+
+    pub fn resident_ram_state(&self) -> Option<Arc<ResidentRamState>> {
+        lock_resident_ram_state(&self.resident_ram_state).as_ref().cloned()
+    }
+
+    pub fn clear_resident_ram_state(&self) {
+        *lock_resident_ram_state(&self.resident_ram_state) = None;
     }
 
     #[expect(clippy::too_many_arguments)]

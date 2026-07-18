@@ -173,8 +173,15 @@ impl CudaRamReadWriteState {
         let mut inc = ctx.u64_to_mont_dev(&all_write_dev, all_write.len()).ok()?;
         ctx.sub(&mut inc, &all_read_mont).ok()?;
 
-        let initial_ram_dev = ctx.upload_u64_slice(initial_ram).ok()?;
-        let val_init = ctx.u64_to_mont_dev(&initial_ram_dev, initial_ram.len()).ok()?;
+        let resident = ctx
+            .resident_ram_state()
+            .filter(|s| s.len == initial_ram.len());
+        let val_init = if let Some(resident) = &resident {
+            ctx.u64_to_mont_dev(&resident.initial, initial_ram.len()).ok()?
+        } else {
+            let initial_ram_dev = ctx.upload_u64_slice(initial_ram).ok()?;
+            ctx.u64_to_mont_dev(&initial_ram_dev, initial_ram.len()).ok()?
+        };
 
         Some(Self {
             val_coeff,

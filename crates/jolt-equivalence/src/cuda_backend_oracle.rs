@@ -264,9 +264,21 @@ pub fn run_bolt_prover(
             &fixture.cycle_inputs,
         );
 
+    let stage1_backend = if stage1_prover_plan.kernels.iter().any(|k| k.backend == "cuda") {
+        "cuda"
+    } else {
+        "cpu"
+    };
+    let stage2_is_cuda = stage2_prover_plan.kernels.iter().any(|k| k.backend == "cuda");
+
     let r1cs_key = fixture.r1cs_key();
-    let data = fixture.stage1_outer_rv64_data_with_backend(&r1cs_key, "cuda");
+    let data = fixture.stage1_outer_rv64_data_with_backend(&r1cs_key, stage1_backend);
     let ram_data = fixture.stage2_ram_data();
+    if stage2_is_cuda {
+        jolt_kernels::cuda::set_shared_resident_ram_state(ram_data.initial_ram, ram_data.final_ram);
+    } else {
+        jolt_kernels::cuda::clear_shared_resident_ram_state();
+    }
 
     let mut staged_transcript =
         transcript_with_bolt_commitment_trace(fixture, &commitment_prover_trace);

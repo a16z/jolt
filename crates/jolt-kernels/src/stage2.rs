@@ -3124,10 +3124,15 @@ fn cuda_ram_output_state<F: Field>(
 ) -> Option<cuda::CudaDenseState> {
     let ctx = crate::cuda::shared_ctx()?;
     let eq = ctx.eq_evals(crate::cuda::as_fr_slice(r_address)?, None).ok()?;
-    let final_dev = ctx.upload_u64_slice(ram.final_ram).ok()?;
-    let (io_mask, diff) = ctx
-        .ram_output_factors(&final_dev, layout.io_start, layout.io_end, k)
-        .ok()?;
+    let resident = ctx.resident_ram_state().filter(|s| s.len == ram.final_ram.len());
+    let (io_mask, diff) = if let Some(resident) = &resident {
+        ctx.ram_output_factors(&resident.final_ram, layout.io_start, layout.io_end, k)
+            .ok()?
+    } else {
+        let final_dev = ctx.upload_u64_slice(ram.final_ram).ok()?;
+        ctx.ram_output_factors(&final_dev, layout.io_start, layout.io_end, k)
+            .ok()?
+    };
     cuda::CudaDenseState::from_device_factors(vec![eq, io_mask, diff])
 }
 
