@@ -133,7 +133,6 @@ pub struct CudaKernelContext {
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
-    #[expect(dead_code, reason = "used once the ram_ra_gather body + wiring land")]
     ram_ra_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -5365,8 +5364,36 @@ impl CudaKernelContext {
         addr: &CudaSlice<i32>,
         trace_len: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let _ = (address_eq, addr, trace_len);
-        Err(CudaError::Unsupported)
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(trace_len.max(1) * LIMBS)?,
+            len: trace_len,
+            staging: self.staging.clone(),
+        };
+        if trace_len == 0 {
+            return Ok(out);
+        }
+        let trace_len_arg = trace_len as u64;
+        let address_count_arg = address_eq.len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((trace_len as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.ram_ra_gather.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out.buf)
+            .arg(&address_eq.buf)
+            .arg(addr)
+            .arg(&trace_len_arg)
+            .arg(&address_count_arg);
+        // SAFETY: one thread per cycle c reads addr[c] and, when 0 <= addr < address_count, copies
+        // address_eq[addr] into out[c] (else 0); out holds trace_len Fr, address_eq holds
+        // address_count Fr, addr holds >= trace_len i32. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+        Ok(out)
     }
 
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
