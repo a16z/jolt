@@ -22,6 +22,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/eq_double.cu"),
     include_str!("cuda/lt_double.cu"),
     include_str!("cuda/rd_wa_gather.cu"),
+    include_str!("cuda/ram_ra_gather.cu"),
     include_str!("cuda/add_scalar.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
@@ -132,6 +133,8 @@ pub struct CudaKernelContext {
     ram_rw_address_round_pairs: CudaFunction,
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
+    #[expect(dead_code, reason = "used once the ram_ra_gather body + wiring land")]
+    ram_ra_gather: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
@@ -172,6 +175,7 @@ pub struct CudaKernelContext {
     resident_stage3: ResidentStage3Cache,
     resident_stage2_product: ResidentStage2ProductCache,
     resident_ram_state: ResidentRamStateCache,
+    resident_ram_addresses: ResidentRamAddressesCache,
 }
 
 pub struct DeviceFrVec {
@@ -330,6 +334,18 @@ pub fn set_shared_resident_ram_state(initial: &[u64], final_ram: &[u64]) {
 pub fn clear_shared_resident_ram_state() {
     if let Some(ctx) = shared_ctx() {
         ctx.clear_resident_ram_state();
+    }
+}
+
+pub fn set_shared_resident_ram_addresses(addr: &[i32]) {
+    if let Some(ctx) = shared_ctx() {
+        let _ = ctx.set_resident_ram_addresses(addr);
+    }
+}
+
+pub fn clear_shared_resident_ram_addresses() {
+    if let Some(ctx) = shared_ctx() {
+        ctx.clear_resident_ram_addresses();
     }
 }
 
@@ -711,6 +727,19 @@ fn lock_resident_ram_state(
     cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+pub struct ResidentRamAddresses {
+    pub addr: CudaSlice<i32>,
+    pub len: usize,
+}
+
+type ResidentRamAddressesCache = Arc<Mutex<Option<Arc<ResidentRamAddresses>>>>;
+
+fn lock_resident_ram_addresses(
+    cache: &ResidentRamAddressesCache,
+) -> MutexGuard<'_, Option<Arc<ResidentRamAddresses>>> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -1088,6 +1117,7 @@ impl CudaKernelContext {
             ram_rw_address_round_pairs: module.load_function("ram_rw_address_round_pairs")?,
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
+            ram_ra_gather: module.load_function("ram_ra_gather")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
@@ -1140,6 +1170,7 @@ impl CudaKernelContext {
             resident_stage3: Arc::new(Mutex::new(None)),
             resident_stage2_product: Arc::new(Mutex::new(None)),
             resident_ram_state: Arc::new(Mutex::new(None)),
+            resident_ram_addresses: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1354,6 +1385,27 @@ impl CudaKernelContext {
 
     pub fn clear_resident_ram_state(&self) {
         *lock_resident_ram_state(&self.resident_ram_state) = None;
+    }
+
+    pub fn set_resident_ram_addresses(
+        &self,
+        addr: &[i32],
+    ) -> Result<Arc<ResidentRamAddresses>, CudaError> {
+        let state = Arc::new(ResidentRamAddresses {
+            addr: self.upload_i32_slice(addr)?,
+            len: addr.len(),
+        });
+        let mut cache = lock_resident_ram_addresses(&self.resident_ram_addresses);
+        *cache = Some(state.clone());
+        Ok(state)
+    }
+
+    pub fn resident_ram_addresses(&self) -> Option<Arc<ResidentRamAddresses>> {
+        lock_resident_ram_addresses(&self.resident_ram_addresses).as_ref().cloned()
+    }
+
+    pub fn clear_resident_ram_addresses(&self) {
+        *lock_resident_ram_addresses(&self.resident_ram_addresses) = None;
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -5307,6 +5359,16 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn ram_ra_gather(
+        &self,
+        address_eq: &DeviceFrVec,
+        addr: &CudaSlice<i32>,
+        trace_len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let _ = (address_eq, addr, trace_len);
+        Err(CudaError::Unsupported)
+    }
+
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         use num_traits::{One, Zero};
         if values.len == 0 {
@@ -6682,6 +6744,38 @@ mod tests {
 
             let c = ctx();
             let got = c.rd_wa_gather(&address_eq, &addresses).unwrap().to_host().unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn ram_ra_gather_matches_cpu(
+            log_trace in 1usize..12,
+            log_k in 1usize..10,
+            seed in fr_strategy(),
+        ) {
+            let trace_len = 1usize << log_trace;
+            let k = 1usize << log_k;
+            let address_eq: Vec<Fr> = (0..k)
+                .map(|i| seed + Fr::from_u64(i as u64 + 1))
+                .collect();
+            let addresses: Vec<i32> = (0..trace_len)
+                .map(|c| {
+                    if (c * 7 + 3) % 5 == 0 {
+                        -1
+                    } else {
+                        ((c * 13) % k) as i32
+                    }
+                })
+                .collect();
+            let expected: Vec<Fr> = addresses
+                .iter()
+                .map(|&a| if a < 0 { Fr::zero() } else { address_eq[a as usize] })
+                .collect();
+
+            let c = ctx();
+            let address_eq_dev = c.upload(&address_eq).unwrap();
+            let addr_dev = c.upload_i32_slice(&addresses).unwrap();
+            let got = c.ram_ra_gather(&address_eq_dev, &addr_dev, trace_len).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
 
