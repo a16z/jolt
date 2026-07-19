@@ -62,7 +62,14 @@ where
             if let Some(t) = span.extensions_mut().get_mut::<Timing>() {
                 if let Some(start) = t.entered.take() {
                     let ns = start.elapsed().as_nanos();
-                    if t.name.starts_with("bolt.") {
+                    let keep = t.name.starts_with("bolt.")
+                        || t.name.contains("::new")
+                        || t.name.contains("_state")
+                        || t.name.contains("::round_poly")
+                        || t.name.contains("::bind")
+                        || t.name.contains("::instance.")
+                        || t.name.contains("::prove_batched");
+                    if keep {
                         *stage_ns().lock().unwrap().entry(t.name.clone()).or_insert(0) += ns;
                     }
                 }
@@ -95,9 +102,23 @@ fn main() {
         let mut rows: Vec<(String, u128)> = m.drain().collect();
         rows.sort_by_key(|(name, _)| name.clone());
         println!("  {label} per-stage (ms):");
-        for (name, ns) in rows {
+        let mut kernels_1_7 = 0u128;
+        for (name, ns) in &rows {
             if name.matches('.').count() == 1 {
-                println!("    {name:<20} {:.0}", ns as f64 / 1e6);
+                println!("    {name:<24} {:.0}", *ns as f64 / 1e6);
+                let is_1_7 = ["1", "2", "3", "4", "5", "6", "7"]
+                    .iter()
+                    .any(|n| name == &format!("bolt.stage{n}"));
+                if is_1_7 {
+                    kernels_1_7 += ns;
+                }
+            }
+        }
+        println!("    {:<24} {:.0}", "[stages 1-7 kernels]", kernels_1_7 as f64 / 1e6);
+        println!("  {label} per-relation (ms):");
+        for (name, ns) in &rows {
+            if !name.starts_with("bolt.") {
+                println!("    {name:<44} {:.0}", *ns as f64 / 1e6);
             }
         }
     };
@@ -107,8 +128,26 @@ fn main() {
     dump("cpu");
 
     stage_ns().lock().unwrap().clear();
+    jolt_kernels::cuda::xfer_stats::reset();
+    let before = jolt_kernels::cuda::xfer_stats::snapshot();
     let (_cuda_state, cuda_ms) = run_bolt_prover(&fixture, all_cuda_programs(&fixture));
+    let after = jolt_kernels::cuda::xfer_stats::snapshot();
     dump("cuda");
+
+    let d = |i: usize| after[i].saturating_sub(before[i]);
+    let h2d_raw_mb = d(16) as f64 / (1024.0 * 1024.0);
+    let h2d_raw_ms = d(18) as f64 / 1e6;
+    let h2d_all_mb = d(2) as f64 / (1024.0 * 1024.0);
+    let upload_ms = d(11) as f64 / 1e6;
+    println!(
+        "  cuda xfer: h2d_raw={h2d_raw_mb:.1} MB in {h2d_raw_ms:.1} ms ({} calls); \
+         h2d_total={h2d_all_mb:.1} MB; upload_span={upload_ms:.1} ms",
+        d(17)
+    );
+    println!(
+        "  h2d_raw share of cuda prove: {:.1}%",
+        100.0 * h2d_raw_ms / cuda_ms
+    );
 
     println!(
         "log_t={log_t}: cpu={cpu_ms:.1} ms  cuda={cuda_ms:.1} ms  speedup={:.3}x",
