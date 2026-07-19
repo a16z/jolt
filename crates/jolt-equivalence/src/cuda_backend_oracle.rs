@@ -271,6 +271,9 @@ pub fn run_bolt_prover(
     };
     let stage2_is_cuda = stage2_prover_plan.kernels.iter().any(|k| k.backend == "cuda");
 
+    let stage4_is_cuda = stage4_prover_plan.kernels.iter().any(|k| k.backend == "cuda");
+    let stage5_is_cuda = stage5_prover_plan.kernels.iter().any(|k| k.backend == "cuda");
+
     let r1cs_key = fixture.r1cs_key();
     let data = fixture.stage1_outer_rv64_data_with_backend(&r1cs_key, stage1_backend);
     let ram_data = fixture.stage2_ram_data();
@@ -278,6 +281,16 @@ pub fn run_bolt_prover(
         jolt_kernels::cuda::set_shared_resident_ram_state(ram_data.initial_ram, ram_data.final_ram);
     } else {
         jolt_kernels::cuda::clear_shared_resident_ram_state();
+    }
+    if stage2_is_cuda || stage4_is_cuda || stage5_is_cuda {
+        let ram_addr: Vec<i32> = ram_data
+            .accesses
+            .iter()
+            .map(|a| a.remapped_address.map_or(-1i32, |x| x as i32))
+            .collect();
+        jolt_kernels::cuda::set_shared_resident_ram_addresses(&ram_addr);
+    } else {
+        jolt_kernels::cuda::clear_shared_resident_ram_addresses();
     }
 
     let mut staged_transcript =

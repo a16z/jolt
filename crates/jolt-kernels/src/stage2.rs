@@ -3046,13 +3046,20 @@ fn cuda_ram_raf_state<F: Field>(
     use rayon::prelude::*;
     let ctx = crate::cuda::shared_ctx()?;
     let eq = ctx.eq_evals(crate::cuda::as_fr_slice(r_cycle)?, None).ok()?;
-    let addr: Vec<i32> = ram
-        .accesses
-        .par_iter()
-        .map(|a| a.remapped_address.map_or(-1i32, |x| x as i32))
-        .collect();
-    let addr_dev = ctx.upload_i32_slice(&addr).ok()?;
-    let ra = ctx.scatter_add_eq(&eq, &addr_dev, ram.accesses.len(), k).ok()?;
+    let resident = ctx
+        .resident_ram_addresses()
+        .filter(|s| s.len == ram.accesses.len());
+    let ra = if let Some(resident) = &resident {
+        ctx.scatter_add_eq(&eq, &resident.addr, ram.accesses.len(), k).ok()?
+    } else {
+        let addr: Vec<i32> = ram
+            .accesses
+            .par_iter()
+            .map(|a| a.remapped_address.map_or(-1i32, |x| x as i32))
+            .collect();
+        let addr_dev = ctx.upload_i32_slice(&addr).ok()?;
+        ctx.scatter_add_eq(&eq, &addr_dev, ram.accesses.len(), k).ok()?
+    };
     let unmap_raw: Vec<u64> = (0..k as u64).map(|i| ram.start_address + 8 * i).collect();
     let unmap = ctx.u64_to_mont(&unmap_raw).ok()?;
     cuda::CudaDenseState::from_device_factors(vec![ra, unmap])

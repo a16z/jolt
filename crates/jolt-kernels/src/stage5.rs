@@ -1582,6 +1582,42 @@ fn build_cuda_ram_ra_state<F: Field>(
     )
 }
 
+#[cfg(feature = "cuda")]
+#[expect(clippy::too_many_arguments)]
+fn cuda_ram_ra_state_from_resident_addr<F: Field>(
+    address_point: &[F],
+    r_cycle_raf: &[F],
+    r_cycle_rw: &[F],
+    r_cycle_val: &[F],
+    gamma: F,
+    gamma2: F,
+    active_scale: F,
+    trace_len: usize,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let resident = ctx.resident_ram_addresses().filter(|s| s.len == trace_len)?;
+    let raf_fr = crate::cuda::as_fr_slice(r_cycle_raf)?;
+    let rw_fr = crate::cuda::as_fr_slice(r_cycle_rw)?;
+    let val_fr = crate::cuda::as_fr_slice(r_cycle_val)?;
+    let gamma_fr = crate::cuda::into_fr(gamma)?;
+    let gamma2_fr = crate::cuda::into_fr(gamma2)?;
+    let mut eq_combined = ctx.eq_evals(raf_fr, None).ok()?;
+    let eq_rw = ctx.eq_evals(rw_fr, Some(gamma_fr)).ok()?;
+    let eq_val = ctx.eq_evals(val_fr, Some(gamma2_fr)).ok()?;
+    ctx.add(&mut eq_combined, &eq_rw).ok()?;
+    ctx.add(&mut eq_combined, &eq_val).ok()?;
+    let address_eq = ctx.eq_evals(crate::cuda::as_fr_slice(address_point)?, None).ok()?;
+    let ram_ra_dev = ctx.ram_ra_gather(&address_eq, &resident.addr, trace_len).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![eq_combined, ram_ra_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 2],
+        vec![0, 1],
+        2,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum InstructionReadRafOutputKind {
     LookupTableFlag(usize),
@@ -4094,8 +4130,6 @@ fn ram_ra_claim_reduction_state<F: Field>(
     let (address_point, r_cycle_raf) = ram_raf_point.split_at(ram_rounds);
     let (_, r_cycle_rw) = ram_rw_point.split_at(ram_rounds);
     let (_, r_cycle_val) = ram_val_point.split_at(ram_rounds);
-    let address_eq = EqPolynomial::<F>::evals(address_point, None);
-    let ram_ra = ram_ra_at_address(witness, &address_eq)?;
     let gamma = store.scalar("stage5.ram_ra_claim_reduction.gamma")?;
     let gamma2 = store
         .try_scalar("stage5.ram_ra_claim_reduction.gamma2")
@@ -4110,6 +4144,31 @@ fn ram_ra_claim_reduction_state<F: Field>(
         oracle: "RamRa",
         factor: 1,
     }];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_ra_state_from_resident_addr(
+            address_point,
+            r_cycle_raf,
+            r_cycle_rw,
+            r_cycle_val,
+            gamma,
+            gamma2,
+            active_scale,
+            witness.trace_len,
+        ) {
+            return Ok(DenseStage5State::from_host_and_cuda(
+                vec![Vec::new(), Vec::new()],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
+    let address_eq = EqPolynomial::<F>::evals(address_point, None);
+    let ram_ra = ram_ra_at_address(witness, &address_eq)?;
 
     #[cfg(feature = "cuda")]
     if backend == "cuda" {

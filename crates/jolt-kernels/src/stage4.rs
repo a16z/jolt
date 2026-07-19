@@ -1916,6 +1916,33 @@ fn build_cuda_ram_val_check_state<F: Field>(
     )
 }
 
+#[cfg(feature = "cuda")]
+fn cuda_ram_val_check_from_resident_addr<F: Field>(
+    address_point: &[F],
+    cycle_point: &[F],
+    gamma: F,
+    ram_inc: &[F],
+    active_scale: F,
+    trace_len: usize,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let resident = ctx.resident_ram_addresses().filter(|s| s.len == trace_len)?;
+    let address_eq = ctx.eq_evals(crate::cuda::as_fr_slice(address_point)?, None).ok()?;
+    let ram_ra_dev = ctx.ram_ra_gather(&address_eq, &resident.addr, trace_len).ok()?;
+    let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
+    let mut lt_plus_gamma = ctx.lt_evals(cycle_point_fr).ok()?;
+    ctx.add_scalar(&mut lt_plus_gamma, crate::cuda::into_fr(gamma)?).ok()?;
+    let ram_inc_dev = ctx.resident_committed_clone(crate::cuda::as_fr_slice(ram_inc)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![lt_plus_gamma, ram_ra_dev, ram_inc_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 3],
+        vec![0, 1, 2],
+        3,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
 impl<F: Field> DenseStage4State<F> {
     fn new(
         factors: Vec<Vec<F>>,
@@ -3356,8 +3383,6 @@ fn ram_val_check_state<F: Field>(
         ram_val_point.len(),
     )?;
     let (address_point, cycle_point) = ram_val_point.split_at(ram_rounds);
-    let address_eq = EqPolynomial::<F>::evals(address_point, None);
-    let ram_ra_at_address = ram_ra_at_address(witness, &address_eq, expected_len)?;
 
     let gamma = store.scalar("stage4.ram_val_check.gamma")?;
 
@@ -3377,6 +3402,29 @@ fn ram_val_check_state<F: Field>(
             factor: 2,
         },
     ];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_val_check_from_resident_addr(
+            address_point,
+            cycle_point,
+            gamma,
+            witness.ram_inc,
+            active_scale,
+            witness.trace_len,
+        ) {
+            return Ok(DenseStage4State::from_host_and_cuda(
+                vec![Vec::new(), Vec::new(), Vec::new()],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
+    let address_eq = EqPolynomial::<F>::evals(address_point, None);
+    let ram_ra_at_address = ram_ra_at_address(witness, &address_eq, expected_len)?;
 
     #[cfg(feature = "cuda")]
     if backend == "cuda" {
