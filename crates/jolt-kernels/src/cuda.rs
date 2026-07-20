@@ -27,6 +27,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/register_merge.cu"),
     include_str!("cuda/schedule_round.cu"),
     include_str!("cuda/add_scalar.cu"),
+    include_str!("cuda/add_scalar_at.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
     include_str!("cuda/dense_outer.cu"),
@@ -144,6 +145,7 @@ pub struct CudaKernelContext {
     schedule_round_count: CudaFunction,
     schedule_round_emit: CudaFunction,
     add_scalar: CudaFunction,
+    add_scalar_at: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
     row_dots: CudaFunction,
@@ -1194,6 +1196,7 @@ impl CudaKernelContext {
             schedule_round_count: module.load_function("schedule_round_count")?,
             schedule_round_emit: module.load_function("schedule_round_emit")?,
             add_scalar: module.load_function("add_scalar")?,
+            add_scalar_at: module.load_function("add_scalar_at")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
             row_dots: module.load_function("row_dots_kernel")?,
@@ -3745,6 +3748,31 @@ impl CudaKernelContext {
         // a holds n * LIMBS u64s. No shared memory.
         let _ = unsafe { launch.launch(cfg) }?;
 
+        Ok(())
+    }
+
+    pub fn add_scalar_at(
+        &self,
+        a: &mut DeviceFrVec,
+        scalar: Fr,
+        index: usize,
+    ) -> Result<(), CudaError> {
+        if index >= a.len {
+            return Err(CudaError::Unsupported);
+        }
+        let scalar_dev = self.stream.clone_htod(&fr_to_limbs(scalar))?;
+        let index_arg = index as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.add_scalar_at.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch.arg(&mut a.buf).arg(&scalar_dev).arg(&index_arg);
+        // SAFETY: the single launched thread reads a[index] and the scalar and writes a[index]
+        // in place; a holds > index * LIMBS u64s. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
         Ok(())
     }
 
@@ -7241,6 +7269,25 @@ mod tests {
             let c = ctx();
             let mut dev = c.upload(&base).unwrap();
             c.add_scalar(&mut dev, scalar).unwrap();
+            prop_assert_eq!(dev.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn add_scalar_at_matches_cpu(
+            log_n in 0usize..12,
+            idx_seed in 0usize..10000,
+            seed in fr_strategy(),
+            scalar in fr_strategy(),
+        ) {
+            let n = 1usize << log_n;
+            let index = idx_seed % n;
+            let base: Vec<Fr> = (0..n).map(|i| seed + Fr::from_u64(i as u64)).collect();
+            let mut expected = base.clone();
+            expected[index] += scalar;
+
+            let c = ctx();
+            let mut dev = c.upload(&base).unwrap();
+            c.add_scalar_at(&mut dev, scalar, index).unwrap();
             prop_assert_eq!(dev.to_host().unwrap(), expected);
         }
 

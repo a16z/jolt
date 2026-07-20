@@ -69,22 +69,6 @@ impl CudaBytecodeReadRafState {
         })
     }
 
-    pub(crate) fn new_cycle<F: Field>(
-        cycle_chunks: &[Vec<F>],
-        combined_eq: &[F],
-        degree: usize,
-    ) -> Option<Self> {
-        let ctx = crate::cuda::shared_ctx()?;
-        let num_chunks = cycle_chunks.len();
-        let mut refs: Vec<&[Fr]> = Vec::with_capacity(num_chunks + 1);
-        for chunk in cycle_chunks {
-            refs.push(crate::cuda::as_fr_slice(chunk)?);
-        }
-        refs.push(crate::cuda::as_fr_slice(combined_eq)?);
-        let factors = ctx.upload_many(&refs).ok()?;
-        Self::from_device_cycle(factors, num_chunks, degree)
-    }
-
     fn from_device_cycle(factors: Vec<DeviceFrVec>, num_chunks: usize, degree: usize) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let term_factor_indices: Vec<u32> = (0..=num_chunks as u32).collect();
@@ -101,10 +85,25 @@ impl CudaBytecodeReadRafState {
         })
     }
 
-    pub(crate) fn new_cycle_sparse<F: Field>(
+    pub(crate) fn new_cycle_device<F: Field>(
+        cycle_chunks: &[Vec<F>],
+        combined_eq: &DeviceFrVec,
+        degree: usize,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let num_chunks = cycle_chunks.len();
+        let mut factors: Vec<DeviceFrVec> = Vec::with_capacity(num_chunks + 1);
+        for chunk in cycle_chunks {
+            factors.push(ctx.upload(crate::cuda::as_fr_slice(chunk)?).ok()?);
+        }
+        factors.push(combined_eq.try_clone().ok()?);
+        Self::from_device_cycle(factors, num_chunks, degree)
+    }
+
+    pub(crate) fn new_cycle_sparse_device<F: Field>(
         tables: &[Vec<F>],
         indices: &[Vec<Option<u8>>],
-        combined_eq: &[F],
+        combined_eq: &DeviceFrVec,
         degree: usize,
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
@@ -142,7 +141,7 @@ impl CudaBytecodeReadRafState {
             round: 1,
             tables: ctx.upload_u64_slice(&flat_tables).ok()?,
             values: ctx.upload_i16_slice(&values).ok()?,
-            combined_eq: ctx.upload(crate::cuda::as_fr_slice(combined_eq)?).ok()?,
+            combined_eq: combined_eq.try_clone().ok()?,
             combined_eq_scratch: ctx.upload(&[]).ok()?,
             num_chunks,
             chunk_domain,
@@ -150,6 +149,7 @@ impl CudaBytecodeReadRafState {
             degree,
         })
     }
+
 
     pub(crate) fn round_poly_evals(&self) -> Option<Vec<Fr>> {
         let ctx = crate::cuda::shared_ctx()?;

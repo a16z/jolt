@@ -2077,14 +2077,17 @@ impl<F: Field> BytecodeReadRafCycleFactors<F> {
     }
 
     #[cfg(feature = "cuda")]
-    fn build_cuda_cycle_sparse(
+    #[cfg(feature = "cuda")]
+    fn build_cuda_cycle_sparse_device(
         &self,
-        combined_eq: &[F],
+        combined_eq: &crate::cuda::DeviceFrVec,
         degree: usize,
     ) -> Option<cuda::CudaBytecodeReadRafState> {
         match self {
             Self::SparseRound1 { tables, indices } => {
-                cuda::CudaBytecodeReadRafState::new_cycle_sparse(tables, indices, combined_eq, degree)
+                cuda::CudaBytecodeReadRafState::new_cycle_sparse_device(
+                    tables, indices, combined_eq, degree,
+                )
             }
             _ => None,
         }
@@ -2309,6 +2312,8 @@ struct BytecodeReadRafStage6State<F: Field> {
     cycle_factors: BytecodeReadRafCycleFactors<F>,
     cycle_eqs: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     cycle_eq_scratch: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
+    stage_cycle_points: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     cycle_entry_eq: Vec<F>,
     cycle_entry_eq_scratch: Vec<F>,
     cycle_combined_eq: Vec<F>,
@@ -2394,11 +2399,16 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         let gamma = store.scalar("stage6.bytecode_read_raf.gamma")?;
         let gamma_powers = bytecode_gamma_powers(gamma);
         let stage_cycle_points = bytecode_stage_cycle_points(store, log_t)?;
-        let cycle_eqs = stage_cycle_points.each_ref().map(|point| {
-            let eq = EqPolynomial::<F>::evals(point, None);
-            debug_assert_eq!(eq.len(), 1usize << log_t);
-            eq
-        });
+        let build_host_cycle_eqs = backend != "cuda";
+        let cycle_eqs: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT] = if build_host_cycle_eqs {
+            stage_cycle_points.each_ref().map(|point| {
+                let eq = EqPolynomial::<F>::evals(point, None);
+                debug_assert_eq!(eq.len(), 1usize << log_t);
+                eq
+            })
+        } else {
+            std::array::from_fn(|_| Vec::new())
+        };
 
         let stage1_gamma = store.scalar("stage6.bytecode_read_raf.stage1_gamma")?;
         let stage2_gamma = store.scalar("stage6.bytecode_read_raf.stage2_gamma")?;
@@ -2500,6 +2510,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             cycle_factors: BytecodeReadRafCycleFactors::empty(),
             cycle_eqs,
             cycle_eq_scratch: std::array::from_fn(|_| Vec::new()),
+            stage_cycle_points,
             cycle_entry_eq,
             cycle_entry_eq_scratch: Vec::new(),
             cycle_combined_eq: Vec::new(),
@@ -2854,20 +2865,32 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             std::array::from_fn::<_, BYTECODE_READ_RAF_STAGE_COUNT, _>(|stage| {
                 self.gamma_powers[stage] * bound_stage_values[stage]
             });
-        let trace_len = 1usize << self.log_t;
-        self.cycle_combined_eq = (0..trace_len)
-            .into_par_iter()
-            .map(|index| {
-                let mut combined = F::zero();
-                for (stage, &coefficient) in stage_coefficients.iter().enumerate() {
-                    combined += coefficient * self.cycle_eqs[stage][index];
-                }
-                combined
-            })
-            .collect();
         let entry_coefficient = self.gamma_powers[7] * bound_entry_expected;
-        if let Some(combined) = self.cycle_combined_eq.first_mut() {
-            *combined += entry_coefficient;
+        let trace_len = 1usize << self.log_t;
+
+        #[cfg(feature = "cuda")]
+        let cuda_combined_eq = if self.backend == "cuda" {
+            cuda_bytecode_combined_eq(&self.stage_cycle_points, &stage_coefficients, entry_coefficient)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let cuda_combined_eq: Option<()> = None;
+
+        if cuda_combined_eq.is_none() {
+            self.cycle_combined_eq = (0..trace_len)
+                .into_par_iter()
+                .map(|index| {
+                    let mut combined = F::zero();
+                    for (stage, &coefficient) in stage_coefficients.iter().enumerate() {
+                        combined += coefficient * self.cycle_eqs[stage][index];
+                    }
+                    combined
+                })
+                .collect();
+            if let Some(combined) = self.cycle_combined_eq.first_mut() {
+                *combined += entry_coefficient;
+            }
         }
 
         self.bound_stage_values = Some(bound_stage_values);
@@ -2888,17 +2911,20 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
 
         #[cfg(feature = "cuda")]
         if self.backend == "cuda" {
+            let degree_bound = self.degree_bound;
+            let combined = cuda_combined_eq;
             self.cuda = crate::cuda::xfer_stats::timed(
                 crate::cuda::xfer_stats::Phase::Materialize,
                 || {
+                    let combined = combined?;
                     self.cycle_factors
-                        .build_cuda_cycle_sparse(&self.cycle_combined_eq, self.degree_bound)
+                        .build_cuda_cycle_sparse_device(&combined, degree_bound)
                         .or_else(|| {
                             self.cycle_factors.dense_chunk_vecs().and_then(|chunk_vecs| {
-                                cuda::CudaBytecodeReadRafState::new_cycle(
+                                cuda::CudaBytecodeReadRafState::new_cycle_device(
                                     &chunk_vecs,
-                                    &self.cycle_combined_eq,
-                                    self.degree_bound,
+                                    &combined,
+                                    degree_bound,
                                 )
                             })
                         })
@@ -6402,6 +6428,29 @@ fn hamming_booleanity_state<F: Field>(
         claim.degree,
         backend,
     )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_bytecode_combined_eq<F: Field>(
+    stage_cycle_points: &[Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    stage_coefficients: &[F; BYTECODE_READ_RAF_STAGE_COUNT],
+    entry_coefficient: F,
+) -> Option<crate::cuda::DeviceFrVec> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let mut combined: Option<crate::cuda::DeviceFrVec> = None;
+    for (point, coeff) in stage_cycle_points.iter().zip(stage_coefficients.iter()) {
+        let scaled = ctx
+            .eq_evals(crate::cuda::as_fr_slice(point)?, Some(crate::cuda::into_fr(*coeff)?))
+            .ok()?;
+        match &mut combined {
+            None => combined = Some(scaled),
+            Some(acc) => ctx.add(acc, &scaled).ok()?,
+        }
+    }
+    let mut combined = combined?;
+    ctx.add_scalar_at(&mut combined, crate::cuda::into_fr(entry_coefficient)?, 0)
+        .ok()?;
+    Some(combined)
 }
 
 #[cfg(feature = "cuda")]
