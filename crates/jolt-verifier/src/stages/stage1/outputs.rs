@@ -35,6 +35,10 @@ pub struct Stage1OutputClaims<F: Field> {
 /// the point and the first `derive_output_term` call builds the table.
 #[derive(SumcheckBatch)]
 pub struct Stage1BatchSumchecks<F: Field> {
+    /// External on the prove side: the remainder member is minted by the
+    /// uni-skip pre-phase (`SpartanOuterInstance::into_remainder`), not by a
+    /// preparer slot, so the generated `prove_clear` takes it caller-supplied.
+    #[sumcheck(external)]
     pub outer_remainder: OuterRemainder<F>,
 }
 
