@@ -23,6 +23,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/lt_double.cu"),
     include_str!("cuda/rd_wa_gather.cu"),
     include_str!("cuda/ram_ra_gather.cu"),
+    include_str!("cuda/scan_u32.cu"),
     include_str!("cuda/add_scalar.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
@@ -134,6 +135,10 @@ pub struct CudaKernelContext {
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
     ram_ra_gather: CudaFunction,
+    #[expect(dead_code, reason = "used once the scan_u32 body + wiring land")]
+    scan_u32_block: CudaFunction,
+    #[expect(dead_code, reason = "used once the scan_u32 body + wiring land")]
+    scan_u32_add_offsets: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
@@ -1117,6 +1122,8 @@ impl CudaKernelContext {
             ram_rw_address_bind: module.load_function("ram_rw_address_bind")?,
             rd_wa_gather: module.load_function("rd_wa_gather")?,
             ram_ra_gather: module.load_function("ram_ra_gather")?,
+            scan_u32_block: module.load_function("scan_u32_block")?,
+            scan_u32_add_offsets: module.load_function("scan_u32_add_offsets")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
@@ -1330,6 +1337,17 @@ impl CudaKernelContext {
         let out = self.stream.clone_dtoh(buf)?;
         self.stream.synchronize()?;
         Ok(out)
+    }
+
+    pub fn download_u32(&self, buf: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
+        let out = self.stream.clone_dtoh(buf)?;
+        self.stream.synchronize()?;
+        Ok(out)
+    }
+
+    pub fn exclusive_scan_u32(&self, input: &[u32]) -> Result<(Vec<u32>, u32), CudaError> {
+        let _ = input;
+        Err(CudaError::Unsupported)
     }
 
     fn factor_ptr_array(&self, factors: &[&DeviceFrVec]) -> Result<CudaSlice<u64>, CudaError> {
@@ -6772,6 +6790,30 @@ mod tests {
             let c = ctx();
             let got = c.rd_wa_gather(&address_eq, &addresses).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn exclusive_scan_u32_matches_cpu(
+            log_n in 0usize..15,
+            seed in 0u64..1000,
+        ) {
+            let n = 1usize << log_n;
+            let input: Vec<u32> = (0..n)
+                .map(|i| ((i as u64 + seed).wrapping_mul(2_654_435_761) % 17) as u32)
+                .collect();
+
+            let mut expected = Vec::with_capacity(n);
+            let mut acc: u32 = 0;
+            for &v in &input {
+                expected.push(acc);
+                acc += v;
+            }
+            let expected_total = acc;
+
+            let c = ctx();
+            let (got, total) = c.exclusive_scan_u32(&input).unwrap();
+            prop_assert_eq!(got, expected);
+            prop_assert_eq!(total, expected_total);
         }
 
         #[test]
