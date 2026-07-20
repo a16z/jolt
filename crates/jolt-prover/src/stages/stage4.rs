@@ -18,11 +18,8 @@ use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
-use jolt_sumcheck::{
-    prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
-};
+use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::{
@@ -39,7 +36,7 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
@@ -178,97 +175,48 @@ where
         &init_structure,
     );
 
-    let mut recorder = ClearSumcheckRecorder::<F, C>::new();
-    let (batch, coefficients) =
-        sumchecks.begin_batch(&inputs, &challenges, &mut recorder, transcript)?;
-
-    let mut registers_read_write = backend.registers_read_write.prepare(
+    let mut preparer = BackendPreparer {
+        backend,
         session,
         witness,
-        ProverInputs {
-            relation: &sumchecks.registers_read_write,
-            claims: &inputs.registers_read_write,
-            points: &input_points.registers_read_write,
-            challenges: &challenges.registers_read_write,
-        },
-    )?;
-    let mut ram_val_check = backend.ram_val_check.prepare(
-        session,
-        witness,
-        ProverInputs {
-            relation: &sumchecks.ram_val_check,
-            claims: &inputs.ram_val_check,
-            points: &input_points.ram_val_check,
-            challenges: &challenges.ram_val_check,
-        },
-    )?;
-
-    let mut members: Vec<&mut dyn ProveRounds<F>> =
-        vec![&mut *registers_read_write, &mut *ram_val_check];
-    let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
-
-    let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
-    registers_read_write.validate_derived_tables(
-        &sumchecks.registers_read_write,
-        &input_points.registers_read_write,
-        &output_points.registers_read_write,
-        &challenges.registers_read_write,
-    )?;
-    ram_val_check.validate_derived_tables(
-        &sumchecks.ram_val_check,
-        &input_points.ram_val_check,
-        &output_points.ram_val_check,
-        &challenges.ram_val_check,
-    )?;
-    // The staged advice openings ride on the RAM value-check claims struct
-    // (the naive kernel fills only its own `Expr` leaves), mirroring the
-    // verifier's wire-claim attach.
-    let mut ram_val_check_claims = ram_val_check.output_claims()?;
-    if let Some((_, value)) = &ram_val_check_init.program_image_contribution {
-        ram_val_check_claims.program_image = Some(*value);
-    }
-    for contribution in &ram_val_check_init.advice_contributions {
-        match contribution.kind {
-            JoltAdviceKind::Trusted => {
-                ram_val_check_claims.trusted_advice = Some(contribution.opening_value);
-            }
-            JoltAdviceKind::Untrusted => {
-                ram_val_check_claims.untrusted_advice = Some(contribution.opening_value);
-            }
-        }
-    }
-    let output_values = Stage4OutputClaims {
-        registers_read_write: registers_read_write.output_claims()?,
-        ram_val_check: ram_val_check_claims,
+        context: (),
     };
-    sumchecks.validate_output_claims(&output_values)?;
-    let expected = sumchecks.expected_final_claim(
-        &coefficients,
+    // The curation hook: the staged advice/program-image openings ride on the
+    // RAM value-check claims struct (the naive kernel fills only its own
+    // `Expr` leaves), mirroring the verifier's wire-claim attach; the stage's
+    // `no_opening_values` absorb order is the claims struct's hand-ordered
+    // `opening_values()` (staged openings first, then registers, then RAM).
+    let proved = sumchecks.prove_clear(
+        &mut preparer,
+        &inputs,
         &input_points,
-        &output_values,
-        &output_points,
         &challenges,
+        |claims, _output_points| {
+            if let Some((_, value)) = &ram_val_check_init.program_image_contribution {
+                claims.ram_val_check.program_image = Some(*value);
+            }
+            for contribution in &ram_val_check_init.advice_contributions {
+                match contribution.kind {
+                    JoltAdviceKind::Trusted => {
+                        claims.ram_val_check.trusted_advice = Some(contribution.opening_value);
+                    }
+                    JoltAdviceKind::Untrusted => {
+                        claims.ram_val_check.untrusted_advice = Some(contribution.opening_value);
+                    }
+                }
+            }
+            Ok(claims.opening_values())
+        },
+        ClearSumcheckRecorder::<F, C>::new(),
+        transcript,
     )?;
-    if expected != proved.final_claim {
-        return Err(ProverError::FinalClaimMismatch {
-            stage: "stage4",
-            expected,
-            got: proved.final_claim,
-        });
-    }
-
-    // The stage-curated absorb: `no_opening_values` suppresses the generated
-    // method, so the finish order comes from the claims struct's hand-ordered
-    // `opening_values()` (the staged advice/program-image openings attached
-    // above, when present, first — then registers, then RAM).
-    let recorded = recorder.finish(&output_values.opening_values(), transcript)?;
 
     Ok(Stage4ProverOutput {
-        sumcheck_proof: recorded.proof,
-        claims: output_values.clone(),
+        sumcheck_proof: proved.recorded.proof,
+        claims: proved.output_claims.clone(),
         clear_output: Stage4ClearOutput {
-            output_values,
-            output_points,
+            output_values: proved.output_claims,
+            output_points: proved.output_points,
             ram_val_check_init,
         },
     })
