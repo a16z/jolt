@@ -686,27 +686,28 @@ impl AkitaPackedProver<'_> {
 
     fn lattice_inc_columns(&self, fused_cycles: &[FusedIncCycle]) -> LatticeIncColumns {
         use rayon::prelude::*;
+        use std::sync::Arc;
 
         let chunk_count = UNSIGNED_INC_BITS / self.one_hot_params.log_k_chunk;
         let width = self.one_hot_params.log_k_chunk;
-        let hot_lanes: Vec<Vec<u8>> = (0..chunk_count)
+        let one_hot: Vec<Arc<Vec<Option<u8>>>> = (0..chunk_count)
             .map(|index| {
+                Arc::new(
+                    fused_cycles
+                        .par_iter()
+                        .map(|cycle| Some(cycle.chunk_hot_lane_bits(width, index) as u8))
+                        .collect(),
+                )
+            })
+            .chain(core::iter::once(Arc::new(
                 fused_cycles
                     .par_iter()
-                    .map(|cycle| cycle.chunk_hot_lane_bits(width, index) as u8)
-                    .collect()
-            })
-            .collect();
-        let msb_hot_lanes: Vec<u8> = fused_cycles
-            .par_iter()
-            .map(|cycle| u8::from(cycle.msb()))
+                    .map(|cycle| Some(u8::from(cycle.msb())))
+                    .collect(),
+            )))
             .collect();
         let fused: Vec<i128> = fused_cycles.par_iter().map(|cycle| cycle.delta).collect();
-        LatticeIncColumns {
-            hot_lanes,
-            msb_hot_lanes,
-            fused,
-        }
+        LatticeIncColumns { one_hot, fused }
     }
 
     /// Builds and commits the untrusted-advice byte one-hot column (`A_unt`).
@@ -810,8 +811,7 @@ impl AkitaPackedProver<'_> {
             &self.trace,
             &self.preprocessing.materialized_program().bytecode,
             &self.program_io.memory_layout,
-            columns.hot_lanes.clone(),
-            columns.msb_hot_lanes.clone(),
+            columns.one_hot.clone(),
         );
 
         let (sumcheck_proof, _r, _claim) =
@@ -1038,8 +1038,7 @@ impl AkitaPackedProver<'_> {
             &self.trace,
             self.preprocessing,
             &self.one_hot_params,
-            columns.hot_lanes,
-            columns.msb_hot_lanes,
+            &columns.one_hot,
         );
 
         // The advice/committed address phases join at the batch tail
@@ -1422,7 +1421,7 @@ impl AkitaPackedProver<'_> {
         );
 
         let fused_cycles = self.fused_inc_cycles();
-        let columns = self.lattice_inc_columns(&fused_cycles);
+        let mut columns = self.lattice_inc_columns(&fused_cycles);
         let plan = W_JOLT_LAYOUT
             .plan(&self.wjolt_shape())
             .expect("canonical Wjolt layout must exist");
@@ -1467,7 +1466,7 @@ impl AkitaPackedProver<'_> {
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
             bytecode_read_raf_params,
             booleanity_cycle_input,
-            columns.fused.clone(),
+            std::mem::take(&mut columns.fused),
         );
         let stage7_sumcheck_proof = self.prove_stage7_lattice(columns);
         let reconstruction_proof =

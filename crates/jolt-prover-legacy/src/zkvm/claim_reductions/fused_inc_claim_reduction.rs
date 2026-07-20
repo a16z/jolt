@@ -4,12 +4,12 @@
 use allocative::Allocative;
 
 use crate::field::JoltField;
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
     LITTLE_ENDIAN,
 };
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
@@ -84,16 +84,17 @@ impl<F: JoltField> SumcheckInstanceParams<F> for FusedIncClaimReductionParams<F>
 
 #[derive(Allocative)]
 pub struct FusedIncClaimReductionProver<F: JoltField> {
-    eq: MultilinearPolynomial<F>,
+    eq: GruenSplitEqPolynomial<F>,
     fused_inc: MultilinearPolynomial<F>,
     pub params: FusedIncClaimReductionParams<F>,
 }
 
 impl<F: JoltField> FusedIncClaimReductionProver<F> {
     pub fn initialize(params: FusedIncClaimReductionParams<F>, fused_inc: Vec<i128>) -> Self {
-        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&params.input_point.r));
+        // The BE opening point is already in split-eq LowToHigh convention:
+        // `w[len - 1]` pairs with the first-bound (LSB) cycle variable.
         Self {
-            eq,
+            eq: GruenSplitEqPolynomial::new(&params.input_point.r, BindingOrder::LowToHigh),
             fused_inc: fused_inc.into(),
             params,
         }
@@ -105,25 +106,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for FusedIncClaim
         &self.params
     }
 
+    #[tracing::instrument(skip_all, name = "FusedIncClaimReductionProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        let half = self.eq.len() / 2;
-        let mut evals = [F::zero(); DEGREE_BOUND];
-        for index in 0..half {
-            let eq = self
-                .eq
-                .sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-            let fused = self
-                .fused_inc
-                .sumcheck_evals_array::<DEGREE_BOUND>(index, BindingOrder::LowToHigh);
-            for evaluation in 0..DEGREE_BOUND {
-                evals[evaluation] += eq[evaluation] * fused[evaluation];
-            }
-        }
-        UniPoly::from_evals_and_hint(previous_claim, &evals)
+        let [q_0] = self
+            .eq
+            .par_fold_out_in_unreduced::<1>(&|j| [self.fused_inc.get_bound_coeff(2 * j)]);
+        self.eq.gruen_poly_deg_2(q_0, previous_claim)
     }
 
+    #[tracing::instrument(skip_all, name = "FusedIncClaimReductionProver::ingest_challenge")]
     fn ingest_challenge(&mut self, challenge: F::Challenge, _round: usize) {
-        self.eq.bind_parallel(challenge, BindingOrder::LowToHigh);
+        self.eq.bind(challenge);
         self.fused_inc
             .bind_parallel(challenge, BindingOrder::LowToHigh);
     }

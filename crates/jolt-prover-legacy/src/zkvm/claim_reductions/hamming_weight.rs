@@ -552,28 +552,35 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
         }
     }
 
+    #[cfg(feature = "akita")]
     pub fn initialize_lattice<C, PCS>(
         params: HammingWeightClaimReductionParams<F>,
         trace: &[Cycle],
         preprocessing: &JoltProverPreprocessing<F, C, PCS>,
         one_hot_params: &OneHotParams,
-        mut hot_lanes: Vec<Vec<u8>>,
-        msb_hot_lanes: Vec<u8>,
+        one_hot_columns: &[std::sync::Arc<Vec<Option<u8>>>],
     ) -> Self
     where
         C: JoltCurve<F = F>,
         PCS: CommitmentScheme<Field = F>,
     {
-        hot_lanes.push(msb_hot_lanes);
-        let r_cycle_eq = EqPolynomial::<F>::evals(&params.r_cycle);
-        let k = 1usize << params.log_k_chunk;
-        let increment_g = hot_lanes.into_iter().map(|lanes| {
-            let mut g = vec![F::zero(); k];
-            for (cycle, lane) in lanes.into_iter().enumerate() {
-                g[lane as usize] += r_cycle_eq[cycle];
-            }
-            MultilinearPolynomial::from(g)
-        });
+        // `params.r_cycle` is BIG_ENDIAN, so the head half of the point
+        // indexes the high cycle bits: eq(r, j) = e_hi[j >> lo] · e_lo[j & mask].
+        let lo_bits = params.r_cycle.len() / 2;
+        let hi_bits = params.r_cycle.len() - lo_bits;
+        let (r_hi, r_lo) = params.r_cycle.split_at(hi_bits);
+        let (e_hi, e_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
+        );
+        let increment_g = crate::subprotocols::booleanity::one_hot_pushforwards(
+            one_hot_columns,
+            &e_hi,
+            &e_lo,
+            1usize << params.log_k_chunk,
+        )
+        .into_iter()
+        .map(MultilinearPolynomial::from);
         let mut prover = Self::initialize(params, trace, preprocessing, one_hot_params);
         prover.G.extend(increment_g);
         prover.identity = Some(crate::poly::identity_poly::IdentityPolynomial::new(
