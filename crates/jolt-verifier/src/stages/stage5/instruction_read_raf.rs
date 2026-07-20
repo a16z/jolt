@@ -93,6 +93,12 @@ pub(crate) fn reconstruct_r_address<F: Field>(
         .collect()
 }
 
+impl<F: Field> InstructionReadRaf<F> {
+    pub fn dimensions(&self) -> InstructionReadRafDimensions {
+        self.dimensions
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
     type Symbolic = relations::instruction::ReadRaf;
 

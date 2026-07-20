@@ -18,6 +18,6 @@ pub mod stages;
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession};
-pub use preparer::BackendPreparer;
+pub use preparer::{BackendPreparer, Stage5PrepareContext};
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
 pub use prover::prove;
