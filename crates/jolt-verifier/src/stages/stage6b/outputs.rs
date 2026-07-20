@@ -70,9 +70,16 @@ pub struct Stage6bSumchecks<F: Field> {
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
     pub inc_claim_reduction: IncClaimReduction<F>,
+    /// External on the prove side (as are the three members below): the
+    /// precommitted reduction kernels span the 6b->7 batch boundary, so the
+    /// recipe supplies them to the generated driver rather than a preparer.
+    #[sumcheck(external)]
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
+    #[sumcheck(external)]
     pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
+    #[sumcheck(external)]
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
+    #[sumcheck(external)]
     pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
 }
 

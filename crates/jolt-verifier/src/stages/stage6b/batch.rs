@@ -22,6 +22,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
+use jolt_riscv::JoltInstructionRow;
 
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::{
@@ -40,13 +41,96 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
 use crate::stages::stage1::Stage1Output;
-use crate::stages::stage2::Stage2Output;
+use crate::stages::stage2::{Stage2BatchOutputPoints, Stage2Output};
+use crate::stages::stage3::outputs::Stage3OutputPoints;
 use crate::stages::stage3::Stage3Output;
+use crate::stages::stage4::outputs::Stage4OutputPoints;
 use crate::stages::stage4::Stage4Output;
+use crate::stages::stage5::outputs::Stage5OutputPoints;
 use crate::stages::stage5::Stage5Output;
+use crate::stages::stage6a::outputs::{Stage6aCarriedChallenges, Stage6aOutputPoints};
 use crate::stages::stage6a::Stage6aOutput;
+use crate::stages::PrecommittedSchedule;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
+
+/// The bytecode read-RAF upstream cycle points shared by the stage-6a address
+/// phase and the stage-6b batch build: the five per-stage cycle bindings (the
+/// stage-1 binding is the raw remainder tail, re-reversed), plus the register
+/// opening points whose 7-var address prefixes feed the stage-value folds.
+pub struct BytecodeStagePoints<F: Field> {
+    pub stage_cycle_points: [Vec<F>; 5],
+    pub register_read_write_point: Vec<F>,
+    pub register_val_evaluation_point: Vec<F>,
+}
+
+/// Derive the [`BytecodeStagePoints`] from the mode-agnostic upstream opening
+/// points. Shared by [`Stage6bSumchecks::build`] (both proving modes) and the
+/// prove-side stage-6a/6b recipes, so the five-leg wiring cannot drift.
+pub fn bytecode_stage_points<F: Field>(
+    stage1_cycle_binding: &[F],
+    stage2: &Stage2BatchOutputPoints<F>,
+    stage3: &Stage3OutputPoints<F>,
+    stage4: &Stage4OutputPoints<F>,
+    stage5: &Stage5OutputPoints<F>,
+) -> Result<BytecodeStagePoints<F>, VerifierError> {
+    let register_read_write_point = stage4.registers_read_write_point().to_vec();
+    let register_val_evaluation_point = stage5.registers_opening_point().to_vec();
+    let (_, register_read_write_cycle) = stage6_checked_split(
+        "Stage 6 stage4 register read-write opening",
+        &register_read_write_point,
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::BytecodeReadRaf,
+    )?;
+    let (_, register_val_evaluation_cycle) = stage6_checked_split(
+        "Stage 6 stage5 register value-evaluation opening",
+        &register_val_evaluation_point,
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::BytecodeReadRaf,
+    )?;
+    let stage_cycle_points = [
+        stage1_cycle_binding.iter().rev().copied().collect(),
+        stage2.product_remainder_point().to_vec(),
+        stage3.shift_opening_point().to_vec(),
+        register_read_write_cycle.to_vec(),
+        register_val_evaluation_cycle.to_vec(),
+    ];
+    Ok(BytecodeStagePoints {
+        stage_cycle_points,
+        register_read_write_point,
+        register_val_evaluation_point,
+    })
+}
+
+/// The batch legs [`Stage6bSumchecks::build_from_parts`] assembles the members
+/// from: protocol geometry, the precommitted schedule, the carried stage-6a
+/// draws, the mode-agnostic upstream opening points, and the clear-only value
+/// aux (each empty/`None` in ZK, where `input_claim`/`expected_output` never
+/// run). Every field is data both the verifier and the prover hold.
+pub struct Stage6bBuildParts<'a, F: Field> {
+    pub formula_dimensions: &'a JoltFormulaDimensions,
+    pub ram_log_k: usize,
+    pub committed_chunk_bits: usize,
+    pub precommitted: &'a PrecommittedSchedule,
+    pub entry_bytecode_index: usize,
+    /// The full bytecode rows backing the full-program table fold
+    /// (`None` in ZK and committed-program modes).
+    pub bytecode_table_rows: Option<&'a [JoltInstructionRow]>,
+    pub carried: &'a Stage6aCarriedChallenges<F>,
+    pub eta: Option<F>,
+    pub stage1_cycle_binding: Vec<F>,
+    pub stage2_points: &'a Stage2BatchOutputPoints<F>,
+    pub stage3_points: &'a Stage3OutputPoints<F>,
+    pub stage4_points: &'a Stage4OutputPoints<F>,
+    pub stage5_points: &'a Stage5OutputPoints<F>,
+    pub stage5_instruction_address: Vec<F>,
+    pub stage6a_points: &'a Stage6aOutputPoints<F>,
+    /// The staged `BytecodeValStage` openings (clear committed-program mode;
+    /// empty otherwise).
+    pub address_val_stages: Vec<F>,
+    pub trusted_advice_reference_point: Option<Vec<F>>,
+    pub untrusted_advice_reference_point: Option<Vec<F>>,
+}
 
 impl<F: Field> Stage6bSumchecks<F> {
     #[expect(
@@ -70,43 +154,12 @@ impl<F: Field> Stage6bSumchecks<F> {
         PCS: CommitmentScheme<Field = F>,
         VC: VectorCommitment<Field = F>,
     {
-        let log_t = formula_dimensions.trace.log_t();
-        let log_k = checked.ram_K.ilog2() as usize;
-        let trace_dimensions = formula_dimensions.trace;
-
-        let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
-        let untrusted_advice_layout = checked.precommitted.untrusted_advice.as_ref();
-        let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
-        let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
-        let committed_program = bytecode_reduction_layout.is_some();
-
-        let booleanity_dimensions = BooleanityDimensions::new(
-            formula_dimensions.ra_layout,
-            log_t,
-            proof.one_hot_config.committed_chunk_bits(),
-        );
-
-        // The pre-/around-6a draws consumed here ride on the stage-6a output as
-        // typed upstream values: the bytecode fold gamma (shared with stage 6a's
-        // squeeze), the per-stage folding gammas, and the booleanity address / cycle
-        // reference points. The bytecode folds below consume per-stage power
-        // VECTORS, expanded once here from the carried scalars.
-        let carried = stage6a.challenges();
-        let stage_gamma_powers = carried.bytecode_read_raf.stage_gamma_powers();
-        let bytecode_r_address = stage6a
-            .output_points()
-            .bytecode_read_raf
-            .intermediate
-            .clone();
-        let booleanity_r_address = stage6a.output_points().booleanity.intermediate.clone();
-
-        // Cycle-phase constructor legs, wired mode-agnostically off the upstream
-        // outputs; the post-batch opening points are derived against these same
-        // values through the relation objects.
-        let stage4_points = stage4.output_points();
-        let stage5_points = stage5.output_points();
-        let stage5_instruction_address = stage5.instruction_r_address();
-        let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
+        // The pre-/around-6a draws consumed by the legs ride on the stage-6a
+        // output as typed upstream values; the mode-specific value aux (the
+        // staged Val openings, the advice reference points, the full bytecode
+        // rows) feeds only `input_claim` / `expected_output`, which never run
+        // in ZK.
+        let committed_program = checked.precommitted.bytecode.is_some();
         let stage1_cycle_binding =
             stage1
                 .cycle_binding()
@@ -114,28 +167,134 @@ impl<F: Field> Stage6bSumchecks<F> {
                     stage: JoltRelationId::BytecodeReadRaf,
                     reason: "Stage 1 remainder point is empty".to_string(),
                 })?;
-        let stage2_points = stage2.batch_output_points();
-        let stage3_points = stage3.output_points();
-        let (register_read_write_address, register_read_write_cycle) = stage6_checked_split(
-            "Stage 6 stage4 register read-write opening",
-            stage4_points.registers_read_write_point(),
-            REGISTER_ADDRESS_BITS,
-            JoltRelationId::BytecodeReadRaf,
+        let entry_bytecode_index =
+            preprocessing
+                .program
+                .entry_bytecode_index()
+                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: "entry address was not found in bytecode preprocessing".to_string(),
+                })?;
+        let bytecode_table_rows = if checked.zk || committed_program {
+            None
+        } else {
+            Some(
+                preprocessing
+                    .program
+                    .as_full()
+                    .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::BytecodeReadRaf,
+                        reason: "full bytecode table is unavailable".to_string(),
+                    })?
+                    .bytecode
+                    .bytecode
+                    .as_slice(),
+            )
+        };
+        let (address_val_stages, trusted_advice_reference_point, untrusted_advice_reference_point) =
+            if checked.zk {
+                (Vec::new(), None, None)
+            } else {
+                let stage4 = stage4.clear()?;
+                let claims_6a = &proof.clear_claims()?.stage6a;
+                let reference = |kind| {
+                    stage4
+                        .ram_val_check_init
+                        .advice_contribution(kind)
+                        .map(|contribution| contribution.opening_point.clone())
+                };
+                (
+                    claims_6a.bytecode_read_raf.val_stages.clone(),
+                    reference(JoltAdviceKind::Trusted),
+                    reference(JoltAdviceKind::Untrusted),
+                )
+            };
+
+        Self::build_from_parts(Stage6bBuildParts {
+            formula_dimensions,
+            ram_log_k: checked.ram_K.ilog2() as usize,
+            committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+            precommitted: &checked.precommitted,
+            entry_bytecode_index,
+            bytecode_table_rows,
+            carried: stage6a.challenges(),
+            eta,
+            stage1_cycle_binding,
+            stage2_points: stage2.batch_output_points(),
+            stage3_points: stage3.output_points(),
+            stage4_points: stage4.output_points(),
+            stage5_points: stage5.output_points(),
+            stage5_instruction_address: stage5.instruction_r_address().to_vec(),
+            stage6a_points: stage6a.output_points(),
+            address_val_stages,
+            trusted_advice_reference_point,
+            untrusted_advice_reference_point,
+        })
+    }
+
+    /// The leg-assembly core of [`build`](Self::build), over data both sides
+    /// hold: the prove-side stage-6b recipe constructs the batch through this
+    /// same constructor from its clear carriers, so the ten member legs are
+    /// single-sourced.
+    pub fn build_from_parts(parts: Stage6bBuildParts<'_, F>) -> Result<Self, VerifierError> {
+        let Stage6bBuildParts {
+            formula_dimensions,
+            ram_log_k: log_k,
+            committed_chunk_bits,
+            precommitted,
+            entry_bytecode_index,
+            bytecode_table_rows,
+            carried,
+            eta,
+            stage1_cycle_binding,
+            stage2_points,
+            stage3_points,
+            stage4_points,
+            stage5_points,
+            stage5_instruction_address,
+            stage6a_points,
+            address_val_stages,
+            trusted_advice_reference_point,
+            untrusted_advice_reference_point,
+        } = parts;
+        let log_t = formula_dimensions.trace.log_t();
+        let trace_dimensions = formula_dimensions.trace;
+
+        let trusted_advice_layout = precommitted.trusted_advice.as_ref();
+        let untrusted_advice_layout = precommitted.untrusted_advice.as_ref();
+        let bytecode_reduction_layout = precommitted.bytecode.as_ref();
+        let program_image_reduction_layout = precommitted.program_image.as_ref();
+        let committed_program = bytecode_reduction_layout.is_some();
+
+        let booleanity_dimensions =
+            BooleanityDimensions::new(formula_dimensions.ra_layout, log_t, committed_chunk_bits);
+
+        // The bytecode folds below consume per-stage power VECTORS, expanded
+        // once here from the carried scalars.
+        let stage_gamma_powers = carried.bytecode_read_raf.stage_gamma_powers();
+        let bytecode_r_address = stage6a_points.bytecode_read_raf.intermediate.clone();
+        let booleanity_r_address = stage6a_points.booleanity.intermediate.clone();
+
+        // Cycle-phase constructor legs, wired mode-agnostically off the upstream
+        // outputs; the post-batch opening points are derived against these same
+        // values through the relation objects.
+        let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
+        let BytecodeStagePoints {
+            stage_cycle_points,
+            register_read_write_point,
+            register_val_evaluation_point,
+        } = bytecode_stage_points(
+            &stage1_cycle_binding,
+            stage2_points,
+            stage3_points,
+            stage4_points,
+            stage5_points,
         )?;
-        let (register_val_evaluation_address, register_val_evaluation_cycle) =
-            stage6_checked_split(
-                "Stage 6 stage5 register value-evaluation opening",
-                stage5_points.registers_opening_point(),
-                REGISTER_ADDRESS_BITS,
-                JoltRelationId::BytecodeReadRaf,
-            )?;
-        let stage_cycle_points = [
-            stage1_cycle_binding.iter().rev().copied().collect(),
-            stage2_points.product_remainder_point().to_vec(),
-            stage3_points.shift_opening_point().to_vec(),
-            register_read_write_cycle.to_vec(),
-            register_val_evaluation_cycle.to_vec(),
-        ];
+        let register_read_write_address = &register_read_write_point[..REGISTER_ADDRESS_BITS];
+        let register_val_evaluation_address =
+            &register_val_evaluation_point[..REGISTER_ADDRESS_BITS];
+        let register_read_write_cycle = stage_cycle_points[3].as_slice();
+        let register_val_evaluation_cycle = stage_cycle_points[4].as_slice();
         let ram_reduced = stage5_points.ram_reduced_opening_point();
         if ram_reduced.len() != log_k + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
@@ -166,35 +325,15 @@ impl<F: Field> Stage6bSumchecks<F> {
             register_read_write_cycle.to_vec(),
             register_val_evaluation_cycle.to_vec(),
         ];
-        let entry_bytecode_index =
-            preprocessing
-                .program
-                .entry_bytecode_index()
-                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::BytecodeReadRaf,
-                    reason: "entry address was not found in bytecode preprocessing".to_string(),
-                })?;
-        // The full-program table fold is expected_output-only, so ZK (which never
-        // runs it) skips the aux entirely.
-        let bytecode_table_fold = if checked.zk || committed_program {
-            None
-        } else {
-            Some(BytecodeReadRafTableFoldInputs {
-                bytecode: preprocessing
-                    .program
-                    .as_full()
-                    .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                        stage: JoltRelationId::BytecodeReadRaf,
-                        reason: "full bytecode table is unavailable".to_string(),
-                    })?
-                    .bytecode
-                    .bytecode
-                    .as_slice(),
+        // The full-program table fold is expected_output-only (absent rows mean
+        // ZK or committed mode, where it never runs).
+        let bytecode_table_fold =
+            bytecode_table_rows.map(|bytecode| BytecodeReadRafTableFoldInputs {
+                bytecode,
                 register_read_write_point: register_read_write_address,
                 register_val_evaluation_point: register_val_evaluation_address,
                 stage_gammas: stage_gamma_powers.each_ref().map(Vec::as_slice),
-            })
-        };
+            });
         // `eta` is drawn exactly when the bytecode layout is committed, so a
         // committed layout always carries weights and the member's `(Some, None)`
         // case is unreachable.
@@ -217,26 +356,6 @@ impl<F: Field> Stage6bSumchecks<F> {
                 )
             })
             .transpose()?;
-        // Clear-only value legs: the staged Val openings and the advice reference
-        // points feed only `input_claim` / `expected_output`, which never run in ZK.
-        let (address_val_stages, trusted_advice_reference_point, untrusted_advice_reference_point) =
-            if checked.zk {
-                (Vec::new(), None, None)
-            } else {
-                let stage4 = stage4.clear()?;
-                let claims_6a = &proof.clear_claims()?.stage6a;
-                let reference = |kind| {
-                    stage4
-                        .ram_val_check_init
-                        .advice_contribution(kind)
-                        .map(|contribution| contribution.opening_point.clone())
-                };
-                (
-                    claims_6a.bytecode_read_raf.val_stages.clone(),
-                    reference(JoltAdviceKind::Trusted),
-                    reference(JoltAdviceKind::Untrusted),
-                )
-            };
 
         let bytecode_read_raf = if committed_program {
             BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
@@ -244,7 +363,7 @@ impl<F: Field> Stage6bSumchecks<F> {
                 r_address: bytecode_r_address,
                 stage_cycle_points,
                 entry_bytecode_index,
-                committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+                committed_chunk_bits,
                 val_stages: address_val_stages,
             })
         } else {
@@ -253,7 +372,7 @@ impl<F: Field> Stage6bSumchecks<F> {
                 r_address: bytecode_r_address,
                 stage_cycle_points,
                 entry_bytecode_index,
-                committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+                committed_chunk_bits,
                 table_fold: bytecode_table_fold,
             })?
         };
@@ -270,13 +389,13 @@ impl<F: Field> Stage6bSumchecks<F> {
             formula_dimensions.ram_ra_virtualization,
             ram_reduced_address.to_vec(),
             ram_reduced_cycle.to_vec(),
-            proof.one_hot_config.committed_chunk_bits(),
+            committed_chunk_bits,
         );
         let instruction_ra_virtualization = InstructionRaVirtualization::new(
             formula_dimensions.instruction_ra_virtualization,
-            stage5_instruction_address.to_vec(),
+            stage5_instruction_address,
             stage5_instruction_cycle.to_vec(),
-            proof.one_hot_config.committed_chunk_bits(),
+            committed_chunk_bits,
         );
         let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
             inc_cycle_points;

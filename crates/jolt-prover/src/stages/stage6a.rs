@@ -43,6 +43,7 @@ use jolt_verifier::stages::stage6a::outputs::{
     Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutputClaims,
     Stage6aSumchecks,
 };
+use jolt_verifier::stages::stage6b::batch::{bytecode_stage_points, BytecodeStagePoints};
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage6Rows};
 use jolt_witness::WitnessProvider;
@@ -151,12 +152,24 @@ where
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
+    let stage1_cycle_binding =
+        stage1
+            .cycle_binding()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "Stage 1 remainder point is empty".to_string(),
+            })?;
     let BytecodeStagePoints {
         stage_cycle_points,
-        stage1_cycle_binding: _,
-        registers_read_write_point,
-        registers_val_evaluation_point,
-    } = bytecode_stage_points(stage1, stage2, stage3, stage4, stage5)?;
+        register_read_write_point,
+        register_val_evaluation_point,
+    } = bytecode_stage_points(
+        &stage1_cycle_binding,
+        &stage2.output_points,
+        &stage3.output_points,
+        &stage4.output_points,
+        &stage5.output_points,
+    )?;
 
     // The per-row stage-value tables, via the verifier's own fold over the
     // padded bytecode (the prover-retained copy in committed mode).
@@ -168,8 +181,8 @@ where
     let stage_gammas = carried.bytecode_read_raf.stage_gamma_powers();
     let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
         bytecode: &program.bytecode.bytecode,
-        register_read_write_point: &registers_read_write_point[..REGISTER_ADDRESS_BITS],
-        register_val_evaluation_point: &registers_val_evaluation_point[..REGISTER_ADDRESS_BITS],
+        register_read_write_point: &register_read_write_point[..REGISTER_ADDRESS_BITS],
+        register_val_evaluation_point: &register_val_evaluation_point[..REGISTER_ADDRESS_BITS],
         stage1_gammas: &stage_gammas[0],
         stage2_gammas: &stage_gammas[1],
         stage3_gammas: &stage_gammas[2],
@@ -221,55 +234,5 @@ where
             output_points: proved.output_points,
             challenges: carried,
         },
-    })
-}
-
-/// The bytecode read+RAF upstream cycle points shared by the stage-6a address
-/// phase and the stage-6b batch build: the five per-stage cycle bindings (the
-/// stage-1 binding is the reversed remainder point minus its stream variable,
-/// re-reversed), plus the register opening points whose 7-var address prefixes
-/// feed the stage-value folds.
-pub(crate) struct BytecodeStagePoints<F> {
-    pub stage_cycle_points: [Vec<F>; 5],
-    pub stage1_cycle_binding: Vec<F>,
-    pub registers_read_write_point: Vec<F>,
-    pub registers_val_evaluation_point: Vec<F>,
-}
-
-pub(crate) fn bytecode_stage_points<F: Field>(
-    stage1: &Stage1ClearOutput<F>,
-    stage2: &Stage2ClearOutput<F>,
-    stage3: &Stage3ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    stage5: &Stage5ClearOutput<F>,
-) -> Result<BytecodeStagePoints<F>, ProverError<F>> {
-    let stage1_remainder_reversed: Vec<F> = stage1
-        .output_points
-        .outer_remainder
-        .left_instruction_input()
-        .iter()
-        .rev()
-        .copied()
-        .collect();
-    let stage1_cycle_binding = stage1_remainder_reversed
-        .split_first()
-        .map(|(_, cycle)| cycle.to_vec())
-        .ok_or(ProverError::InvariantViolation {
-            reason: "stage-1 remainder point is empty",
-        })?;
-    let registers_read_write_point = stage4.output_points.registers_read_write_point().to_vec();
-    let registers_val_evaluation_point = stage5.output_points.registers_opening_point().to_vec();
-    let stage_cycle_points: [Vec<F>; 5] = [
-        stage1_cycle_binding.iter().rev().copied().collect(),
-        stage2.output_points.product_remainder_point().to_vec(),
-        stage3.output_points.shift_opening_point().to_vec(),
-        registers_read_write_point[REGISTER_ADDRESS_BITS..].to_vec(),
-        registers_val_evaluation_point[REGISTER_ADDRESS_BITS..].to_vec(),
-    ];
-    Ok(BytecodeStagePoints {
-        stage_cycle_points,
-        stage1_cycle_binding,
-        registers_read_write_point,
-        registers_val_evaluation_point,
     })
 }
