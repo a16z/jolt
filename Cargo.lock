@@ -3430,12 +3430,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-lean-gen"
-version = "0.1.0"
-dependencies = [
- "common",
- "jolt-program",
- "jolt-riscv",
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
@@ -3453,6 +3447,15 @@ dependencies = [
  "jolt-witness",
  "rayon",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-lean-gen"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-program",
+ "jolt-riscv",
 ]
 
 [[package]]
