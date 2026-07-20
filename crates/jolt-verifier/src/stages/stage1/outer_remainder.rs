@@ -95,6 +95,16 @@ impl<F: Field> OuterRemainderCoefficients<F> {
     }
 }
 
+impl<F: Field> OuterRemainder<F> {
+    pub fn tau(&self) -> &[F] {
+        &self.tau
+    }
+
+    pub fn uniskip_challenge(&self) -> F {
+        self.uniskip_challenge
+    }
+}
+
 pub struct OuterRemainder<F: Field> {
     symbolic: relations::spartan::OuterRemainder,
     variable_count: usize,

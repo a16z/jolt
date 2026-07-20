@@ -165,9 +165,10 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
     /// one multilinear table.
     fn into_remainder(
         self: Box<Self>,
-        uniskip_challenge: F,
+        relation: &OuterRemainder<F>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
         let this = *self;
+        let uniskip_challenge = relation.uniskip_challenge();
         let kernel = centered_lagrange_kernel::<F>(
             OUTER_UNISKIP_DOMAIN_SIZE,
             this.tau[this.log_t + 1],
@@ -241,9 +242,8 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
             })
             .collect();
 
-        let relation = OuterRemainder::new(dimensions, this.tau, uniskip_challenge);
         Ok(Box::new(NaiveSumcheckProver::new(
-            &relation,
+            relation,
             &NoChallenges::default(),
             opening_tables,
             derived_tables,

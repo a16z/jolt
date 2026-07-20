@@ -82,7 +82,7 @@ where
         ),
     };
 
-    let mut member = instance.into_remainder(uniskip_challenge)?;
+    let mut member = instance.into_remainder(&sumchecks.outer_remainder)?;
     let mut preparer = BackendPreparer {
         backend,
         session,

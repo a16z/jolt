@@ -147,7 +147,7 @@ where
     let input_points = sumchecks.empty_input_points();
     let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);
 
-    let mut product_remainder = product.into_remainder(tau_high, uniskip_challenge)?;
+    let mut product_remainder = product.into_remainder(&sumchecks.product_remainder)?;
     let mut preparer = BackendPreparer {
         backend,
         session,

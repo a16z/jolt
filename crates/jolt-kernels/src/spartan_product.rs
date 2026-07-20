@@ -23,13 +23,14 @@ pub trait SpartanProductProver<F: Field> {
 
 /// A prepared product-virtualization instance: the uni-skip first-round
 /// polynomial (once `τ_high` is drawn), then the remainder batch member (once
-/// the uni-skip challenge binds).
+/// the uni-skip challenge binds). `relation` is the stage's batch instance
+/// (the source of `τ_high` and the uni-skip challenge; the kernel owns no
+/// copy).
 pub trait SpartanProductInstance<F: Field> {
     fn uniskip_first_round_poly(&self, tau_high: F) -> Result<UnivariatePoly<F>, KernelError<F>>;
 
     fn into_remainder(
         self: Box<Self>,
-        tau_high: F,
-        uniskip_challenge: F,
+        relation: &ProductRemainder<F>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>>;
 }

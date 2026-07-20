@@ -21,7 +21,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_S
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
-    write_lookup_output_to_rd_product, SpartanProductDimensions,
+    write_lookup_output_to_rd_product,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
 use jolt_claims::NoChallenges;
@@ -57,7 +57,6 @@ impl<F: Field> SpartanProductProver<F> for ReferenceBackend {
 /// remainder member both consume.
 pub struct SpartanProductKernel<F: Field> {
     log_t: usize,
-    tau_low: Vec<F>,
     eq_cycle: Vec<F>,
     left_instruction_input: Vec<F>,
     lookup_output: Vec<F>,
@@ -77,7 +76,6 @@ impl<F: Field> SpartanProductKernel<F> {
     ) -> Result<Self, KernelError<F>> {
         Ok(Self {
             log_t,
-            tau_low: tau_low.to_vec(),
             eq_cycle: eq_table(tau_low),
             left_instruction_input: dense_view(witness, left_instruction_input_product())?,
             lookup_output: dense_view(witness, lookup_output_product())?,
@@ -134,10 +132,11 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
     /// table); `TauKernel` is the `LK(τ_high, r₀)`-scaled eq-cycle table.
     fn into_remainder(
         self: Box<Self>,
-        tau_high: F,
-        uniskip_challenge: F,
+        relation: &ProductRemainder<F>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
         let this = *self;
+        let tau_high = relation.tau_high();
+        let uniskip_challenge = relation.uniskip_challenge();
         let cycles = 1usize << this.log_t;
         let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)?;
         let scale = centered_lagrange_kernel::<F>(
@@ -186,14 +185,8 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
             ),
         ]);
 
-        let relation = ProductRemainder::new(
-            SpartanProductDimensions::new(this.log_t),
-            uniskip_challenge,
-            tau_high,
-            this.tau_low,
-        );
         Ok(Box::new(NaiveSumcheckProver::new(
-            &relation,
+            relation,
             &NoChallenges::default(),
             opening_tables,
             derived_tables,

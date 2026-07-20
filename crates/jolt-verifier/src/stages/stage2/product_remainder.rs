@@ -37,6 +37,16 @@ pub fn product_remainder_input_values_from_uniskip_output<F: Field>(
     }
 }
 
+impl<F: Field> ProductRemainder<F> {
+    pub fn uniskip_challenge(&self) -> F {
+        self.uniskip_challenge
+    }
+
+    pub fn tau_high(&self) -> F {
+        self.tau_high
+    }
+}
+
 pub struct ProductRemainder<F: Field> {
     symbolic: relations::spartan::ProductRemainder,
     uniskip_challenge: F,
