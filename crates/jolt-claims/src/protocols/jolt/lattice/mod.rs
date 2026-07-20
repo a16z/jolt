@@ -2,7 +2,7 @@
 //! Jolt PIOP over a packed one-hot witness committed with a
 //! non-homomorphic PCS. Design: `specs/lattice-claims.md`.
 //!
-//! This module names facts only — the canonical native Wjolt member set,
+//! This module names facts only — the canonical native OneHotTrace column set,
 //! auxiliary `jolt-openings::PrefixPacking` registrations, extra relations,
 //! and final-opening map. Witness materialization, transcripts, and stage
 //! orchestration live in the verifier/prover crates.
@@ -24,7 +24,7 @@
 //!   bits are always the logical point's suffix.
 //! - **final claim** — claims flow through the relation DAG until, per
 //!   polynomial, one claim remains that no relation consumes. In base mode
-//!   the stage-8 RLC batch settles it; in lattice mode Wjolt members are opened
+//!   the stage-8 RLC batch settles it; in lattice mode OneHotTrace columns are opened
 //!   natively at one point while auxiliary columns use one packed-slot claim.
 
 pub mod geometry;
@@ -36,6 +36,9 @@ pub use geometry::{
 };
 pub mod strategy;
 pub use packing::{
-    advice_bytes_packing, precommitted_packing, wjolt_members, PrecommittedPackingShape, WJoltShape,
+    advice_bytes_packing, one_hot_trace_columns, precommitted_packing, OneHotTraceShape,
+    PrecommittedPackingShape,
 };
-pub use strategy::{WJoltLayout, WJoltLayoutPlan, WJoltSetupShape, W_JOLT_LAYOUT};
+pub use strategy::{
+    OneHotTraceLayout, OneHotTraceLayoutPlan, OneHotTraceSetupShape, ONE_HOT_TRACE_LAYOUT,
+};

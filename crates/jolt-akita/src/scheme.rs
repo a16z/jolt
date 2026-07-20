@@ -11,12 +11,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
-    domain_size, invalid_batch, one_hot_polynomial, serialize_akita, sparse_unit_polynomial,
-    transparent_zk_error, validate_one_hot_k, AkitaBackendCommitment, AkitaBackendDensePoly,
-    AkitaBackendHint, AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField,
-    AkitaHidingCommitment, AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotK16BackendScheme,
-    AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
-    AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    domain_size, invalid_batch, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
+    sparse_unit_polynomial, transparent_zk_error, validate_one_hot_k, AkitaBackendCommitment,
+    AkitaBackendDensePoly, AkitaBackendHint, AkitaBackendScheme, AkitaBatchProof, AkitaCommitment,
+    AkitaField, AkitaHidingCommitment, AkitaHintPolynomials, AkitaLayoutDigest,
+    AkitaOneHotK16BackendScheme, AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup,
+    AkitaSetupParams, AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 
@@ -109,6 +109,91 @@ impl AkitaScheme {
         )
     }
 
+    /// Commits owned one-hot columns without cloning their hot-index buffers
+    /// at the Jolt/Akita boundary. The opening hint retains the backend
+    /// representations needed by the prover.
+    pub fn commit_one_hot_group_owned(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        polynomials: Vec<OneHotPolynomial>,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let first = polynomials
+            .first()
+            .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
+        let num_vars = first.num_vars();
+        Self::validate_commit_shape(setup, num_vars, polynomials.len())?;
+        let backend_polynomials = polynomials
+            .into_iter()
+            .map(|polynomial| {
+                if polynomial.num_vars() != num_vars {
+                    return Err(invalid_batch(format!(
+                        "Akita commitment group mixes {}-variable and {num_vars}-variable polynomials",
+                        polynomial.num_vars()
+                    )));
+                }
+                owned_one_hot_polynomial(polynomial, setup.one_hot_k())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let (backend_commitment, backend_hint) = match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                &backend_polynomials,
+                &stack,
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                &backend_polynomials,
+                &stack,
+            ),
+            _ => unreachable!("one-hot K is validated during setup"),
+        }
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::OneHot(backend_polynomials.into()),
+        )
+    }
+
+    /// Opens committed one-hot columns directly from their hint. The hint
+    /// owns the witnesses after [`Self::commit_one_hot_group_owned`], so no
+    /// second Jolt-side allocation is required.
+    pub fn open_one_hot_group_from_hint(
+        point: &[AkitaField],
+        evaluations: &[AkitaField],
+        setup: &AkitaProverSetup,
+        hint: AkitaProverHint,
+        transcript: &mut impl Transcript<Challenge = AkitaField>,
+    ) -> Result<AkitaBatchProof, OpeningsError> {
+        let statement = evaluations
+            .iter()
+            .map(|evaluation| VerifierOpeningClaim {
+                commitment: hint.commitment.clone(),
+                evaluation: EvaluationClaim::new(point.to_vec(), *evaluation),
+            })
+            .collect();
+        let shapes = (0..evaluations.len())
+            .map(|_| CommittedOneHotShape {
+                num_vars: point.len(),
+            })
+            .collect::<Vec<_>>();
+        let polynomials: AkitaNativeBatchPolynomials<'_> = shapes
+            .iter()
+            .map(|shape| shape as &dyn MultilinearPoly<AkitaField>)
+            .collect();
+        <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            setup,
+            statement,
+            polynomials,
+            hint,
+            transcript,
+        )
+    }
+
     /// Validates the commitment shape before handing values to Akita.
     fn validate_commit_shape(
         setup: &AkitaProverSetup,
@@ -184,6 +269,28 @@ impl AkitaScheme {
             backend_hint,
             AkitaHintPolynomials::Dense(dense.into()),
         )
+    }
+}
+
+struct CommittedOneHotShape {
+    num_vars: usize,
+}
+
+impl MultilinearPoly<AkitaField> for CommittedOneHotShape {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn evaluate(&self, _point: &[AkitaField]) -> AkitaField {
+        unreachable!("hint-owned one-hot witness is evaluated by the Akita backend")
+    }
+
+    fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[AkitaField])) {
+        unreachable!("hint-owned one-hot witness is streamed by the Akita backend")
+    }
+
+    fn is_one_hot(&self) -> bool {
+        true
     }
 }
 
@@ -717,7 +824,7 @@ mod tests {
     }
 }
 
-/// Timed comparison of the two W_jolt commitment formats at production shape:
+/// Timed comparison of the two OneHotTrace commitment formats at production shape:
 /// one sparse-unit union polynomial (`slots` slots × `2^(8+log_t)` cells)
 /// versus one batched one-hot group (`slots` polynomials of `8+log_t`
 /// variables each) — commit + batched open + verify for both.

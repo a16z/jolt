@@ -13,13 +13,13 @@ Akita is a lattice PCS: it commits to small-norm coefficient vectors and has no
 commitment homomorphism. Two consequences for Jolt:
 
 1. **No RLC of commitments.** The stage-8 final-opening step over homomorphic
-   commitments cannot be reused. The per-proof `W_jolt` commitment is therefore
+   commitments cannot be reused. The per-proof `OneHotTrace` commitment is therefore
    one native Akita commitment group: every member is a strict `K x T` one-hot
    polynomial, all members open at one canonical point, and one native Akita
    batch proof settles the group. Advice and committed-program objects have
    different domains and remain auxiliary `PrefixPacking` reductions.
 2. **0/1 cells, for efficiency.** Committing 0/1 vectors is where Akita is
-   fast, so Wjolt and the auxiliary objects stay one-hot/boolean throughout — this is a
+   fast, so OneHotTrace and the auxiliary objects stay one-hot/boolean throughout — this is a
    performance choice, not a norm-bound requirement. Every committed column
    that is not already one-hot gets a one-hot encoding: the dense signed
    `RdInc`/`RamInc` columns become a **fused, shifted, one-hot chunk
@@ -45,7 +45,7 @@ rejected here.
 V1 scope (full prototype parity):
 
 ```text
-canonical native one-hot Wjolt layout plus auxiliary prefix-packed objects
+canonical native one-hot OneHotTrace layout plus auxiliary prefix-packed objects
 inc fusion (RamInc/RdInc -> one Inc stream selected by the bytecode Store flag)
 base-2^b one-hot chunk decomposition + full one-hot msb column
 four fused-inc consumer val stages inside the bytecode read-RAF, discharging
@@ -61,7 +61,7 @@ bytecode sub-column decomposition (register selectors, circuit/instruction
     BytecodeChunkReconstruction relation rebuilding chunk lane values
 program-image byte decomposition + its reconstruction relation
 decode-weight point algebra (the relations' derived semantics)
-final-opening map (native Wjolt claim | auxiliary packed claim | virtualized)
+final-opening map (native OneHotTrace claim | auxiliary packed claim | virtualized)
 ```
 
 Out of scope (deferred):
@@ -88,13 +88,13 @@ encoding is not re-proven in-protocol.
 
 | Crate | Owns | Must NOT contain |
 |-------|------|------------------|
-| `jolt-claims` | ids, arities, symbolic relations, final-opening map, canonical Wjolt member order and layout digest | transcripts, witnesses, PCS |
+| `jolt-claims` | ids, arities, symbolic relations, final-opening map, canonical OneHotTrace column order and layout digest | transcripts, witnesses, PCS |
 | `jolt-openings` | `PrefixPacking` slot assignment, suffix-compat check, eq-prefix reduction, transcript binding | Jolt-specific ids or protocol semantics |
-| `jolt-verifier` | `ConcreteSumcheck` impls, stage schedule, native Wjolt opening and auxiliary packed openings | relation algebra (sourced from `jolt-claims`) |
+| `jolt-verifier` | `ConcreteSumcheck` impls, stage schedule, native OneHotTrace opening and auxiliary packed openings | relation algebra (sourced from `jolt-claims`) |
 | `jolt-witness`/prover | one-hot witness materialization and matching stage schedule | — |
 | `jolt-akita` | PCS transport | — |
 
-`jolt-claims` owns the ordered Wjolt member list and hashes the order, member
+`jolt-claims` owns the ordered OneHotTrace column list and hashes the order, member
 identities, and dimensions into a nonzero setup digest. The proof never chooses
 this digest. `jolt-openings::PrefixPacking` remains the source of truth only for
 the auxiliary advice and committed-program objects.
@@ -112,9 +112,9 @@ crates/jolt-claims/src/protocols/jolt/lattice/
 │                   definitions of the reconstruction relations' deriveds,
 │                   composed from jolt-poly's IdentityPolynomial /
 │                   eq_index_msb primitives); pure functions
-├── packing.rs      wjolt_members(..) -> canonical native member order;
+├── packing.rs      one_hot_trace_columns(..) -> canonical native member order;
 │                   auxiliary precommitted/advice PrefixPacking registration
-├── strategy.rs     the one native Wjolt layout, common-point permutation,
+├── strategy.rs     the one native OneHotTrace layout, common-point permutation,
 │                   setup shape, and canonical nonzero layout digest
 └── relations/
     ├── read_raf.rs                      lattice bytecode read-RAF (address
@@ -153,7 +153,7 @@ ProgramImageReconstruction,      // word-decode leg only
 BytecodeChunkReconstruction,     // chunk -> lane sub-column decode
 
 // JoltCommittedPolynomial — appended variants (committed only in lattice mode,
-// as native Wjolt members or auxiliary packed columns; base mode never
+// as native OneHotTrace columns or auxiliary packed columns; base mode never
 // constructs them)
 UnsignedIncChunk(usize),   // one-hot column j of the fused unsigned inc
 UnsignedIncMsb,            // full K x T one-hot column, hot address 0 or 1
@@ -180,8 +180,8 @@ FusedInc,                  // gamma-batched RamInc/RdInc stream; opened once,
 ```
 
 WARNING: enum `Ord` is protocol data for auxiliary objects — `PrefixPacking`
-assigns slots by `(num_vars, Id)` order. Wjolt does not use this ordering: its
-member order is constructed explicitly by `wjolt_members` and hashed into its
+assigns slots by `(num_vars, Id)` order. OneHotTrace does not use this ordering: its
+member order is constructed explicitly by `one_hot_trace_columns` and hashed into its
 canonical layout digest.
 
 Per-relation challenge/public sub-enums live in `protocols/jolt/ids.rs` next to every other
@@ -201,17 +201,17 @@ allowed the same id to denote claims at two different points.
 
 ## Commitment Layout
 
-Every native Wjolt member and every auxiliary packed column is identified by
+Every native OneHotTrace column and every auxiliary packed column is identified by
 `JoltCommittedPolynomial`. The earlier draft's separate `LatticeColumn` id
-family is gone. Wjolt has one relation-produced claim per member at a shared
+family is gone. OneHotTrace has one relation-produced claim per column at a shared
 point; auxiliary columns have one claim per prefix-packed slot.
 
-Wjolt is one native Akita group; the helper below supplies its canonical
+OneHotTrace is one native Akita group; the helper below supplies its canonical
 ordered member list. Auxiliary objects use separate prefix packings:
 
 ```rust
-/// Canonical per-proof Wjolt member order.
-pub fn wjolt_members(shape) -> Vec<JoltCommittedPolynomial>;
+/// Canonical per-proof OneHotTrace column order.
+pub fn one_hot_trace_columns(shape) -> Vec<JoltCommittedPolynomial>;
 // InstructionRa(0..I), BytecodeRa(0..B), RamRa(0..R)   log_k_chunk + log_T each
 // UnsignedIncChunk(0..N)                               log_k_chunk + log_T each
 //                       (chunk width b = log_k_chunk, N = 64 / b)
@@ -248,7 +248,7 @@ logical polynomial / slot / prefix, plus each family's own dimension names —
   dummy place cells are zero by convention (checked offline with the rest of
   the precommitted validity).
 
-Every Wjolt member has the same arity. Relation leaves use
+Every OneHotTrace column has the same arity. Relation leaves use
 `(address || cycle)` order; the native Akita members use row-major
 `(cycle || address)` order. Stage 8 applies this one permutation to every
 member and rejects unless all mapped points are identical. A protocol-owned,
@@ -463,7 +463,7 @@ would emit.
 
 ## Packed-Claim Invariants and Final Openings
 
-Wjolt's native batch requires one evaluation per committed member at exactly
+OneHotTrace's native batch requires one evaluation per committed column at exactly
 one point. Stage 7 therefore lands all RA, increment chunk, and MSB claims at
 the same `(address || cycle)` point, after which Stage 8 applies the common
 row-major permutation. Any missing member, arity mismatch, or point mismatch
@@ -485,7 +485,7 @@ row, `γ` for the advice column).
 `lattice/packing.rs` is the single source of truth for the endgame:
 
 A polynomial's **final claim** is the one claim left when the relation DAG
-bottoms out. Wjolt final claims feed the native batch; auxiliary claims feed
+bottoms out. OneHotTrace final claims feed the native batch; auxiliary claims feed
 their packed reductions. `Virtualized` polynomials have none.
 
 ```rust
@@ -529,7 +529,7 @@ base stage-8 RLC order for lattice mode.
   there is no separate fused-inc member.
 - Stage 7 extends `HammingWeightClaimReduction` with hamming, Booleanity, and
   shifted-decode terms for all increment one-hot columns.
-- Stage 8 opens Wjolt directly with one native same-point Akita batch and runs
+- Stage 8 opens OneHotTrace directly with one native same-point Akita batch and runs
   the generic packed-opening reduction only for auxiliary objects.
 - The Dory build instantiates the original Booleanity, increment claim
   reduction, HammingWeightClaimReduction, and homomorphic final opening.
@@ -544,11 +544,11 @@ base stage-8 RLC order for lattice mode.
   `Σ 2^(b*j)·address(chunk_j) + 2^64·address(msb) − 2^64`
   round-trips the value.
 - Semantic integration tests (`tests/lattice_semantics.rs`) over concrete
-  witness data: every Wjolt member is a uniform `K x T` one-hot polynomial;
+  witness data: every OneHotTrace column is a uniform `K x T` one-hot polynomial;
   the chunk/MSB decomposition reconstructs signed increments including
   padding; auxiliary lane/advice reconstruction terms reproduce the committed
   evaluations.
-- Determinism: `wjolt_members`/`precommitted_packing` are pure functions of
+- Determinism: `one_hot_trace_columns`/`precommitted_packing` are pure functions of
   shape (golden test), and every packed proof column has a claim source.
 
 ## Dropped From the Prototype (jolt-claims-ref) and Why
@@ -560,7 +560,7 @@ base stage-8 RLC order for lattice mode.
 | `JoltOpeningId::Lattice { relation, index }` | deleted | untyped; hid polynomial identity and point identity |
 | `PackingValidityRequirement`/`PackingValidityKind` + digest | deleted | validity is not metadata; it is the validity **relations** (prover-supplied columns) or an **offline preprocessing check** (public precommitted columns) |
 | `PackingViewFormula`/`PackingViewTerm` | deleted | briefly survived as `ReconstructionTerm` lists, then replaced outright by the reconstruction *relations* (5–8) + the decode-weight point algebra; provenness follows from the column's validity story |
-| two-entry one-hot boolean-flag encoding | replaced for auxiliary public bytecode flags | plain 0/1 columns of `log_rows` variables; `1 − flag` is expression algebra, and the auxiliary commitment stays 0/1. The increment MSB is not such a flag: it is a full `K x T` Wjolt one-hot member. |
+| two-entry one-hot boolean-flag encoding | replaced for auxiliary public bytecode flags | plain 0/1 columns of `log_rows` variables; `1 − flag` is expression algebra, and the auxiliary commitment stays 0/1. The increment MSB is not such a flag: it is a full `K x T` OneHotTrace one-hot column. |
 | bytecode store-rd-disjoint, canonical imm bytes, sub-column one-hot validity | moved offline | public precommitted data; the verifier checks structure at preprocessing instead of spending relations |
 | Public→Challenge enum migration (EqCycle etc.) | not ported | orthogonal to lattice; main's Derived model already covers it |
 | eq-polynomial / coefficient materialization helpers | not ported | belongs to verifier/witness crates per the boundary contract |

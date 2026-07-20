@@ -2,10 +2,10 @@
 //!
 //! Tables are emitted offline by the `gen_jolt_schedules` binary (this
 //! crate) through `akita_planner::emit` — the same emitter and DP that
-//! produce akita's own shipped tables — over the `W_jolt` shapes reachable
-//! from Jolt: every member width the RA layout, unsigned-inc chunking, and
-//! MSB can produce, across the trace sizes of each K regime. Checked-in
-//! tables are source; regenerate with:
+//! produce akita's own shipped tables — over the `OneHotTrace` shapes reachable
+//! from Jolt: every native group width produced by the RA layout and
+//! unsigned-increment chunking across each K regime. Checked-in tables are
+//! source; regenerate with:
 //!
 //! ```text
 //! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/src/schedules
@@ -38,7 +38,7 @@ mod jolt_fp128_d64_onehot_k16;
 )]
 mod jolt_fp128_d64_onehot_k256;
 
-/// The K=16 `W_jolt` catalog.
+/// The K=16 `OneHotTrace` catalog.
 pub fn jolt_fp128_d64_onehot_k16_table() -> Option<GeneratedScheduleTable> {
     Some(GeneratedScheduleTable {
         entries: jolt_fp128_d64_onehot_k16::JOLT_FP128_D64_ONEHOT_K16_SCHEDULES,
@@ -46,7 +46,7 @@ pub fn jolt_fp128_d64_onehot_k16_table() -> Option<GeneratedScheduleTable> {
     })
 }
 
-/// The K=256 large-trace `W_jolt` catalog.
+/// The K=256 large-trace `OneHotTrace` catalog.
 pub fn jolt_fp128_d64_onehot_k256_table() -> Option<GeneratedScheduleTable> {
     Some(GeneratedScheduleTable {
         entries: jolt_fp128_d64_onehot_k256::JOLT_FP128_D64_ONEHOT_K256_SCHEDULES,
@@ -56,7 +56,7 @@ pub fn jolt_fp128_d64_onehot_k256_table() -> Option<GeneratedScheduleTable> {
 
 /// Emit-spec construction shared by the `gen_jolt_schedules` binary and the
 /// drift test: one family per config, scalar single-group keys over the
-/// reachable `W_jolt` grid.
+/// reachable `OneHotTrace` grid.
 pub mod emit {
     use akita_config::{policy_of, CommitmentConfig};
     use akita_pcs::AkitaError;
@@ -67,24 +67,24 @@ pub mod emit {
 
     use crate::configs::{JoltD64OneHotK16, JoltD64OneHotK256};
 
-    /// `W_jolt` member widths at K=16 (`log_k_chunk = 4`): 49 fixed members
-    /// (32 instruction-address chunks, 16 fused-increment chunks, the
-    /// increment MSB) plus up to 16 bytecode and 16 RAM chunks; width 1
-    /// covers singleton one-hot opens.
+    /// `OneHotTrace` widths at K=16: 49 fixed columns (32 instruction-address
+    /// chunks, 16 unsigned-increment chunks, and the increment MSB), plus up
+    /// to 16 bytecode and 16 RAM chunks. Width one covers singleton one-hot
+    /// objects.
     pub const K16_NUM_POLYS: &[usize] = &[
         1, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
         71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
     ];
-    /// Member arity is `4 + log_T`; `log_T < 25` in the K=16 regime.
+    /// Column arity is `4 + log_T`; `log_T < 25` in the K=16 regime.
     pub const K16_NUM_VARS: (usize, usize) = (1, 28);
 
-    /// `W_jolt` member widths at K=256 (`log_k_chunk = 8`): 25 fixed members
-    /// (16 instruction chunks, 8 fused-increment chunks, the MSB) plus up to
-    /// 8 bytecode and 8 RAM chunks.
+    /// `OneHotTrace` widths at K=256: 25 fixed columns (16 instruction
+    /// chunks, eight unsigned-increment chunks, and the MSB), plus up to eight
+    /// bytecode and eight RAM chunks.
     pub const K256_NUM_POLYS: &[usize] = &[
         1, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
     ];
-    /// Member arity is `8 + log_T`; the K=256 regime starts at `log_T = 25`.
+    /// Column arity is `8 + log_T`; the K=256 regime starts at `log_T = 25`.
     pub const K256_NUM_VARS: (usize, usize) = (33, 38);
 
     fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {

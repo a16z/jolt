@@ -20,7 +20,7 @@ use crate::{
 #[cfg(not(feature = "akita"))]
 pub type ProofCommitments<PCS> = JoltCommitments<<PCS as Commitment>::Output>;
 /// The proof-carried polynomial commitments on the `akita` build: the single
-/// packed `W_jolt` commitment carrying every per-proof column.
+/// packed `OneHotTrace` commitment carrying every per-proof column.
 #[cfg(feature = "akita")]
 pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 
@@ -28,12 +28,12 @@ pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 /// opening proof at the unified point.
 #[cfg(not(feature = "akita"))]
 pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
-/// The Akita Wjolt opening is native and same-point. Only auxiliary packed
+/// The Akita OneHotTrace opening is native and same-point. Only auxiliary packed
 /// objects retain the generic reduction proof.
 #[cfg(feature = "akita")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaJointOpeningProof<F, P> {
-    pub w_jolt: P,
+    pub one_hot_trace: P,
     pub auxiliary: Option<jolt_openings::PackedOpeningProof<F, P>>,
 }
 
