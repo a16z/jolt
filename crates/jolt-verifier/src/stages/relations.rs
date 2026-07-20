@@ -1880,3 +1880,457 @@ mod engine_twin_tests {
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
 }
+
+/// Twin locks for the GENERATED `prove_clear` driver against a hand-rolled toy
+/// stage: three self-consistent dense relations — a plain member, an `Option`
+/// member (exercised absent and present), and a `#[sumcheck(external)]`
+/// member — driven end to end (head → prepare → round loop → typed extraction
+/// → shape validation → final-claim self-check → finish) and byte-compared
+/// against the generated `verify_clear` on a twin transcript.
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod prove_clear_tests {
+    use core::marker::PhantomData;
+
+    use jolt_claims::protocols::jolt::{
+        JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
+    };
+    use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
+    use jolt_field::{Field, Fr, FromPrimitiveInt, RingCore};
+    use jolt_poly::UnivariatePoly;
+    use jolt_sumcheck::{
+        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SumcheckError,
+    };
+    use jolt_transcript::{Blake2bTranscript, Transcript};
+
+    use super::{
+        ConcreteSumcheck, PrepareSumcheck, ProverInputs, SumcheckKernel, SumcheckKernelError,
+        SumcheckOutputClaims, SumcheckPreparer,
+    };
+    use crate::VerifierError;
+
+    /// Declare one toy dense relation: a single produced opening, a single
+    /// consumed claim carrying the true table sum, no challenges, degree 1.
+    macro_rules! toy_relation {
+        (
+            $symbolic:ident, $relation:ident, $inputs:ident, $outputs:ident,
+            rel = $rel:ident, output = $output:ident, input = $input:ident
+        ) => {
+            #[derive(Clone, Debug, Default, PartialEq, Eq, jolt_claims::InputClaims)]
+            struct $inputs<C> {
+                #[opening($input, from = $rel)]
+                claimed_sum: C,
+            }
+
+            #[derive(
+                Clone,
+                Debug,
+                PartialEq,
+                Eq,
+                jolt_claims::OutputClaims,
+                serde::Serialize,
+                serde::Deserialize,
+            )]
+            #[relation($rel)]
+            struct $outputs<C> {
+                #[opening($output)]
+                value: C,
+            }
+
+            struct $symbolic {
+                rounds: usize,
+            }
+
+            impl SymbolicSumcheck for $symbolic {
+                type RelationId = JoltRelationId;
+                type OpeningId = JoltOpeningId;
+                type DerivedId = jolt_claims::protocols::jolt::JoltDerivedId;
+                type ChallengeId = jolt_claims::protocols::jolt::JoltChallengeId;
+                type Shape = usize;
+                type Challenges<F> = NoChallenges<F>;
+                type Inputs<C> = $inputs<C>;
+                type Outputs<C> = $outputs<C>;
+
+                fn new(shape: usize) -> Self {
+                    Self { rounds: shape }
+                }
+
+                fn id() -> JoltRelationId {
+                    JoltRelationId::$rel
+                }
+
+                fn rounds(&self) -> usize {
+                    self.rounds
+                }
+
+                fn degree(&self) -> usize {
+                    1
+                }
+
+                fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+                    opening(JoltOpeningId::virtual_polynomial(
+                        JoltVirtualPolynomial::$input,
+                        JoltRelationId::$rel,
+                    ))
+                }
+
+                fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+                    opening(JoltOpeningId::virtual_polynomial(
+                        JoltVirtualPolynomial::$output,
+                        JoltRelationId::$rel,
+                    ))
+                }
+            }
+
+            struct $relation<F: Field> {
+                symbolic: $symbolic,
+                _field: PhantomData<F>,
+            }
+
+            impl<F: Field> $relation<F> {
+                fn new(rounds: usize) -> Self {
+                    Self {
+                        symbolic: $symbolic::new(rounds),
+                        _field: PhantomData,
+                    }
+                }
+            }
+
+            impl<F: Field> ConcreteSumcheck<F> for $relation<F> {
+                type Symbolic = $symbolic;
+
+                fn symbolic(&self) -> &$symbolic {
+                    &self.symbolic
+                }
+
+                fn derive_opening_points(
+                    &self,
+                    sumcheck_point: &[F],
+                    _input_points: &$inputs<Vec<F>>,
+                ) -> Result<$outputs<Vec<F>>, VerifierError> {
+                    Ok($outputs {
+                        value: sumcheck_point.to_vec(),
+                    })
+                }
+            }
+        };
+    }
+
+    toy_relation!(
+        AlphaSymbolic,
+        ToyAlpha,
+        ToyAlphaInputs,
+        ToyAlphaOutputs,
+        rel = RegistersValEvaluation,
+        output = LookupOutput,
+        input = UnexpandedPC
+    );
+    toy_relation!(
+        BetaSymbolic,
+        ToyBeta,
+        ToyBetaInputs,
+        ToyBetaOutputs,
+        rel = RamValCheck,
+        output = LeftLookupOperand,
+        input = UnexpandedPC
+    );
+    toy_relation!(
+        GammaSymbolic,
+        ToyGamma,
+        ToyGammaInputs,
+        ToyGammaOutputs,
+        rel = SpartanShift,
+        output = RightLookupOperand,
+        input = UnexpandedPC
+    );
+
+    #[derive(super::SumcheckBatch)]
+    struct ToyDriverSumchecks<F: Field> {
+        alpha: ToyAlpha<F>,
+        beta: Option<ToyBeta<F>>,
+        #[sumcheck(external)]
+        gamma: ToyGamma<F>,
+    }
+
+    /// A dense multilinear kernel with a prescribed total sum (HighToLow
+    /// binding, degree 1): the single produced opening is the fully bound
+    /// table value, which is exactly the relation's `expected_output`.
+    struct DenseKernel<R> {
+        evals: Vec<Fr>,
+        num_rounds: usize,
+        _relation: PhantomData<fn() -> R>,
+    }
+
+    impl<R> DenseKernel<R> {
+        fn with_sum(num_rounds: usize, sum: Fr, seed: u64) -> Self {
+            let size = 1u64 << num_rounds;
+            let mut evals: Vec<Fr> = (0..size)
+                .map(|i| Fr::from_u64(seed + 31 * i + 11))
+                .collect();
+            let current: Fr = evals.iter().copied().sum();
+            evals[0] += sum - current;
+            Self {
+                evals,
+                num_rounds,
+                _relation: PhantomData,
+            }
+        }
+
+        fn bind(&mut self, challenge: Fr) {
+            let half = self.evals.len() / 2;
+            for i in 0..half {
+                self.evals[i] = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
+            }
+            self.evals.truncate(half);
+        }
+    }
+
+    impl<R> ProveRounds<Fr> for DenseKernel<R> {
+        fn num_rounds(&self) -> usize {
+            self.num_rounds
+        }
+
+        fn prove_round(
+            &mut self,
+            bind: Option<Fr>,
+            _round: usize,
+            previous_claim: Fr,
+        ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+            if let Some(challenge) = bind {
+                self.bind(challenge);
+            }
+            let half = self.evals.len() / 2;
+            let eval_0: Fr = self.evals[..half].iter().copied().sum();
+            let eval_1: Fr = self.evals[half..].iter().copied().sum();
+            assert_eq!(eval_0 + eval_1, previous_claim);
+            Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
+        }
+
+        fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
+            self.bind(bind);
+            Ok(())
+        }
+    }
+
+    impl<R> SumcheckKernel<Fr> for DenseKernel<R>
+    where
+        R: ConcreteSumcheck<Fr>,
+        SumcheckOutputClaims<Fr, R>: super::OutputClaims<Fr>,
+        super::SumcheckInputClaims<Fr, R>: super::InputClaims<Fr>,
+        super::ConcreteSumcheckChallenges<Fr, R>:
+            super::SumcheckChallenges<Fr, jolt_claims::protocols::jolt::JoltChallengeId>,
+    {
+        type Relation = R;
+
+        fn output_claims(
+            &mut self,
+        ) -> Result<SumcheckOutputClaims<Fr, R>, SumcheckKernelError<Fr>> {
+            assert_eq!(self.evals.len(), 1, "kernel extracted before fully bound");
+            let value = self.evals[0];
+            SumcheckOutputClaims::<Fr, R>::from_opening_values(|_| Some(value))
+                .map_err(SumcheckKernelError::from)
+        }
+    }
+
+    #[derive(Debug)]
+    #[expect(dead_code, reason = "payloads exist for unwrap's Debug output")]
+    enum ToyError {
+        Verifier(VerifierError),
+        Sumcheck(SumcheckError<Fr>),
+        Kernel(SumcheckKernelError<Fr>),
+    }
+
+    impl From<VerifierError> for ToyError {
+        fn from(error: VerifierError) -> Self {
+            Self::Verifier(error)
+        }
+    }
+
+    impl From<SumcheckError<Fr>> for ToyError {
+        fn from(error: SumcheckError<Fr>) -> Self {
+            Self::Sumcheck(error)
+        }
+    }
+
+    impl From<SumcheckKernelError<Fr>> for ToyError {
+        fn from(error: SumcheckKernelError<Fr>) -> Self {
+            Self::Kernel(error)
+        }
+    }
+
+    /// The toy preparer: mints dense kernels whose tables sum to the member's
+    /// consumed claim (read off the `ProverInputs` bundle, like a real backend
+    /// slot reads the relation), and records the prepare call order.
+    struct ToyPreparer {
+        calls: Vec<&'static str>,
+    }
+
+    impl SumcheckPreparer<Fr> for ToyPreparer {
+        type Error = ToyError;
+    }
+
+    impl PrepareSumcheck<Fr, ToyAlpha<Fr>> for ToyPreparer {
+        fn prepare(
+            &mut self,
+            inputs: ProverInputs<'_, Fr, ToyAlpha<Fr>>,
+        ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = ToyAlpha<Fr>>>, ToyError> {
+            self.calls.push("alpha");
+            Ok(Box::new(DenseKernel::<ToyAlpha<Fr>>::with_sum(
+                inputs.relation.rounds(),
+                inputs.claims.claimed_sum,
+                5,
+            )))
+        }
+    }
+
+    impl PrepareSumcheck<Fr, ToyBeta<Fr>> for ToyPreparer {
+        fn prepare(
+            &mut self,
+            inputs: ProverInputs<'_, Fr, ToyBeta<Fr>>,
+        ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = ToyBeta<Fr>>>, ToyError> {
+            self.calls.push("beta");
+            Ok(Box::new(DenseKernel::<ToyBeta<Fr>>::with_sum(
+                inputs.relation.rounds(),
+                inputs.claims.claimed_sum,
+                91,
+            )))
+        }
+    }
+
+    const ALPHA_ROUNDS: usize = 3;
+    const BETA_ROUNDS: usize = 2;
+    const GAMMA_ROUNDS: usize = 3;
+
+    fn fixture(beta: bool) -> ToyDriverSumchecks<Fr> {
+        ToyDriverSumchecks {
+            alpha: ToyAlpha::new(ALPHA_ROUNDS),
+            beta: beta.then(|| ToyBeta::new(BETA_ROUNDS)),
+            gamma: ToyGamma::new(GAMMA_ROUNDS),
+        }
+    }
+
+    fn inputs(beta: bool) -> ToyDriverInputClaims<Fr> {
+        let fr = Fr::from_u64;
+        ToyDriverInputClaims {
+            alpha: ToyAlphaInputs {
+                claimed_sum: fr(1234),
+            },
+            beta: beta.then(|| ToyBetaInputs {
+                claimed_sum: fr(777),
+            }),
+            gamma: ToyGammaInputs {
+                claimed_sum: fr(4242),
+            },
+        }
+    }
+
+    /// Drive the generated `prove_clear` and its `verify_clear` twin, assert
+    /// byte-identical transcript states, and return the driver's output.
+    fn drive(beta: bool) -> (ProvedToyDriver<Fr, Fr>, Vec<&'static str>) {
+        let sumchecks = fixture(beta);
+        let inputs = inputs(beta);
+        let mut preparer = ToyPreparer { calls: Vec::new() };
+        let mut gamma_kernel =
+            DenseKernel::<ToyGamma<Fr>>::with_sum(GAMMA_ROUNDS, inputs.gamma.claimed_sum, 23);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"prove-clear-twin");
+        let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
+        let input_points = sumchecks.empty_input_points();
+        let proved = sumchecks
+            .prove_clear(
+                &mut preparer,
+                &inputs,
+                &input_points,
+                &challenges,
+                ToyDriverExternalMembers {
+                    gamma: &mut gamma_kernel,
+                },
+                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                &mut prover_transcript,
+            )
+            .unwrap();
+
+        // Verifier twin: generated draw + verify_clear + output-claim absorbs.
+        let mut verifier_transcript = Blake2bTranscript::new(b"prove-clear-twin");
+        let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
+        let verified = sumchecks
+            .verify_clear(
+                &inputs,
+                &verifier_challenges,
+                &proved.recorded.proof,
+                &mut verifier_transcript,
+            )
+            .unwrap();
+        sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
+
+        assert_eq!(verified.reduction.value, proved.final_claim);
+        assert_eq!(
+            sumchecks
+                .expected_final_claim(
+                    &verified.coefficients,
+                    &input_points,
+                    &proved.output_claims,
+                    &sumchecks
+                        .derive_opening_points(&verified.reduction.point, &input_points)
+                        .unwrap(),
+                    &verifier_challenges,
+                )
+                .unwrap(),
+            proved.final_claim,
+        );
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        (proved, preparer.calls)
+    }
+
+    #[test]
+    fn prove_clear_twin_with_present_option_member() {
+        let (proved, calls) = drive(true);
+        // Prepare ran in declaration order; the external member never touched
+        // the preparer.
+        assert_eq!(calls, vec!["alpha", "beta"]);
+        assert!(proved.output_claims.beta.is_some());
+        // Typed extraction filled every slot, external included.
+        assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
+        assert_eq!(proved.output_claims.gamma.opening_values().len(), 1);
+    }
+
+    #[test]
+    fn prove_clear_twin_with_absent_option_member() {
+        let (proved, calls) = drive(false);
+        assert_eq!(calls, vec!["alpha"]);
+        assert!(proved.output_claims.beta.is_none());
+    }
+
+    /// `prove_clear` is generic over the recorder: this compiles it against
+    /// the committed recorder even though nothing wires the ZK path yet.
+    #[expect(dead_code, reason = "compile-only recorder-generality witness")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the generated driver's signature it type-checks"
+    )]
+    fn prove_clear_type_checks_with_committed_recorder(
+        sumchecks: &ToyDriverSumchecks<Fr>,
+        preparer: &mut ToyPreparer,
+        inputs: &ToyDriverInputClaims<Fr>,
+        input_points: &ToyDriverInputPoints<Fr>,
+        challenges: &ToyDriverChallenges<Fr>,
+        externals: ToyDriverExternalMembers<'_, Fr>,
+        recorder: CommittedSumcheckRecorder<
+            '_,
+            Fr,
+            jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
+            rand_core::OsRng,
+        >,
+        transcript: &mut Blake2bTranscript,
+    ) -> Result<ProvedToyDriver<Fr, jolt_crypto::Bn254G1>, ToyError> {
+        sumchecks.prove_clear(
+            preparer,
+            inputs,
+            input_points,
+            challenges,
+            externals,
+            recorder,
+            transcript,
+        )
+    }
+}

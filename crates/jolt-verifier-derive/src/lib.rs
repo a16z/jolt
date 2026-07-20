@@ -51,6 +51,25 @@
 //!   (clear appends, committed no-ops), never by a runtime flag. Returns the
 //!   engine-form `jolt_sumcheck::BatchPrelude` paired with the stage's named
 //!   `BatchingCoefficients`.
+//! - `prove_clear` — the prove-side stage driver, mirroring `verify_clear`
+//!   member for member: `begin_batch` → per-member kernel `prepare` (through
+//!   the caller's `PrepareSumcheck` impls, in declaration order, `Option`
+//!   members gated on presence) → `jolt_sumcheck::prove_batch` →
+//!   `derive_opening_points` → per-member `validate_derived_tables` → typed
+//!   `output_claims()` into the stage's `OutputClaims` aggregate →
+//!   `validate_output_claims` → the `expected_final_claim` hard self-check →
+//!   `recorder.finish` over the canonical opening values. Returns the
+//!   generated `Proved<Stage>` carrier (recorded proof, typed claims, derived
+//!   points, final claim). Recorder-generic like `begin_batch`. A
+//!   `#[sumcheck(external)]` FIELD attribute marks members whose kernel the
+//!   preparer cannot mint (uni-skip remainder handoffs, the precommitted
+//!   6b→7 phase spans): the driver takes them as caller-supplied
+//!   `&mut dyn SumcheckKernel` bundles (the generated
+//!   `<Stage>ExternalMembers`), appended to the round loop in declaration
+//!   order. The `no_opening_values` opt-out swaps the generated finish values
+//!   for a caller-supplied curation hook (mutate-claims + curated absorb
+//!   order); `no_output_shape` skips the shape validation, exactly as on the
+//!   verify side.
 //! - `verify_clear` — the clear-path batched-verify driver: `begin_batch` with a
 //!   clear recorder, then reduce the combined claim through the single-instance
 //!   `SumcheckProof::verify_compressed_boolean`. The batching lives in the
@@ -110,7 +129,7 @@ use syn::{
 /// suppressing generated methods that would be wrong to call on the flagged
 /// stage, which supplies its own replacement where one is needed. The
 /// aggregate structs and their derives are emitted unchanged.
-#[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
+#[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch, sumcheck))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand(input)
@@ -121,10 +140,16 @@ pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
 /// One instance field of the source struct: its name and `ConcreteSumcheck`
 /// instance type. `is_option` records a conditional instance (`Option<Instance>`),
 /// whose projections become `Option<..>` and chain only when present.
+/// `is_external` records a `#[sumcheck(external)]` member: the generated
+/// `prove_clear` takes its kernel as a caller-supplied
+/// `&mut dyn SumcheckKernel` (the escape hatch for the uni-skip remainders
+/// and the precommitted 6b→7 family) instead of minting it through the
+/// preparer.
 struct InstanceField {
     ident: Ident,
     instance: Type,
     is_option: bool,
+    is_external: bool,
 }
 
 /// Wrap `body` in the member-presence scaffold shared by the per-member driver
@@ -960,11 +985,386 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    // ------------------------------------------------------------------
+    // The generated prove-side stage driver: `prove_clear` plus its output
+    // carrier (`Proved<Stage>`) and, when the stage declares
+    // `#[sumcheck(external)]` members, the caller-supplied kernel bundle
+    // (`<Stage>ExternalMembers`). See the crate docs.
+    // ------------------------------------------------------------------
+    let proved_name = format_ident!("Proved{base}");
+    let externals_name = format_ident!("{base}ExternalMembers");
+    let has_externals = plans.iter().any(|plan| plan.is_external);
+
+    let proved_struct = quote! {
+        /// A proved stage batch, as assembled by the generated `prove_clear`:
+        /// the recorded wire proof (plus retained witness for a committed
+        /// recorder), the typed output claims and derived opening points, and
+        /// the batch's final running claim (already hard-checked against the
+        /// generated `expected_final_claim`).
+        #vis struct #proved_name<#f: ::jolt_field::Field, __C> {
+            pub recorded: ::jolt_sumcheck::RecordedSumcheck<#f, __C>,
+            pub output_claims: #output_claims_name<#f>,
+            pub output_points: #output_points_name<#f>,
+            pub final_claim: #f,
+        }
+    };
+
+    let externals_struct = if has_externals {
+        let external_fields = plans.iter().filter(|plan| plan.is_external).map(|plan| {
+            let id = &plan.ident;
+            let instance = &plan.instance;
+            let kernel = quote!(&'__m mut dyn #relations::SumcheckKernel<#f, Relation = #instance>);
+            if plan.is_option {
+                quote!(pub #id: ::core::option::Option<#kernel>)
+            } else {
+                quote!(pub #id: #kernel)
+            }
+        });
+        quote! {
+            /// The caller-supplied kernels for this stage's
+            /// `#[sumcheck(external)]` members — the members whose lifecycle
+            /// the preparer cannot mint (uni-skip remainder handoffs, the
+            /// precommitted 6b→7 phase spans). `prove_clear` appends them to
+            /// the round loop in declaration order and extracts their typed
+            /// output claims like any other member.
+            #vis struct #externals_name<'__m, #f: ::jolt_field::Field> {
+                #(#external_fields,)*
+            }
+        }
+    } else {
+        quote!()
+    };
+
+    let prove_clear_method = {
+        // An all-external stage never touches the preparer value (only its
+        // associated `Error` type), so the parameter is underscore-named to
+        // keep the generated code warning-free.
+        let preparer_ident = if plans.iter().all(|plan| plan.is_external) {
+            format_ident!("_preparer")
+        } else {
+            format_ident!("preparer")
+        };
+        let kernel_idents = plans
+            .iter()
+            .map(|plan| format_ident!("__kernel_{}", plan.ident))
+            .collect::<Vec<_>>();
+
+        // Acquire each member's kernel in declaration order: minted through
+        // the preparer for regular members, taken from `externals` for
+        // external ones. A present `Option` member with an absent cell (or a
+        // presence disagreement with its external kernel) is a wiring bug,
+        // attributed to the member's relation id.
+        let kernel_bindings = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
+            let id = &plan.ident;
+            let instance = &plan.instance;
+            if plan.is_external {
+                if plan.is_option {
+                    quote! {
+                        let mut #kernel = match (self.#id.as_ref(), externals.#id) {
+                            (::core::option::Option::Some(_), ::core::option::Option::Some(__k)) => {
+                                ::core::option::Option::Some(__k)
+                            }
+                            (::core::option::Option::None, ::core::option::Option::None) => {
+                                ::core::option::Option::None
+                            }
+                            (::core::option::Option::Some(__member), ::core::option::Option::None) => {
+                                return ::core::result::Result::Err(
+                                    crate::VerifierError::StageClaimSumcheckFailed {
+                                        stage: __member.id(),
+                                        reason: "present external instance was supplied no kernel"
+                                            .to_string(),
+                                    }
+                                    .into(),
+                                );
+                            }
+                            (::core::option::Option::None, ::core::option::Option::Some(_)) => {
+                                return ::core::result::Result::Err(
+                                    crate::VerifierError::StageClaimSumcheckFailed {
+                                        stage: <<#instance as #relations::ConcreteSumcheck<#f>>::Symbolic
+                                            as ::jolt_claims::SymbolicSumcheck>::id(),
+                                        reason: "external kernel supplied for an absent instance"
+                                            .to_string(),
+                                    }
+                                    .into(),
+                                );
+                            }
+                        };
+                    }
+                } else {
+                    quote!(let #kernel = externals.#id;)
+                }
+            } else if plan.is_option {
+                quote! {
+                    let mut #kernel = match (
+                        self.#id.as_ref(),
+                        inputs.#id.as_ref(),
+                        input_points.#id.as_ref(),
+                        challenges.#id.as_ref(),
+                    ) {
+                        (
+                            ::core::option::Option::Some(__member),
+                            ::core::option::Option::Some(__claims),
+                            ::core::option::Option::Some(__points),
+                            ::core::option::Option::Some(__challenges),
+                        ) => ::core::option::Option::Some(
+                            <__P as #relations::PrepareSumcheck<#f, #instance>>::prepare(
+                                #preparer_ident,
+                                #relations::ProverInputs {
+                                    relation: __member,
+                                    claims: __claims,
+                                    points: __points,
+                                    challenges: __challenges,
+                                },
+                            )?,
+                        ),
+                        (::core::option::Option::None, _, _, _) => ::core::option::Option::None,
+                        (::core::option::Option::Some(__member), _, _, _) => {
+                            return ::core::result::Result::Err(
+                                crate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: __member.id(),
+                                    reason: "present instance is missing an input, point, or \
+                                             challenge cell for prepare"
+                                        .to_string(),
+                                }
+                                .into(),
+                            );
+                        }
+                    };
+                }
+            } else {
+                quote! {
+                    let mut #kernel = <__P as #relations::PrepareSumcheck<#f, #instance>>::prepare(
+                        #preparer_ident,
+                        #relations::ProverInputs {
+                            relation: &self.#id,
+                            claims: &inputs.#id,
+                            points: &input_points.#id,
+                            challenges: &challenges.#id,
+                        },
+                    )?;
+                }
+            }
+        });
+
+        // The engine-facing member slice, in declaration order (`Option`
+        // members join only when present). The `&mut **`/`&mut *` reborrows
+        // upcast `dyn SumcheckKernel` to its `ProveRounds` supertrait.
+        let member_pushes = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
+            if plan.is_option {
+                quote! {
+                    if let ::core::option::Option::Some(__kernel) = #kernel.as_mut() {
+                        __members.push(&mut **__kernel);
+                    }
+                }
+            } else {
+                quote!(__members.push(&mut *#kernel);)
+            }
+        });
+
+        let validate_tables = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    if let (
+                        ::core::option::Option::Some(__kernel),
+                        ::core::option::Option::Some(__member),
+                        ::core::option::Option::Some(__input_points_cell),
+                        ::core::option::Option::Some(__output_points_cell),
+                        ::core::option::Option::Some(__challenges_cell),
+                    ) = (
+                        #kernel.as_mut(),
+                        self.#id.as_ref(),
+                        input_points.#id.as_ref(),
+                        __output_points.#id.as_ref(),
+                        challenges.#id.as_ref(),
+                    ) {
+                        __kernel.validate_derived_tables(
+                            __member,
+                            __input_points_cell,
+                            __output_points_cell,
+                            __challenges_cell,
+                        )?;
+                    }
+                }
+            } else {
+                quote! {
+                    #kernel.validate_derived_tables(
+                        &self.#id,
+                        &input_points.#id,
+                        &__output_points.#id,
+                        &challenges.#id,
+                    )?;
+                }
+            }
+        });
+
+        let claim_fields = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    #id: match #kernel.as_mut() {
+                        ::core::option::Option::Some(__kernel) => {
+                            ::core::option::Option::Some(__kernel.output_claims()?)
+                        }
+                        ::core::option::Option::None => ::core::option::Option::None,
+                    }
+                }
+            } else {
+                quote!(#id: #kernel.output_claims()?)
+            }
+        });
+
+        let preparer_bounds = plans
+            .iter()
+            .filter(|plan| !plan.is_external)
+            .map(|plan| {
+                let instance = &plan.instance;
+                quote!(+ #relations::PrepareSumcheck<#f, #instance>)
+            })
+            .collect::<Vec<_>>();
+
+        let externals_param = if has_externals {
+            quote!(externals: #externals_name<'_, #f>,)
+        } else {
+            quote!()
+        };
+        let (claims_binding, curate_param, opening_values_stmt) = if options.no_opening_values {
+            (
+                quote!(let mut __output_claims),
+                quote! {
+                    curate_opening_values: impl ::core::ops::FnOnce(
+                        &mut #output_claims_name<#f>,
+                        &#output_points_name<#f>,
+                    )
+                        -> ::core::result::Result<::std::vec::Vec<#f>, crate::VerifierError>,
+                },
+                quote! {
+                    let __opening_values =
+                        curate_opening_values(&mut __output_claims, &__output_points)?;
+                },
+            )
+        } else {
+            (
+                quote!(let __output_claims),
+                quote!(),
+                quote!(let __opening_values = self.opening_values(&__output_claims);),
+            )
+        };
+        let validate_shape = if options.no_output_shape {
+            quote!()
+        } else {
+            quote!(self.validate_output_claims(&__output_claims)?;)
+        };
+        // The base signature sits exactly at clippy's argument limit; the
+        // externals bundle and the curation hook each push one past it.
+        let expect_arg_count = if has_externals || options.no_opening_values {
+            quote! {
+                #[expect(
+                    clippy::too_many_arguments,
+                    reason = "the stage's external-member bundle / curation hook ride on the \
+                              driver's fixed protocol signature"
+                )]
+            }
+        } else {
+            quote!()
+        };
+
+        quote! {
+            /// The generated prove-side stage driver, mirroring `verify_clear`
+            /// member for member: `begin_batch` (the shared head) → per-member
+            /// kernel `prepare` in declaration order (external members are
+            /// caller-supplied) → the engine round loop → derived opening
+            /// points → per-member `validate_derived_tables` → typed output
+            /// extraction → shape validation → the `expected_final_claim` hard
+            /// self-check → `recorder.finish` over the canonical opening
+            /// values. Recorder-generic: the clear/ZK seam is the recorder
+            /// TYPE, exactly as in `begin_batch`.
+            #expect_arg_count
+            pub fn prove_clear<__P, __Rec, __T>(
+                &self,
+                #preparer_ident: &mut __P,
+                inputs: &#input_claims_name<#f>,
+                input_points: &#input_points_name<#f>,
+                challenges: &#challenges_name<#f>,
+                #externals_param
+                #curate_param
+                mut recorder: __Rec,
+                transcript: &mut __T,
+            ) -> ::core::result::Result<
+                #proved_name<#f, <__Rec as ::jolt_sumcheck::SumcheckRecorder<#f>>::Commitment>,
+                <__P as #relations::SumcheckPreparer<#f>>::Error,
+            >
+            where
+                __P: #relations::SumcheckPreparer<#f> #(#preparer_bounds)*,
+                __Rec: ::jolt_sumcheck::SumcheckRecorder<#f>,
+                __T: ::jolt_transcript::Transcript<Challenge = #f>,
+            {
+                use #relations::ConcreteSumcheck as _;
+                use #relations::SumcheckKernel as _;
+
+                let (__batch, __coefficients) =
+                    self.begin_batch(inputs, challenges, &mut recorder, transcript)?;
+
+                #(#kernel_bindings)*
+
+                let mut __members: ::std::vec::Vec<&mut dyn ::jolt_sumcheck::ProveRounds<#f>> =
+                    ::std::vec::Vec::new();
+                #(#member_pushes)*
+                let __proved = ::jolt_sumcheck::prove_batch(
+                    &__batch,
+                    &mut __members,
+                    &mut recorder,
+                    transcript,
+                )?;
+
+                let __output_points = self.derive_opening_points(&__proved.challenges, input_points)?;
+                #(#validate_tables)*
+
+                #claims_binding = #output_claims_name {
+                    #(#claim_fields,)*
+                };
+
+                #opening_values_stmt
+                #validate_shape
+
+                let __expected = self.expected_final_claim(
+                    &__coefficients,
+                    input_points,
+                    &__output_claims,
+                    &__output_points,
+                    challenges,
+                )?;
+                if __expected != __proved.final_claim {
+                    return ::core::result::Result::Err(
+                        crate::VerifierError::StageClaimSumcheckFailed {
+                            stage: self.#stage_id_ident.id(),
+                            reason: ::std::format!(
+                                "prover final claim {:?} disagrees with the expected output fold {:?}",
+                                __proved.final_claim,
+                                __expected,
+                            ),
+                        }
+                        .into(),
+                    );
+                }
+
+                let __recorded = recorder.finish(&__opening_values, transcript)?;
+                ::core::result::Result::Ok(#proved_name {
+                    recorded: __recorded,
+                    output_claims: __output_claims,
+                    output_points: __output_points,
+                    final_claim: __proved.final_claim,
+                })
+            }
+        }
+    };
+
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
             #draw_challenges_method
 
             #begin_batch_method
+            #prove_clear_method
             #verify_clear_method
             #verify_zk_method
             #derive_points_method
@@ -1029,6 +1429,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #clear_batch_struct
+
+        #proved_struct
+
+        #externals_struct
 
         #driver_impl
     })
@@ -1142,10 +1546,35 @@ fn plan_field(field: &syn::Field) -> syn::Result<InstanceField> {
         Some(inner) => (true, inner.clone()),
         None => (false, field.ty.clone()),
     };
+    let mut is_external = false;
+    for attr in &field.attrs {
+        if !attr.path().is_ident("sumcheck") {
+            continue;
+        }
+        let flags =
+            attr.parse_args_with(syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated)?;
+        for flag in flags {
+            let Meta::Path(path) = &flag else {
+                return Err(syn::Error::new_spanned(
+                    &flag,
+                    "expected a bare `sumcheck` field flag (e.g. `external`)",
+                ));
+            };
+            if path.is_ident("external") {
+                is_external = true;
+            } else {
+                return Err(syn::Error::new_spanned(
+                    path,
+                    "unknown `sumcheck` field flag (supported: `external`)",
+                ));
+            }
+        }
+    }
     Ok(InstanceField {
         ident,
         instance,
         is_option,
+        is_external,
     })
 }
 
