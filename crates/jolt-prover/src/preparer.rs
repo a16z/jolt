@@ -10,10 +10,13 @@
 //! from the stage-supplied `context`.
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
+use jolt_claims::protocols::jolt::geometry::bytecode::{
+    read_raf_stage_values, BytecodeReadRafDimensions, BytecodeReadRafStageValueInputs,
+};
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::stages::relations::{
     PrepareSumcheck, ProverInputs, SumcheckKernel, SumcheckPreparer,
 };
@@ -110,7 +113,11 @@ where
 pub struct Stage6aPrepareContext<'a, F: Field> {
     pub bytecode_dimensions: BytecodeReadRafDimensions,
     pub booleanity_dimensions: BooleanityDimensions,
-    pub stage_values: Option<Vec<[F; 5]>>,
+    /// The prover-retained program (padded bytecode rows), the source of the
+    /// per-row stage-value fold the bytecode kernel's tables carry.
+    pub program: &'a JoltProgramPreprocessing,
+    pub register_read_write_point: &'a [F],
+    pub register_val_evaluation_point: &'a [F],
     pub stage_cycle_points: &'a [Vec<F>; 5],
     pub bytecode_indices: Option<Vec<usize>>,
     pub entry_bytecode_index: usize,
@@ -128,13 +135,19 @@ where
         inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, Self::Error>
     {
-        let stage_values =
-            self.context
-                .stage_values
-                .take()
-                .ok_or(ProverError::InvariantViolation {
-                    reason: "stage-6a bytecode stage values were staged once but consumed twice",
-                })?;
+        // The per-row stage-value tables, via the verifier's own fold over the
+        // padded bytecode (the prover-retained copy in committed mode).
+        let stage_gammas = inputs.challenges.stage_gamma_powers();
+        let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
+            bytecode: &self.context.program.bytecode.bytecode,
+            register_read_write_point: self.context.register_read_write_point,
+            register_val_evaluation_point: self.context.register_val_evaluation_point,
+            stage1_gammas: &stage_gammas[0],
+            stage2_gammas: &stage_gammas[1],
+            stage3_gammas: &stage_gammas[2],
+            stage4_gammas: &stage_gammas[3],
+            stage5_gammas: &stage_gammas[4],
+        });
         let bytecode_indices =
             self.context
                 .bytecode_indices

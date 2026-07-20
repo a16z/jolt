@@ -17,10 +17,7 @@
 //! bytecode read-RAF points (which fires when the bytecode address width is
 //! a multiple of the committed chunk width).
 
-use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeLaneWeightInputs;
-use jolt_claims::protocols::jolt::geometry::dimensions::{
-    JoltFormulaDimensions, REGISTER_ADDRESS_BITS,
-};
+use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
@@ -37,15 +34,13 @@ use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
-use jolt_verifier::stages::stage6b::batch::{
-    bytecode_stage_points, BytecodeStagePoints, Stage6bBuildParts,
-};
+use jolt_verifier::stages::stage6b::batch::Stage6bBuildParts;
 use jolt_verifier::stages::stage6b::booleanity::BooleanityCyclePhaseChallenges;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCyclePhaseCommittedChallenges;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
-    bytecode_reduction_weights, BytecodeReductionCyclePhaseChallenges,
-    BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
-    TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
+    BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseOutputClaims,
+    ProgramImageReductionCyclePhaseOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
+    UntrustedAdviceCyclePhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReductionChallenges;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualizationChallenges;
@@ -60,7 +55,7 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use super::precommitted::PrecommittedKernelAdapter;
+use super::precommitted::{scalar_phase_adapter, PrecommittedKernelAdapter};
 use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 6b's outputs: the wire proof, the wire claims, the verifier-typed
@@ -226,45 +221,13 @@ where
         &stage5.output_points,
     );
 
-    // The precommitted cycle-phase kernels (bespoke slots: prover-retained
-    // program data and staged advice references). The committed-program
-    // weights mirror `build_from_parts`' internal fold; the recipe's copy
-    // also feeds the bytecode slot and rides the clear carrier for stage 7.
-    let stage_gammas = carried.bytecode_read_raf.stage_gamma_powers();
-    let BytecodeStagePoints {
-        stage_cycle_points: _,
-        register_read_write_point,
-        register_val_evaluation_point,
-    } = bytecode_stage_points(
-        &stage1_cycle_binding,
-        &stage2.output_points,
-        &stage3.output_points,
-        &stage4.output_points,
-        &stage5.output_points,
-    )?;
-    let bytecode_r_address = stage6a.output_points.bytecode_read_raf.intermediate.clone();
-    let bytecode_weights = precommitted
-        .bytecode
+    // The committed-program weights: read back off the batch member (the
+    // `build_from_parts` fold), for the bytecode reduction kernel and the
+    // clear carrier stage 7 consumes.
+    let bytecode_weights = sumchecks
+        .bytecode_reduction
         .as_ref()
-        .zip(eta)
-        .map(|(layout, eta)| {
-            bytecode_reduction_weights(
-                layout,
-                BytecodeLaneWeightInputs {
-                    eta,
-                    stage1_gammas: &stage_gammas[0],
-                    stage2_gammas: &stage_gammas[1],
-                    stage3_gammas: &stage_gammas[2],
-                    stage4_gammas: &stage_gammas[3],
-                    stage5_gammas: &stage_gammas[4],
-                    register_read_write_point: &register_read_write_point[..REGISTER_ADDRESS_BITS],
-                    register_val_evaluation_point: &register_val_evaluation_point
-                        [..REGISTER_ADDRESS_BITS],
-                },
-                &bytecode_r_address,
-            )
-        })
-        .transpose()?;
+        .map(|member| member.weights().clone());
 
     let prepare_advice =
         |session: &mut ProofSession,
@@ -337,36 +300,20 @@ where
         .as_mut()
         .zip(precommitted.trusted_advice.as_ref())
         .map(|(member, layout)| {
-            let has_address_phase = layout.dimensions().has_address_phase();
-            PrecommittedKernelAdapter::new(
+            scalar_phase_adapter(
                 &mut **member,
-                move |member: &dyn PrecommittedReductionProver<F>| {
-                    Ok(TrustedAdviceCyclePhaseOutputClaims {
-                        trusted: if has_address_phase {
-                            member.cycle_intermediate_claim()
-                        } else {
-                            member.final_claim()?
-                        },
-                    })
-                },
+                layout.dimensions().has_address_phase(),
+                |trusted| TrustedAdviceCyclePhaseOutputClaims { trusted },
             )
         });
     let mut untrusted_adapter = untrusted_advice_member
         .as_mut()
         .zip(precommitted.untrusted_advice.as_ref())
         .map(|(member, layout)| {
-            let has_address_phase = layout.dimensions().has_address_phase();
-            PrecommittedKernelAdapter::new(
+            scalar_phase_adapter(
                 &mut **member,
-                move |member: &dyn PrecommittedReductionProver<F>| {
-                    Ok(UntrustedAdviceCyclePhaseOutputClaims {
-                        untrusted: if has_address_phase {
-                            member.cycle_intermediate_claim()
-                        } else {
-                            member.final_claim()?
-                        },
-                    })
-                },
+                layout.dimensions().has_address_phase(),
+                |untrusted| UntrustedAdviceCyclePhaseOutputClaims { untrusted },
             )
         });
     let mut bytecode_adapter = bytecode_reduction_member
@@ -395,18 +342,10 @@ where
         .as_mut()
         .zip(precommitted.program_image.as_ref())
         .map(|(member, layout)| {
-            let has_address_phase = layout.dimensions().has_address_phase();
-            PrecommittedKernelAdapter::new(
+            scalar_phase_adapter(
                 &mut **member,
-                move |member: &dyn PrecommittedReductionProver<F>| {
-                    Ok(ProgramImageReductionCyclePhaseOutputClaims {
-                        program_image: if has_address_phase {
-                            member.cycle_intermediate_claim()
-                        } else {
-                            member.final_claim()?
-                        },
-                    })
-                },
+                layout.dimensions().has_address_phase(),
+                |program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image },
             )
         });
 
@@ -446,6 +385,14 @@ where
         ClearSumcheckRecorder::<F, C>::new(),
         transcript,
     )?;
+
+    // The boxed extraction closures carry the member borrows' lifetime in
+    // their type, so the adapters must be dropped before the kernels move
+    // into the output (dropck would otherwise extend the borrows to the end
+    // of scope).
+    drop(trusted_adapter);
+    drop(untrusted_adapter);
+    drop(program_image_adapter);
 
     Ok(Stage6bProverOutput {
         sumcheck_proof: proved.recorded.proof,

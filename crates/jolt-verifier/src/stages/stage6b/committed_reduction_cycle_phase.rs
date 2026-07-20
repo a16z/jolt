@@ -347,10 +347,13 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
         }
     }
 
-    /// The public bytecode claim-reduction weights this member was built with.
+    /// The public bytecode claim-reduction weights this member was built
+    /// with. Pub: the prove-side recipe reads them back off the
+    /// `build_from_parts` batch (they also feed the bytecode reduction kernel
+    /// and ride the clear carrier), so the weight fold is single-sourced.
     /// Stage 7's bytecode address phase reads them off the stage-6b clear output
     /// rather than recomputing them.
-    pub(super) fn weights(&self) -> &BytecodeReductionWeights<F> {
+    pub fn weights(&self) -> &BytecodeReductionWeights<F> {
         &self.weights
     }
 }

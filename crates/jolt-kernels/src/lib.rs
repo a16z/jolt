@@ -6,10 +6,17 @@
 //!
 //! Kernel APIs consume witness oracles, field elements, and PCS setups —
 //! never a transcript, never Fiat-Shamir — and return canonical values.
-//! Sumcheck kernels implement `jolt_sumcheck::ProveRounds` and are added per
-//! relation as stages demand them: each per-relation module at the crate
-//! root defines the slot's object-safe factory/instance traits (the seam),
-//! and its sibling under [`reference`] holds the reference implementation.
+//! Sumcheck kernels implement the fused `jolt_sumcheck::ProveRounds` round
+//! contract and are minted per relation through ONE universal trait,
+//! [`PrepareKernel`]: its typed request is the relation instance itself
+//! (inside a `ProverInputs` bundle), so kernels read geometry off relation
+//! accessors instead of restated constructor arguments. Only the bespoke
+//! slots keep hand-shaped trait modules at the crate root: the uni-skip
+//! handoffs ([`spartan_outer`], [`spartan_product`]), the typed-row witness
+//! ([`instruction_read_raf`]), the non-oracle stage-6a address phases
+//! ([`bytecode_read_raf`], [`booleanity`]), the two-batch precommitted
+//! reduction family ([`precommitted_reduction`]), commitment streaming, and
+//! the joint opening. Reference implementations live under [`reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness

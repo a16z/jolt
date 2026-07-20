@@ -14,9 +14,6 @@
 //! stage-6 typed rows (the per-cycle bytecode indices).
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::bytecode::{
-    read_raf_stage_values, BytecodeReadRafStageValueInputs,
-};
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     JoltFormulaDimensions, REGISTER_ADDRESS_BITS,
 };
@@ -171,24 +168,11 @@ where
         &stage5.output_points,
     )?;
 
-    // The per-row stage-value tables, via the verifier's own fold over the
-    // padded bytecode (the prover-retained copy in committed mode).
     let program = preprocessing
         .program()
         .ok_or(ProverError::InvariantViolation {
             reason: "full bytecode preprocessing is unavailable",
         })?;
-    let stage_gammas = carried.bytecode_read_raf.stage_gamma_powers();
-    let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: &program.bytecode.bytecode,
-        register_read_write_point: &register_read_write_point[..REGISTER_ADDRESS_BITS],
-        register_val_evaluation_point: &register_val_evaluation_point[..REGISTER_ADDRESS_BITS],
-        stage1_gammas: &stage_gammas[0],
-        stage2_gammas: &stage_gammas[1],
-        stage3_gammas: &stage_gammas[2],
-        stage4_gammas: &stage_gammas[3],
-        stage5_gammas: &stage_gammas[4],
-    });
     let entry_bytecode_index = preprocessing
         .verifier
         .program
@@ -210,7 +194,9 @@ where
         context: Stage6aPrepareContext {
             bytecode_dimensions: formula_dimensions.bytecode_read_raf,
             booleanity_dimensions,
-            stage_values: Some(stage_values),
+            program,
+            register_read_write_point: &register_read_write_point[..REGISTER_ADDRESS_BITS],
+            register_val_evaluation_point: &register_val_evaluation_point[..REGISTER_ADDRESS_BITS],
             stage_cycle_points: &stage_cycle_points,
             bytecode_indices: Some(bytecode_indices),
             entry_bytecode_index,

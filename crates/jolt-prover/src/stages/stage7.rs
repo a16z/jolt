@@ -35,7 +35,7 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use super::precommitted::PrecommittedKernelAdapter;
+use super::precommitted::{scalar_phase_adapter, PrecommittedKernelAdapter};
 use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
@@ -129,24 +129,14 @@ where
     )?;
 
     let mut trusted_advice = trusted_advice.map(|member| {
-        PrecommittedKernelAdapter::new(
-            &mut **member,
-            |member: &dyn PrecommittedReductionProver<F>| {
-                Ok(TrustedAdviceAddressPhaseOutputClaims {
-                    trusted: member.final_claim()?,
-                })
-            },
-        )
+        scalar_phase_adapter(&mut **member, false, |trusted| {
+            TrustedAdviceAddressPhaseOutputClaims { trusted }
+        })
     });
     let mut untrusted_advice = untrusted_advice.map(|member| {
-        PrecommittedKernelAdapter::new(
-            &mut **member,
-            |member: &dyn PrecommittedReductionProver<F>| {
-                Ok(UntrustedAdviceAddressPhaseOutputClaims {
-                    untrusted: member.final_claim()?,
-                })
-            },
-        )
+        scalar_phase_adapter(&mut **member, false, |untrusted| {
+            UntrustedAdviceAddressPhaseOutputClaims { untrusted }
+        })
     });
     let mut bytecode_reduction = bytecode_reduction.map(|member| {
         PrecommittedKernelAdapter::new(
@@ -159,14 +149,9 @@ where
         )
     });
     let mut program_image = program_image.map(|member| {
-        PrecommittedKernelAdapter::new(
-            &mut **member,
-            |member: &dyn PrecommittedReductionProver<F>| {
-                Ok(ProgramImageReductionAddressPhaseOutputClaims {
-                    program_image: member.final_claim()?,
-                })
-            },
-        )
+        scalar_phase_adapter(&mut **member, false, |program_image| {
+            ProgramImageReductionAddressPhaseOutputClaims { program_image }
+        })
     });
 
     let mut preparer = BackendPreparer {

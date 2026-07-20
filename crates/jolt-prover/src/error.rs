@@ -27,15 +27,6 @@ pub enum ProverError<F: FieldCore> {
     #[error(transparent)]
     Witness(#[from] jolt_witness::WitnessError),
 
-    /// A stage's final running claim disagrees with the verifier's
-    /// `expected_final_claim` fold over the produced openings.
-    #[error("{stage}: final claim {got} != expected {expected}")]
-    FinalClaimMismatch {
-        stage: &'static str,
-        expected: F,
-        got: F,
-    },
-
     /// A capability the modular prover does not implement yet, or an input
     /// regime it rejects up front. Recoverable in principle: the caller may
     /// fall back to another prover.

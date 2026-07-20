@@ -66,6 +66,43 @@ where
     }
 }
 
+/// The claims-extraction closure shape a [`PrecommittedKernelAdapter`] runs.
+pub(crate) type PhaseExtract<'a, F, R> = Box<
+    dyn FnMut(
+            &dyn PrecommittedReductionProver<F>,
+        ) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>>
+        + 'a,
+>;
+
+/// An adapter whose wire claim is one scalar: the intermediate handoff claim
+/// when the schedule continues into the address phase, else the final bound
+/// opening. `wrap` builds the member's one-field claims struct. (The bytecode
+/// reduction's chunked claims keep a bespoke closure at its two call sites.)
+pub(crate) fn scalar_phase_adapter<'a, F, R, W>(
+    member: &'a mut dyn PrecommittedReductionProver<F>,
+    has_address_phase: bool,
+    wrap: W,
+) -> PrecommittedKernelAdapter<'a, F, R, PhaseExtract<'a, F, R>>
+where
+    F: Field,
+    R: ConcreteSumcheck<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    W: Fn(F) -> SumcheckOutputClaims<F, R> + 'a,
+{
+    PrecommittedKernelAdapter::new(
+        member,
+        Box::new(move |member: &dyn PrecommittedReductionProver<F>| {
+            Ok(wrap(if has_address_phase {
+                member.cycle_intermediate_claim()
+            } else {
+                member.final_claim()?
+            }))
+        }),
+    )
+}
+
 impl<F, R, E> SumcheckKernel<F> for PrecommittedKernelAdapter<'_, F, R, E>
 where
     F: Field,
