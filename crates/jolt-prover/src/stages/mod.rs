@@ -1,5 +1,6 @@
 //! Per-stage prover recipes, mirroring `jolt-verifier`'s `stages/` layout.
 
+mod precommitted;
 pub mod stage0;
 pub mod stage1;
 pub mod stage2;

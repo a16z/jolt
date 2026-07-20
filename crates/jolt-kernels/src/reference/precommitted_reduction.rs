@@ -26,7 +26,7 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 
 use crate::precommitted_reduction::PrecommittedReductionProver;
-use crate::KernelError;
+use crate::{KernelError, SumcheckKernelError};
 
 pub(crate) struct PrecommittedReductionKernel<F> {
     reduction: PrecommittedClaimReduction,
@@ -89,9 +89,9 @@ impl<F: Field> PrecommittedReductionKernel<F> {
         active.binary_search(&round).is_ok()
     }
 
-    fn require_fully_bound(&self) -> Result<(), KernelError<F>> {
+    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.value.len() != 1 {
-            return Err(KernelError::InvariantViolation {
+            return Err(SumcheckKernelError::InvariantViolation {
                 reason:
                     "precommitted reduction final claim requested before the polynomial is fully bound",
             });
@@ -194,12 +194,12 @@ impl<F: Field> PrecommittedReductionProver<F> for PrecommittedReductionKernel<F>
         product * self.scale
     }
 
-    fn final_claim(&self) -> Result<F, KernelError<F>> {
+    fn final_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.value[0])
     }
 
-    fn final_aux_claims(&self) -> Result<Vec<F>, KernelError<F>> {
+    fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.aux.iter().map(|table| table[0]).collect())
     }

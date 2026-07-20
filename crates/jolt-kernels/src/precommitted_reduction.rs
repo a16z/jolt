@@ -9,6 +9,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::ProveRounds;
+use jolt_verifier::stages::relations::SumcheckKernelError;
 use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
@@ -94,10 +95,10 @@ pub trait PrecommittedReductionProver<F: Field>: ProveRounds<F> {
     /// value (the advice/program-image polynomial's own opening; for the
     /// bytecode reduction, the chunk-weighted fold the per-chunk claims sum
     /// to). Errors while any variable remains unbound.
-    fn final_claim(&self) -> Result<F, KernelError<F>>;
+    fn final_claim(&self) -> Result<F, SumcheckKernelError<F>>;
 
     /// The fully bound `aux` coefficients — the per-chunk `BytecodeChunk(i)`
     /// opening values. Empty for reductions without aux tables. Errors while
     /// any variable remains unbound.
-    fn final_aux_claims(&self) -> Result<Vec<F>, KernelError<F>>;
+    fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>>;
 }

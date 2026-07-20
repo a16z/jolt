@@ -18,11 +18,8 @@ use jolt_kernels::precommitted_reduction::PrecommittedReductionProver;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::{
-    prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
-};
+use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::advice_address_phase::{
@@ -31,13 +28,15 @@ use jolt_verifier::stages::stage7::advice_address_phase::{
 use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhaseOutputClaims, ProgramImageReductionAddressPhaseOutputClaims,
 };
+use jolt_verifier::stages::stage7::outputs::Stage7ExternalMembers;
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use super::precommitted::PrecommittedKernelAdapter;
+use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 8 consumes.
@@ -102,128 +101,101 @@ where
     let inputs = stage7_input_values_from_upstream(&sumchecks, stage6b)?;
     let input_points = sumchecks.empty_input_points();
 
-    let mut recorder = ClearSumcheckRecorder::<F, C>::new();
-    let (batch, coefficients) =
-        sumchecks.begin_batch(&inputs, &challenges, &mut recorder, transcript)?;
-
-    let mut hamming = backend.hamming_weight_claim_reduction.prepare(
-        session,
-        witness,
-        ProverInputs {
-            relation: &sumchecks.hamming_weight_claim_reduction,
-            claims: &inputs.hamming_weight_claim_reduction,
-            points: &input_points.hamming_weight_claim_reduction,
-            challenges: &challenges.hamming_weight_claim_reduction,
-        },
-    )?;
-
     // The precommitted address phases: the stage-6b kernel objects,
     // transitioned. A member joins exactly when the batch declares it (layout
-    // committed AND active address rounds) — the kernel exists whenever the
+    // committed AND active address rounds) -- the kernel exists whenever the
     // layout does, so absence here just leaves a cycle-completed kernel
-    // behind.
-    let mut trusted_advice = take_scheduled(
+    // behind. Each joins the generated driver as a typed external member
+    // whose extraction is the phase's final opening.
+    let trusted_advice = take_scheduled(
         sumchecks.trusted_advice.is_some(),
         trusted_advice_member.as_mut(),
         "stage 6b carried no trusted-advice kernel for the scheduled address phase",
     )?;
-    let mut untrusted_advice = take_scheduled(
+    let untrusted_advice = take_scheduled(
         sumchecks.untrusted_advice.is_some(),
         untrusted_advice_member.as_mut(),
         "stage 6b carried no untrusted-advice kernel for the scheduled address phase",
     )?;
-    let mut bytecode_reduction = take_scheduled(
+    let bytecode_reduction = take_scheduled(
         sumchecks.bytecode_address_phase.is_some(),
         bytecode_reduction_member.as_mut(),
         "stage 6b carried no bytecode kernel for the scheduled address phase",
     )?;
-    let mut program_image = take_scheduled(
+    let program_image = take_scheduled(
         sumchecks.program_image_address_phase.is_some(),
         program_image_member.as_mut(),
         "stage 6b carried no program-image kernel for the scheduled address phase",
     )?;
 
-    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut *hamming];
-    if let Some(member) = trusted_advice.as_mut() {
-        members.push(&mut ***member);
-    }
-    if let Some(member) = untrusted_advice.as_mut() {
-        members.push(&mut ***member);
-    }
-    if let Some(member) = bytecode_reduction.as_mut() {
-        members.push(&mut ***member);
-    }
-    if let Some(member) = program_image.as_mut() {
-        members.push(&mut ***member);
-    }
-    let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
-
-    let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
-    hamming.validate_derived_tables(
-        &sumchecks.hamming_weight_claim_reduction,
-        &input_points.hamming_weight_claim_reduction,
-        &output_points.hamming_weight_claim_reduction,
-        &challenges.hamming_weight_claim_reduction,
-    )?;
-    let output_values = Stage7OutputClaims {
-        hamming_weight_claim_reduction: hamming.output_claims()?,
-        trusted_advice: trusted_advice
-            .as_ref()
-            .map(|member| {
-                Ok::<_, ProverError<F>>(TrustedAdviceAddressPhaseOutputClaims {
+    let mut trusted_advice = trusted_advice.map(|member| {
+        PrecommittedKernelAdapter::new(
+            &mut **member,
+            |member: &dyn PrecommittedReductionProver<F>| {
+                Ok(TrustedAdviceAddressPhaseOutputClaims {
                     trusted: member.final_claim()?,
                 })
-            })
-            .transpose()?,
-        untrusted_advice: untrusted_advice
-            .as_ref()
-            .map(|member| {
-                Ok::<_, ProverError<F>>(UntrustedAdviceAddressPhaseOutputClaims {
+            },
+        )
+    });
+    let mut untrusted_advice = untrusted_advice.map(|member| {
+        PrecommittedKernelAdapter::new(
+            &mut **member,
+            |member: &dyn PrecommittedReductionProver<F>| {
+                Ok(UntrustedAdviceAddressPhaseOutputClaims {
                     untrusted: member.final_claim()?,
                 })
-            })
-            .transpose()?,
-        bytecode_address_phase: bytecode_reduction
-            .as_ref()
-            .map(|member| {
-                Ok::<_, ProverError<F>>(BytecodeReductionAddressPhaseOutputClaims {
+            },
+        )
+    });
+    let mut bytecode_reduction = bytecode_reduction.map(|member| {
+        PrecommittedKernelAdapter::new(
+            &mut **member,
+            |member: &dyn PrecommittedReductionProver<F>| {
+                Ok(BytecodeReductionAddressPhaseOutputClaims {
                     chunks: member.final_aux_claims()?,
                 })
-            })
-            .transpose()?,
-        program_image_address_phase: program_image
-            .as_ref()
-            .map(|member| {
-                Ok::<_, ProverError<F>>(ProgramImageReductionAddressPhaseOutputClaims {
+            },
+        )
+    });
+    let mut program_image = program_image.map(|member| {
+        PrecommittedKernelAdapter::new(
+            &mut **member,
+            |member: &dyn PrecommittedReductionProver<F>| {
+                Ok(ProgramImageReductionAddressPhaseOutputClaims {
                     program_image: member.final_claim()?,
                 })
-            })
-            .transpose()?,
-    };
-    sumchecks.validate_output_claims(&output_values)?;
-    let expected = sumchecks.expected_final_claim(
-        &coefficients,
-        &input_points,
-        &output_values,
-        &output_points,
-        &challenges,
-    )?;
-    if expected != proved.final_claim {
-        return Err(ProverError::FinalClaimMismatch {
-            stage: "stage7",
-            expected,
-            got: proved.final_claim,
-        });
-    }
+            },
+        )
+    });
 
-    let recorded = recorder.finish(&sumchecks.opening_values(&output_values), transcript)?;
+    let mut preparer = BackendPreparer {
+        backend,
+        session,
+        witness,
+        context: (),
+    };
+    let proved = sumchecks.prove_clear(
+        &mut preparer,
+        &inputs,
+        &input_points,
+        &challenges,
+        Stage7ExternalMembers {
+            trusted_advice: trusted_advice.as_mut().map(|adapter| adapter as _),
+            untrusted_advice: untrusted_advice.as_mut().map(|adapter| adapter as _),
+            bytecode_address_phase: bytecode_reduction.as_mut().map(|adapter| adapter as _),
+            program_image_address_phase: program_image.as_mut().map(|adapter| adapter as _),
+        },
+        ClearSumcheckRecorder::<F, C>::new(),
+        transcript,
+    )?;
 
     Ok(Stage7ProverOutput {
-        sumcheck_proof: recorded.proof,
-        claims: output_values.clone(),
+        sumcheck_proof: proved.recorded.proof,
+        claims: proved.output_claims.clone(),
         clear_output: Stage7ClearOutput {
-            output_values,
-            output_points,
+            output_values: proved.output_claims,
+            output_points: proved.output_points,
         },
     })
 }

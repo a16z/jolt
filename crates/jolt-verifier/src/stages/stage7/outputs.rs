@@ -35,16 +35,23 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 pub struct Stage7Sumchecks<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
     /// Final `TrustedAdvice` claim from the trusted advice reduction's address
-    /// phase; present only when that phase runs.
+    /// phase; present only when that phase runs. External on the prove side:
+    /// the kernel is the stage-6b cycle-phase object, phase-transitioned and
+    /// carried across the batch boundary.
+    #[sumcheck(external)]
     pub trusted_advice: Option<TrustedAdviceAddressPhase<F>>,
     /// Final `UntrustedAdvice` claim from the untrusted advice reduction's address
-    /// phase; present only when that phase runs.
+    /// phase; present only when that phase runs. External on the prove side.
+    #[sumcheck(external)]
     pub untrusted_advice: Option<UntrustedAdviceAddressPhase<F>>,
     /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
-    /// address phase; present only when that phase runs.
+    /// address phase; present only when that phase runs. External on the prove
+    /// side.
+    #[sumcheck(external)]
     pub bytecode_address_phase: Option<BytecodeReductionAddressPhase<F>>,
     /// Final `ProgramImageInit` claim from the program-image reduction's address
-    /// phase; present only when that phase runs.
+    /// phase; present only when that phase runs. External on the prove side.
+    #[sumcheck(external)]
     pub program_image_address_phase: Option<ProgramImageReductionAddressPhase<F>>,
 }
 
