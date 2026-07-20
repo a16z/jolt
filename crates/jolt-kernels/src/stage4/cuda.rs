@@ -2,9 +2,33 @@ use jolt_field::Fr;
 use jolt_poly::UnivariatePoly;
 
 use crate::cuda::{
-    build_schedules, CudaError, DeviceFrVec, RoundPolyTerms, RoundSchedule,
+    build_schedules, CudaError, CudaSlice, DeviceFrVec, RoundPolyTerms, RoundSchedule,
     SparseRegisterBindInputs, SparseRegisterEntries, SparseRegisterRoundInputs,
 };
+
+struct ResidentSchedule {
+    even_idx: CudaSlice<i32>,
+    odd_idx: CudaSlice<i32>,
+    pair: CudaSlice<u32>,
+    items: usize,
+}
+
+fn upload_schedules(
+    ctx: &crate::cuda::CudaKernelContext,
+    rounds: &[RoundSchedule],
+) -> Option<Vec<ResidentSchedule>> {
+    rounds
+        .iter()
+        .map(|round| {
+            Some(ResidentSchedule {
+                even_idx: ctx.upload_i32_slice(&round.even_idx).ok()?,
+                odd_idx: ctx.upload_i32_slice(&round.odd_idx).ok()?,
+                pair: ctx.upload_u32_slice(&round.pair).ok()?,
+                items: round.even_idx.len(),
+            })
+        })
+        .collect()
+}
 
 pub(crate) struct CudaDenseState {
     factors: Vec<DeviceFrVec>,
@@ -99,7 +123,7 @@ pub(crate) struct CudaSparseRegistersState {
     rd_inc: DeviceFrVec,
     rd_inc_scratch: DeviceFrVec,
     eq_cycle: crate::split_eq::CudaSplitEqState<'static>,
-    schedules: Vec<RoundSchedule>,
+    schedules: Vec<ResidentSchedule>,
     final_cols: Vec<u8>,
     round: usize,
 }
@@ -132,7 +156,8 @@ impl CudaSparseRegistersState {
             None,
         )
         .ok()?;
-        let (schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
+        let (host_schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
+        let schedules = upload_schedules(ctx, &host_schedules)?;
         Some(Self {
             entries,
             rd_inc: ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
@@ -196,7 +221,8 @@ impl CudaSparseRegistersState {
             None,
         )
         .ok()?;
-        let (schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
+        let (host_schedules, final_cols) = build_schedules(rows, cols, trace_rounds);
+        let schedules = upload_schedules(ctx, &host_schedules)?;
         Some(Self {
             entries,
             rd_inc: ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
@@ -227,6 +253,7 @@ impl CudaSparseRegistersState {
             e_in: e_in_dev,
             e_out: e_out_dev,
             in_pairs,
+            items: schedule.items,
         })
         .ok()
     }
@@ -242,6 +269,7 @@ impl CudaSparseRegistersState {
             next_val: &self.entries.next_val,
             even_idx: &schedule.even_idx,
             odd_idx: &schedule.odd_idx,
+            items: schedule.items,
             challenge,
         })?;
         self.entries = entries;
