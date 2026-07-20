@@ -66,6 +66,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/mul_scalar.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
     include_str!("cuda/readraf_chunk_values.cu"),
+    include_str!("cuda/readraf_combined.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
     include_str!("cuda/reduce.cu"),
@@ -128,6 +129,7 @@ pub struct CudaKernelContext {
     mul_scalar: CudaFunction,
     read_suffix_scatter: CudaFunction,
     readraf_chunk_values: CudaFunction,
+    readraf_combined: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
     u64_to_mont: CudaFunction,
@@ -1180,6 +1182,7 @@ impl CudaKernelContext {
             mul_scalar: module.load_function("mul_scalar")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             readraf_chunk_values: module.load_function("readraf_chunk_values")?,
+            readraf_combined: module.load_function("readraf_combined")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
             u64_to_mont: module.load_function("u64_to_mont")?,
@@ -5461,6 +5464,26 @@ impl CudaKernelContext {
         Ok(out)
     }
 
+    pub fn readraf_combined(
+        &self,
+        table_index: &CudaSlice<u32>,
+        is_interleaved: &CudaSlice<u8>,
+        table_values: &[Fr],
+        raf_interleaved: Fr,
+        raf_identity: Fr,
+        m: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let _ = (
+            table_index,
+            is_interleaved,
+            table_values,
+            raf_interleaved,
+            raf_identity,
+            m,
+        );
+        Err(CudaError::Unsupported)
+    }
+
     pub fn raf_weight_phase_update(
         &self,
         weight: &mut DeviceFrVec,
@@ -7001,6 +7024,63 @@ mod tests {
                 .readraf_chunk_values(&lo_dev, &hi_dev, num_chunks, chunk_bits, m)
                 .unwrap();
             let got = c.download_u16(&got_dev).unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn readraf_combined_matches_cpu(
+            log_m in 1usize..12,
+            table_count in 1usize..33,
+            raf_interleaved in fr_strategy(),
+            raf_identity in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            let m = 1usize << log_m;
+            let table_values: Vec<Fr> = (0..table_count)
+                .map(|t| seed + Fr::from_u64((t * 31 + 7) as u64))
+                .collect();
+            let table_index: Vec<u32> = (0..m)
+                .map(|c| {
+                    if c % 5 == 0 {
+                        u32::MAX
+                    } else {
+                        (c % table_count) as u32
+                    }
+                })
+                .collect();
+            let is_interleaved: Vec<u8> = (0..m).map(|c| u8::from(c % 3 == 0)).collect();
+
+            let expected: Vec<Fr> = (0..m)
+                .map(|c| {
+                    let table_value = if table_index[c] == u32::MAX {
+                        Fr::zero()
+                    } else {
+                        table_values[table_index[c] as usize]
+                    };
+                    let raf_value = if is_interleaved[c] == 1 {
+                        raf_interleaved
+                    } else {
+                        raf_identity
+                    };
+                    table_value + raf_value
+                })
+                .collect();
+
+            let c = ctx();
+            let table_index_dev = c.upload_u32_slice(&table_index).unwrap();
+            let is_interleaved_dev = c.upload_u8_slice(&is_interleaved).unwrap();
+            let got = c
+                .readraf_combined(
+                    &table_index_dev,
+                    &is_interleaved_dev,
+                    &table_values,
+                    raf_interleaved,
+                    raf_identity,
+                    m,
+                )
+                .unwrap()
+                .to_host()
+                .unwrap();
             prop_assert_eq!(got, expected);
         }
 
