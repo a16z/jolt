@@ -65,6 +65,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/batched_bind_high_to_low.cu"),
     include_str!("cuda/mul_scalar.cu"),
     include_str!("cuda/read_suffix_scatter.cu"),
+    include_str!("cuda/readraf_chunk_values.cu"),
     include_str!("cuda/ram_rw_cycle.cu"),
     include_str!("cuda/ram_rw_address.cu"),
     include_str!("cuda/reduce.cu"),
@@ -126,6 +127,7 @@ pub struct CudaKernelContext {
     batched_bind_high_to_low_kernel: CudaFunction,
     mul_scalar: CudaFunction,
     read_suffix_scatter: CudaFunction,
+    readraf_chunk_values: CudaFunction,
     ram_rw_cycle_round_pairs: CudaFunction,
     ram_rw_cycle_bind: CudaFunction,
     u64_to_mont: CudaFunction,
@@ -1177,6 +1179,7 @@ impl CudaKernelContext {
                 .load_function("batched_bind_high_to_low_kernel")?,
             mul_scalar: module.load_function("mul_scalar")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
+            readraf_chunk_values: module.load_function("readraf_chunk_values")?,
             ram_rw_cycle_round_pairs: module.load_function("ram_rw_cycle_round_pairs")?,
             ram_rw_cycle_bind: module.load_function("ram_rw_cycle_bind")?,
             u64_to_mont: module.load_function("u64_to_mont")?,
@@ -1412,6 +1415,12 @@ impl CudaKernelContext {
     }
 
     pub fn download_u32(&self, buf: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
+        let out = self.stream.clone_dtoh(buf)?;
+        self.stream.synchronize()?;
+        Ok(out)
+    }
+
+    pub fn download_u16(&self, buf: &CudaSlice<u16>) -> Result<Vec<u16>, CudaError> {
         let out = self.stream.clone_dtoh(buf)?;
         self.stream.synchronize()?;
         Ok(out)
@@ -5412,6 +5421,18 @@ impl CudaKernelContext {
         Ok(banks)
     }
 
+    pub fn readraf_chunk_values(
+        &self,
+        lookup_index_lo: &CudaSlice<u64>,
+        lookup_index_hi: &CudaSlice<u64>,
+        num_chunks: usize,
+        chunk_bits: usize,
+        m: usize,
+    ) -> Result<CudaSlice<u16>, CudaError> {
+        let _ = (lookup_index_lo, lookup_index_hi, num_chunks, chunk_bits, m);
+        Err(CudaError::Unsupported)
+    }
+
     pub fn raf_weight_phase_update(
         &self,
         weight: &mut DeviceFrVec,
@@ -6912,6 +6933,46 @@ mod tests {
             for bank in &banks {
                 got.extend(bank.to_host().unwrap());
             }
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn readraf_chunk_values_matches_cpu(
+            log_m in 1usize..12,
+            chunk_bits in prop::sample::select(vec![8usize, 16]),
+            seed in any::<u64>(),
+        ) {
+            const LOG_K: usize = 128;
+            let num_chunks = LOG_K / chunk_bits;
+            let m = 1usize << log_m;
+            let lookup_index: Vec<u128> = (0..m)
+                .map(|c| {
+                    (c as u128).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                        ^ ((seed as u128) << 41)
+                        ^ ((c as u128) << 61)
+                })
+                .collect();
+
+            let chunk_index = |lookup_index: u128, chunk: usize| -> u16 {
+                let shift = LOG_K - (chunk + 1) * chunk_bits;
+                ((lookup_index >> shift) & ((1u128 << chunk_bits) - 1)) as u16
+            };
+            let mut expected = vec![0u16; num_chunks * m];
+            for chunk in 0..num_chunks {
+                for (c, &lookup) in lookup_index.iter().enumerate() {
+                    expected[chunk * m + c] = chunk_index(lookup, chunk);
+                }
+            }
+
+            let c = ctx();
+            let lo: Vec<u64> = lookup_index.iter().map(|&v| v as u64).collect();
+            let hi: Vec<u64> = lookup_index.iter().map(|&v| (v >> 64) as u64).collect();
+            let lo_dev = c.upload_u64_slice(&lo).unwrap();
+            let hi_dev = c.upload_u64_slice(&hi).unwrap();
+            let got_dev = c
+                .readraf_chunk_values(&lo_dev, &hi_dev, num_chunks, chunk_bits, m)
+                .unwrap();
+            let got = c.download_u16(&got_dev).unwrap();
             prop_assert_eq!(got, expected);
         }
 
