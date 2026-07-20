@@ -2440,14 +2440,6 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             }
         }
 
-        let mut stage_factors: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT] =
-            std::array::from_fn(|_| vec![F::zero(); expected_entries]);
-        for (cycle, &bytecode_index) in bytecode_cycle_indices.iter().enumerate() {
-            for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
-                stage_factors[stage][bytecode_index] += cycle_eqs[stage][cycle];
-            }
-        }
-
         let mut entry_trace = vec![F::zero(); expected_entries];
         entry_trace[bytecode_cycle_indices[0]] = F::one();
         let mut entry_expected = vec![F::zero(); expected_entries];
@@ -2458,8 +2450,10 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
 
         #[cfg(feature = "cuda")]
         let cuda = if backend == "cuda" {
-            cuda::CudaBytecodeReadRafState::new_address(
-                &stage_factors,
+            cuda_bytecode_address_state(
+                &stage_cycle_points,
+                &bytecode_cycle_indices,
+                expected_entries,
                 &stage_values,
                 &entry_trace,
                 &entry_expected,
@@ -2468,6 +2462,22 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         } else {
             None
         };
+
+        #[cfg(feature = "cuda")]
+        let build_host_factors = cuda.is_none();
+        #[cfg(not(feature = "cuda"))]
+        let build_host_factors = true;
+
+        let mut stage_factors: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT] =
+            std::array::from_fn(|_| Vec::new());
+        if build_host_factors {
+            stage_factors = std::array::from_fn(|_| vec![F::zero(); expected_entries]);
+            for (cycle, &bytecode_index) in bytecode_cycle_indices.iter().enumerate() {
+                for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
+                    stage_factors[stage][bytecode_index] += cycle_eqs[stage][cycle];
+                }
+            }
+        }
 
         Ok(Self {
             log_k,
@@ -6391,6 +6401,35 @@ fn hamming_booleanity_state<F: Field>(
         active_scale,
         claim.degree,
         backend,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_bytecode_address_state<F: Field>(
+    stage_cycle_points: &[Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    bytecode_cycle_indices: &[usize],
+    expected_entries: usize,
+    stage_values: &[Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    entry_trace: &[F],
+    entry_expected: &[F],
+    gamma_powers: &[F],
+) -> Option<cuda::CudaBytecodeReadRafState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let trace_len = bytecode_cycle_indices.len();
+    let addr: Vec<i32> = bytecode_cycle_indices.par_iter().map(|&i| i as i32).collect();
+    let addr_dev = ctx.upload_i32_slice(&addr).ok()?;
+    let mut stage_factors = Vec::with_capacity(BYTECODE_READ_RAF_STAGE_COUNT);
+    for point in stage_cycle_points {
+        let eq = ctx.eq_evals(crate::cuda::as_fr_slice(point)?, None).ok()?;
+        stage_factors.push(ctx.scatter_add_eq(&eq, &addr_dev, trace_len, expected_entries).ok()?);
+    }
+    cuda::CudaBytecodeReadRafState::new_address_device(
+        stage_factors,
+        stage_values,
+        entry_trace,
+        entry_expected,
+        gamma_powers,
     )
 }
 

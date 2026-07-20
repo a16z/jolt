@@ -28,8 +28,8 @@ pub(crate) enum CudaBytecodeReadRafState {
 }
 
 impl CudaBytecodeReadRafState {
-    pub(crate) fn new_address<F: Field>(
-        stage_factors: &[Vec<F>],
+    pub(crate) fn new_address_device<F: Field>(
+        stage_factors: Vec<DeviceFrVec>,
         stage_values: &[Vec<F>],
         entry_trace: &[F],
         entry_expected: &[F],
@@ -37,16 +37,12 @@ impl CudaBytecodeReadRafState {
     ) -> Option<Self> {
         let ctx = crate::cuda::shared_ctx()?;
         let stages = stage_factors.len();
-        let mut refs: Vec<&[Fr]> = Vec::with_capacity(2 * stages + 2);
-        for factor in stage_factors {
-            refs.push(crate::cuda::as_fr_slice(factor)?);
-        }
+        let mut factors = stage_factors;
         for value in stage_values {
-            refs.push(crate::cuda::as_fr_slice(value)?);
+            factors.push(ctx.upload(crate::cuda::as_fr_slice(value)?).ok()?);
         }
-        refs.push(crate::cuda::as_fr_slice(entry_trace)?);
-        refs.push(crate::cuda::as_fr_slice(entry_expected)?);
-        let factors = ctx.upload_many(&refs).ok()?;
+        factors.push(ctx.upload(crate::cuda::as_fr_slice(entry_trace)?).ok()?);
+        factors.push(ctx.upload(crate::cuda::as_fr_slice(entry_expected)?).ok()?);
 
         let mut term_coeffs = Vec::with_capacity(stages + 1);
         let mut term_factor_offsets = vec![0u32];
