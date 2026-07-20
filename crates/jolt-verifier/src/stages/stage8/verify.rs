@@ -449,8 +449,8 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript + super::WJoltCommitmentMetadata,
-    PCS::VerifierSetup: super::WJoltSetupMetadata,
+    PCS::Output: Clone + AppendToTranscript + super::OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -465,7 +465,7 @@ where
         stage7.clear()?,
     )?;
 
-    // Wjolt then opens natively at its shared point; reconstruction leaves are
+    // OneHotTrace then opens natively at its shared point; reconstruction leaves are
     // discharged by separate auxiliary packed openings.
     super::packed::verify(
         formula_dimensions,

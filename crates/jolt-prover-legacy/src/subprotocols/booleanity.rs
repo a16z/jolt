@@ -652,7 +652,7 @@ pub fn lattice_booleanity_params<F: JoltField>(
 /// Per-cycle lattice increment one-hot columns consumed by Booleanity and the
 /// Stage 7 hamming-weight reduction.
 #[cfg(all(feature = "prover", feature = "akita"))]
-pub struct LatticeIncColumns {
+pub struct FusedIncColumns {
     /// One-hot hot-address lanes: the unsigned-inc chunk columns in index
     /// order, then the MSB column (hot address zero or one) last — the
     /// batching order of [`lattice_booleanity_params`]. Lanes are never

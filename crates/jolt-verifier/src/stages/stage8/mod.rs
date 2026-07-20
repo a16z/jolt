@@ -27,9 +27,10 @@ pub use verify::verify;
 pub use verify::{batch_entries, Stage8BatchEntry};
 
 /// The commitment/setup metadata Stage 8 enforces before dispatching a
-/// native Wjolt opening — the generic [`jolt_openings`] traits, applied here
-/// to the W_jolt group (impls live beside the concrete PCS types).
+/// native OneHotTrace opening — the generic [`jolt_openings`] traits, applied here
+/// to the OneHotTrace group (impls live beside the concrete PCS types).
 #[cfg(feature = "akita")]
 pub use jolt_openings::{
-    GroupCommitmentMetadata as WJoltCommitmentMetadata, GroupSetupMetadata as WJoltSetupMetadata,
+    GroupCommitmentMetadata as OneHotTraceCommitmentMetadata,
+    GroupSetupMetadata as OneHotTraceSetupMetadata,
 };

@@ -2,7 +2,7 @@
 //!
 //! Settles the base `BytecodeClaimReduction`'s per-chunk claims (all chunks
 //! at one shared `(lane ‖ row)` point) against the precommitted per-lane
-//! sub-columns of `W_prog` in ONE γ-batched sumcheck — the chunk polynomials
+//! sub-columns of `ProgramOneHot` in ONE γ-batched sumcheck — the chunk polynomials
 //! are never PCS-opened.
 //!
 //! Leg embedding contract (shared with the verifier): the batch binds the

@@ -2,7 +2,7 @@
 //!
 //! The trusted-advice decode shape over the program image byte column:
 //! settles the completed `ProgramImageInit` claim against the precommitted
-//! `ProgramImageBytes` one-hot column of `W_prog`. Only the `(byte ‖ place)`
+//! `ProgramImageBytes` one-hot column of `ProgramOneHot`. Only the `(byte ‖ place)`
 //! variables bind (the word point stays fixed by the incoming claim); the
 //! single decode leg `byte · 256^place` is degree 2, and the produced byte
 //! opening lands at `(bound ‖ r_word)` — the column's own packed-slot point.

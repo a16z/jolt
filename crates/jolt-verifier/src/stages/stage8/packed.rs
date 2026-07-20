@@ -1,8 +1,8 @@
 //! The Akita final opening.
 //!
-//! Wjolt is a native group of uniform one-hot members, all opened directly at
-//! one canonical point. Optional advice and committed-program objects have
-//! distinct domains and are discharged separately through
+//! `OneHotTrace` is one native group of uniform one-hot columns, all opened
+//! directly at one canonical point. Optional advice and committed-program
+//! objects have distinct domains and are discharged separately through
 //! [`jolt_openings::verify_packed_openings`].
 
 use std::collections::BTreeMap;
@@ -10,9 +10,11 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::lattice::geometry::word_byte_num_vars;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_bytes_packing, precommitted_packing, PrecommittedPackingShape, WJoltShape,
+    advice_bytes_packing, precommitted_packing, OneHotTraceShape, PrecommittedPackingShape,
 };
-use jolt_claims::protocols::jolt::lattice::strategy::{WJoltLayoutPlan, W_JOLT_LAYOUT};
+use jolt_claims::protocols::jolt::lattice::strategy::{
+    OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
+};
 use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
@@ -26,7 +28,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 
 use super::reconstruction::ReconstructionClearOutput;
 use crate::stages::stage7::outputs::Stage7ClearOutput;
-use crate::stages::stage8::{WJoltCommitmentMetadata, WJoltSetupMetadata};
+use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::VerifierError;
 
 fn batch_failed(reason: impl ToString) -> VerifierError {
@@ -41,48 +43,48 @@ fn opening_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-fn validate_wjolt_metadata<C, S>(
+fn validate_one_hot_trace_metadata<C, S>(
     commitment: &C,
     setup: &S,
     canonical_digest: [u8; 32],
-    member_arity: usize,
-    member_count: usize,
+    column_arity: usize,
+    column_count: usize,
     one_hot_k: usize,
 ) -> Result<(), VerifierError>
 where
-    C: WJoltCommitmentMetadata,
-    S: WJoltSetupMetadata,
+    C: OneHotTraceCommitmentMetadata,
+    S: OneHotTraceSetupMetadata,
 {
     if !commitment.is_one_hot_backend() {
         return Err(batch_failed(
-            "Wjolt commitment must use Akita's one-hot backend",
+            "OneHotTrace commitment must use Akita's one-hot backend",
         ));
     }
     if commitment.one_hot_k() != one_hot_k || setup.one_hot_k() != one_hot_k {
         return Err(batch_failed(format!(
-            "Wjolt commitment/setup one-hot chunk size must equal canonical K={one_hot_k}"
+            "OneHotTrace commitment/setup one-hot chunk size must equal canonical K={one_hot_k}"
         )));
     }
     if commitment.layout_digest() != canonical_digest {
         return Err(batch_failed(
-            "Wjolt commitment has a noncanonical layout digest",
+            "OneHotTrace commitment has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != member_arity || setup.max_num_vars() != member_arity {
+    if commitment.num_vars() != column_arity || setup.max_num_vars() != column_arity {
         return Err(batch_failed(format!(
-            "Wjolt commitment/setup arity must equal canonical arity {member_arity}"
+            "OneHotTrace commitment/setup arity must equal canonical arity {column_arity}"
         )));
     }
-    if commitment.poly_count() != member_count
-        || setup.max_num_polys_per_commitment_group() != member_count
+    if commitment.poly_count() != column_count
+        || setup.max_num_polys_per_commitment_group() != column_count
     {
         return Err(batch_failed(format!(
-            "Wjolt commitment/setup member count must equal canonical count {member_count}"
+            "OneHotTrace commitment/setup column count must equal canonical count {column_count}"
         )));
     }
     if setup.default_layout_digest() != canonical_digest {
         return Err(batch_failed(
-            "Wjolt verifier setup has a noncanonical layout digest",
+            "OneHotTrace verifier setup has a noncanonical layout digest",
         ));
     }
     Ok(())
@@ -143,7 +145,7 @@ pub fn verify<PCS, VC, T>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
-    w_jolt_commitment: &PCS::Output,
+    one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     proof: &crate::proof::AkitaJointOpeningProof<PCS::Field, PCS::Proof>,
@@ -153,53 +155,57 @@ pub fn verify<PCS, VC, T>(
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: Clone + AppendToTranscript + WJoltCommitmentMetadata,
-    PCS::VerifierSetup: WJoltSetupMetadata,
+    PCS::Output: Clone + AppendToTranscript + OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
     // Per-object packings, commitments, and setups in canonical object order:
-    // `W_jolt` is one native group of uniform one-hot members, followed by the
-    // optional auxiliary commitment objects. The shared layout is the same
-    // one the prover committed under.
+    // `OneHotTrace` is one native group of uniform one-hot columns, followed
+    // by the optional auxiliary commitment objects. The shared layout is the
+    // same one the prover committed under.
     // Optional objects join exactly when their reconstruction outputs exist;
     // presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
-    let wjolt_shape = WJoltShape {
+    let one_hot_trace_shape = OneHotTraceShape {
         ra_layout: formula_dimensions.ra_layout,
         log_t: formula_dimensions.trace.log_t(),
         log_k_chunk: chunk_width,
     };
-    let plan = W_JOLT_LAYOUT.plan(&wjolt_shape).map_err(batch_failed)?;
-    let canonical_digest = W_JOLT_LAYOUT
-        .layout_digest(&wjolt_shape)
+    let plan = ONE_HOT_TRACE_LAYOUT
+        .plan(&one_hot_trace_shape)
         .map_err(batch_failed)?;
-    let WJoltLayoutPlan {
-        members,
-        member_arity,
+    let canonical_digest = ONE_HOT_TRACE_LAYOUT
+        .layout_digest(&one_hot_trace_shape)
+        .map_err(batch_failed)?;
+    let OneHotTraceLayoutPlan {
+        columns,
+        column_arity,
     } = &plan;
-    validate_wjolt_metadata(
-        w_jolt_commitment,
+    validate_one_hot_trace_metadata(
+        one_hot_trace_commitment,
         &preprocessing.pcs_setup,
         canonical_digest,
-        *member_arity,
-        members.len(),
+        *column_arity,
+        columns.len(),
         1 << chunk_width,
     )?;
     let leaves = leaf_claims(stage7, reconstruction);
     let mut common_point: Option<Vec<PCS::Field>> = None;
-    let mut evaluations = Vec::with_capacity(members.len());
-    for polynomial in members {
-        let claim = leaves
-            .get(polynomial)
-            .ok_or_else(|| batch_failed(format!("missing final Wjolt claim for {polynomial:?}")))?;
-        let point = W_JOLT_LAYOUT
-            .member_point(*polynomial, chunk_width, claim.point.as_slice())
+    let mut evaluations = Vec::with_capacity(columns.len());
+    for polynomial in columns {
+        let claim = leaves.get(polynomial).ok_or_else(|| {
+            batch_failed(format!(
+                "missing final OneHotTrace claim for {polynomial:?}"
+            ))
+        })?;
+        let point = ONE_HOT_TRACE_LAYOUT
+            .column_point(*polynomial, chunk_width, claim.point.as_slice())
             .map_err(batch_failed)?;
         if let Some(expected) = &common_point {
             if expected != &point {
                 return Err(batch_failed(format!(
-                    "Wjolt member {polynomial:?} does not share the canonical opening point"
+                    "OneHotTrace column {polynomial:?} does not share the canonical opening point"
                 )));
             }
         } else {
@@ -207,12 +213,12 @@ where
         }
         evaluations.push(claim.value);
     }
-    let common_point = common_point.ok_or_else(|| batch_failed("Wjolt has no members"))?;
+    let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
     PCS::verify_batch(
-        w_jolt_commitment,
+        one_hot_trace_commitment,
         &common_point,
         &evaluations,
-        &proof.w_jolt,
+        &proof.one_hot_trace,
         &preprocessing.pcs_setup,
         transcript,
     )
@@ -258,10 +264,15 @@ where
         preprocessing.program.committed(),
     ) {
         (Some(bytecode_points), Some(committed)) => {
-            let setup = preprocessing.w_prog_setup.as_ref().ok_or_else(|| {
-                batch_failed("committed-program object without a verifier setup in preprocessing")
-            })?;
-            // The `W_prog` shape is claim-derived: the packing must match the
+            let setup = preprocessing
+                .program_one_hot_setup
+                .as_ref()
+                .ok_or_else(|| {
+                    batch_failed(
+                        "committed-program object without a verifier setup in preprocessing",
+                    )
+                })?;
+            // The `ProgramOneHot` shape is claim-derived: the packing must match the
             // committed witness or its PCS opening fails, so the lane/image
             // point arities are an honest source for the row/word counts.
             let log_bytecode_rows = bytecode_points
@@ -286,18 +297,18 @@ where
                 })
                 .map_err(batch_failed)?,
             );
-            commitments.push(&committed.w_prog_commitment);
+            commitments.push(&committed.program_one_hot_commitment);
             setups.push(setup);
         }
         (None, None) => {}
         (Some(_), None) => {
             return Err(batch_failed(
-                "program reconstruction leaves without a W_prog commitment",
+                "program reconstruction leaves without a ProgramOneHot commitment",
             ));
         }
         (None, Some(_)) => {
             return Err(batch_failed(
-                "W_prog commitment supplied without program reconstruction leaves",
+                "ProgramOneHot commitment supplied without program reconstruction leaves",
             ));
         }
     }
@@ -526,7 +537,7 @@ mod tests {
         one_hot_k: usize,
     }
 
-    impl WJoltCommitmentMetadata for CommitmentMetadata {
+    impl OneHotTraceCommitmentMetadata for CommitmentMetadata {
         fn is_one_hot_backend(&self) -> bool {
             self.one_hot
         }
@@ -556,7 +567,7 @@ mod tests {
         one_hot_k: usize,
     }
 
-    impl WJoltSetupMetadata for SetupMetadata {
+    impl OneHotTraceSetupMetadata for SetupMetadata {
         fn max_num_vars(&self) -> usize {
             self.num_vars
         }
@@ -579,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn wjolt_metadata_is_enforced_before_pcs_verification() {
+    fn one_hot_trace_metadata_is_enforced_before_pcs_verification() {
         let digest = [7; 32];
         let commitment = CommitmentMetadata {
             one_hot: true,
@@ -594,7 +605,7 @@ mod tests {
             poly_count: 17,
             one_hot_k: 256,
         };
-        assert!(validate_wjolt_metadata(&commitment, &setup, digest, 12, 17, 256).is_ok());
+        assert!(validate_one_hot_trace_metadata(&commitment, &setup, digest, 12, 17, 256).is_ok());
 
         for invalid in [
             CommitmentMetadata {
@@ -618,7 +629,9 @@ mod tests {
                 ..commitment
             },
         ] {
-            assert!(validate_wjolt_metadata(&invalid, &setup, digest, 12, 17, 256).is_err());
+            assert!(
+                validate_one_hot_trace_metadata(&invalid, &setup, digest, 12, 17, 256).is_err()
+            );
         }
         for invalid in [
             SetupMetadata {
@@ -638,7 +651,10 @@ mod tests {
                 ..setup
             },
         ] {
-            assert!(validate_wjolt_metadata(&commitment, &invalid, digest, 12, 17, 256).is_err());
+            assert!(
+                validate_one_hot_trace_metadata(&commitment, &invalid, digest, 12, 17, 256)
+                    .is_err()
+            );
         }
     }
 

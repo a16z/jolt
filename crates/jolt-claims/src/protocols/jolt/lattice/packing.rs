@@ -1,9 +1,8 @@
-//! Canonical auxiliary-object packings and the native Wjolt member registry.
+//! Canonical auxiliary-object packings and the native `OneHotTrace` column registry.
 //!
 //! `jolt-openings::PrefixPacking` is the single source of truth for slot
-//! assignment within auxiliary advice and committed-program objects. Wjolt is
-//! not prefix-packed: [`wjolt_members`] returns the exact ordered members of
-//! its native same-point one-hot commitment group.
+//! assignment within auxiliary advice and committed-program objects. `OneHotTrace`
+//! is not prefix-packed: [`one_hot_trace_columns`] returns its exact ordered columns.
 
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_openings::PrefixPacking;
@@ -17,13 +16,13 @@ use super::geometry::{
     byte_num_vars, word_byte_num_vars, LatticeGeometryError, UnsignedIncChunking,
 };
 
-/// Shape of the per-proof native commitment group (`W_jolt`): the canonical
-/// committed Jolt data — `Ra` families, unsigned-inc chunks, and MSB — as
-/// uniform one-hot members opened together at one point.
+/// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
+/// `Ra` families, unsigned-inc chunks, and MSB — as semantic columns of one
+/// packed one-hot polynomial.
 /// Advice byte columns are their own commitment objects
 /// ([`advice_bytes_packing`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WJoltShape {
+pub struct OneHotTraceShape {
     pub ra_layout: JoltRaPolynomialLayout,
     pub log_t: usize,
     /// Shared one-hot chunk size: the address bits of each `Ra` family and
@@ -32,7 +31,7 @@ pub struct WJoltShape {
     pub log_k_chunk: usize,
 }
 
-/// Shape of the preprocessing-time packed commitment (`W_prog`,
+/// Shape of the preprocessing-time packed commitment (`ProgramOneHot`,
 /// committed-program mode): the per-lane bytecode decompositions and program
 /// image bytes. All public or verifier-trusted, so their one-hot structure
 /// is checked offline rather than by in-protocol relations.
@@ -46,9 +45,9 @@ pub struct PrecommittedPackingShape {
     pub program_image_log_words: Option<usize>,
 }
 
-/// Returns the canonical ordered native one-hot members of Wjolt.
-pub fn wjolt_members(
-    shape: &WJoltShape,
+/// Returns the canonical ordered one-hot columns of `OneHotTrace`.
+pub fn one_hot_trace_columns(
+    shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
     let chunking = UnsignedIncChunking::new(shape.log_k_chunk)?;
     let mut polynomials = shape.ra_layout.committed_polynomials().collect::<Vec<_>>();
@@ -135,8 +134,8 @@ fn precommitted_polynomials(
 mod tests {
     use super::*;
 
-    fn wjolt_shape() -> WJoltShape {
-        WJoltShape {
+    fn one_hot_trace_shape() -> OneHotTraceShape {
+        OneHotTraceShape {
             ra_layout: JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
             log_t: 5,
             log_k_chunk: 8,
@@ -153,15 +152,15 @@ mod tests {
     }
 
     #[test]
-    fn wjolt_members_cover_every_committed_lattice_polynomial() {
-        let members = wjolt_members(&wjolt_shape()).unwrap();
+    fn one_hot_trace_columns_cover_every_committed_lattice_polynomial() {
+        let columns = one_hot_trace_columns(&one_hot_trace_shape()).unwrap();
 
         // 4 Ra polynomials + 8 inc chunks + msb.
-        assert_eq!(members.len(), 4 + 8 + 1);
-        assert_eq!(members[0], JoltCommittedPolynomial::InstructionRa(0));
-        assert!(members.contains(&JoltCommittedPolynomial::UnsignedIncChunk(7)));
+        assert_eq!(columns.len(), 4 + 8 + 1);
+        assert_eq!(columns[0], JoltCommittedPolynomial::InstructionRa(0));
+        assert!(columns.contains(&JoltCommittedPolynomial::UnsignedIncChunk(7)));
         assert_eq!(
-            members.last(),
+            columns.last(),
             Some(&JoltCommittedPolynomial::UnsignedIncMsb)
         );
     }
@@ -180,13 +179,13 @@ mod tests {
     }
 
     #[test]
-    fn wjolt_members_reject_invalid_chunk_widths() {
-        let shape = WJoltShape {
+    fn one_hot_trace_columns_reject_invalid_chunk_widths() {
+        let shape = OneHotTraceShape {
             log_k_chunk: 7,
-            ..wjolt_shape()
+            ..one_hot_trace_shape()
         };
         assert_eq!(
-            wjolt_members(&shape),
+            one_hot_trace_columns(&shape),
             Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width: 7 })
         );
     }

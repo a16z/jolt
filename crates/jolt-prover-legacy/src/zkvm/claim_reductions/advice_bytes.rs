@@ -12,7 +12,7 @@
 //! The reference point `r_ref` is drawn fresh over the cell domain before
 //! the instance gamma; the word kernel binds the completed advice claim's
 //! own point. The column opening produced here is the leaf claim the packed
-//! stage-8 `A_unt` statement consumes.
+//! stage-8 `UntrustedAdviceOneHot` statement consumes.
 
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

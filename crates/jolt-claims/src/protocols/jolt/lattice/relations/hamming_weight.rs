@@ -63,7 +63,7 @@ pub struct LatticeHammingWeightClaimReductionInputClaims<C> {
     #[opening(committed = RamRa, from = RamRaVirtualization)]
     pub ram_virtualization: Vec<C>,
     #[opening(committed = UnsignedIncChunk, from = Booleanity)]
-    pub unsigned_inc_booleanity: Vec<C>,
+    pub unsigned_inc_chunk_booleanity: Vec<C>,
     #[opening(committed = UnsignedIncMsb, from = Booleanity)]
     pub unsigned_inc_msb_booleanity: C,
     #[opening(FusedInc, from = BytecodeReadRaf)]

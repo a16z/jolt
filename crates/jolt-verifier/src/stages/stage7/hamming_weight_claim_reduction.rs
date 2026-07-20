@@ -55,7 +55,7 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
         bytecode_virtualization: cycle_phase.bytecode_read_raf.bytecode_ra.clone(),
         ram_virtualization: cycle_phase.ram_ra_virtualization.ram_ra.clone(),
         #[cfg(feature = "akita")]
-        unsigned_inc_booleanity: cycle_phase.booleanity.unsigned_inc_chunks.clone(),
+        unsigned_inc_chunk_booleanity: cycle_phase.booleanity.unsigned_inc_chunks.clone(),
         #[cfg(feature = "akita")]
         unsigned_inc_msb_booleanity: cycle_phase.booleanity.unsigned_inc_msb,
         #[cfg(feature = "akita")]

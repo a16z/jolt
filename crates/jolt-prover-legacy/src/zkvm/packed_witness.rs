@@ -1,5 +1,5 @@
-//! Prover-side Akita witness assembly. Wjolt is a native commitment group of
-//! uniform row-major one-hot members; auxiliary program/advice objects retain
+//! Prover-side Akita witness assembly. `OneHotTrace` contains the uniform
+//! row-major one-hot columns derived from the execution trace; auxiliary program/advice objects retain
 //! sparse prefix-packed representations.
 
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
@@ -113,11 +113,11 @@ impl<F: jolt_field::Field> jolt_poly::MultilinearPoly<F> for SparseUnitPolynomia
 /// The per-cycle fused increment stream: the RAM delta on store cycles, the
 /// rd delta otherwise. Padding cycles carry `delta = 0`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FusedIncCycle {
+pub struct FusedIncValue {
     pub delta: i128,
 }
 
-impl FusedIncCycle {
+impl FusedIncValue {
     /// The per-cycle fused delta: the RAM write delta on store cycles, the
     /// rd write delta otherwise.
     pub fn from_cycle(cycle: &tracer::instruction::Cycle) -> Self {
@@ -130,7 +130,7 @@ impl FusedIncCycle {
     /// selector opens.
     pub fn from_cycle_with_store(cycle: &tracer::instruction::Cycle) -> (Self, bool) {
         let store = JoltTraceCycle::try_new(cycle)
-            .expect("Wjolt cycles must be final Jolt instruction rows")
+            .expect("OneHotTrace cycles must be final Jolt instruction rows")
             .circuit_flags()[CircuitFlags::Store];
         let ram_delta = match cycle.ram_access() {
             tracer::instruction::RAMAccess::Write(write) => {
@@ -158,9 +158,9 @@ impl FusedIncCycle {
         (Self { delta }, store)
     }
 
-    /// The shifted unsigned encoding `2^64 + delta`: the msb bit and the
-    /// low-64-bit chunk hot_lanes. Padding (`delta = 0`) encodes as msb hot
-    /// with every chunk at hot_lane 0 (the jolt-claims padding invariant).
+    /// The shifted unsigned encoding `2^64 + delta`: the MSB and low-64-bit
+    /// chunks. Padding (`delta = 0`) encodes as MSB hot with every chunk at
+    /// hot lane zero.
     fn shifted(self) -> u128 {
         debug_assert!(self.delta.unsigned_abs() < 1u128 << UNSIGNED_INC_BITS);
         (self.delta + (1i128 << UNSIGNED_INC_BITS)) as u128
@@ -174,7 +174,7 @@ impl FusedIncCycle {
         self.chunk_hot_lane_bits(chunking.chunk_width(), index)
     }
 
-    /// Chunk hot_lane from a plain bit width (the shared-final-point invariant
+    /// Chunk hot lane from a plain bit width (the shared-final-point invariant
     /// fixes `width == log_k_chunk`).
     pub fn chunk_hot_lane_bits(self, width: usize, index: usize) -> usize {
         let low = self.shifted() & ((1u128 << UNSIGNED_INC_BITS) - 1);
@@ -186,25 +186,25 @@ impl FusedIncCycle {
 enum ColumnCells {
     /// Per-cycle hot address (`None` on padding cycles — no access).
     Ra(Vec<Option<usize>>),
-    /// The fused-inc chunk column at this index.
+    /// The unsigned fused-increment chunk at this index.
     Chunk(usize),
-    /// The fused-inc msb column.
+    /// The unsigned fused-increment MSB.
     Msb,
 }
 
-/// Builds the strict one-hot Wjolt members in canonical order for the native
-/// one-hot commitment format: `K = 2^chunk_width` lanes over `2^log_t`
+/// Builds the strict one-hot `OneHotTrace` columns in canonical order:
+/// `K = 2^chunk_width` lanes over `2^log_t`
 /// row-major rows (`cycle · K + lane`).
 ///
-/// `Ra` members take their per-cycle hot address, `UnsignedIncChunk(i)` its
-/// per-cycle chunk address, and the MSB member encodes its bit as hot address
+/// `Ra` columns take their per-cycle hot address, `UnsignedIncChunk(i)` its
+/// per-cycle chunk address, and the MSB column encodes its bit as hot address
 /// zero or one.
-pub fn assemble_one_hot_members(
-    members: &[JoltCommittedPolynomial],
+pub fn assemble_one_hot_trace_columns(
+    column_ids: &[JoltCommittedPolynomial],
     chunking: UnsignedIncChunking,
     log_t: usize,
     ra_indices: &dyn Fn(JoltCommittedPolynomial) -> Option<Vec<Option<usize>>>,
-    fused_inc: &[FusedIncCycle],
+    fused_inc: &[FusedIncValue],
 ) -> Result<Vec<OneHotPolynomial>, String> {
     debug_assert!(fused_inc.len() <= 1 << log_t);
     let k = 1usize
@@ -212,14 +212,14 @@ pub fn assemble_one_hot_members(
         .filter(|k| *k <= u8::MAX as usize + 1)
         .ok_or_else(|| {
             format!(
-                "one-hot member lanes need chunk width <= 8, got {}",
+                "one-hot trace lanes need chunk width <= 8, got {}",
                 chunking.chunk_width()
             )
         })?;
     let rows = 1usize << log_t;
 
     let mut columns = Vec::new();
-    for polynomial in members {
+    for polynomial in column_ids {
         let cells = match polynomial {
             JoltCommittedPolynomial::InstructionRa(_)
             | JoltCommittedPolynomial::BytecodeRa(_)
@@ -230,7 +230,7 @@ pub fn assemble_one_hot_members(
             JoltCommittedPolynomial::UnsignedIncChunk(index) => ColumnCells::Chunk(*index),
             JoltCommittedPolynomial::UnsignedIncMsb => ColumnCells::Msb,
             other => {
-                return Err(format!("polynomial {other:?} is not a native Wjolt member"));
+                return Err(format!("polynomial {other:?} is not an OneHotTrace column"));
             }
         };
         columns.push((*polynomial, cells));
@@ -265,7 +265,7 @@ pub fn assemble_one_hot_members(
         .collect()
 }
 
-/// Scatters the precommitted `W_prog` sub-columns (per-chunk bytecode lanes
+/// Scatters the precommitted `ProgramOneHot` sub-columns (per-chunk bytecode lanes
 /// and the program image) into one-positions of the packed precommitted
 /// witness, per the canonical `precommitted_packing` slots. Row domain per
 /// chunk is `2^log_bytecode_rows` (bytecode rows, zero-padded); byte
@@ -384,7 +384,7 @@ pub fn assemble_precommitted_witness<F: JoltField>(
             }
             JoltCommittedPolynomial::ProgramImageBytes => {
                 let words = program_image_words
-                    .ok_or_else(|| "program image words missing for W_prog".to_string())?;
+                    .ok_or_else(|| "program image words missing for ProgramOneHot".to_string())?;
                 let word_vars = slot.num_vars - 8 - WORD_BYTES.log_2();
                 let limb_bits = WORD_BYTES.log_2();
                 debug_assert!(words.len() <= 1 << word_vars);
@@ -423,14 +423,14 @@ mod tests {
         UnsignedIncChunking::new(LOG_K_CHUNK).unwrap()
     }
 
-    fn fused_trace() -> Vec<FusedIncCycle> {
+    fn fused_trace() -> Vec<FusedIncValue> {
         [7i128, -3, 0, (1 << 40) + 5, -(1 << 63), 1, -1, 0]
             .into_iter()
-            .map(|delta| FusedIncCycle { delta })
+            .map(|delta| FusedIncValue { delta })
             .collect()
     }
 
-    fn members() -> Vec<(JoltCommittedPolynomial, OneHotPolynomial)> {
+    fn columns() -> Vec<(JoltCommittedPolynomial, OneHotPolynomial)> {
         let ra = |polynomial: JoltCommittedPolynomial| {
             let base = match polynomial {
                 JoltCommittedPolynomial::InstructionRa(_) => 3usize,
@@ -452,35 +452,35 @@ mod tests {
         ids.extend((0..chunking().chunk_count()).map(JoltCommittedPolynomial::UnsignedIncChunk));
         ids.push(JoltCommittedPolynomial::UnsignedIncMsb);
         let polynomials =
-            assemble_one_hot_members(&ids, chunking(), LOG_T, &ra, &fused_trace()).unwrap();
+            assemble_one_hot_trace_columns(&ids, chunking(), LOG_T, &ra, &fused_trace()).unwrap();
         ids.into_iter().zip(polynomials).collect()
     }
 
     #[test]
-    fn every_wjolt_member_has_the_uniform_native_shape() {
-        for (_, member) in members() {
-            assert_eq!(member.num_vars(), LOG_K_CHUNK + LOG_T);
-            assert_eq!(member.k(), 1 << LOG_K_CHUNK);
-            assert_eq!(member.indices().len(), 1 << LOG_T);
+    fn every_one_hot_trace_column_has_the_uniform_native_shape() {
+        for (_, column) in columns() {
+            assert_eq!(column.num_vars(), LOG_K_CHUNK + LOG_T);
+            assert_eq!(column.k(), 1 << LOG_K_CHUNK);
+            assert_eq!(column.indices().len(), 1 << LOG_T);
         }
     }
 
     #[test]
     fn chunk_columns_reconstruct_the_shifted_fused_increment() {
-        let chunking = chunking();
+        let encoding = chunking();
         let trace = fused_trace();
-        let members = members();
+        let columns = columns();
         for (cycle, inc) in trace.iter().enumerate() {
             let mut reconstructed = 0u128;
-            for index in 0..chunking.chunk_count() {
-                let (_, member) = members
+            for index in 0..encoding.chunk_count() {
+                let (_, column) = columns
                     .iter()
                     .find(|(id, _)| *id == JoltCommittedPolynomial::UnsignedIncChunk(index))
                     .unwrap();
-                let hot = member.indices()[cycle].unwrap() as usize;
-                reconstructed |= (hot as u128) << (chunking.chunk_width() * index);
+                let hot = column.indices()[cycle].unwrap() as usize;
+                reconstructed |= (hot as u128) << (encoding.chunk_width() * index);
             }
-            let (_, msb) = members
+            let (_, msb) = columns
                 .iter()
                 .find(|(id, _)| *id == JoltCommittedPolynomial::UnsignedIncMsb)
                 .unwrap();
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn msb_is_one_hot_at_address_zero_or_one() {
-        let (_, msb) = members()
+        let (_, msb) = columns()
             .into_iter()
             .find(|(id, _)| *id == JoltCommittedPolynomial::UnsignedIncMsb)
             .unwrap();
@@ -505,8 +505,8 @@ mod tests {
     }
 
     #[test]
-    fn padding_cycles_encode_msb_hot_chunks_at_zero() {
-        let padding = FusedIncCycle { delta: 0 };
+    fn padding_cycles_encode_msb_hot_and_zero_digits() {
+        let padding = FusedIncValue { delta: 0 };
         assert!(padding.msb());
         for index in 0..chunking().chunk_count() {
             assert_eq!(padding.chunk_hot_lane(chunking(), index), 0);
@@ -514,8 +514,8 @@ mod tests {
     }
 
     #[test]
-    fn ra_member_retains_absent_rows() {
-        let (_, instruction) = members()
+    fn ra_column_retains_absent_rows() {
+        let (_, instruction) = columns()
             .into_iter()
             .find(|(id, _)| *id == JoltCommittedPolynomial::InstructionRa(0))
             .unwrap();
@@ -559,7 +559,7 @@ mod precommitted_tests {
         }
     }
 
-    /// Per-cell reconstruction weight of a `W_prog` sub-column: the value the
+    /// Per-cell reconstruction weight of a `ProgramOneHot` sub-column: the value the
     /// bytecode chunk reconstruction attributes to that cell against the
     /// chunk's lane-eq table (register/lookup selectors and flags are plain
     /// lane weights; pc/imm bytes carry the `byte · 256^place` decode).

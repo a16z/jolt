@@ -53,29 +53,29 @@ pub enum CommittedPolynomial {
     /// (lattice/packed mode only; a slot of the packed witness `W`).
     UnsignedIncMsb,
     /// One-hot register selector `(chunk, lane)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `W_prog` slot). Lane
+    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot). Lane
     /// order is rs1, rs2, rd.
     BytecodeRegisterSelector(usize, usize),
     /// Boolean circuit-flag column `(chunk, flag)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `W_prog` slot).
+    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot).
     BytecodeCircuitFlag(usize, usize),
     /// Boolean instruction-flag column `(chunk, flag)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `W_prog` slot).
+    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot).
     BytecodeInstructionFlag(usize, usize),
     /// One-hot lookup-table selector of a precommitted bytecode chunk
-    /// (lattice/packed mode; a `W_prog` slot).
+    /// (lattice/packed mode; a `ProgramOneHot` slot).
     BytecodeLookupSelector(usize),
     /// Boolean RAF flag column of a precommitted bytecode chunk
-    /// (lattice/packed mode; a `W_prog` slot).
+    /// (lattice/packed mode; a `ProgramOneHot` slot).
     BytecodeRafFlag(usize),
     /// Byte one-hot decomposition of a chunk's unexpanded PCs
-    /// (lattice/packed mode; a `W_prog` slot).
+    /// (lattice/packed mode; a `ProgramOneHot` slot).
     BytecodeUnexpandedPcBytes(usize),
     /// Byte one-hot decomposition of a chunk's canonical immediate field
-    /// bytes (lattice/packed mode; a `W_prog` slot).
+    /// bytes (lattice/packed mode; a `ProgramOneHot` slot).
     BytecodeImmBytes(usize),
     /// Byte one-hot decomposition of the program image words
-    /// (lattice/packed mode; a `W_prog` slot).
+    /// (lattice/packed mode; a `ProgramOneHot` slot).
     ProgramImageBytes,
 }
 
@@ -273,7 +273,7 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| {
                         Some(
-                            crate::zkvm::packed_witness::FusedIncCycle::from_cycle(cycle)
+                            crate::zkvm::packed_witness::FusedIncValue::from_cycle(cycle)
                                 .chunk_hot_lane_bits(width, *i) as u8,
                         )
                     })
@@ -289,7 +289,7 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| {
                         u8::from(
-                            crate::zkvm::packed_witness::FusedIncCycle::from_cycle(cycle).msb(),
+                            crate::zkvm::packed_witness::FusedIncValue::from_cycle(cycle).msb(),
                         )
                     })
                     .collect();
@@ -310,7 +310,7 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
             | CommittedPolynomial::BytecodeImmBytes(_)
             | CommittedPolynomial::ProgramImageBytes => {
-                panic!("W_prog sub-columns commit through the packed precommitted witness, not generate_witness")
+                panic!("ProgramOneHot sub-columns commit through the packed precommitted witness, not generate_witness")
             }
             #[cfg(not(feature = "prover"))]
             CommittedPolynomial::BytecodeRegisterSelector(..)

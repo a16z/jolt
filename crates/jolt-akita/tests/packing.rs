@@ -347,7 +347,7 @@ fn akita_prefix_packed_batch_rejects_wrong_witness_dimension() {
 
 /// Two Akita commitment objects of different widths discharged through one
 /// joint reduction sumcheck — the shape of Jolt's packed final opening
-/// (`W_jolt` plus a smaller advice/program object).
+/// (`OneHotTrace` plus a smaller advice/program object).
 #[test]
 fn akita_joint_packed_openings_roundtrip_across_two_objects() {
     let wide_polynomials = packed_polynomials();

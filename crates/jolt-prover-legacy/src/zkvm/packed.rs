@@ -1,15 +1,15 @@
 //! The packed (Akita/lattice) prove path.
 //!
 //! Mirrors [`super::prover::JoltCpuProver::prove_parts`] with the lattice
-//! stage swaps: one native Akita commitment group `W_jolt` replaces the
+//! stage swaps: one native Akita commitment group `OneHotTrace` replaces the
 //! per-polynomial streaming Dory commits, the nine-stage bytecode read-raf
 //! discharges the four reduced inc claims through its fused-inc val stages
 //! (producing the `FusedInc` opening at the shared 6b cycle point), the
 //! lattice booleanity carries the fused-inc columns, stage 7 folds the
 //! increment one-hot claims into `HammingWeightClaimReduction`, the
 //! reconstruction phase settles auxiliary advice/bytecode/image columns, and
-//! stage 8 uses one native same-point Akita opening for Wjolt plus packed
-//! openings for auxiliaries.
+//! stage 8 uses one native same-point Akita opening for `OneHotTrace` plus
+//! packed openings for auxiliaries.
 //!
 //! The prover runs over the `AkitaFp128` newtype (the legacy `JoltField`
 //! impl of the same underlying fp128 element the verifier stack uses), so
@@ -27,15 +27,15 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::{word_byte_num_vars, WORD_BYTES};
 use jolt_claims::protocols::jolt::lattice::{
-    advice_bytes_packing, precommitted_packing, PrecommittedPackingShape, UnsignedIncChunking,
-    WJoltLayoutPlan, WJoltShape, W_JOLT_LAYOUT,
+    advice_bytes_packing, precommitted_packing, OneHotTraceLayoutPlan, OneHotTraceShape,
+    PrecommittedPackingShape, ONE_HOT_TRACE_LAYOUT,
 };
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
     prove_packed_openings, CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim,
     PackedProverGroup, PackedProverObject, PrefixPackedStatement, PrefixPacking,
 };
-use jolt_poly::{MultilinearPoly, OneHotPolynomial};
+use jolt_poly::OneHotPolynomial;
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
 use jolt_verifier::preprocessing::JoltVerifierPreprocessing;
@@ -51,8 +51,8 @@ use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::subprotocols::booleanity::{
-    lattice_booleanity_params, LatticeBooleanityAddressSumcheckProver,
-    LatticeBooleanityCycleSumcheckProver, LatticeIncColumns,
+    lattice_booleanity_params, FusedIncColumns, LatticeBooleanityAddressSumcheckProver,
+    LatticeBooleanityCycleSumcheckProver,
 };
 use crate::transcripts::Transcript as LegacyTranscript;
 use crate::utils::math::Math;
@@ -72,9 +72,7 @@ use crate::zkvm::fiat_shamir_preamble;
 use crate::zkvm::instruction_lookups::ra_virtual::{
     InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
 };
-use crate::zkvm::packed_witness::{
-    assemble_one_hot_members, FusedIncCycle, SparseUnitPolynomial, UNSIGNED_INC_BITS,
-};
+use crate::zkvm::packed_witness::{FusedIncValue, SparseUnitPolynomial, UNSIGNED_INC_BITS};
 use crate::zkvm::prover::JoltCpuProver;
 use crate::zkvm::ram::hamming_booleanity::{
     HammingBooleanitySumcheckParams, HammingBooleanitySumcheckProver,
@@ -250,14 +248,14 @@ impl JoltCurve for AkitaNoCurve {
 }
 
 /// A zero-sized stand-in for the legacy per-polynomial commitment machinery:
-/// the Akita path commits Wjolt as one native one-hot member group, so none of
+/// the Akita path commits OneHotTrace as one native one-hot member group, so none of
 /// these entry points is ever reached.
 #[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AkitaPackedScheme;
 
 macro_rules! no_per_polynomial_commitment {
     () => {
-        panic!("the Akita path commits one native Wjolt member group; legacy per-polynomial commitment entry points are unreachable")
+        panic!("the Akita path commits one native OneHotTrace column group; legacy per-polynomial commitment entry points are unreachable")
     };
 }
 
@@ -385,7 +383,7 @@ impl crate::zkvm::proof::ProofCurve<AkitaFp128> for AkitaNoCurve {
 }
 
 /// The transparent setup of a singleton commitment object (advice byte
-/// columns, `W_prog`): one polynomial at `num_vars`, fixed zero seed — the
+/// columns, `ProgramOneHot`): one polynomial at `num_vars`, fixed zero seed — the
 /// convention `akita_verifier_preprocessing` re-derives on the verifier
 /// side, so the two must stay a single definition.
 fn transparent_object_setup(
@@ -402,10 +400,10 @@ fn transparent_object_setup(
     ))
 }
 
-/// A packed advice commitment object (`A_unt` per proof, `A_tru`
+/// A packed advice commitment object (`UntrustedAdviceOneHot` per proof, `TrustedAdviceOneHot`
 /// precommitted): the word polynomial the base advice reductions run over,
 /// the byte one-hot column, and its commitment data.
-pub struct PackedAdviceObject {
+pub struct AdviceOneHot {
     pub words: Vec<u64>,
     pub byte_column: SparseUnitPolynomial<AkitaField>,
     pub commitment: <AkitaScheme as jolt_crypto::Commitment>::Output,
@@ -418,10 +416,10 @@ pub struct PackedAdviceObject {
 /// past the actual advice length — the same zero padding the base word
 /// polynomial carries. The setup is derived from the public advice shape
 /// with the same fixed seed on both sides (the Akita setup is transparent).
-pub fn packed_advice_byte_object(
+pub fn commit_advice_one_hot(
     advice_bytes: &[u8],
     max_advice_bytes: usize,
-) -> Result<PackedAdviceObject, VerifierError> {
+) -> Result<AdviceOneHot, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
 
     let mut words = vec![0u64; max_advice_bytes / 8];
@@ -445,7 +443,7 @@ pub fn packed_advice_byte_object(
     let (commitment, hint) =
         <AkitaScheme as VerifierCommitmentScheme>::commit(&byte_column, &setup)
             .map_err(|error| commit_failed(error.to_string()))?;
-    Ok(PackedAdviceObject {
+    Ok(AdviceOneHot {
         words,
         byte_column,
         commitment,
@@ -454,21 +452,21 @@ pub fn packed_advice_byte_object(
     })
 }
 
-/// Precommits the trusted-advice byte one-hot column (`A_tru`) out of band.
+/// Precommits the trusted-advice byte one-hot column (`TrustedAdviceOneHot`) out of band.
 /// The caller passes the returned object to the packed prove and its
 /// commitment to the verifier.
-pub fn commit_trusted_advice_packed(
+pub fn commit_trusted_advice_one_hot(
     trusted_advice_bytes: &[u8],
     max_trusted_advice_bytes: usize,
-) -> Result<PackedAdviceObject, VerifierError> {
-    packed_advice_byte_object(trusted_advice_bytes, max_trusted_advice_bytes)
+) -> Result<AdviceOneHot, VerifierError> {
+    commit_advice_one_hot(trusted_advice_bytes, max_trusted_advice_bytes)
 }
 
-/// The precommitted `W_prog` commitment object (committed-program mode):
+/// The precommitted `ProgramOneHot` commitment object (committed-program mode):
 /// the packed sub-column witness (bytecode lanes + program image), its
 /// Akita commitment/hint, the shape-exact setup, and the packing shape —
 /// assembled and committed once at preprocessing time.
-pub struct PackedProgramObject {
+pub struct ProgramOneHot {
     pub shape: PrecommittedPackingShape,
     pub witness: SparseUnitPolynomial<AkitaField>,
     pub commitment: <AkitaScheme as jolt_crypto::Commitment>::Output,
@@ -476,17 +474,17 @@ pub struct PackedProgramObject {
     pub setup: <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
 }
 
-/// Assembles and commits `W_prog` from the full (public) program: every
+/// Assembles and commits `ProgramOneHot` from the full (public) program: every
 /// bytecode sub-column plus the program image, packed per the canonical
 /// `precommitted_packing`. The setup is derived from the public program
 /// shape with the same fixed seed on both sides (the Akita setup is
 /// transparent). The imm lane uses the field's canonical byte width, so
 /// negative immediates (`p − |imm|`) reconstruct exactly.
-pub fn commit_program_packed(
+pub fn commit_program_one_hot(
     program: &crate::zkvm::program::FullProgramPreprocessing,
     memory_layout: &common::jolt_device::MemoryLayout,
     bytecode_chunk_count: usize,
-) -> Result<PackedProgramObject, VerifierError> {
+) -> Result<ProgramOneHot, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
     let imm_byte_width = <AkitaFp128 as crate::field::JoltField>::NUM_BYTES;
     let bytecode_len = program.bytecode_len();
@@ -518,7 +516,7 @@ pub fn commit_program_packed(
         .map_err(|error| commit_failed(error.to_string()))?;
     let (commitment, hint) = <AkitaScheme as VerifierCommitmentScheme>::commit(&witness, &setup)
         .map_err(|error| commit_failed(error.to_string()))?;
-    Ok(PackedProgramObject {
+    Ok(ProgramOneHot {
         shape,
         witness,
         commitment,
@@ -528,13 +526,13 @@ pub fn commit_program_packed(
 }
 
 /// The packed sibling of `JoltSharedPreprocessing::new_committed`: marks the
-/// program committed (metadata + digest) and assembles/commits `W_prog`
-/// through [`commit_program_packed`] instead of per-polynomial commitments.
+/// program committed (metadata + digest) and assembles/commits `ProgramOneHot`
+/// through [`commit_program_one_hot`] instead of per-polynomial commitments.
 /// The placeholder per-polynomial structs carry unit commitments and zeroed
-/// shape fields — the packed path never reads them; the real `W_prog`
+/// shape fields — the packed path never reads them; the real `ProgramOneHot`
 /// commitment binds via explicit transcript absorption in canonical object
 /// order, exactly like the base committed chunk commitments.
-pub fn shared_preprocessing_committed_packed(
+pub fn shared_preprocessing_with_program_one_hot(
     program: crate::zkvm::program::ProgramPreprocessing<AkitaPackedScheme>,
     memory_layout: common::jolt_device::MemoryLayout,
     max_padded_trace_length: usize,
@@ -543,7 +541,7 @@ pub fn shared_preprocessing_committed_packed(
     (
         crate::zkvm::preprocessing::JoltSharedPreprocessing<AkitaPackedScheme>,
         crate::zkvm::program::CommittedProgramProverData<AkitaPackedScheme>,
-        PackedProgramObject,
+        ProgramOneHot,
     ),
     VerifierError,
 > {
@@ -552,7 +550,7 @@ pub fn shared_preprocessing_committed_packed(
             reason: "packed committed preprocessing starts from a full program".to_string(),
         });
     };
-    let w_prog = commit_program_packed(&full, &memory_layout, bytecode_chunk_count)?;
+    let program_one_hot = commit_program_one_hot(&full, &memory_layout, bytecode_chunk_count)?;
     let meta = full.meta();
     let meta_for_shared = meta.clone();
     let bytecode_len = full.bytecode_len();
@@ -587,7 +585,7 @@ pub fn shared_preprocessing_committed_packed(
             program_image_hint: AkitaPackedScheme,
         },
     };
-    Ok((shared, prover_data, w_prog))
+    Ok((shared, prover_data, program_one_hot))
 }
 
 /// The packed prover pinned to the Akita stack.
@@ -595,16 +593,16 @@ pub type AkitaPackedProver<'a> =
     JoltCpuProver<'a, AkitaFp128, AkitaNoCurve, AkitaPackedScheme, AkitaTranscript>;
 
 impl AkitaPackedProver<'_> {
-    /// Akita setup parameters sized to Wjolt: one commitment
-    /// group of per-column one-hot members over the shared cell dimension.
-    pub fn wjolt_setup_params(&self) -> jolt_akita::AkitaSetupParams {
-        let wjolt_shape = self.wjolt_shape();
-        let shape = W_JOLT_LAYOUT
-            .setup_shape(&wjolt_shape)
-            .expect("canonical Wjolt layout must exist");
-        let layout_digest = W_JOLT_LAYOUT
-            .layout_digest(&wjolt_shape)
-            .expect("canonical Wjolt layout digest must exist");
+    /// Akita setup parameters sized to the native `OneHotTrace` group of
+    /// uniform one-hot columns.
+    pub fn one_hot_trace_setup_params(&self) -> jolt_akita::AkitaSetupParams {
+        let one_hot_trace_shape = self.one_hot_trace_shape();
+        let shape = ONE_HOT_TRACE_LAYOUT
+            .setup_shape(&one_hot_trace_shape)
+            .expect("canonical OneHotTrace layout must exist");
+        let layout_digest = ONE_HOT_TRACE_LAYOUT
+            .layout_digest(&one_hot_trace_shape)
+            .expect("canonical OneHotTrace layout digest must exist");
         jolt_akita::AkitaSetupParams::one_hot_only(
             shape.num_vars,
             shape.num_polys,
@@ -613,8 +611,8 @@ impl AkitaPackedProver<'_> {
         )
     }
 
-    fn wjolt_shape(&self) -> WJoltShape {
-        WJoltShape {
+    fn one_hot_trace_shape(&self) -> OneHotTraceShape {
+        OneHotTraceShape {
             ra_layout: self.ra_layout(),
             log_t: self.trace.len().log_2(),
             log_k_chunk: self.one_hot_params.log_k_chunk,
@@ -630,60 +628,79 @@ impl AkitaPackedProver<'_> {
         .expect("Jolt always commits at least one RA polynomial")
     }
 
-    /// Per-cycle hot addresses of a committed `Ra` polynomial, mirroring
-    /// `CommittedPolynomial::generate_witness`'s one-hot index computation.
-    fn packed_ra_indices(&self, polynomial: JoltCommittedPolynomial) -> Option<Vec<Option<usize>>> {
+    /// Builds the native `OneHotTrace` columns from compact per-cycle source
+    /// data. Each returned index buffer is handed to Akita by ownership, so
+    /// there is no witness clone at the PCS boundary.
+    #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
+    fn assemble_one_hot_trace(
+        &self,
+        plan: &OneHotTraceLayoutPlan,
+        fused_inc: &[FusedIncValue],
+    ) -> Vec<OneHotPolynomial> {
         use crate::zkvm::instruction::LookupQuery;
         use crate::zkvm::ram::remap_address;
         use common::constants::XLEN;
         use rayon::prelude::*;
 
         let params = &self.one_hot_params;
-        let indices = match polynomial {
-            JoltCommittedPolynomial::InstructionRa(index) => self
-                .trace
-                .par_iter()
-                .map(|cycle| {
-                    let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                    Some(params.lookup_index_chunk(lookup_index, index) as usize)
-                })
-                .collect(),
-            JoltCommittedPolynomial::BytecodeRa(index) => self
-                .trace
-                .par_iter()
-                .map(|cycle| {
-                    let pc = self.preprocessing.materialized_program().get_pc(cycle);
-                    Some(params.bytecode_pc_chunk(pc, index) as usize)
-                })
-                .collect(),
-            JoltCommittedPolynomial::RamRa(index) => self
-                .trace
-                .par_iter()
-                .map(|cycle| {
-                    remap_address(
-                        cycle.ram_access().address() as u64,
-                        &self.preprocessing.shared.memory_layout,
-                    )
-                    .map(|address| params.ram_address_chunk(address, index) as usize)
-                })
-                .collect(),
-            _ => return None,
-        };
-        Some(indices)
+        let trace = &self.trace;
+        let program = self.preprocessing.materialized_program();
+        let memory_layout = &self.preprocessing.shared.memory_layout;
+        let cycle_data = trace
+            .par_iter()
+            .map(|cycle| {
+                (
+                    LookupQuery::<XLEN>::to_lookup_index(cycle),
+                    program.get_pc(cycle),
+                    remap_address(cycle.ram_access().address() as u64, memory_layout),
+                )
+            })
+            .collect::<Vec<_>>();
+        let k = 1usize << params.log_k_chunk;
+        plan.columns
+            .par_iter()
+            .map(|polynomial| {
+                let indices = cycle_data
+                    .iter()
+                    .zip(fused_inc)
+                    .map(|((lookup_index, pc, ram_address), inc)| {
+                        let hot = match polynomial {
+                            JoltCommittedPolynomial::InstructionRa(index) => {
+                                Some(params.lookup_index_chunk(*lookup_index, *index) as usize)
+                            }
+                            JoltCommittedPolynomial::BytecodeRa(index) => {
+                                Some(params.bytecode_pc_chunk(*pc, *index) as usize)
+                            }
+                            JoltCommittedPolynomial::RamRa(index) => (*ram_address)
+                                .map(|address| params.ram_address_chunk(address, *index) as usize),
+                            JoltCommittedPolynomial::UnsignedIncChunk(index) => {
+                                Some(inc.chunk_hot_lane_bits(params.log_k_chunk, *index))
+                            }
+                            JoltCommittedPolynomial::UnsignedIncMsb => Some(usize::from(inc.msb())),
+                            _ => unreachable!("OneHotTrace plan contains only canonical columns"),
+                        };
+                        hot.map(|hot| {
+                            u8::try_from(hot).expect("OneHotTrace K is at most the u8 lane domain")
+                        })
+                    })
+                    .collect();
+                OneHotPolynomial::new(k, indices)
+            })
+            .collect()
     }
 
     /// The per-cycle fused increments, shared by the inc-column witness
-    /// build and Wjolt assembly.
-    fn fused_inc_cycles(&self) -> Vec<FusedIncCycle> {
+    /// build and OneHotTrace assembly.
+    fn fused_inc_values(&self) -> Vec<FusedIncValue> {
         use rayon::prelude::*;
 
         self.trace
             .par_iter()
-            .map(FusedIncCycle::from_cycle)
+            .map(FusedIncValue::from_cycle)
             .collect()
     }
 
-    fn lattice_inc_columns(&self, fused_cycles: &[FusedIncCycle]) -> LatticeIncColumns {
+    fn fused_inc_columns(&self, fused_cycles: &[FusedIncValue]) -> FusedIncColumns {
         use rayon::prelude::*;
         use std::sync::Arc;
 
@@ -706,20 +723,20 @@ impl AkitaPackedProver<'_> {
             )))
             .collect();
         let fused: Vec<i128> = fused_cycles.par_iter().map(|cycle| cycle.delta).collect();
-        LatticeIncColumns { one_hot, fused }
+        FusedIncColumns { one_hot, fused }
     }
 
-    /// Builds and commits the untrusted-advice byte one-hot column (`A_unt`).
+    /// Builds and commits the untrusted-advice byte one-hot column (`UntrustedAdviceOneHot`).
     /// Also materializes the base advice *word* polynomial on `self.advice`
     /// so the shared stage-4/6b/7 advice reduction machinery runs unchanged.
     #[tracing::instrument(skip_all, name = "generate_and_commit_untrusted_advice_packed")]
     fn generate_and_commit_untrusted_advice_packed(
         &mut self,
-    ) -> Result<Option<PackedAdviceObject>, VerifierError> {
+    ) -> Result<Option<AdviceOneHot>, VerifierError> {
         if self.program_io.untrusted_advice.is_empty() {
             return Ok(None);
         }
-        let object = packed_advice_byte_object(
+        let object = commit_advice_one_hot(
             &self.program_io.untrusted_advice,
             self.program_io.memory_layout.max_untrusted_advice_size as usize,
         )?;
@@ -733,30 +750,10 @@ impl AkitaPackedProver<'_> {
         Ok(Some(object))
     }
 
-    /// Builds the strict one-hot member polynomials of `W_jolt` in the
-    /// canonical native-batch member order.
-    #[tracing::instrument(skip_all, name = "assemble_witness")]
-    fn assemble_witness(
-        &self,
-        members: &[JoltCommittedPolynomial],
-        fused_inc: &[FusedIncCycle],
-    ) -> Vec<OneHotPolynomial> {
-        let chunking = UnsignedIncChunking::new(self.one_hot_params.log_k_chunk)
-            .expect("log_k_chunk divides the 64 unsigned-inc bits");
-        assemble_one_hot_members(
-            members,
-            chunking,
-            self.trace.len().log_2(),
-            &|polynomial| self.packed_ra_indices(polynomial),
-            fused_inc,
-        )
-        .expect("Wjolt assembly must cover every native member")
-    }
-
     #[tracing::instrument(skip_all, name = "prove_stage6a_lattice")]
     fn prove_stage6a_lattice(
         &mut self,
-        columns: &LatticeIncColumns,
+        columns: &FusedIncColumns,
     ) -> (
         crate::subprotocols::sumcheck::SumcheckInstanceProof<
             AkitaFp128,
@@ -1003,7 +1000,7 @@ impl AkitaPackedProver<'_> {
     #[tracing::instrument(skip_all, name = "prove_stage7_lattice")]
     fn prove_stage7_lattice(
         &mut self,
-        columns: LatticeIncColumns,
+        columns: FusedIncColumns,
     ) -> crate::subprotocols::sumcheck::SumcheckInstanceProof<
         AkitaFp128,
         AkitaNoCurve,
@@ -1106,8 +1103,8 @@ impl AkitaPackedProver<'_> {
     #[tracing::instrument(skip_all, name = "prove_reconstruction_phase")]
     fn prove_reconstruction_phase(
         &mut self,
-        untrusted: Option<&PackedAdviceObject>,
-        trusted: Option<&PackedAdviceObject>,
+        untrusted: Option<&AdviceOneHot>,
+        trusted: Option<&AdviceOneHot>,
     ) -> Option<
         crate::subprotocols::sumcheck::SumcheckInstanceProof<
             AkitaFp128,
@@ -1120,8 +1117,7 @@ impl AkitaPackedProver<'_> {
             return None;
         }
 
-        let word_vars =
-            |object: &PackedAdviceObject| object.words.len().next_power_of_two().log_2();
+        let word_vars = |object: &AdviceOneHot| object.words.len().next_power_of_two().log_2();
         let mut untrusted_prover = untrusted.map(|object| {
             let params = UntrustedAdviceReconstructionSumcheckParams::new(
                 word_vars(object),
@@ -1186,11 +1182,9 @@ impl AkitaPackedProver<'_> {
         Some(proof)
     }
 
-    /// The legacy `(polynomial, sumcheck)` pair holding a `W_jolt` packed
-    /// column's final claim on the accumulator.
-    /// The legacy `(polynomial, relation)` pair holding a packed column's
-    /// final claim on the accumulator — `W_jolt` members and `W_prog`
-    /// sub-columns alike (their variant sets are disjoint).
+    /// The `(polynomial, relation)` pair holding a semantic column's final
+    /// claim on the accumulator. This covers `OneHotTrace` columns and
+    /// `ProgramOneHot` sub-columns (their variant sets are disjoint).
     fn leaf_source(
         polynomial: JoltCommittedPolynomial,
     ) -> Result<(CommittedPolynomial, SumcheckId), VerifierError> {
@@ -1284,7 +1278,7 @@ impl AkitaPackedProver<'_> {
     fn packed_advice_statement(
         &self,
         kind: JoltAdviceKind,
-        object: &PackedAdviceObject,
+        object: &AdviceOneHot,
     ) -> Result<(PrefixPacking<JoltCommittedPolynomial>, AkitaPackedStatement), VerifierError> {
         let batch_failed = |reason: String| VerifierError::FinalOpeningBatchFailed { reason };
         let word_vars = object.words.len().next_power_of_two().log_2();
@@ -1317,12 +1311,12 @@ impl AkitaPackedProver<'_> {
         Ok((packing, statement))
     }
 
-    /// The `W_prog` statement: one final claim per precommitted sub-column,
+    /// The `ProgramOneHot` statement: one final claim per precommitted sub-column,
     /// pulled from the accumulator at the reconstruction phase's produced
     /// ids.
     fn packed_program_statement(
         &self,
-        object: &PackedProgramObject,
+        object: &ProgramOneHot,
     ) -> Result<(PrefixPacking<JoltCommittedPolynomial>, AkitaPackedStatement), VerifierError> {
         let batch_failed = |reason: String| VerifierError::FinalOpeningBatchFailed { reason };
         let packing =
@@ -1353,15 +1347,15 @@ impl AkitaPackedProver<'_> {
     }
 
     /// The Akita prove pipeline. `object_setup` is the Akita prover setup
-    /// sized to Wjolt ([`Self::wjolt_setup_params`]);
-    /// `trusted_advice` is the precommitted `A_tru` object, passed exactly
+    /// sized to OneHotTrace ([`Self::one_hot_trace_setup_params`]);
+    /// `trusted_advice` is the precommitted `TrustedAdviceOneHot` object, passed exactly
     /// when trusted advice exists.
     #[tracing::instrument(skip_all, name = "prove_packed")]
     pub fn prove_packed(
         mut self,
         object_setup: &<AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
-        trusted_advice: Option<PackedAdviceObject>,
-        program: Option<PackedProgramObject>,
+        trusted_advice: Option<AdviceOneHot>,
+        program: Option<ProgramOneHot>,
     ) -> Result<AkitaJoltProof, VerifierError> {
         assert!(
             !cfg!(feature = "zk"),
@@ -1370,12 +1364,12 @@ impl AkitaPackedProver<'_> {
         assert_eq!(
             program.is_some(),
             self.preprocessing.is_committed_mode(),
-            "committed-program mode and the W_prog object must agree"
+            "committed-program mode and the ProgramOneHot object must agree"
         );
         assert_eq!(
             trusted_advice.is_some(),
             !self.program_io.trusted_advice.is_empty(),
-            "the precommitted A_tru object must be passed exactly when trusted advice exists"
+            "the precommitted TrustedAdviceOneHot object must be passed exactly when trusted advice exists"
         );
 
         let preprocessing_digest = self.preprocessing.shared.digest();
@@ -1401,17 +1395,16 @@ impl AkitaPackedProver<'_> {
             Some(DoryLayout::CycleMajor),
         );
 
-        let fused_cycles = self.fused_inc_cycles();
-        let mut columns = self.lattice_inc_columns(&fused_cycles);
-        let plan = W_JOLT_LAYOUT
-            .plan(&self.wjolt_shape())
-            .expect("canonical Wjolt layout must exist");
-        let WJoltLayoutPlan { members, .. } = &plan;
-        let w_jolt_witness = self.assemble_witness(members, &fused_cycles);
-        let (commitment, hint) = AkitaScheme::commit_one_hot_group(
+        let fused_cycles = self.fused_inc_values();
+        let mut fused_inc_columns = self.fused_inc_columns(&fused_cycles);
+        let plan = ONE_HOT_TRACE_LAYOUT
+            .plan(&self.one_hot_trace_shape())
+            .expect("canonical OneHotTrace layout must exist");
+        let one_hot_trace_witness = self.assemble_one_hot_trace(&plan, &fused_cycles);
+        let (commitment, hint) = AkitaScheme::commit_one_hot_group_owned(
             object_setup,
             object_setup.default_layout_digest(),
-            &w_jolt_witness,
+            one_hot_trace_witness,
         )
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
@@ -1429,7 +1422,7 @@ impl AkitaPackedProver<'_> {
         if let Some(program) = program.as_ref() {
             append_length_prefixed(
                 &mut self.transcript,
-                b"w_prog_commitment",
+                b"program_one_hot_commitment",
                 &program.commitment,
             );
         }
@@ -1442,24 +1435,24 @@ impl AkitaPackedProver<'_> {
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
-            self.prove_stage6a_lattice(&columns);
+            self.prove_stage6a_lattice(&fused_inc_columns);
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
             bytecode_read_raf_params,
             booleanity_cycle_input,
-            std::mem::take(&mut columns.fused),
+            std::mem::take(&mut fused_inc_columns.fused),
         );
-        let stage7_sumcheck_proof = self.prove_stage7_lattice(columns);
+        let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns);
         let reconstruction_proof =
             self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice.as_ref());
 
-        // Stage 8: Wjolt opens directly as one native same-point batch. Advice
-        // and Wprog, when present, remain auxiliary packed objects.
+        // Stage 8: OneHotTrace opens as one native same-point batch. Advice
+        // and ProgramOneHot remain auxiliary packed objects.
         let mut common_point: Option<Vec<AkitaField>> = None;
-        let mut w_jolt_evaluations = Vec::with_capacity(members.len());
-        for polynomial in members {
+        let mut evaluations = Vec::with_capacity(plan.columns.len());
+        for polynomial in &plan.columns {
             let (leaf_point, value) = self.resolve_leaf_claim(*polynomial)?;
-            let point = W_JOLT_LAYOUT
-                .member_point(*polynomial, self.one_hot_params.log_k_chunk, &leaf_point)
+            let point = ONE_HOT_TRACE_LAYOUT
+                .column_point(*polynomial, self.one_hot_params.log_k_chunk, &leaf_point)
                 .map_err(|error| VerifierError::FinalOpeningBatchFailed {
                     reason: error.to_string(),
                 })?;
@@ -1467,26 +1460,21 @@ impl AkitaPackedProver<'_> {
                 if expected != &point {
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(
-                            "Wjolt member {polynomial:?} does not share the canonical opening point"
+                            "OneHotTrace column {polynomial:?} does not share the canonical opening point"
                         ),
                     });
                 }
             } else {
                 common_point = Some(point);
             }
-            w_jolt_evaluations.push(value);
+            evaluations.push(value);
         }
         let common_point = common_point.ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "Wjolt has no members".to_string(),
+            reason: "OneHotTrace has no columns".to_string(),
         })?;
-        let w_jolt_polys: Vec<&dyn MultilinearPoly<AkitaField>> = w_jolt_witness
-            .iter()
-            .map(|member| member as &dyn MultilinearPoly<AkitaField>)
-            .collect();
-        let w_jolt_opening = <AkitaScheme as VerifierCommitmentScheme>::open_batch(
-            &w_jolt_polys,
+        let one_hot_trace_opening = AkitaScheme::open_one_hot_group_from_hint(
             &common_point,
-            &w_jolt_evaluations,
+            &evaluations,
             object_setup,
             hint,
             &mut self.transcript,
@@ -1558,7 +1546,7 @@ impl AkitaPackedProver<'_> {
             )
         };
         let joint_opening_proof = jolt_verifier::proof::AkitaJointOpeningProof {
-            w_jolt: w_jolt_opening,
+            one_hot_trace: one_hot_trace_opening,
             auxiliary,
         };
 
@@ -1614,7 +1602,7 @@ impl AkitaPackedProver<'_> {
 }
 
 /// The verifier preprocessing for a packed proof: the program preprocessing
-/// (full-program mode), the digest, the `W_jolt` setup, and the per-object
+/// (full-program mode), the digest, the `OneHotTrace` setup, and the per-object
 /// setups derived from the public shapes (transparent setup, fixed seed —
 /// the same derivation the prover's object builders use).
 pub fn akita_verifier_preprocessing(
@@ -1624,7 +1612,7 @@ pub fn akita_verifier_preprocessing(
         AkitaPackedScheme,
     >,
     akita_verifier_setup: <AkitaScheme as VerifierCommitmentScheme>::VerifierSetup,
-    w_prog_commitment: Option<<AkitaScheme as jolt_crypto::Commitment>::Output>,
+    program_one_hot_commitment: Option<<AkitaScheme as jolt_crypto::Commitment>::Output>,
 ) -> JoltVerifierPreprocessing<AkitaScheme, AkitaVc> {
     let program = match &preprocessing.shared.program {
         crate::zkvm::program::ProgramPreprocessing::Full(full) => {
@@ -1649,8 +1637,8 @@ pub fn akita_verifier_preprocessing(
                     },
                     memory_layout: preprocessing.shared.memory_layout.clone(),
                     max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                    w_prog_commitment: w_prog_commitment
-                        .expect("committed-program mode requires the W_prog commitment"),
+                    program_one_hot_commitment: program_one_hot_commitment
+                        .expect("committed-program mode requires the ProgramOneHot commitment"),
                     bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
                 },
             )
@@ -1679,8 +1667,8 @@ pub fn akita_verifier_preprocessing(
         advice_setup(layout.max_untrusted_advice_size as usize);
     verifier_preprocessing.trusted_advice_setup =
         advice_setup(layout.max_trusted_advice_size as usize);
-    // The W_prog setup is derived from the public program shape (transparent
-    // setup, fixed seed) — the same shape `commit_program_packed` committed
+    // The ProgramOneHot setup is derived from the public program shape (transparent
+    // setup, fixed seed) — the same shape `commit_program_one_hot` committed
     // at.
     if committed_mode {
         let imm_byte_width = <AkitaFp128 as crate::field::JoltField>::NUM_BYTES;
@@ -1702,7 +1690,7 @@ pub fn akita_verifier_preprocessing(
             precommitted_packing(&shape).expect("the canonical precommitted packing must exist");
         let (_, program_verifier_setup) = transparent_object_setup(packing.packed_num_vars)
             .expect("the transparent program-shape setup must derive");
-        verifier_preprocessing.w_prog_setup = Some(program_verifier_setup);
+        verifier_preprocessing.program_one_hot_setup = Some(program_verifier_setup);
     }
     verifier_preprocessing
 }
@@ -1718,7 +1706,7 @@ mod tests {
     use serial_test::serial;
 
     /// Proves and verifies muldiv end to end over the packed (Akita) stack:
-    /// the full-program packed pipeline, one `W_jolt` commitment object, and
+    /// the full-program packed pipeline, one `OneHotTrace` commitment object, and
     /// the joint packed opening.
     #[test]
     #[serial]
@@ -1747,7 +1735,7 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let setup_params = prover.wjolt_setup_params();
+        let setup_params = prover.one_hot_trace_setup_params();
         assert_eq!(setup_params.one_hot_k(), 16);
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
@@ -1849,7 +1837,8 @@ mod tests {
         );
         let io_device = prover.program_io.clone();
         let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.wjolt_setup_params()).unwrap();
+            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
+                .unwrap();
         let proof = prover
             .prove_packed(&object_setup, None, None)
             .expect("packed prover should produce a verifier-native proof");
@@ -1881,7 +1870,7 @@ mod advice_tests {
     use serial_test::serial;
 
     /// The packed advice e2e: a guest consuming both advice kinds, proved
-    /// over three commitment objects (`W_jolt`, `A_unt`, `A_tru`), with
+    /// over three commitment objects (`OneHotTrace`, `UntrustedAdviceOneHot`, `TrustedAdviceOneHot`), with
     /// per-object tamper rejection.
     #[test]
     #[serial]
@@ -1906,7 +1895,7 @@ mod advice_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
-        let trusted_object = commit_trusted_advice_packed(
+        let trusted_object = commit_trusted_advice_one_hot(
             &trusted_advice,
             io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -1925,7 +1914,7 @@ mod advice_tests {
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.wjolt_setup_params())
+            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
                 .expect("the transparent packed setup must derive");
         let trusted_commitment = trusted_object.commitment.clone();
         let proof = prover
@@ -1933,7 +1922,7 @@ mod advice_tests {
             .expect("packed prover should produce a verifier-native proof");
         assert!(proof.untrusted_advice_commitment.is_some());
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // Wjolt is discharged by its native same-point batch. The two advice
+        // OneHotTrace is discharged by its native same-point batch. The two advice
         // commitment objects remain in the auxiliary packed opening.
         let auxiliary = proof
             .joint_opening_proof
@@ -1997,7 +1986,7 @@ mod committed_tests {
     use crate::zkvm::prover::JoltProverPreprocessing;
     use serial_test::serial;
 
-    /// The committed-program packed e2e: `W_prog` joins as the second
+    /// The committed-program packed e2e: `ProgramOneHot` joins as the second
     /// commitment object (muldiv carries no advice), with tamper rejection
     /// on its claimed evaluation and a reconstruction wire.
     fn committed_e2e(bytecode_chunk_count: usize) {
@@ -2009,7 +1998,7 @@ mod committed_tests {
 
         let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
             .expect("program preprocessing");
-        let (shared, prover_data, w_prog) = shared_preprocessing_committed_packed(
+        let (shared, prover_data, program_one_hot) = shared_preprocessing_with_program_one_hot(
             program_data,
             io_device.memory_layout.clone(),
             1 << 16,
@@ -2033,14 +2022,14 @@ mod committed_tests {
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.wjolt_setup_params())
+            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
                 .expect("the transparent packed setup must derive");
-        let w_prog_commitment = w_prog.commitment.clone();
+        let program_one_hot_commitment = program_one_hot.commitment.clone();
         let proof = prover
-            .prove_packed(&object_setup, None, Some(w_prog))
+            .prove_packed(&object_setup, None, Some(program_one_hot))
             .expect("packed prover should produce a verifier-native proof");
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // Wjolt is discharged by its native same-point batch; Wprog is the
+        // OneHotTrace is discharged by its native same-point batch; ProgramOneHot is the
         // only auxiliary packed object.
         let auxiliary = proof
             .joint_opening_proof
@@ -2053,7 +2042,7 @@ mod committed_tests {
         let verifier_preprocessing = akita_verifier_preprocessing(
             &prover_preprocessing,
             verifier_setup,
-            Some(w_prog_commitment),
+            Some(program_one_hot_commitment),
         );
         let verify = |proof: &AkitaJoltProof| {
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
@@ -2065,7 +2054,7 @@ mod committed_tests {
         };
         verify(&proof).expect("packed verifier should accept the committed packed proof");
 
-        // Tampers: the W_prog claimed evaluation (last object) breaks its
+        // Tampers: the ProgramOneHot claimed evaluation (last object) breaks its
         // native opening; a mutated reconstruction wire breaks the batched
         // output check.
         let mut tampered = proof.clone();
@@ -2077,7 +2066,7 @@ mod committed_tests {
             .evaluations[0] += AkitaField::from_u64(1);
         assert!(
             verify(&tampered).is_err(),
-            "tampered W_prog evaluation must be rejected"
+            "tampered ProgramOneHot evaluation must be rejected"
         );
         let mut tampered = proof.clone();
         let jolt_verifier::proof::JoltProofClaims::Clear(claims) = &mut tampered.claims else {
@@ -2167,8 +2156,8 @@ mod committed_tests {
         );
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
-        let setup_params = prover.wjolt_setup_params();
-        eprintln!("Wjolt one-hot K: {}", setup_params.one_hot_k());
+        let setup_params = prover.one_hot_trace_setup_params();
+        eprintln!("OneHotTrace one-hot K: {}", setup_params.one_hot_k());
         let setup_start = Instant::now();
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
@@ -2180,8 +2169,13 @@ mod committed_tests {
             .expect("packed prover should produce a verifier-native proof");
         eprintln!("akita prove: {:.2?}", prove_start.elapsed());
 
+        let verifier_preprocessing_start = Instant::now();
         let verifier_preprocessing =
             akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
+        eprintln!(
+            "akita verifier preprocessing: {:.2?}",
+            verifier_preprocessing_start.elapsed()
+        );
         let verify_start = Instant::now();
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
             &verifier_preprocessing,

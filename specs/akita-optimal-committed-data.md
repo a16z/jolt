@@ -1,7 +1,7 @@
 # Optimal committed-data form for the packed (Akita) path
 
 > **Status 2026-07-16**: superseded in part by the #1683 distillation
-> (`specs/akita-1683-distillation.md`): W_jolt now commits as the native
+> (`specs/akita-1683-distillation.md`): OneHotTrace now commits as the native
 > one-hot group and opens at one common point (no packed union, no
 > reduction sumcheck), K=16 below 2^25 with jolt-owned schedule catalogs.
 > Measured 2^20 sha2-chain: akita 8.19s vs dory 13.64s (0.60×). The
@@ -11,7 +11,7 @@
 > protocol work.
 
 
-Working note for co-designing the W_jolt commitment format with the akita
+Working note for co-designing the OneHotTrace commitment format with the akita
 backend (local checkout at `../akita`, baseline upstream `33169b8d`). The
 question: what is the cheapest sound way to commit and open Jolt's packed
 one-hot witness data? This is the canonical record of the investigation —
@@ -51,7 +51,7 @@ select" over `T = 2^20` cycles:
 |---|---|
 | information content | `T` one-byte symbols ≈ 1 MB / member |
 | PIOP object (one-hot multilinear extension) | `K·T = 2^28` cells, ≤ `2^20` ones |
-| whole `W_jolt` (~29 members at 2^20) | ~29 MB of data → ~2^32.9 committed cells, ~3.0·10^7 ones |
+| whole `OneHotTrace` (~29 members at 2^20) | ~29 MB of data → ~2^32.9 committed cells, ~3.0·10^7 ones |
 
 The PIOP's sumchecks emit evaluation claims on the **28-variable one-hot
 extension**, not on the symbol vector — so whatever we commit must support
@@ -136,7 +136,7 @@ Two corrections this table forced on our intuitions:
 | K=2^16 fusion (`log_k_chunk = 16`) | ~4.5 s | ones ×0.52, `n_a`→7 | chunk-65536 preset + regenerated schedules; u16 indices exist upstream |
 | ~~sparse-unit union on de-tiered backend~~ | ~~1–2 s?~~ | small-`num_vars` kernel constant | **measured DEAD below: 72 s commit / 112 s open at 33v** |
 | **committed-symbols mode (the optimal path)** | **~2.8 s stock, ~1 s with a bit-aware backend preset/kernel** | commit the bit-planes (2^23 cells, m ≈ 2^17) via the dense path: per symbol `n_a·D` mults/8 ≈ 144 add-eq vs one-hot's 384 (2.7× stock); unit-norm sizing + narrow-CRT accumulation close the rest | opening gains a degree-9 one-hot-evaluation sumcheck leg + bit-booleanity |
-| multi-group merge of advice/W_prog (orthogonal) | −0.5–1 s of opens | upstream #275 | protocol plumbing only |
+| multi-group merge of advice/ProgramOneHot (orthogonal) | −0.5–1 s of opens | upstream #275 | protocol plumbing only |
 
 ### The committed-symbols co-design, in one paragraph
 
@@ -193,7 +193,7 @@ floor against the measured breakdown (commit 7.5 + open 4.7 + reduction 1.9
 | one-hot accumulate vectorization (NEON, accumulator batching, narrow-CRT) | akita, kernel-only | commit → 2–3.5 s | medium-high (6× over arithmetic floor is measured) |
 | `n_a` sizing at 28v (6 → 5?) under the 138-bit tables | akita, config | ×0.83 on commit, partial on open | unknown — estimator question |
 | open-phase parallelization (~1.5× utilization today) | akita, same proof bytes | open → 1.5–2.5 s | medium |
-| multi-group merge of advice/W_prog (#275) | jolt plumbing | −0.5–1 s | high |
+| multi-group merge of advice/ProgramOneHot (#275) | jolt plumbing | −0.5–1 s | high |
 | ~~reduction sweep-halving (paired rounds)~~ | jolt | **measured neutral** — the sweep is bound by split-eq table accesses (4/position paired vs 2×2 single), not arithmetic; object-parallel rounds also measured neutral earlier. The reduction window (~1.9 s) is access-bound from every angle | — |
 | PIOP stage polish | jolt | −0.3–0.5 s | medium |
 
@@ -252,7 +252,7 @@ the lattice booleanity / hamming-weight-1 machinery becomes partially
 redundant (~1–2 s candidate), but it reshapes the claim flow feeding the
 leaves — its own iteration.
 
-**Phase 4 — multi-group merge (orthogonal).** Advice/W_prog into the same
+**Phase 4 — multi-group merge (orthogonal).** Advice/ProgramOneHot into the same
 commitment via upstream #275 (~0.5–1 s of singleton opens).
 
 **Backend co-dev track (parallel, `../akita`):** audited schedule entries
@@ -278,23 +278,29 @@ remain akita-side fallback tracks.
 
 ## Current state and code map (for the cleanup phase)
 
-The pipeline today: `W_jolt` = one commitment object of ~29 row-major
-K=256 `OneHotPolynomial` members (one per committed column), committed by
-`AkitaScheme::commit_one_hot_group` and opened by one native batched proof;
-`W_prog` and the advice byte columns remain singleton objects. The packed
-reduction settles every leaf claim (one per member, plus the singletons')
-in a single sumcheck, after which groups open natively.
+The pipeline today: `OneHotTrace` is one native Akita commitment group of
+uniform row-major `K x T` one-hot columns. Every column opens at the same
+`(cycle || address)` point in one backend batch proof. `ProgramOneHot` and the
+advice byte columns remain separate singleton objects.
+
+The single-polynomial layout experiment was rejected. Packing the semantic
+columns into a new Boolean column axis required power-of-two zero padding and
+raised the polynomial arity by six or seven variables. At `T = 2^20`, the
+result took 47.52 s to prove versus the earlier 6.97 s grouped baseline, while
+verification remained 23.59 ms. The extra arity, not padding alone, destroys
+the native one-hot schedule economics. There is therefore no column-axis fold
+and no additional sumcheck.
 
 | piece | where |
 |---|---|
-| member assembly (`assemble_one_hot_members`) | `jolt-prover-legacy/src/zkvm/packed_witness.rs` |
-| prove pipeline (`prove_packed`, member statements, groups) | `jolt-prover-legacy/src/zkvm/packed.rs` |
-| leaf-point mapping (`one_hot_member_point`, symbol‖cycle → cycle‖lane; msb as lanes {0,1}) | `jolt-claims/src/protocols/jolt/lattice/packing.rs` |
+| compact-source column assembly (`assemble_one_hot_trace`) | `jolt-prover-legacy/src/zkvm/packed.rs` |
+| prove pipeline (one native grouped opening) | `jolt-prover-legacy/src/zkvm/packed.rs` |
+| layout and point mapping (`address‖cycle` → `cycle‖address`) | `jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
 | reduction sumcheck + grouped native tail (`prove/verify_packed_openings`, `PackedObjectGroup`, `open_batch`) | `jolt-openings/src/packing.rs` |
-| backend adapter (`commit_one_hot_group`, `open_batch`/`verify_batch`, one-hot-only setups) | `jolt-akita/src/{scheme,native_batching,adapters}.rs` |
+| owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `jolt-akita/src/{scheme,adapters}.rs` |
 | verifier mirror | `jolt-verifier/src/stages/stage8/packed.rs` |
 | flavor/measurement bench (`flavor_bench`, `BENCH_*` env knobs) | `jolt-akita/src/scheme.rs` |
-| packed config (`log_k_chunk = 8` forced under `cfg(feature = "akita")`) | `jolt-prover-legacy/src/zkvm/config.rs`, `preprocessing.rs` |
+| packed config (`K=16` or `K=256`, selected like Dory) | `jolt-prover-legacy/src/zkvm/config.rs`, `preprocessing.rs` |
 
 The `akita-*` deps build from the local `../akita` clone (committed on this
 branch for co-design; pin a fork rev before the branch travels). (This spec
