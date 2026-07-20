@@ -25,6 +25,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/ram_ra_gather.cu"),
     include_str!("cuda/scan_u32.cu"),
     include_str!("cuda/register_merge.cu"),
+    include_str!("cuda/schedule_round.cu"),
     include_str!("cuda/add_scalar.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
@@ -140,6 +141,10 @@ pub struct CudaKernelContext {
     scan_u32_add_offsets: CudaFunction,
     register_merge_count: CudaFunction,
     register_merge_scatter: CudaFunction,
+    #[expect(dead_code, reason = "used once the schedule_round body + wiring land")]
+    schedule_round_count: CudaFunction,
+    #[expect(dead_code, reason = "used once the schedule_round body + wiring land")]
+    schedule_round_emit: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
@@ -1045,6 +1050,14 @@ pub struct RegisterMergeColumns {
     pub rd_flag: Vec<u8>,
 }
 
+pub struct ScheduleRoundColumns {
+    pub even_idx: Vec<i32>,
+    pub odd_idx: Vec<i32>,
+    pub pair: Vec<u32>,
+    pub next_rows: Vec<u32>,
+    pub next_cols: Vec<u32>,
+}
+
 pub struct SparseRegisterRoundInputs<'a> {
     pub val: &'a DeviceFrVec,
     pub read_ra: &'a DeviceFrVec,
@@ -1149,6 +1162,8 @@ impl CudaKernelContext {
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets")?,
             register_merge_count: module.load_function("register_merge_count")?,
             register_merge_scatter: module.load_function("register_merge_scatter")?,
+            schedule_round_count: module.load_function("schedule_round_count")?,
+            schedule_round_emit: module.load_function("schedule_round_emit")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
@@ -1461,6 +1476,15 @@ impl CudaKernelContext {
             rs2_flag: self.stream.clone_dtoh(&rs2_flag_dev)?[..total].to_vec(),
             rd_flag: self.stream.clone_dtoh(&rd_flag_dev)?[..total].to_vec(),
         })
+    }
+
+    pub fn schedule_round(
+        &self,
+        cur_rows: &[u32],
+        cur_cols: &[u32],
+    ) -> Result<ScheduleRoundColumns, CudaError> {
+        let _ = (cur_rows, cur_cols);
+        Err(CudaError::Unsupported)
     }
 
     pub fn exclusive_scan_u32(&self, input: &[u32]) -> Result<(Vec<u32>, u32), CudaError> {
@@ -6976,6 +7000,51 @@ mod tests {
             let (got, total) = c.exclusive_scan_u32(&input).unwrap();
             prop_assert_eq!(got, expected);
             prop_assert_eq!(total, expected_total);
+        }
+
+        #[test]
+        fn schedule_round_matches_cpu(
+            log_rows in 1usize..12,
+            max_col in 1u32..40,
+            seed in 0u64..1000,
+        ) {
+            let num_rows = 1usize << log_rows;
+            // Build a (row, col)-sorted sparse set: each row keeps a strictly increasing
+            // subset of columns, matching build_schedules' input invariant.
+            let mut rows: Vec<usize> = Vec::new();
+            let mut cols_usize: Vec<usize> = Vec::new();
+            for row in 0..num_rows {
+                let mut col = (row as u64 + seed) % (max_col as u64 + 1);
+                loop {
+                    if (col + row as u64).is_multiple_of(3) {
+                        rows.push(row);
+                        cols_usize.push(col as usize);
+                    }
+                    col += 1 + ((row as u64 + col) % 3);
+                    if col > max_col as u64 {
+                        break;
+                    }
+                }
+            }
+
+            let (schedules, next_cols_ref) = crate::cuda::build_schedules(&rows, &cols_usize, 1);
+            let sched = &schedules[0];
+            let exp_even = sched.even_idx.clone();
+            let exp_odd = sched.odd_idx.clone();
+            let exp_pair = sched.pair.clone();
+            let exp_next_cols: Vec<u32> = next_cols_ref.iter().map(|&c| c as u32).collect();
+            let exp_next_rows: Vec<u32> = exp_pair.clone();
+
+            let cur_rows: Vec<u32> = rows.iter().map(|&r| r as u32).collect();
+            let cur_cols: Vec<u32> = cols_usize.iter().map(|&c| c as u32).collect();
+
+            let c = ctx();
+            let got = c.schedule_round(&cur_rows, &cur_cols).unwrap();
+            prop_assert_eq!(got.even_idx, exp_even);
+            prop_assert_eq!(got.odd_idx, exp_odd);
+            prop_assert_eq!(got.pair, exp_pair);
+            prop_assert_eq!(got.next_rows, exp_next_rows);
+            prop_assert_eq!(got.next_cols, exp_next_cols);
         }
 
         #[test]
