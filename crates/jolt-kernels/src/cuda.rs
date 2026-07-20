@@ -5473,15 +5473,38 @@ impl CudaKernelContext {
         raf_identity: Fr,
         m: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let _ = (
-            table_index,
-            is_interleaved,
-            table_values,
-            raf_interleaved,
-            raf_identity,
-            m,
-        );
-        Err(CudaError::Unsupported)
+        let mut out = DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: self.stream.alloc_zeros(m.max(1) * LIMBS)?,
+            len: m,
+            staging: self.staging.clone(),
+        };
+        if m == 0 {
+            return Ok(out);
+        }
+        let table_values_dev = self.upload(table_values)?;
+        let raf_pair_dev = self.upload(&[raf_identity, raf_interleaved])?;
+
+        let cfg = LaunchConfig {
+            grid_dim: ((m as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let m_arg = m as u64;
+        let kernel = self.readraf_combined.clone();
+        let mut launch = self.stream.launch_builder(&kernel);
+        let _ = launch
+            .arg(&mut out.buf)
+            .arg(table_index)
+            .arg(is_interleaved)
+            .arg(&table_values_dev.buf)
+            .arg(&raf_pair_dev.buf)
+            .arg(&m_arg);
+        // SAFETY: cycle `c` writes only out[c], reads table_index[c] and is_interleaved[c]
+        // (both >= m elems), the sentinel u32::MAX selecting field zero, table_values[ti]
+        // (ti < table_values.len() by construction), and raf_pair[0|1]. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        Ok(out)
     }
 
     pub fn raf_weight_phase_update(
