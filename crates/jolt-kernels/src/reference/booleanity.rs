@@ -24,7 +24,6 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
-use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -47,6 +46,7 @@ impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
+        relation: &BooleanityAddressPhase<F>,
         dimensions: BooleanityDimensions,
         reference_address: &[F],
         reference_cycle: &[F],
@@ -55,6 +55,7 @@ impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
         Ok(Box::new(BooleanityAddressKernel::new(
+            relation,
             dimensions,
             reference_address,
             reference_cycle,
@@ -65,7 +66,7 @@ impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
 }
 
 pub struct BooleanityAddressKernel<F: Field> {
-    relation: BooleanityAddressPhase<F>,
+    rounds: usize,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
     gamma_weights: Vec<F>,
@@ -80,6 +81,7 @@ pub struct BooleanityAddressKernel<F: Field> {
 
 impl<F: Field> BooleanityAddressKernel<F> {
     pub fn new(
+        relation: &BooleanityAddressPhase<F>,
         dimensions: BooleanityDimensions,
         reference_address: &[F],
         reference_cycle: &[F],
@@ -135,7 +137,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
         }
 
         Ok(Self {
-            relation: BooleanityAddressPhase::new(dimensions),
+            rounds: relation.rounds(),
             gamma_weights,
             linear,
             squared,
@@ -167,7 +169,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
 
 impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.relation.symbolic().rounds()
+        self.rounds
     }
 
     fn prove_round(

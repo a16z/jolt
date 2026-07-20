@@ -29,7 +29,6 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::bytecode
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
-use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
@@ -54,8 +53,8 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
+        relation: &BytecodeReadRafAddressPhase<F>,
         dimensions: BytecodeReadRafDimensions,
-        committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
         bytecode_indices: Vec<usize>,
@@ -64,8 +63,8 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
+            relation,
             dimensions,
-            committed_program,
             stage_values,
             stage_cycle_points,
             bytecode_indices,
@@ -76,7 +75,7 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
 }
 
 pub struct BytecodeReadRafAddressKernel<F: Field> {
-    relation: BytecodeReadRafAddressPhase<F>,
+    rounds: usize,
     /// Committed-program mode stages the five raw bound `Val_s` wire claims.
     committed_program: bool,
     /// `γ^{s}` batching weights for the five stage products, then `γ⁷` for the
@@ -98,8 +97,8 @@ pub struct BytecodeReadRafAddressKernel<F: Field> {
 
 impl<F: Field> BytecodeReadRafAddressKernel<F> {
     pub fn new(
+        relation: &BytecodeReadRafAddressPhase<F>,
         dimensions: BytecodeReadRafDimensions,
-        committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
         bytecode_indices: Vec<usize>,
@@ -173,8 +172,8 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
         };
 
         Ok(Self {
-            relation: BytecodeReadRafAddressPhase::new(dimensions, committed_program),
-            committed_program,
+            rounds: relation.rounds(),
+            committed_program: relation.committed_program(),
             stage_weights: std::array::from_fn(|s| gamma_powers[s]),
             entry_weight: gamma_powers[7],
             raf_weights,
@@ -205,7 +204,7 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
 
 impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.relation.symbolic().rounds()
+        self.rounds
     }
 
     fn prove_round(

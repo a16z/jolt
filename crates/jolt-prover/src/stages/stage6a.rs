@@ -26,9 +26,7 @@ use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::{
-    prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder,
-};
+use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
@@ -49,7 +47,9 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage6Rows};
 use jolt_witness::WitnessProvider;
 
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{
+    BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError, Stage6aPrepareContext,
+};
 
 /// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 6b consumes.
@@ -151,10 +151,6 @@ where
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
-    let mut recorder = ClearSumcheckRecorder::<F, C>::new();
-    let (batch, coefficients) =
-        sumchecks.begin_batch(&inputs, &address_challenges, &mut recorder, transcript)?;
-
     let BytecodeStagePoints {
         stage_cycle_points,
         stage1_cycle_binding: _,
@@ -194,69 +190,35 @@ where
         .map(|row| row.bytecode_index)
         .collect();
 
-    let mut bytecode_read_raf = backend.bytecode_read_raf_address.prepare(
+    let mut preparer = BackendPreparer {
+        backend,
         session,
-        formula_dimensions.bytecode_read_raf,
-        committed_program,
-        stage_values,
-        &stage_cycle_points,
-        bytecode_indices,
-        entry_bytecode_index,
-        &carried.bytecode_read_raf,
-    )?;
-    let mut booleanity = backend.booleanity_address.prepare(
-        session,
-        booleanity_dimensions,
-        &carried.booleanity_reference_address,
-        &carried.booleanity_reference_cycle,
-        carried.booleanity_gamma,
         witness,
-    )?;
-
-    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut *bytecode_read_raf, &mut *booleanity];
-    let proved = prove_batch(&batch, &mut members, &mut recorder, transcript)?;
-
-    let output_points = sumchecks.derive_opening_points(&proved.challenges, &input_points)?;
-    bytecode_read_raf.validate_derived_tables(
-        &sumchecks.bytecode_read_raf,
-        &input_points.bytecode_read_raf,
-        &output_points.bytecode_read_raf,
-        &carried.bytecode_read_raf,
-    )?;
-    booleanity.validate_derived_tables(
-        &sumchecks.booleanity,
-        &input_points.booleanity,
-        &output_points.booleanity,
-        &address_challenges.booleanity,
-    )?;
-    let output_values = Stage6aOutputClaims {
-        bytecode_read_raf: bytecode_read_raf.output_claims()?,
-        booleanity: booleanity.output_claims()?,
+        context: Stage6aPrepareContext {
+            bytecode_dimensions: formula_dimensions.bytecode_read_raf,
+            booleanity_dimensions,
+            stage_values: Some(stage_values),
+            stage_cycle_points: &stage_cycle_points,
+            bytecode_indices: Some(bytecode_indices),
+            entry_bytecode_index,
+            carried: &carried,
+        },
     };
-    sumchecks.validate_output_claims(&output_values)?;
-    let expected = sumchecks.expected_final_claim(
-        &coefficients,
+    let proved = sumchecks.prove_clear(
+        &mut preparer,
+        &inputs,
         &input_points,
-        &output_values,
-        &output_points,
         &address_challenges,
+        ClearSumcheckRecorder::<F, C>::new(),
+        transcript,
     )?;
-    if expected != proved.final_claim {
-        return Err(ProverError::FinalClaimMismatch {
-            stage: "stage6a",
-            expected,
-            got: proved.final_claim,
-        });
-    }
-
-    let recorded = recorder.finish(&sumchecks.opening_values(&output_values), transcript)?;
 
     Ok(Stage6aProverOutput {
-        sumcheck_proof: recorded.proof,
-        claims: output_values.clone(),
+        sumcheck_proof: proved.recorded.proof,
+        claims: proved.output_claims.clone(),
         clear_output: Stage6aClearOutput {
-            output_values,
-            output_points,
+            output_values: proved.output_claims,
+            output_points: proved.output_points,
             challenges: carried,
         },
     })

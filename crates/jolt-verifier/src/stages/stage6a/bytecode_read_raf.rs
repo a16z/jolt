@@ -103,6 +103,10 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
         }
     }
 
+    pub fn committed_program(&self) -> bool {
+        self.committed_program
+    }
+
     /// The staged `BytecodeValStage` wire-claim count: all
     /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, none in full mode.
     fn num_val_stages(&self) -> usize {

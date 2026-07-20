@@ -14,13 +14,19 @@ use jolt_witness::WitnessProvider;
 
 use crate::{KernelError, ProofSession, SumcheckKernel};
 
-/// The stage-6a booleanity address-phase slot. `reference_address` and
+/// The stage-6a booleanity address-phase slot. `relation` is the stage's
+/// batch instance (the kernel owns no copy); `reference_address` and
 /// `reference_cycle` are the little-endian reference points carried in
 /// `Stage6aCarriedChallenges`; `gamma` is the booleanity batching challenge.
 pub trait BooleanityAddressProver<F: Field> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the relation's construction data"
+    )]
     fn prepare(
         &self,
         session: &mut ProofSession,
+        relation: &BooleanityAddressPhase<F>,
         dimensions: BooleanityDimensions,
         reference_address: &[F],
         reference_cycle: &[F],

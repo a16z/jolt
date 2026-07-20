@@ -9,6 +9,8 @@
 //! prover-retained program data, carried pre-batch draws) read the extra data
 //! from the stage-supplied `context`.
 
+use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
@@ -16,6 +18,9 @@ use jolt_verifier::stages::relations::{
     PrepareSumcheck, ProverInputs, SumcheckKernel, SumcheckPreparer,
 };
 use jolt_verifier::stages::stage5::InstructionReadRaf;
+use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
+use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
+use jolt_verifier::stages::stage6a::outputs::Stage6aCarriedChallenges;
 use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, Stage5InstructionReadRafRow};
 use jolt_witness::WitnessProvider;
 
@@ -92,6 +97,82 @@ where
             &inputs.points.lookup_output,
             rows,
             inputs.challenges,
+        )?)
+    }
+}
+
+/// Stage 6a's non-oracle data: both address-phase slots are bespoke. The
+/// bytecode member's stage-value table folds the prover-retained program
+/// bytecode and its PC pushforward source is the per-cycle bytecode indices
+/// (typed stage-6 rows); the booleanity member consumes the hand pre-batch
+/// draws carried in `Stage6aCarriedChallenges`, which neither its relation
+/// nor its (empty) challenge struct holds.
+pub struct Stage6aPrepareContext<'a, F: Field> {
+    pub bytecode_dimensions: BytecodeReadRafDimensions,
+    pub booleanity_dimensions: BooleanityDimensions,
+    pub stage_values: Option<Vec<[F; 5]>>,
+    pub stage_cycle_points: &'a [Vec<F>; 5],
+    pub bytecode_indices: Option<Vec<usize>>,
+    pub entry_bytecode_index: usize,
+    pub carried: &'a Stage6aCarriedChallenges<F>,
+}
+
+impl<F, PCS> PrepareSumcheck<F, BytecodeReadRafAddressPhase<F>>
+    for BackendPreparer<'_, F, PCS, Stage6aPrepareContext<'_, F>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn prepare(
+        &mut self,
+        inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, Self::Error>
+    {
+        let stage_values =
+            self.context
+                .stage_values
+                .take()
+                .ok_or(ProverError::InvariantViolation {
+                    reason: "stage-6a bytecode stage values were staged once but consumed twice",
+                })?;
+        let bytecode_indices =
+            self.context
+                .bytecode_indices
+                .take()
+                .ok_or(ProverError::InvariantViolation {
+                    reason: "stage-6a bytecode indices were staged once but consumed twice",
+                })?;
+        Ok(self.backend.bytecode_read_raf_address.prepare(
+            self.session,
+            inputs.relation,
+            self.context.bytecode_dimensions,
+            stage_values,
+            self.context.stage_cycle_points,
+            bytecode_indices,
+            self.context.entry_bytecode_index,
+            inputs.challenges,
+        )?)
+    }
+}
+
+impl<F, PCS> PrepareSumcheck<F, BooleanityAddressPhase<F>>
+    for BackendPreparer<'_, F, PCS, Stage6aPrepareContext<'_, F>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn prepare(
+        &mut self,
+        inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, Self::Error> {
+        Ok(self.backend.booleanity_address.prepare(
+            self.session,
+            inputs.relation,
+            self.context.booleanity_dimensions,
+            &self.context.carried.booleanity_reference_address,
+            &self.context.carried.booleanity_reference_cycle,
+            self.context.carried.booleanity_gamma,
+            self.witness,
         )?)
     }
 }

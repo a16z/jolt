@@ -26,8 +26,8 @@ pub trait BytecodeReadRafAddressProver<F: Field> {
     fn prepare(
         &self,
         session: &mut ProofSession,
+        relation: &BytecodeReadRafAddressPhase<F>,
         dimensions: BytecodeReadRafDimensions,
-        committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
         bytecode_indices: Vec<usize>,
