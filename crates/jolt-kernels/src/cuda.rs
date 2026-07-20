@@ -135,9 +135,7 @@ pub struct CudaKernelContext {
     ram_rw_address_bind: CudaFunction,
     rd_wa_gather: CudaFunction,
     ram_ra_gather: CudaFunction,
-    #[expect(dead_code, reason = "used once the scan_u32 body + wiring land")]
     scan_u32_block: CudaFunction,
-    #[expect(dead_code, reason = "used once the scan_u32 body + wiring land")]
     scan_u32_add_offsets: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -1346,8 +1344,61 @@ impl CudaKernelContext {
     }
 
     pub fn exclusive_scan_u32(&self, input: &[u32]) -> Result<(Vec<u32>, u32), CudaError> {
-        let _ = input;
-        Err(CudaError::Unsupported)
+        let n = input.len();
+        if n == 0 {
+            return Ok((Vec::new(), 0));
+        }
+        let block = BLOCK;
+        let num_blocks = (n as u32).div_ceil(block) as usize;
+
+        let in_dev = self.upload_u32_slice(input)?;
+        let mut out_dev: CudaSlice<u32> = self.stream.alloc_zeros(n)?;
+        let mut block_sums: CudaSlice<u32> = self.stream.alloc_zeros(num_blocks)?;
+
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (num_blocks as u32, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: block * std::mem::size_of::<u32>() as u32,
+        };
+        let f = self.scan_u32_block.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut out_dev)
+            .arg(&mut block_sums)
+            .arg(&in_dev)
+            .arg(&n_arg);
+        // SAFETY: each block exclusive-scans its BLOCK-wide segment of `in` into `out` and writes
+        // the segment total to block_sums[blockIdx]; out/in hold n u32, block_sums holds num_blocks,
+        // shared mem holds BLOCK u32.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let sums = self.download_u32(&block_sums)?;
+        let mut offsets = Vec::with_capacity(num_blocks);
+        let mut acc: u32 = 0;
+        for &s in &sums {
+            offsets.push(acc);
+            acc += s;
+        }
+        let total = acc;
+
+        if num_blocks > 1 {
+            let offsets_dev = self.upload_u32_slice(&offsets)?;
+            let add_cfg = LaunchConfig {
+                grid_dim: (num_blocks as u32, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            let f = self.scan_u32_add_offsets.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out_dev).arg(&offsets_dev).arg(&n_arg);
+            // SAFETY: each thread i<n adds block_offsets[blockIdx] to out[i]; out holds n u32,
+            // block_offsets holds num_blocks. No shared memory.
+            let _ = unsafe { launch.launch(add_cfg) }?;
+        }
+
+        let out = self.download_u32(&out_dev)?;
+        Ok((out, total))
     }
 
     fn factor_ptr_array(&self, factors: &[&DeviceFrVec]) -> Result<CudaSlice<u64>, CudaError> {
