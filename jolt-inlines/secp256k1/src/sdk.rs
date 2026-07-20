@@ -52,7 +52,8 @@ pub enum Secp256k1Error {
     NotOnCurve,       // point is not on the secp256k1 curve
     QAtInfinity,      // public key is point at infinity
     ROrSZero,         // one of the signature components is zero
-    RxMismatch,       // computed R.x does not match r
+    ZeroMessageHash,
+    RxMismatch, // computed R.x does not match r
     InvalidGlvSignWord(u64),
 }
 
@@ -892,9 +893,11 @@ pub fn ecdsa_verify(
     if q.is_infinity() {
         return Err(Secp256k1Error::QAtInfinity);
     }
-    // Check that r and s are non-zero
     if r.is_zero() || s.is_zero() {
         return Err(Secp256k1Error::ROrSZero);
+    }
+    if z.is_zero() {
+        return Err(Secp256k1Error::ZeroMessageHash);
     }
     // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
     let u1 = z.div_assume_nonzero(&s);

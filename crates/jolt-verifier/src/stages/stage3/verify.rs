@@ -31,7 +31,7 @@ use crate::{
 /// the generated `Stage3InputClaims` aggregate. This is the single place the
 /// stage's Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream`
 /// helper wires which upstream opening feeds which downstream input.
-fn stage3_input_values_from_upstream<F: Field>(
+pub fn stage3_input_values_from_upstream<F: Field>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> Stage3InputClaims<F> {

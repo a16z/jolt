@@ -42,12 +42,20 @@
 //! per-member logic lives as generic functions in `stages::relations`, so the
 //! macro emits only the typed per-member dispatch):
 //!
-//! - `verify_clear` — the clear-path batched-verify driver: fold the members into
-//!   one combined claim (max `(num_vars, degree)`, absorb each `input_claim`, draw
-//!   the batching coefficients, random-linear-combine the padded sums) and reduce it
-//!   through the single-instance `SumcheckProof::verify_compressed_boolean`. The
-//!   batching lives in this generated driver; `jolt-sumcheck` provides only the
-//!   single-instance verifier. Returns `StageNClearBatch { reduction, coefficients }`.
+//! - `begin_batch` — the batched-sumcheck *head*, shared by `verify_clear` and
+//!   the prove-side stage recipes: per-member `input_claim` (declaration order)
+//!   → `recorder.absorb_input_claims` → one batching-coefficient draw per
+//!   present member → the `2^(max − rounds)`-padded random linear combination.
+//!   Generic over `jolt_sumcheck::SumcheckRecorder`, the clear/ZK seam: whether
+//!   the claim absorb writes transcript bytes is decided by the recorder TYPE
+//!   (clear appends, committed no-ops), never by a runtime flag. Returns the
+//!   engine-form `jolt_sumcheck::BatchPrelude` paired with the stage's named
+//!   `BatchingCoefficients`.
+//! - `verify_clear` — the clear-path batched-verify driver: `begin_batch` with a
+//!   clear recorder, then reduce the combined claim through the single-instance
+//!   `SumcheckProof::verify_compressed_boolean`. The batching lives in the
+//!   generated head; `jolt-sumcheck` provides only the single-instance verifier.
+//!   Returns `StageNClearBatch { reduction, coefficients }`.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
 //!   `SumcheckProof::verify_committed_consistency_dims`. Committed proofs reveal no
@@ -303,11 +311,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
     };
 
-    // The clear-path batched-verify driver: compute the combined `(max_num_vars,
-    // max_degree, claimed_sum)` from the members (absorb sums, draw coefficients,
-    // random-linear-combine), then reduce through the single-instance
-    // `SumcheckProof::verify_compressed_boolean`.
-    let verify_clear_method = {
+    // The batched-sumcheck head, shared by the clear verify driver and the
+    // prove-side stage recipes: compute each member's input claim, absorb the
+    // claims through the recorder (the clear/ZK seam — a clear recorder appends
+    // them, a committed recorder no-ops), draw the batching coefficients, and
+    // random-linear-combine the padded sums. Every Fiat-Shamir-ordered step of
+    // the head lives here, so the two sides cannot drift on it.
+    let begin_batch_method = {
         let max_fold = max_fold();
         let sum_idents = plans
             .iter()
@@ -356,15 +366,16 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
 
-        // Absorb each present member's claimed sum into the transcript, in
-        // declaration order — the Fiat-Shamir binding that must precede the
-        // batching-coefficient draw.
+        // Collect each present member's claimed sum, in declaration order, for
+        // the recorder absorb — the Fiat-Shamir binding that must precede the
+        // batching-coefficient draw (a clear recorder appends each under
+        // `b"sumcheck_claim"`).
         let sum_ident = format_ident!("__sum");
-        let sum_absorbs = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
+        let sum_collects = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
             per_member(
                 plan.is_option,
                 &[(&sum_ident, quote!(#sum))],
-                quote!(::jolt_sumcheck::append_sumcheck_claim(transcript, __sum);),
+                quote!(__input_claims.push(*__sum);),
             )
         });
 
@@ -393,45 +404,69 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: #coeff)
         });
 
-        // Each member's contribution to the combined claim: `coeff * sum * 2^(max -
-        // rounds)` (front-loaded padding scale), pushed into `__terms` and summed.
-        let term_pushes = plans
-            .iter()
-            .zip(sum_idents.iter().zip(&coeff_idents))
-            .map(|(plan, (sum, coeff))| {
-                let id = &plan.ident;
-                if plan.is_option {
-                    quote! {
-                        if let (
-                            ::core::option::Option::Some(__coeff),
-                            ::core::option::Option::Some(__sum),
-                            ::core::option::Option::Some(__member),
-                        ) = (#coeff, #sum, self.#id.as_ref())
-                        {
-                            __terms.push(__coeff * __sum.mul_pow_2(__max_num_vars - __member.rounds()));
+        // Each present member's engine-form entry `{ input_claim, coefficient,
+        // rounds }`, in declaration order. `BatchPrelude::new` folds these into
+        // the combined claim `Σ coeff · sum · 2^(max − rounds)` (the front-loaded
+        // padding scale).
+        let member_pushes =
+            plans
+                .iter()
+                .zip(sum_idents.iter().zip(&coeff_idents))
+                .map(|(plan, (sum, coeff))| {
+                    let id = &plan.ident;
+                    if plan.is_option {
+                        quote! {
+                            if let (
+                                ::core::option::Option::Some(__coeff),
+                                ::core::option::Option::Some(__sum),
+                                ::core::option::Option::Some(__member),
+                            ) = (#coeff, #sum, self.#id.as_ref())
+                            {
+                                __members.push(::jolt_sumcheck::BatchMember {
+                                    input_claim: __sum,
+                                    coefficient: __coeff,
+                                    rounds: __member.rounds(),
+                                    offset: __member.instance_point_offset(__max_num_vars)?,
+                                });
+                            }
+                        }
+                    } else {
+                        quote! {
+                            __members.push(::jolt_sumcheck::BatchMember {
+                                input_claim: #sum,
+                                coefficient: #coeff,
+                                rounds: self.#id.rounds(),
+                                offset: self.#id.instance_point_offset(__max_num_vars)?,
+                            });
                         }
                     }
-                } else {
-                    quote! {
-                        __terms.push(#coeff * #sum.mul_pow_2(__max_num_vars - self.#id.rounds()));
-                    }
-                }
-            });
+                });
 
         quote! {
-            pub fn verify_clear<__C, __T>(
+            /// The batched-sumcheck head, shared by `verify_clear` and the
+            /// prove-side stage recipes: per-member `input_claim` (declaration
+            /// order) → `recorder.absorb_input_claims` → one batching-coefficient
+            /// draw per present member → the `2^(max − rounds)`-padded random
+            /// linear combination. Whether the claim absorb writes transcript
+            /// bytes is decided by the recorder type (clear appends, committed
+            /// no-ops), never by a runtime flag. Returns the engine-form
+            /// `jolt_sumcheck::BatchPrelude` paired with the stage's named
+            /// batching coefficients.
+            pub fn begin_batch<__R, __T>(
                 &self,
                 inputs: &#input_claims_name<#f>,
                 challenges: &#challenges_name<#f>,
-                proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
+                recorder: &mut __R,
                 transcript: &mut __T,
-            ) -> ::core::result::Result<#clear_batch_name<#f>, crate::VerifierError>
+            ) -> ::core::result::Result<
+                (::jolt_sumcheck::BatchPrelude<#f>, #batching_coefficients_name<#f>),
+                crate::VerifierError,
+            >
             where
-                __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
+                __R: ::jolt_sumcheck::SumcheckRecorder<#f>,
                 __T: ::jolt_transcript::Transcript<Challenge = #f>,
             {
                 use #relations::ConcreteSumcheck as _;
-                use ::jolt_field::MulPow2 as _;
 
                 #(#sum_bindings)*
 
@@ -439,29 +474,63 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let mut __max_degree = 0usize;
                 #(#max_fold)*
 
-                #(#sum_absorbs)*
+                let mut __input_claims = ::std::vec::Vec::new();
+                #(#sum_collects)*
+                recorder.absorb_input_claims(&__input_claims, transcript);
 
                 #(#coeff_draws)*
                 let __coefficients = #batching_coefficients_name {
                     #(#coeff_fields,)*
                 };
 
-                let mut __terms = ::std::vec::Vec::new();
-                #(#term_pushes)*
-                let __claimed_sum: #f = __terms.into_iter().sum();
+                let mut __members = ::std::vec::Vec::new();
+                #(#member_pushes)*
 
-                let __reduction = proof
-                    .verify_compressed_boolean(__max_num_vars, __max_degree, __claimed_sum, transcript)
-                    .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
-                        stage: self.#stage_id_ident.id(),
-                        reason: error.to_string(),
-                    })?;
-
-                ::core::result::Result::Ok(#clear_batch_name {
-                    reduction: __reduction,
-                    coefficients: __coefficients,
-                })
+                ::core::result::Result::Ok((
+                    ::jolt_sumcheck::BatchPrelude::new(__members, __max_num_vars, __max_degree),
+                    __coefficients,
+                ))
             }
+        }
+    };
+
+    // The clear-path batched-verify driver: the generated `begin_batch` head
+    // (with a clear recorder, so the claim absorbs are appended) followed by the
+    // single-instance `SumcheckProof::verify_compressed_boolean` tail.
+    let verify_clear_method = quote! {
+        pub fn verify_clear<__C, __T>(
+            &self,
+            inputs: &#input_claims_name<#f>,
+            challenges: &#challenges_name<#f>,
+            proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
+            transcript: &mut __T,
+        ) -> ::core::result::Result<#clear_batch_name<#f>, crate::VerifierError>
+        where
+            __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
+            __T: ::jolt_transcript::Transcript<Challenge = #f>,
+        {
+            use #relations::ConcreteSumcheck as _;
+
+            let mut __recorder = ::jolt_sumcheck::ClearSumcheckRecorder::<#f, __C>::new();
+            let (__batch, __coefficients) =
+                self.begin_batch(inputs, challenges, &mut __recorder, transcript)?;
+
+            let __reduction = proof
+                .verify_compressed_boolean(
+                    __batch.max_num_vars,
+                    __batch.max_degree,
+                    __batch.claimed_sum,
+                    transcript,
+                )
+                .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
+                    stage: self.#stage_id_ident.id(),
+                    reason: error.to_string(),
+                })?;
+
+            ::core::result::Result::Ok(#clear_batch_name {
+                reduction: __reduction,
+                coefficients: __coefficients,
+            })
         }
     };
 
@@ -535,10 +604,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     // Map each member's opening point through its
     // `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
-    // aggregate. Takes the batch challenge vector directly: under the front-loaded
-    // batching layout an instance's point is the length-`rounds` suffix of that
-    // vector, so no batch-result abstraction is needed and one method serves both the
-    // clear and ZK paths (each supplies its own challenge vector).
+    // aggregate. Takes the batch challenge vector directly: an instance's point
+    // is the length-`rounds` slice of that vector starting at its
+    // `instance_point_offset`, so no batch-result abstraction is needed and one
+    // method serves both the clear and ZK paths (each supplies its own
+    // challenge vector).
     let derive_points_method = {
         let field_bindings = plans.iter().map(|plan| {
             let id = &plan.ident;
@@ -894,6 +964,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         impl<#f: ::jolt_field::Field> #name<#f> {
             #draw_challenges_method
 
+            #begin_batch_method
             #verify_clear_method
             #verify_zk_method
             #derive_points_method

@@ -207,6 +207,11 @@ impl BytecodeClaimReductionLayout {
         self.log_bytecode_chunk_size
     }
 
+    /// The trace order the chunk grids interleave `(lane, cycle)` by.
+    pub const fn trace_order(&self) -> TracePolynomialOrder {
+        self.trace_order
+    }
+
     /// Split the full bytecode address point (the `BytecodeReadRafAddrClaim`
     /// opening point) into per-chunk eq weights over the dropped high bits and
     /// the chunk-local cycle point shared by all chunks.

@@ -620,7 +620,7 @@ pub(crate) fn pc_spartan_outer() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanOuter)
 }
 
-pub(crate) fn bytecode_ra(index: usize) -> JoltOpeningId {
+pub fn bytecode_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::BytecodeRa(index),
         JoltRelationId::BytecodeReadRaf,

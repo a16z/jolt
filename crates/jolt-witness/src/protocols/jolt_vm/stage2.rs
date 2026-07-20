@@ -85,7 +85,7 @@ pub(crate) fn stage2_trace_row(
         RamAccess::Write(write) => (write.pre_value, write.post_value),
         RamAccess::NoOp => (0, 0),
     };
-    let next_is_noop = next.is_some_and(row_is_noop);
+    let next_is_noop = next.is_none_or(row_is_noop);
 
     Ok(JoltVmStage2TraceRow {
         remapped_ram_address,

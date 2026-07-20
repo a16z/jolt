@@ -56,8 +56,9 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
 /// absorb methods: booleanity's `bytecode_ra` openings
 /// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
-/// order is curated by [`append_opening_claims`](super::verify::append_opening_claims)
-/// which threads the dedup points. `no_output_shape`: shape methods are inapplicable — the committed
+/// order is curated by [`stage6b_opening_values`](super::verify::stage6b_opening_values)
+/// which threads the dedup points (the verifier absorbs its output; the
+/// prover's recorder absorbs the same sequence). `no_output_shape`: shape methods are inapplicable — the committed
 /// bytecode output `Expr` consumes the 6a-produced `BytecodeValStage` openings
 /// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]

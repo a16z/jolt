@@ -59,7 +59,7 @@ enum ProductUniskipVerified<F: Field, C> {
 /// `*_from_upstream` helper wires which upstream opening feeds which downstream
 /// input. The product-remainder input is the product uni-skip's output claim (a
 /// separate stage-2 sub-sumcheck), not an upstream stage's opening.
-fn stage2_batch_input_values_from_upstream<F: Field>(
+pub fn stage2_batch_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
 ) -> Stage2BatchInputClaims<F> {

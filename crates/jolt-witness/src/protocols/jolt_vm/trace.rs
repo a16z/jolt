@@ -211,7 +211,11 @@ pub(crate) fn trace_virtual_value<F: Field>(
         JoltVirtualPolynomial::NextUnexpandedPC => {
             next.map_or_else(F::zero, |row| F::from_u64(row.instruction.address as u64))
         }
-        JoltVirtualPolynomial::NextIsNoop => F::from_bool(next.is_some_and(row_is_noop)),
+        // The last cycle's missing successor counts as a no-op: the
+        // product/shift family requires `NextIsNoop = 1` at `T - 1` (legacy
+        // forces `not_next_noop = false` there -- "EqPlusOne does not do
+        // overflow").
+        JoltVirtualPolynomial::NextIsNoop => F::from_bool(next.is_none_or(row_is_noop)),
         JoltVirtualPolynomial::NextIsVirtual => F::from_bool(next.is_some_and(|row| {
             row_circuit_flags(row).is_ok_and(|flags| flags[CircuitFlags::VirtualInstruction])
         })),
@@ -240,6 +244,11 @@ pub(crate) fn trace_virtual_value<F: Field>(
             signed_128_to_field(product)
         }
         JoltVirtualPolynomial::ShouldJump => {
+            // Deliberately `is_some_and` (unlike `NextIsNoop` above): at
+            // `T - 1` constraint 21 (`ShouldJump = Jump · (1 − NextIsNoop)`)
+            // forces `ShouldJump = 0`, which holds under either convention
+            // only because the padded trace ends in a NoOp row (`Jump = 0`
+            // there) — the padding every prover config guarantees.
             let next_is_noop = next.is_some_and(row_is_noop);
             F::from_bool(circuit_flags[CircuitFlags::Jump] && !next_is_noop)
         }

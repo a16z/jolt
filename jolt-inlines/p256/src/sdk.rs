@@ -148,11 +148,12 @@ fn bytes_to_limbs(bytes: &[u8; 32]) -> [u64; 4] {
 /// Error types for P-256 operations.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum P256Error {
-    InvalidFqElement,        // input array does not correspond to a valid Fq element
-    InvalidFrElement,        // input array does not correspond to a valid Fr element
-    NotOnCurve,              // point is not on the P-256 curve
-    QAtInfinity,             // public key is point at infinity
-    ROrSZero,                // one of the signature components is zero
+    InvalidFqElement, // input array does not correspond to a valid Fq element
+    InvalidFrElement, // input array does not correspond to a valid Fr element
+    NotOnCurve,       // point is not on the P-256 curve
+    QAtInfinity,      // public key is point at infinity
+    ROrSZero,         // one of the signature components is zero
+    ZeroMessageHash,
     RxMismatch,              // computed R.x does not match r
     InvalidGlvSignWord(u64), // GLV sign word is not 0 or 1
 }
@@ -830,9 +831,11 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     if q.is_infinity() {
         return Err(P256Error::QAtInfinity);
     }
-    // Check that r, s, and z are non-zero
-    if r.is_zero() || s.is_zero() || z.is_zero() {
+    if r.is_zero() || s.is_zero() {
         return Err(P256Error::ROrSZero);
+    }
+    if z.is_zero() {
+        return Err(P256Error::ZeroMessageHash);
     }
 
     // Step 1: Compute u1 = z/s, u2 = r/s

@@ -14,8 +14,8 @@ mod sumcheck;
 mod symbolic;
 
 pub use claim_data::{
-    ChallengeDrawError, InputClaims, NoChallenges, NoInputs, NoOutputs, OutputClaims,
-    SumcheckChallenges,
+    ChallengeDrawError, InputClaims, MissingOpeningValue, NoChallenges, NoInputs, NoOutputs,
+    OutputClaims, SumcheckChallenges,
 };
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};

@@ -1,0 +1,128 @@
+//! The runtime seam: [`JoltBackend`] is the value `jolt-prover` proves
+//! against — one boxed object-safe slot per kernel entry — and
+//! [`ProofSession`] is the backend-owned state with proof lifetime. Swapping
+//! a kernel implementation, mixing implementations per slot, running two
+//! backends side by side, and choosing a configuration from the hardware are
+//! all value construction, never compilation. See
+//! `specs/clean-slate-prover.md`, "The backend seam".
+
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
+
+use jolt_field::Field;
+use jolt_openings::CommitmentScheme;
+
+use crate::advice_claim_reduction::AdviceClaimReduction;
+use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
+use crate::bytecode_claim_reduction::BytecodeClaimReduction;
+use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
+use crate::commitment::CommitWitness;
+use crate::hamming_weight_claim_reduction::HammingWeightClaimReductionProver;
+use crate::inc_claim_reduction::IncClaimReductionProver;
+use crate::instruction_claim_reduction::InstructionClaimReductionProver;
+use crate::instruction_input::InstructionInputProver;
+use crate::instruction_ra_virtualization::InstructionRaVirtualizationProver;
+use crate::instruction_read_raf::InstructionReadRafProver;
+use crate::opening::JointOpeningPolynomials;
+use crate::program_image_claim_reduction::ProgramImageClaimReduction;
+use crate::ram_hamming_booleanity::RamHammingBooleanityProver;
+use crate::ram_output_check::RamOutputCheckProver;
+use crate::ram_ra_claim_reduction::RamRaClaimReductionProver;
+use crate::ram_ra_virtualization::RamRaVirtualizationProver;
+use crate::ram_raf_evaluation::RamRafEvaluationProver;
+use crate::ram_read_write::RamReadWriteProver;
+use crate::ram_val_check::RamValCheckProver;
+use crate::registers_claim_reduction::RegistersClaimReductionProver;
+use crate::registers_read_write::RegistersReadWriteProver;
+use crate::registers_val_evaluation::RegistersValEvaluationProver;
+use crate::spartan_outer::SpartanOuterProver;
+use crate::spartan_product::SpartanProductProver;
+use crate::spartan_shift::SpartanShiftProver;
+
+/// The kernel registry: one independently swappable slot per kernel entry.
+///
+/// `F` and `PCS` are deployment constants, not swap targets — the PCS traits
+/// are structurally non-object-safe and their associated types are wire
+/// types, so they stay type parameters.
+pub struct JoltBackend<F, PCS>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+{
+    pub commit: Box<dyn CommitWitness<F, PCS>>,
+    pub spartan_outer: Box<dyn SpartanOuterProver<F>>,
+    pub spartan_product: Box<dyn SpartanProductProver<F>>,
+    pub ram_read_write: Box<dyn RamReadWriteProver<F>>,
+    pub instruction_claim_reduction: Box<dyn InstructionClaimReductionProver<F>>,
+    pub ram_raf_evaluation: Box<dyn RamRafEvaluationProver<F>>,
+    pub ram_output_check: Box<dyn RamOutputCheckProver<F>>,
+    pub spartan_shift: Box<dyn SpartanShiftProver<F>>,
+    pub instruction_input: Box<dyn InstructionInputProver<F>>,
+    pub registers_claim_reduction: Box<dyn RegistersClaimReductionProver<F>>,
+    pub registers_read_write: Box<dyn RegistersReadWriteProver<F>>,
+    pub ram_val_check: Box<dyn RamValCheckProver<F>>,
+    pub instruction_read_raf: Box<dyn InstructionReadRafProver<F>>,
+    pub ram_ra_claim_reduction: Box<dyn RamRaClaimReductionProver<F>>,
+    pub registers_val_evaluation: Box<dyn RegistersValEvaluationProver<F>>,
+    pub bytecode_read_raf_address: Box<dyn BytecodeReadRafAddressProver<F>>,
+    pub booleanity_address: Box<dyn BooleanityAddressProver<F>>,
+    pub bytecode_read_raf_cycle: Box<dyn BytecodeReadRafCycleProver<F>>,
+    pub booleanity_cycle: Box<dyn BooleanityCycleProver<F>>,
+    pub ram_hamming_booleanity: Box<dyn RamHammingBooleanityProver<F>>,
+    pub ram_ra_virtualization: Box<dyn RamRaVirtualizationProver<F>>,
+    pub instruction_ra_virtualization: Box<dyn InstructionRaVirtualizationProver<F>>,
+    pub inc_claim_reduction: Box<dyn IncClaimReductionProver<F>>,
+    pub advice_claim_reduction: Box<dyn AdviceClaimReduction<F>>,
+    pub bytecode_claim_reduction: Box<dyn BytecodeClaimReduction<F>>,
+    pub program_image_claim_reduction: Box<dyn ProgramImageClaimReduction<F>>,
+    pub hamming_weight_claim_reduction: Box<dyn HammingWeightClaimReductionProver<F>>,
+    pub joint_opening: Box<dyn JointOpeningPolynomials<F>>,
+}
+
+impl<F, PCS> JoltBackend<F, PCS>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+{
+    /// Open the proof-scoped session that slot state lives in. One session
+    /// per proof; drop it when the proof is assembled.
+    pub fn begin_proof(&self) -> ProofSession {
+        ProofSession::default()
+    }
+}
+
+/// Backend-owned state with proof lifetime, opaque to orchestration.
+///
+/// Slots stash and share private state keyed by a backend-private type, so
+/// per-slot mixing of backend families cannot collide: witness-upload
+/// residency, cross-member shared tables, and cross-stage carries all live
+/// here, invisible to the stage recipes that thread `&mut ProofSession`
+/// through every slot call.
+#[derive(Default)]
+pub struct ProofSession {
+    state: HashMap<TypeId, Box<dyn Any>>,
+}
+
+impl ProofSession {
+    /// The calling backend's private state, created by `init` on first
+    /// access. `T` is the backend-private key: choose one type per backend
+    /// family.
+    #[expect(
+        clippy::expect_used,
+        reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
+    )]
+    pub fn state_or_insert_with<T: Any>(&mut self, init: impl FnOnce() -> T) -> &mut T {
+        self.state
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(init()))
+            .downcast_mut::<T>()
+            .expect("ProofSession state entry keyed by its own TypeId")
+    }
+
+    /// The calling backend's private state, if any slot created it yet.
+    pub fn state<T: Any>(&self) -> Option<&T> {
+        self.state
+            .get(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_ref::<T>())
+    }
+}

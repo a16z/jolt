@@ -161,12 +161,16 @@ where
         &ram_output_address,
     )?;
     values.public(
-        JoltDerivedId::from(RamOutputCheckPublic::EqIoMask),
+        JoltDerivedId::from(RamOutputCheckPublic::EqAddress),
         output_publics.0,
     )?;
     values.public(
-        JoltDerivedId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
+        JoltDerivedId::from(RamOutputCheckPublic::IoMask),
         output_publics.1,
+    )?;
+    values.public(
+        JoltDerivedId::from(RamOutputCheckPublic::ValIo),
+        output_publics.2,
     )?;
 
     let product_order = relations::spartan::ProductRemainderOutputClaims::<PCS::Field> {

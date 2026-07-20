@@ -12,10 +12,7 @@ use jolt_verifier::{
     preprocessing::{
         CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
     },
-    proof::{
-        JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
-        TracePolynomialOrder,
-    },
+    proof::{JoltCommitments, JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder},
 };
 
 #[cfg(not(feature = "zk"))]
@@ -394,7 +391,9 @@ fn commitments_from_proof_payload_order<C>(
     Ok(JoltCommitments::new(
         rd_inc,
         ram_inc,
-        JoltRaCommitments::new(instruction_ra, ram_ra, bytecode_ra),
+        instruction_ra,
+        ram_ra,
+        bytecode_ra,
     ))
 }
 

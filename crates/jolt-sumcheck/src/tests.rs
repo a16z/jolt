@@ -1058,3 +1058,482 @@ fn sumcheck_claim_new_rejects_degree_zero() {
 fn sumcheck_statement_new_rejects_degree_zero() {
     let _ = SumcheckStatement::new(3, 0);
 }
+
+/// Drive an honest degree-1 sumcheck through the clear recorder and check the
+/// assembled proof against `verify_compressed_boolean` on a twin transcript:
+/// the recorder's writes (claim absorb, compressed round polys, opening-claim
+/// absorb) must be byte-identical to what the verifier reads back, and the
+/// verifier's reduction must land on the prover's bound value.
+#[test]
+fn clear_recorder_roundtrip_matches_compressed_verifier() {
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+
+    let num_vars = 3;
+    let evals: Vec<F> = (0..1u64 << num_vars)
+        .map(|i| F::from_u64(3 * i + 7))
+        .collect();
+    let claimed_sum = compute_sum(&evals);
+
+    // Prover side: recorder-driven round loop (HighToLow binding, degree 1).
+    let mut prover_transcript = Blake2bTranscript::new(b"recorder-test");
+    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    recorder.absorb_input_claims(&[claimed_sum], &mut prover_transcript);
+
+    let mut buf = evals;
+    for _round in 0..num_vars {
+        let half = buf.len() / 2;
+        let eval_0: F = buf[..half].iter().copied().sum();
+        let eval_1: F = buf[half..].iter().copied().sum();
+        let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
+
+        let r = recorder
+            .absorb_round(&round_poly, &mut prover_transcript)
+            .unwrap();
+
+        for i in 0..half {
+            buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
+        }
+        buf.truncate(half);
+    }
+    let final_eval = buf[0];
+    let recorded = recorder
+        .finish(&[final_eval], &mut prover_transcript)
+        .unwrap();
+
+    // Verifier side: same transcript schedule via the public verify path.
+    let mut verifier_transcript = Blake2bTranscript::new(b"recorder-test");
+    append_sumcheck_claim(&mut verifier_transcript, &claimed_sum);
+    let reduction = recorded
+        .proof
+        .verify_compressed_boolean(num_vars, 1, claimed_sum, &mut verifier_transcript)
+        .unwrap();
+    verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &reduction.value);
+
+    assert_eq!(reduction.value, final_eval);
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}
+
+/// A minimal dense multilinear [`ProveRounds`](crate::prover::ProveRounds)
+/// member (HighToLow binding), constructible with a prescribed total sum —
+/// the engine tests' stand-in for a real kernel-backed batch member.
+struct DenseMember {
+    evals: Vec<F>,
+    num_rounds: usize,
+}
+
+impl DenseMember {
+    fn with_sum(num_rounds: usize, sum: F, seed: u64) -> Self {
+        let size = 1u64 << num_rounds;
+        let mut evals: Vec<F> = (0..size).map(|i| F::from_u64(seed + 31 * i + 11)).collect();
+        let current: F = evals.iter().copied().sum();
+        evals[0] += sum - current;
+        Self { evals, num_rounds }
+    }
+
+    /// The fully bound value; meaningful only after all rounds are ingested.
+    fn final_eval(&self) -> F {
+        self.evals[0]
+    }
+}
+
+impl crate::prover::ProveRounds<F> for DenseMember {
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn compute_message(
+        &mut self,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let half = self.evals.len() / 2;
+        let eval_0: F = self.evals[..half].iter().copied().sum();
+        let eval_1: F = self.evals[half..].iter().copied().sum();
+        assert_eq!(eval_0 + eval_1, previous_claim);
+        Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
+    }
+
+    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
+        let half = self.evals.len() / 2;
+        for i in 0..half {
+            self.evals[i] = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
+        }
+        self.evals.truncate(half);
+        Ok(())
+    }
+}
+
+fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
+    let generator = Bn254::g1_generator();
+    let generators = (2..2 + capacity)
+        .map(|k| generator.scalar_mul(&F::from_u64(k)))
+        .collect();
+    PedersenSetup::new(generators, generator.scalar_mul(&F::from_u64(99)))
+}
+
+/// Twin-transcript lock for the batched engine, padding included: a
+/// 3-round and a 1-round member proved through `prove_batch` with the clear
+/// recorder must be byte-identical to the verifier's head-replica +
+/// `verify_compressed_boolean` + opening-claim absorbs, and the reduction must
+/// land on the prover's final claim and challenges.
+#[test]
+fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+    use jolt_field::MulPow2;
+
+    let sum_long = F::from_u64(1234);
+    let sum_short = F::from_u64(777);
+    let mut long = DenseMember::with_sum(3, sum_long, 5);
+    let mut short = DenseMember::with_sum(1, sum_short, 91);
+
+    // Prover: the begin_batch head choreography, the round loop, finish.
+    let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-twin");
+    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_transcript);
+    let coeff_long: F = prover_transcript.challenge_scalar();
+    let coeff_short: F = prover_transcript.challenge_scalar();
+    let prelude = BatchPrelude::new(
+        vec![
+            BatchMember {
+                input_claim: sum_long,
+                coefficient: coeff_long,
+                rounds: 3,
+                offset: 0,
+            },
+            BatchMember {
+                input_claim: sum_short,
+                coefficient: coeff_short,
+                rounds: 1,
+                offset: 2,
+            },
+        ],
+        3,
+        1,
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
+    let proved = prove_batch(
+        &prelude,
+        &mut members,
+        &mut recorder,
+        &mut prover_transcript,
+    )
+    .unwrap();
+    assert_eq!(
+        proved.member_claims,
+        vec![long.final_eval(), short.final_eval()]
+    );
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_transcript)
+        .unwrap();
+    assert!(recorded.committed_witness.is_none());
+
+    // Verifier twin.
+    let mut verifier_transcript = Blake2bTranscript::new(b"prove-batch-twin");
+    append_sumcheck_claim(&mut verifier_transcript, &sum_long);
+    append_sumcheck_claim(&mut verifier_transcript, &sum_short);
+    let verifier_coeff_long: F = verifier_transcript.challenge_scalar();
+    let verifier_coeff_short: F = verifier_transcript.challenge_scalar();
+    assert_eq!(
+        (verifier_coeff_long, verifier_coeff_short),
+        (coeff_long, coeff_short)
+    );
+
+    let claimed_sum =
+        verifier_coeff_long * sum_long + verifier_coeff_short * sum_short.mul_pow_2(2);
+    assert_eq!(claimed_sum, prelude.claimed_sum);
+    let reduction = recorded
+        .proof
+        .verify_compressed_boolean(3, 1, claimed_sum, &mut verifier_transcript)
+        .unwrap();
+    for value in &proved.member_claims {
+        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
+    }
+
+    assert_eq!(reduction.value, proved.final_claim);
+    assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}
+
+/// Twin-transcript lock for a head-aligned member: a 1-round member at
+/// `offset: 0` is active in the batch's FIRST round and then halves through
+/// the trailing dummy rounds. Its kernel must emit at the dummy-round padding
+/// scale (the table sums to `2^(max − rounds) · input_claim`), so its final
+/// batch claim is the fully-bound value with the padding halved back out.
+#[test]
+fn prove_batch_clear_twin_head_aligned_member() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+    use jolt_field::{Invertible, MulPow2};
+
+    let sum_long = F::from_u64(1234);
+    let sum_short = F::from_u64(777);
+    let mut long = DenseMember::with_sum(3, sum_long, 5);
+    // The head-aligned kernel's table carries the 2^(3 - 1) padding scale.
+    let mut short = DenseMember::with_sum(1, sum_short.mul_pow_2(2), 91);
+
+    let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-head-twin");
+    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_transcript);
+    let coeff_long: F = prover_transcript.challenge_scalar();
+    let coeff_short: F = prover_transcript.challenge_scalar();
+    let prelude = BatchPrelude::new(
+        vec![
+            BatchMember {
+                input_claim: sum_long,
+                coefficient: coeff_long,
+                rounds: 3,
+                offset: 0,
+            },
+            BatchMember {
+                input_claim: sum_short,
+                coefficient: coeff_short,
+                rounds: 1,
+                offset: 0,
+            },
+        ],
+        3,
+        1,
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
+    let proved = prove_batch(
+        &prelude,
+        &mut members,
+        &mut recorder,
+        &mut prover_transcript,
+    )
+    .unwrap();
+    // The short member bound the batch's FIRST challenge, then halved twice.
+    let quarter = F::from_u64(4).inverse().unwrap();
+    assert_eq!(
+        proved.member_claims,
+        vec![long.final_eval(), short.final_eval() * quarter]
+    );
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_transcript)
+        .unwrap();
+
+    // Verifier twin: the claimed sum is position-independent — identical to
+    // the tail-aligned layout's.
+    let mut verifier_transcript = Blake2bTranscript::new(b"prove-batch-head-twin");
+    append_sumcheck_claim(&mut verifier_transcript, &sum_long);
+    append_sumcheck_claim(&mut verifier_transcript, &sum_short);
+    let verifier_coeff_long: F = verifier_transcript.challenge_scalar();
+    let verifier_coeff_short: F = verifier_transcript.challenge_scalar();
+    let claimed_sum =
+        verifier_coeff_long * sum_long + verifier_coeff_short * sum_short.mul_pow_2(2);
+    assert_eq!(claimed_sum, prelude.claimed_sum);
+    let reduction = recorded
+        .proof
+        .verify_compressed_boolean(3, 1, claimed_sum, &mut verifier_transcript)
+        .unwrap();
+    for value in &proved.member_claims {
+        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
+    }
+
+    assert_eq!(reduction.value, proved.final_claim);
+    assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}
+
+/// The committed twin of the batched engine: the same members proved through
+/// the committed recorder must be byte-identical to
+/// `verify_committed_consistency_dims` (coefficient draws included — no claim
+/// scalars are absorbed on either side), and the retained witness must open
+/// every round commitment.
+#[test]
+fn prove_batch_committed_twin_matches_committed_consistency() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds};
+    use crate::recorder::{CommittedSumcheckRecorder, SumcheckRecorder};
+
+    type VC = Pedersen<Bn254G1>;
+    let setup = pedersen_setup(4);
+
+    let sum_long = F::from_u64(4242);
+    let sum_short = F::from_u64(1717);
+    let mut long = DenseMember::with_sum(3, sum_long, 23);
+    let mut short = DenseMember::with_sum(1, sum_short, 57);
+
+    let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-zk-twin");
+    let mut recorder =
+        CommittedSumcheckRecorder::<F, VC, _>::new(&setup, rand_core::OsRng).unwrap();
+    recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_transcript);
+    let coeff_long: F = prover_transcript.challenge_scalar();
+    let coeff_short: F = prover_transcript.challenge_scalar();
+    let prelude = BatchPrelude::new(
+        vec![
+            BatchMember {
+                input_claim: sum_long,
+                coefficient: coeff_long,
+                rounds: 3,
+                offset: 0,
+            },
+            BatchMember {
+                input_claim: sum_short,
+                coefficient: coeff_short,
+                rounds: 1,
+                offset: 2,
+            },
+        ],
+        3,
+        1,
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
+    let proved = prove_batch(
+        &prelude,
+        &mut members,
+        &mut recorder,
+        &mut prover_transcript,
+    )
+    .unwrap();
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_transcript)
+        .unwrap();
+
+    // Verifier twin: the committed path absorbs no claim scalars — only the
+    // coefficient squeezes and the commitments the proof carries.
+    let mut verifier_transcript = Blake2bTranscript::new(b"prove-batch-zk-twin");
+    let _coeff_long: F = verifier_transcript.challenge_scalar();
+    let _coeff_short: F = verifier_transcript.challenge_scalar();
+    let consistency = recorded
+        .proof
+        .verify_committed_consistency_dims(3, 1, &mut verifier_transcript)
+        .unwrap();
+
+    assert_eq!(consistency.challenges(), proved.challenges);
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+    // The retained witness opens every round commitment and output-claim row.
+    let witness = recorded.committed_witness.unwrap();
+    let committed = recorded.proof.as_committed().unwrap();
+    assert_eq!(witness.round_coefficients.len(), committed.rounds.len());
+    for ((round, coefficients), blinding) in committed
+        .rounds
+        .iter()
+        .zip(&witness.round_coefficients)
+        .zip(&witness.round_blindings)
+    {
+        assert!(VC::verify(
+            &setup,
+            &round.commitment,
+            coefficients,
+            blinding
+        ));
+    }
+    for ((commitment, row), blinding) in committed
+        .output_claims
+        .commitments
+        .iter()
+        .zip(&witness.output_claim_rows)
+        .zip(&witness.output_claim_blindings)
+    {
+        assert!(VC::verify(&setup, commitment, row, blinding));
+    }
+    assert_eq!(witness.output_claim_rows.concat(), proved.member_claims,);
+}
+
+/// Twin-transcript lock for the clear uni-skip prover against the verify
+/// choreography `jolt-verifier`'s `uniskip::verify_clear` performs: full
+/// labeled round poly, challenge, output claim absorbed under
+/// `b"opening_claim"` before any later draw.
+#[test]
+fn prove_uniskip_clear_twin_matches_uniskip_verify() {
+    use crate::prover::prove_uniskip_clear;
+    use crate::{CenteredIntegerDomain, OPENING_CLAIM_TRANSCRIPT_LABEL};
+
+    let degree = 3;
+    let domain_size = 4;
+    let poly = UnivariatePoly::new(vec![
+        F::from_u64(3),
+        F::from_u64(1),
+        F::from_u64(4),
+        F::from_u64(1),
+    ]);
+    let domain = CenteredIntegerDomain::new(domain_size);
+    let coefficients = domain.round_sum_coefficients(degree).unwrap();
+    let input_claim =
+        <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(&poly, &coefficients);
+
+    let mut prover_transcript = Blake2bTranscript::new(b"uniskip-twin");
+    let proved = prove_uniskip_clear::<F, Bn254G1, _>(
+        poly,
+        input_claim,
+        degree,
+        domain_size,
+        &mut prover_transcript,
+    )
+    .unwrap();
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-twin");
+    let reduction = proved
+        .proof
+        .verify(
+            &SumcheckClaim::new(1, degree, input_claim),
+            domain,
+            crate::UNISKIP_ROUND_TRANSCRIPT_LABEL,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+    assert_eq!(reduction.value, proved.output_claim);
+    verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &proved.output_claim);
+
+    assert_eq!(reduction.point.as_slice(), &[proved.challenge]);
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}
+
+/// The committed uni-skip twin: `prove_uniskip_committed` must be
+/// byte-identical to `verify_committed_consistency` (the transcript path of
+/// `uniskip::verify_zk` — its commitment-count check is transcript-pure), and
+/// the witness must open the round and output-claim commitments.
+#[test]
+fn prove_uniskip_committed_twin_matches_committed_consistency() {
+    use crate::prover::prove_uniskip_committed;
+    use crate::CenteredIntegerDomain;
+
+    type VC = Pedersen<Bn254G1>;
+    let setup = pedersen_setup(4);
+
+    let degree = 3;
+    let domain_size = 4;
+    let poly = UnivariatePoly::new(vec![
+        F::from_u64(2),
+        F::from_u64(7),
+        F::from_u64(1),
+        F::from_u64(8),
+    ]);
+    let domain = CenteredIntegerDomain::new(domain_size);
+    let coefficients = domain.round_sum_coefficients(degree).unwrap();
+    let input_claim =
+        <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(&poly, &coefficients);
+
+    let mut prover_transcript = Blake2bTranscript::new(b"uniskip-zk-twin");
+    let proved = prove_uniskip_committed::<F, VC, _, _>(
+        poly,
+        input_claim,
+        degree,
+        domain_size,
+        &setup,
+        rand_core::OsRng,
+        &mut prover_transcript,
+    )
+    .unwrap();
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-zk-twin");
+    let consistency = proved
+        .proof
+        .verify_committed_consistency(SumcheckStatement::new(1, degree), &mut verifier_transcript)
+        .unwrap();
+
+    assert_eq!(consistency.challenges(), vec![proved.challenge]);
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        proved.witness.output_claim_rows.concat(),
+        vec![proved.output_claim],
+    );
+}

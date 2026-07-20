@@ -79,13 +79,28 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoryScheme;
 
+/// Dory's generator count depends on `ceil(max_log_n / 2)`, so odd/even pairs
+/// like 21 and 22 share the same generator bucket — but the URS derivation
+/// seeds on the exact size, so their generator VALUES differ. Canonicalizing
+/// to the even bucket representative keeps every run on a single URS (and
+/// matches the legacy prover's setups byte-for-byte).
+#[inline]
+fn canonical_setup_log_n(max_num_vars: usize) -> usize {
+    if max_num_vars.is_multiple_of(2) {
+        max_num_vars
+    } else {
+        max_num_vars + 1
+    }
+}
+
 impl DoryScheme {
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
     pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
+        let canonical_max_num_vars = canonical_setup_log_n(max_num_vars);
         #[cfg(not(target_arch = "wasm32"))]
-        let setup = ArkworksProverSetup::new_from_urs(max_num_vars);
+        let setup = ArkworksProverSetup::new_from_urs(canonical_max_num_vars);
         #[cfg(target_arch = "wasm32")]
-        let setup = ArkworksProverSetup::new(max_num_vars);
+        let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
         DoryProverSetup(setup)
     }
@@ -260,11 +275,15 @@ impl AdditivelyHomomorphic for DoryScheme {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
-        let num_rows = hints[0].row_commitments.len();
-        assert!(
-            hints.iter().all(|h| h.row_commitments.len() == num_rows),
-            "combine_hints: ragged hint lengths",
-        );
+        // Hints may be ragged: a polynomial narrower than the shared
+        // commitment grid commits fewer rows, and its zero-embedding's
+        // missing rows are identity commitments — combine over the widest
+        // hint's row count, treating absent rows as identity.
+        let num_rows = hints
+            .iter()
+            .map(|hint| hint.row_commitments.len())
+            .max()
+            .unwrap_or(0);
 
         let combined_blind = hints
             .iter()
@@ -277,7 +296,9 @@ impl AdditivelyHomomorphic for DoryScheme {
             .map(|row| {
                 let mut acc = Bn254G1::default();
                 for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
-                    acc += hint.row_commitments[row].scalar_mul(&scalar);
+                    if let Some(row_commitment) = hint.row_commitments.get(row) {
+                        acc += row_commitment.scalar_mul(&scalar);
+                    }
                 }
                 acc
             })

@@ -325,7 +325,7 @@ impl<F: Field> RamValCheckInitStructure<F> {
 /// geometry. Runs before the zk/clear branch in both modes; the advice selectors
 /// and opening points come from [`ram_val_check_advice_block`], the same
 /// computation the prover uses.
-pub(crate) fn ram_val_check_init_structure<F: Field>(
+pub fn ram_val_check_init_structure<F: Field>(
     checked: &CheckedInputs,
     untrusted_advice_present: bool,
     r_address: &[F],

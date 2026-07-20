@@ -162,7 +162,7 @@ where
 /// `derive_output_term` never runs). An address phase is present exactly when its
 /// precommitted layout is committed and its dimensions carry active address rounds
 /// — the presence flag the input / challenge aggregates track in lockstep.
-fn build_stage7_sumchecks<F: Field>(
+pub fn build_stage7_sumchecks<F: Field>(
     hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
@@ -277,8 +277,9 @@ fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
 /// output into the generated `Stage7InputClaims` aggregate. The two advice members
 /// and the two committed-program members are `Some` exactly when their address
 /// phase runs (tracking each `Stage7Sumchecks` member's presence), so a present
-/// member always has its input cell populated.
-fn stage7_input_values_from_upstream<F: Field>(
+/// member always has its input cell populated. Public because the prover's
+/// stage-7 recipe builds its batch inputs through the same wiring.
+pub fn stage7_input_values_from_upstream<F: Field>(
     sumchecks: &Stage7Sumchecks<F>,
     stage6: &Stage6bClearOutput<F>,
 ) -> Result<Stage7InputClaims<F>, VerifierError> {

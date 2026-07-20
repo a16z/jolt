@@ -45,6 +45,8 @@ members = [
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
+  "crates/jolt-kernels",
+  "crates/jolt-prover",
   "crates/jolt-prover-legacy",
   "tracer",
   "common",
@@ -386,7 +388,7 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.4", features = ["rayon", "serde"] }
+reth-primitives-traits = { version = "0.5", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
@@ -407,6 +409,8 @@ jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
+jolt-kernels = { path = "./crates/jolt-kernels" }
+jolt-prover = { path = "./crates/jolt-prover" }
 jolt-witness = { path = "./crates/jolt-witness" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
