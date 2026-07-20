@@ -15,11 +15,12 @@ use crate::protocols::jolt::{
 };
 use crate::{challenge, constant, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
+use crate::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
+
 use super::super::geometry::{LatticeGeometryError, UnsignedIncChunking, UNSIGNED_INC_BITS};
 use super::booleanity::{
     booleanity_unsigned_inc_chunk_opening, booleanity_unsigned_inc_msb_opening,
 };
-use super::fused_inc_claim_reduction::fused_inc_reduced_opening;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LatticeHammingWeightClaimReductionDimensions {
@@ -65,7 +66,7 @@ pub struct LatticeHammingWeightClaimReductionInputClaims<C> {
     pub unsigned_inc_booleanity: Vec<C>,
     #[opening(committed = UnsignedIncMsb, from = Booleanity)]
     pub unsigned_inc_msb_booleanity: C,
-    #[opening(FusedInc, from = FusedIncClaimReduction)]
+    #[opening(FusedInc, from = BytecodeReadRaf)]
     pub fused_inc: C,
 }
 
@@ -155,7 +156,7 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
             + gamma.clone().pow(msb_offset + 1) * opening(booleanity_unsigned_inc_msb_opening());
         input
             + gamma.pow(self.decode_power())
-                * (opening(fused_inc_reduced_opening()) + constant(F::pow2(UNSIGNED_INC_BITS)))
+                * (opening(fused_inc_read_raf_opening()) + constant(F::pow2(UNSIGNED_INC_BITS)))
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
@@ -247,7 +248,7 @@ mod tests {
             id if id == booleanity_unsigned_inc_chunk_opening(0) => *bool_0,
             id if id == booleanity_unsigned_inc_chunk_opening(1) => *bool_1,
             id if id == booleanity_unsigned_inc_msb_opening() => *bool_msb,
-            id if id == fused_inc_reduced_opening() => *fused,
+            id if id == fused_inc_read_raf_opening() => *fused,
             id if id == reduced_claim(JoltRaPolynomial::Ram(0)) => *out_ra,
             id if id == reduced_unsigned_inc_chunk_opening(0) => *out_0,
             id if id == reduced_unsigned_inc_chunk_opening(1) => *out_1,

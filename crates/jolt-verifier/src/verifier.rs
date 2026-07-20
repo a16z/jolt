@@ -222,15 +222,6 @@ where
         &stage2,
         &stage4,
     )?;
-    let inc_virtualization = crate::stages::inc_virtualization::verify(
-        &checked,
-        &proof.stages.inc_virtualization_sumcheck_proof,
-        &proof.clear_claims()?.inc_virtualization,
-        &mut transcript,
-        stage2.clear()?,
-        stage4.clear()?,
-        stage5.clear()?,
-    )?;
     let stage6a = stage6a::verify(
         &checked,
         proof,
@@ -241,7 +232,6 @@ where
         &stage3,
         &stage4,
         &stage5,
-        &inc_virtualization,
     )?;
     let stage6b = stage6b::verify(
         &checked,
@@ -255,7 +245,6 @@ where
         &stage4,
         &stage5,
         &stage6a,
-        &inc_virtualization,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -513,11 +502,6 @@ where
         (&proof.stages.stage3_sumcheck_proof, "stage3_sumcheck_proof"),
         (&proof.stages.stage4_sumcheck_proof, "stage4_sumcheck_proof"),
         (&proof.stages.stage5_sumcheck_proof, "stage5_sumcheck_proof"),
-        #[cfg(feature = "akita")]
-        (
-            &proof.stages.inc_virtualization_sumcheck_proof,
-            "inc_virtualization_sumcheck_proof",
-        ),
         (
             &proof.stages.stage6a_sumcheck_proof,
             "stage6a_sumcheck_proof",
@@ -1366,14 +1350,6 @@ mod tests {
                 outer: empty_spartan_outer_claims(),
             },
             #[cfg(feature = "akita")]
-            inc_virtualization: crate::stages::inc_virtualization::IncVirtualizationPhaseOutputClaims {
-                inc_virtualization:
-                    jolt_claims::protocols::jolt::lattice::relations::inc_virtualization::IncVirtualizationOutputClaims {
-                        fused_inc: zero,
-                        store: zero,
-                    },
-            },
-            #[cfg(feature = "akita")]
             reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims {
                 untrusted_advice: None,
                 trusted_advice: None,
@@ -1476,9 +1452,16 @@ mod tests {
                 },
             },
             stage6b: stage6b::outputs::Stage6bOutputClaims {
+                #[cfg(not(feature = "akita"))]
                 bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
                     bytecode_ra: Vec::new(),
                 },
+                #[cfg(feature = "akita")]
+                bytecode_read_raf:
+                    stage6b::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims {
+                        bytecode_ra: Vec::new(),
+                        fused_inc: zero,
+                    },
                 #[cfg(not(feature = "akita"))]
                 booleanity: stage6b::outputs::BooleanityOutputClaims {
                     instruction_ra: Vec::new(),
@@ -1504,9 +1487,6 @@ mod tests {
                     stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                         committed_instruction_ra: Vec::new(),
                     },
-                #[cfg(feature = "akita")]
-                fused_inc_claim_reduction:
-                    stage6b::outputs::FusedIncClaimReductionOutputClaims { fused_inc: zero },
                 #[cfg(not(feature = "akita"))]
                 inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                     ram_inc: zero,
@@ -1625,8 +1605,6 @@ mod tests {
             stage3_sumcheck_proof: sumcheck_proof(is_zk),
             stage4_sumcheck_proof: sumcheck_proof(is_zk),
             stage5_sumcheck_proof: sumcheck_proof(is_zk),
-            #[cfg(feature = "akita")]
-            inc_virtualization_sumcheck_proof: sumcheck_proof(is_zk),
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),

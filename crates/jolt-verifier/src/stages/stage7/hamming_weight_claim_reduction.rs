@@ -59,7 +59,7 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
         #[cfg(feature = "akita")]
         unsigned_inc_msb_booleanity: cycle_phase.booleanity.unsigned_inc_msb,
         #[cfg(feature = "akita")]
-        fused_inc: cycle_phase.fused_inc_claim_reduction.fused_inc,
+        fused_inc: cycle_phase.bytecode_read_raf.fused_inc,
     }
 }
 
