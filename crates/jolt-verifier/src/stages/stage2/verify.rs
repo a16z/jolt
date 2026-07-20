@@ -248,21 +248,14 @@ where
     }))
 }
 
-fn verify_product_uniskip<PCS, VC, T, ZkProof>(
-    checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    transcript: &mut T,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-) -> Result<ProductUniskipStep<PCS::Field, VC::Output>, VerifierError>
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
-{
+/// The product uni-skip's low binding tau_low: the tail (`[1..]`) of stage
+/// 1's raw remainder point, reversed. Shared by `verify_product_uniskip` and
+/// the prove-side stage-2 recipe, so the derivation cannot drift.
+pub fn product_tau_low<F: Field>(
+    stage1_remainder: &[F],
+    log_t: usize,
+) -> Result<Vec<F>, VerifierError> {
     let stage = JoltRelationId::SpartanProductVirtualization;
-    let log_t = checked.trace_length.ilog2() as usize;
-    let product_dimensions = SpartanProductDimensions::new(log_t);
-    let stage1_remainder = stage1.remainder_point();
     let mut tau_low = stage1_remainder
         .get(1..)
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
@@ -280,6 +273,23 @@ where
         });
     }
     tau_low.reverse();
+    Ok(tau_low)
+}
+
+fn verify_product_uniskip<PCS, VC, T, ZkProof>(
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    transcript: &mut T,
+    stage1: &Stage1Output<PCS::Field, VC::Output>,
+) -> Result<ProductUniskipStep<PCS::Field, VC::Output>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let log_t = checked.trace_length.ilog2() as usize;
+    let product_dimensions = SpartanProductDimensions::new(log_t);
+    let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 
     let tau_high = transcript.challenge();
     let uniskip_params = uniskip::UniskipParams::spartan_product();
