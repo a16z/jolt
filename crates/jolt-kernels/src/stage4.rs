@@ -1751,6 +1751,7 @@ struct SparseRegisterRawColumns {
 }
 
 #[cfg(feature = "cuda")]
+#[cfg_attr(not(test), expect(dead_code, reason = "host reference retained for D2b parity tests"))]
 fn sparse_register_raw_columns(
     register_count: usize,
     accesses: &[Stage4RegisterAccess],
@@ -1840,15 +1841,53 @@ fn cuda_sparse_registers_from_raw<F: Field>(
     gamma2: F,
     trace_rounds: usize,
 ) -> Result<Option<cuda::CudaSparseRegistersState>, Stage4KernelError> {
-    let raw = sparse_register_raw_columns(register_count, accesses)?;
-    Ok(cuda::CudaSparseRegistersState::new_from_raw(
-        &raw.rows,
-        &raw.cols,
-        &raw.prev_val,
-        &raw.next_val,
-        &raw.rs1_flag,
-        &raw.rs2_flag,
-        &raw.rd_flag,
+    let n = accesses.len();
+    let mut rs1_addr = Vec::with_capacity(n);
+    let mut rs1_val = Vec::with_capacity(n);
+    let mut rs2_addr = Vec::with_capacity(n);
+    let mut rs2_val = Vec::with_capacity(n);
+    let mut rd_addr = Vec::with_capacity(n);
+    let mut rd_pre = Vec::with_capacity(n);
+    let mut rd_post = Vec::with_capacity(n);
+    for access in accesses {
+        let (a1, v1) = match access.rs1 {
+            Some(r) => {
+                validate_register_address(register_count, r.address)?;
+                (sparse_register_col(r.address)? as i32, r.value)
+            }
+            None => (-1, 0),
+        };
+        let (a2, v2) = match access.rs2 {
+            Some(r) => {
+                validate_register_address(register_count, r.address)?;
+                (sparse_register_col(r.address)? as i32, r.value)
+            }
+            None => (-1, 0),
+        };
+        let (a3, pre, post) = match access.rd {
+            Some(w) => {
+                validate_register_address(register_count, w.address)?;
+                (sparse_register_col(w.address)? as i32, w.pre_value, w.post_value)
+            }
+            None => (-1, 0, 0),
+        };
+        rs1_addr.push(a1);
+        rs1_val.push(v1);
+        rs2_addr.push(a2);
+        rs2_val.push(v2);
+        rd_addr.push(a3);
+        rd_pre.push(pre);
+        rd_post.push(post);
+    }
+
+    Ok(cuda::CudaSparseRegistersState::new_device_native(
+        &rs1_addr,
+        &rs1_val,
+        &rs2_addr,
+        &rs2_val,
+        &rd_addr,
+        &rd_pre,
+        &rd_post,
         rd_inc,
         trace_point,
         gamma,

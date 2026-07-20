@@ -170,6 +170,104 @@ impl CudaSparseRegistersState {
     }
 
     #[expect(clippy::too_many_arguments)]
+    pub(crate) fn new_device_native<F: jolt_field::Field>(
+        rs1_addr: &[i32],
+        rs1_val: &[u64],
+        rs2_addr: &[i32],
+        rs2_val: &[u64],
+        rd_addr: &[i32],
+        rd_pre: &[u64],
+        rd_post: &[u64],
+        rd_inc: &[F],
+        trace_point: &[F],
+        gamma: F,
+        gamma2: F,
+        trace_rounds: usize,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let n = rs1_addr.len();
+
+        let rs1_addr_dev = ctx.upload_i32_slice(rs1_addr).ok()?;
+        let rs2_addr_dev = ctx.upload_i32_slice(rs2_addr).ok()?;
+        let rd_addr_dev = ctx.upload_i32_slice(rd_addr).ok()?;
+        let rs1_val_dev = ctx.upload_u64_slice(rs1_val).ok()?;
+        let rs2_val_dev = ctx.upload_u64_slice(rs2_val).ok()?;
+        let rd_pre_dev = ctx.upload_u64_slice(rd_pre).ok()?;
+        let rd_post_dev = ctx.upload_u64_slice(rd_post).ok()?;
+
+        let merged = ctx
+            .register_merge_dev(crate::cuda::RegisterMergeDeviceInputs {
+                rs1_addr: &rs1_addr_dev,
+                rs1_val: &rs1_val_dev,
+                rs2_addr: &rs2_addr_dev,
+                rs2_val: &rs2_val_dev,
+                rd_addr: &rd_addr_dev,
+                rd_pre: &rd_pre_dev,
+                rd_post: &rd_post_dev,
+                n,
+            })
+            .ok()?;
+
+        let entries = SparseRegisterEntries {
+            val: ctx.u64_to_mont_dev(&merged.prev_val, merged.total).ok()?,
+            read_ra: {
+                let mut read_ra = ctx.u64_to_mont_dev(&merged.rs1_flag, merged.total).ok()?;
+                ctx.mul_scalar(&mut read_ra, crate::cuda::into_fr(gamma)?).ok()?;
+                let mut rs2_term = ctx.u64_to_mont_dev(&merged.rs2_flag, merged.total).ok()?;
+                ctx.mul_scalar(&mut rs2_term, crate::cuda::into_fr(gamma2)?).ok()?;
+                ctx.add(&mut read_ra, &rs2_term).ok()?;
+                read_ra
+            },
+            rd_wa: ctx.u64_to_mont_dev(&merged.rd_flag, merged.total).ok()?,
+            prev_val: ctx.u64_to_mont_dev(&merged.prev_val, merged.total).ok()?,
+            next_val: ctx.u64_to_mont_dev(&merged.next_val, merged.total).ok()?,
+        };
+
+        let eq_cycle = crate::split_eq::CudaSplitEqState::new_low_to_high(
+            ctx,
+            crate::cuda::as_fr_slice(trace_point)?,
+            None,
+        )
+        .ok()?;
+
+        let mut cur_rows = merged.rows;
+        let mut cur_cols = merged.cols;
+        let mut cur_len = merged.total;
+        let mut schedules = Vec::with_capacity(trace_rounds);
+        for _ in 0..trace_rounds {
+            let round = ctx.schedule_round_dev(&cur_rows, &cur_cols, cur_len).ok()?;
+            schedules.push(ResidentSchedule {
+                even_idx: round.even_idx,
+                odd_idx: round.odd_idx,
+                pair: round.pair,
+                items: round.total,
+            });
+            cur_rows = round.next_rows;
+            cur_cols = round.next_cols;
+            cur_len = round.total;
+        }
+        let final_cols: Vec<u8> = ctx
+            .download_u32(&cur_cols)
+            .ok()?
+            .get(..cur_len)
+            .unwrap_or(&[])
+            .iter()
+            .map(|&c| c as u8)
+            .collect();
+
+        Some(Self {
+            entries,
+            rd_inc: ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?,
+            rd_inc_scratch: ctx.upload(&[]).ok()?,
+            eq_cycle,
+            schedules,
+            final_cols,
+            round: 0,
+        })
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "host-merge path retained for D2b parity test"))]
     pub(crate) fn new_from_raw<F: jolt_field::Field>(
         rows: &[usize],
         cols: &[u8],

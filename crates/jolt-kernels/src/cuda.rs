@@ -1038,6 +1038,17 @@ pub struct RegisterMergeInputs<'a> {
     pub rd_post: &'a [u64],
 }
 
+pub(crate) struct RegisterMergeDeviceInputs<'a> {
+    pub(crate) rs1_addr: &'a CudaSlice<i32>,
+    pub(crate) rs1_val: &'a CudaSlice<u64>,
+    pub(crate) rs2_addr: &'a CudaSlice<i32>,
+    pub(crate) rs2_val: &'a CudaSlice<u64>,
+    pub(crate) rd_addr: &'a CudaSlice<i32>,
+    pub(crate) rd_pre: &'a CudaSlice<u64>,
+    pub(crate) rd_post: &'a CudaSlice<u64>,
+    pub(crate) n: usize,
+}
+
 pub struct RegisterMergeColumns {
     pub rows: Vec<u32>,
     pub cols: Vec<u32>,
@@ -1054,6 +1065,26 @@ pub struct ScheduleRoundColumns {
     pub pair: Vec<u32>,
     pub next_rows: Vec<u32>,
     pub next_cols: Vec<u32>,
+}
+
+pub struct RegisterMergeDevice {
+    pub rows: CudaSlice<u32>,
+    pub cols: CudaSlice<u32>,
+    pub prev_val: CudaSlice<u64>,
+    pub next_val: CudaSlice<u64>,
+    pub rs1_flag: CudaSlice<u64>,
+    pub rs2_flag: CudaSlice<u64>,
+    pub rd_flag: CudaSlice<u64>,
+    pub total: usize,
+}
+
+pub struct ScheduleRoundDevice {
+    pub even_idx: CudaSlice<i32>,
+    pub odd_idx: CudaSlice<i32>,
+    pub pair: CudaSlice<u32>,
+    pub next_rows: CudaSlice<u32>,
+    pub next_cols: CudaSlice<u32>,
+    pub total: usize,
 }
 
 pub struct SparseRegisterRoundInputs<'a> {
@@ -1408,6 +1439,36 @@ impl CudaKernelContext {
         let rd_pre = self.upload_u64_slice(inputs.rd_pre)?;
         let rd_post = self.upload_u64_slice(inputs.rd_post)?;
 
+        let dev = self.register_merge_dev(RegisterMergeDeviceInputs {
+            rs1_addr: &rs1_addr,
+            rs1_val: &rs1_val,
+            rs2_addr: &rs2_addr,
+            rs2_val: &rs2_val,
+            rd_addr: &rd_addr,
+            rd_pre: &rd_pre,
+            rd_post: &rd_post,
+            n,
+        })?;
+        let total = dev.total;
+        let flag_u8 = |s: &CudaSlice<u64>| -> Result<Vec<u8>, CudaError> {
+            Ok(self.download_u64(s)?[..total].iter().map(|&v| v as u8).collect())
+        };
+        Ok(RegisterMergeColumns {
+            rows: self.download_u32(&dev.rows)?[..total].to_vec(),
+            cols: self.download_u32(&dev.cols)?[..total].to_vec(),
+            prev_val: self.download_u64(&dev.prev_val)?[..total].to_vec(),
+            next_val: self.download_u64(&dev.next_val)?[..total].to_vec(),
+            rs1_flag: flag_u8(&dev.rs1_flag)?,
+            rs2_flag: flag_u8(&dev.rs2_flag)?,
+            rd_flag: flag_u8(&dev.rd_flag)?,
+        })
+    }
+
+    pub(crate) fn register_merge_dev(
+        &self,
+        inputs: RegisterMergeDeviceInputs<'_>,
+    ) -> Result<RegisterMergeDevice, CudaError> {
+        let n = inputs.n;
         let mut counts: CudaSlice<u32> = self.stream.alloc_zeros(n)?;
         let n_arg = n as u64;
         let cfg = LaunchConfig {
@@ -1419,26 +1480,24 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut counts)
-            .arg(&rs1_addr)
-            .arg(&rs2_addr)
-            .arg(&rd_addr)
+            .arg(inputs.rs1_addr)
+            .arg(inputs.rs2_addr)
+            .arg(inputs.rd_addr)
             .arg(&n_arg);
         // SAFETY: thread c<n counts distinct-column entries among rs1/rs2/rd addresses into
         // counts[c]; counts holds n u32, the three addr columns hold >= n i32. No shared memory.
         let _ = unsafe { launch.launch(cfg) }?;
 
-        let counts_host = self.download_u32(&counts)?;
-        let (offsets, total) = self.exclusive_scan_u32(&counts_host)?;
+        let (offsets_dev, total) = self.exclusive_scan_u32_dev(&counts, n)?;
         let total = total as usize;
-        let offsets_dev = self.upload_u32_slice(&offsets)?;
 
         let mut rows_dev: CudaSlice<u32> = self.stream.alloc_zeros(total.max(1))?;
         let mut cols_dev: CudaSlice<u32> = self.stream.alloc_zeros(total.max(1))?;
         let mut prev_dev: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1))?;
         let mut next_dev: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1))?;
-        let mut rs1_flag_dev: CudaSlice<u8> = self.stream.alloc_zeros(total.max(1))?;
-        let mut rs2_flag_dev: CudaSlice<u8> = self.stream.alloc_zeros(total.max(1))?;
-        let mut rd_flag_dev: CudaSlice<u8> = self.stream.alloc_zeros(total.max(1))?;
+        let mut rs1_flag_dev: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1))?;
+        let mut rs2_flag_dev: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1))?;
+        let mut rd_flag_dev: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1))?;
 
         let f = self.register_merge_scatter.clone();
         let mut launch = self.stream.launch_builder(&f);
@@ -1451,13 +1510,13 @@ impl CudaKernelContext {
             .arg(&mut rs2_flag_dev)
             .arg(&mut rd_flag_dev)
             .arg(&offsets_dev)
-            .arg(&rs1_addr)
-            .arg(&rs1_val)
-            .arg(&rs2_addr)
-            .arg(&rs2_val)
-            .arg(&rd_addr)
-            .arg(&rd_pre)
-            .arg(&rd_post)
+            .arg(inputs.rs1_addr)
+            .arg(inputs.rs1_val)
+            .arg(inputs.rs2_addr)
+            .arg(inputs.rs2_val)
+            .arg(inputs.rd_addr)
+            .arg(inputs.rd_pre)
+            .arg(inputs.rd_post)
             .arg(&n_arg);
         // SAFETY: thread c<n resolves its <=3 operand entries (dedup by column, sort by column) and
         // writes them at offsets[c].. into the 7 output columns; each output holds `total` elements
@@ -1465,14 +1524,15 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
 
-        Ok(RegisterMergeColumns {
-            rows: self.download_u32(&rows_dev)?[..total].to_vec(),
-            cols: self.download_u32(&cols_dev)?[..total].to_vec(),
-            prev_val: self.download_u64(&prev_dev)?[..total].to_vec(),
-            next_val: self.download_u64(&next_dev)?[..total].to_vec(),
-            rs1_flag: self.stream.clone_dtoh(&rs1_flag_dev)?[..total].to_vec(),
-            rs2_flag: self.stream.clone_dtoh(&rs2_flag_dev)?[..total].to_vec(),
-            rd_flag: self.stream.clone_dtoh(&rd_flag_dev)?[..total].to_vec(),
+        Ok(RegisterMergeDevice {
+            rows: rows_dev,
+            cols: cols_dev,
+            prev_val: prev_dev,
+            next_val: next_dev,
+            rs1_flag: rs1_flag_dev,
+            rs2_flag: rs2_flag_dev,
+            rd_flag: rd_flag_dev,
+            total,
         })
     }
 
@@ -1494,7 +1554,23 @@ impl CudaKernelContext {
 
         let rows_dev = self.upload_u32_slice(cur_rows)?;
         let cols_dev = self.upload_u32_slice(cur_cols)?;
+        let dev = self.schedule_round_dev(&rows_dev, &cols_dev, len)?;
+        let total = dev.total;
+        Ok(ScheduleRoundColumns {
+            even_idx: self.stream.clone_dtoh(&dev.even_idx)?[..total].to_vec(),
+            odd_idx: self.stream.clone_dtoh(&dev.odd_idx)?[..total].to_vec(),
+            pair: self.download_u32(&dev.pair)?[..total].to_vec(),
+            next_rows: self.download_u32(&dev.next_rows)?[..total].to_vec(),
+            next_cols: self.download_u32(&dev.next_cols)?[..total].to_vec(),
+        })
+    }
 
+    pub(crate) fn schedule_round_dev(
+        &self,
+        cur_rows: &CudaSlice<u32>,
+        cur_cols: &CudaSlice<u32>,
+        len: usize,
+    ) -> Result<ScheduleRoundDevice, CudaError> {
         let mut counts: CudaSlice<u32> = self.stream.alloc_zeros(len)?;
         let len_arg = len as u64;
         let cfg = LaunchConfig {
@@ -1506,17 +1582,15 @@ impl CudaKernelContext {
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut counts)
-            .arg(&rows_dev)
-            .arg(&cols_dev)
+            .arg(cur_rows)
+            .arg(cur_cols)
             .arg(&len_arg);
         // SAFETY: each entry thread that starts a pair-group computes its two-pointer merge-union
         // size into counts[k] (0 for non-starts); counts/cur_rows/cur_cols hold >= len. No shared mem.
         let _ = unsafe { launch.launch(cfg) }?;
 
-        let counts_host = self.download_u32(&counts)?;
-        let (offsets, total) = self.exclusive_scan_u32(&counts_host)?;
+        let (offsets_dev, total) = self.exclusive_scan_u32_dev(&counts, len)?;
         let total = total as usize;
-        let offsets_dev = self.upload_u32_slice(&offsets)?;
 
         let mut even_dev: CudaSlice<i32> = self.stream.alloc_zeros(total.max(1))?;
         let mut odd_dev: CudaSlice<i32> = self.stream.alloc_zeros(total.max(1))?;
@@ -1533,8 +1607,8 @@ impl CudaKernelContext {
             .arg(&mut next_rows_dev)
             .arg(&mut next_cols_dev)
             .arg(&offsets_dev)
-            .arg(&rows_dev)
-            .arg(&cols_dev)
+            .arg(cur_rows)
+            .arg(cur_cols)
             .arg(&len_arg);
         // SAFETY: each pair-group-start thread re-walks its merge-union writing even_idx/odd_idx/pair/
         // next_rows/next_cols at offsets[k]..; outputs hold `total` (sum of per-group union sizes),
@@ -1542,12 +1616,13 @@ impl CudaKernelContext {
         let _ = unsafe { launch.launch(cfg) }?;
         self.stream.synchronize()?;
 
-        Ok(ScheduleRoundColumns {
-            even_idx: self.stream.clone_dtoh(&even_dev)?[..total].to_vec(),
-            odd_idx: self.stream.clone_dtoh(&odd_dev)?[..total].to_vec(),
-            pair: self.download_u32(&pair_dev)?[..total].to_vec(),
-            next_rows: self.download_u32(&next_rows_dev)?[..total].to_vec(),
-            next_cols: self.download_u32(&next_cols_dev)?[..total].to_vec(),
+        Ok(ScheduleRoundDevice {
+            even_idx: even_dev,
+            odd_idx: odd_dev,
+            pair: pair_dev,
+            next_rows: next_rows_dev,
+            next_cols: next_cols_dev,
+            total,
         })
     }
 
