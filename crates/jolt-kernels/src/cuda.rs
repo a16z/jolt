@@ -141,9 +141,7 @@ pub struct CudaKernelContext {
     scan_u32_add_offsets: CudaFunction,
     register_merge_count: CudaFunction,
     register_merge_scatter: CudaFunction,
-    #[expect(dead_code, reason = "used once the schedule_round body + wiring land")]
     schedule_round_count: CudaFunction,
-    #[expect(dead_code, reason = "used once the schedule_round body + wiring land")]
     schedule_round_emit: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -1483,8 +1481,74 @@ impl CudaKernelContext {
         cur_rows: &[u32],
         cur_cols: &[u32],
     ) -> Result<ScheduleRoundColumns, CudaError> {
-        let _ = (cur_rows, cur_cols);
-        Err(CudaError::Unsupported)
+        let len = cur_rows.len();
+        if len == 0 {
+            return Ok(ScheduleRoundColumns {
+                even_idx: Vec::new(),
+                odd_idx: Vec::new(),
+                pair: Vec::new(),
+                next_rows: Vec::new(),
+                next_cols: Vec::new(),
+            });
+        }
+
+        let rows_dev = self.upload_u32_slice(cur_rows)?;
+        let cols_dev = self.upload_u32_slice(cur_cols)?;
+
+        let mut counts: CudaSlice<u32> = self.stream.alloc_zeros(len)?;
+        let len_arg = len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((len as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.schedule_round_count.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut counts)
+            .arg(&rows_dev)
+            .arg(&cols_dev)
+            .arg(&len_arg);
+        // SAFETY: each entry thread that starts a pair-group computes its two-pointer merge-union
+        // size into counts[k] (0 for non-starts); counts/cur_rows/cur_cols hold >= len. No shared mem.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let counts_host = self.download_u32(&counts)?;
+        let (offsets, total) = self.exclusive_scan_u32(&counts_host)?;
+        let total = total as usize;
+        let offsets_dev = self.upload_u32_slice(&offsets)?;
+
+        let mut even_dev: CudaSlice<i32> = self.stream.alloc_zeros(total.max(1))?;
+        let mut odd_dev: CudaSlice<i32> = self.stream.alloc_zeros(total.max(1))?;
+        let mut pair_dev: CudaSlice<u32> = self.stream.alloc_zeros(total.max(1))?;
+        let mut next_rows_dev: CudaSlice<u32> = self.stream.alloc_zeros(total.max(1))?;
+        let mut next_cols_dev: CudaSlice<u32> = self.stream.alloc_zeros(total.max(1))?;
+
+        let f = self.schedule_round_emit.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut even_dev)
+            .arg(&mut odd_dev)
+            .arg(&mut pair_dev)
+            .arg(&mut next_rows_dev)
+            .arg(&mut next_cols_dev)
+            .arg(&offsets_dev)
+            .arg(&rows_dev)
+            .arg(&cols_dev)
+            .arg(&len_arg);
+        // SAFETY: each pair-group-start thread re-walks its merge-union writing even_idx/odd_idx/pair/
+        // next_rows/next_cols at offsets[k]..; outputs hold `total` (sum of per-group union sizes),
+        // cur_rows/cur_cols hold >= len. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        Ok(ScheduleRoundColumns {
+            even_idx: self.stream.clone_dtoh(&even_dev)?[..total].to_vec(),
+            odd_idx: self.stream.clone_dtoh(&odd_dev)?[..total].to_vec(),
+            pair: self.download_u32(&pair_dev)?[..total].to_vec(),
+            next_rows: self.download_u32(&next_rows_dev)?[..total].to_vec(),
+            next_cols: self.download_u32(&next_cols_dev)?[..total].to_vec(),
+        })
     }
 
     pub fn exclusive_scan_u32(&self, input: &[u32]) -> Result<(Vec<u32>, u32), CudaError> {
