@@ -138,9 +138,7 @@ pub struct CudaKernelContext {
     ram_ra_gather: CudaFunction,
     scan_u32_block: CudaFunction,
     scan_u32_add_offsets: CudaFunction,
-    #[expect(dead_code, reason = "used once the register_merge body + wiring land")]
     register_merge_count: CudaFunction,
-    #[expect(dead_code, reason = "used once the register_merge body + wiring land")]
     register_merge_scatter: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
@@ -1372,9 +1370,97 @@ impl CudaKernelContext {
         Ok(out)
     }
 
-    pub fn register_merge(&self, inputs: RegisterMergeInputs<'_>) -> Result<RegisterMergeColumns, CudaError> {
-        let _ = inputs;
-        Err(CudaError::Unsupported)
+    pub fn register_merge(
+        &self,
+        inputs: RegisterMergeInputs<'_>,
+    ) -> Result<RegisterMergeColumns, CudaError> {
+        let n = inputs.rs1_addr.len();
+        if n == 0 {
+            return Ok(RegisterMergeColumns {
+                rows: Vec::new(),
+                cols: Vec::new(),
+                prev_val: Vec::new(),
+                next_val: Vec::new(),
+                rs1_flag: Vec::new(),
+                rs2_flag: Vec::new(),
+                rd_flag: Vec::new(),
+            });
+        }
+
+        let rs1_addr = self.upload_i32_slice(inputs.rs1_addr)?;
+        let rs2_addr = self.upload_i32_slice(inputs.rs2_addr)?;
+        let rd_addr = self.upload_i32_slice(inputs.rd_addr)?;
+        let rs1_val = self.upload_u64_slice(inputs.rs1_val)?;
+        let rs2_val = self.upload_u64_slice(inputs.rs2_val)?;
+        let rd_pre = self.upload_u64_slice(inputs.rd_pre)?;
+        let rd_post = self.upload_u64_slice(inputs.rd_post)?;
+
+        let mut counts: CudaSlice<u32> = self.stream.alloc_zeros(n)?;
+        let n_arg = n as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.register_merge_count.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut counts)
+            .arg(&rs1_addr)
+            .arg(&rs2_addr)
+            .arg(&rd_addr)
+            .arg(&n_arg);
+        // SAFETY: thread c<n counts distinct-column entries among rs1/rs2/rd addresses into
+        // counts[c]; counts holds n u32, the three addr columns hold >= n i32. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let counts_host = self.download_u32(&counts)?;
+        let (offsets, total) = self.exclusive_scan_u32(&counts_host)?;
+        let total = total as usize;
+        let offsets_dev = self.upload_u32_slice(&offsets)?;
+
+        let mut rows_dev: CudaSlice<u32> = self.stream.alloc_zeros(total.max(1))?;
+        let mut cols_dev: CudaSlice<u32> = self.stream.alloc_zeros(total.max(1))?;
+        let mut prev_dev: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1))?;
+        let mut next_dev: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1))?;
+        let mut rs1_flag_dev: CudaSlice<u8> = self.stream.alloc_zeros(total.max(1))?;
+        let mut rs2_flag_dev: CudaSlice<u8> = self.stream.alloc_zeros(total.max(1))?;
+        let mut rd_flag_dev: CudaSlice<u8> = self.stream.alloc_zeros(total.max(1))?;
+
+        let f = self.register_merge_scatter.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut rows_dev)
+            .arg(&mut cols_dev)
+            .arg(&mut prev_dev)
+            .arg(&mut next_dev)
+            .arg(&mut rs1_flag_dev)
+            .arg(&mut rs2_flag_dev)
+            .arg(&mut rd_flag_dev)
+            .arg(&offsets_dev)
+            .arg(&rs1_addr)
+            .arg(&rs1_val)
+            .arg(&rs2_addr)
+            .arg(&rs2_val)
+            .arg(&rd_addr)
+            .arg(&rd_pre)
+            .arg(&rd_post)
+            .arg(&n_arg);
+        // SAFETY: thread c<n resolves its <=3 operand entries (dedup by column, sort by column) and
+        // writes them at offsets[c].. into the 7 output columns; each output holds `total` elements
+        // (sum of per-cycle counts), inputs hold >= n. No shared memory.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        Ok(RegisterMergeColumns {
+            rows: self.download_u32(&rows_dev)?[..total].to_vec(),
+            cols: self.download_u32(&cols_dev)?[..total].to_vec(),
+            prev_val: self.download_u64(&prev_dev)?[..total].to_vec(),
+            next_val: self.download_u64(&next_dev)?[..total].to_vec(),
+            rs1_flag: self.stream.clone_dtoh(&rs1_flag_dev)?[..total].to_vec(),
+            rs2_flag: self.stream.clone_dtoh(&rs2_flag_dev)?[..total].to_vec(),
+            rd_flag: self.stream.clone_dtoh(&rd_flag_dev)?[..total].to_vec(),
+        })
     }
 
     pub fn exclusive_scan_u32(&self, input: &[u32]) -> Result<(Vec<u32>, u32), CudaError> {
