@@ -56,4 +56,12 @@ rd != x0:
   .done RETIRE_SUCCESS
 ```
 
+## Generating Full Lean File 
+
+Run the following command to generate automatic expansions.
+
+```zsh
+cargo run -p jolt-lean-gen -- --lean --out /path/to/ExpansionsAutomated.lean
+```
+
 
