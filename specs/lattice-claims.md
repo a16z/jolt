@@ -48,9 +48,9 @@ V1 scope (full prototype parity):
 canonical native one-hot Wjolt layout plus auxiliary prefix-packed objects
 inc fusion (RamInc/RdInc -> one Inc stream selected by the bytecode Store flag)
 base-2^b one-hot chunk decomposition + full one-hot msb column
-standalone IncVirtualization after stage 5, retaining the Store claim needed by
-    bytecode read-RAF
-FusedIncClaimReduction inside stage 6b
+four fused-inc consumer val stages inside the bytecode read-RAF, discharging
+    the reduced inc claims and producing the FusedInc opening at the shared
+    stage-6b cycle point
 booleanity + hamming-weight coverage of the new one-hot columns
 fused-increment decode folded into stage 7 HammingWeightClaimReduction
 store-selector binding to the bytecode Store circuit flag
@@ -117,9 +117,10 @@ crates/jolt-claims/src/protocols/jolt/lattice/
 ├── strategy.rs     the one native Wjolt layout, common-point permutation,
 │                   setup shape, and canonical nonzero layout digest
 └── relations/
-    ├── inc_virtualization.rs
-    ├── fused_inc_claim_reduction.rs
-    ├── hamming_weight.rs                 stage-7 fused increment reduction
+    ├── read_raf.rs                      lattice bytecode read-RAF (address
+    │                                    fold over the four inc claims; cycle
+    │                                    phases carrying the FusedInc factor)
+    ├── hamming_weight.rs                stage-7 fused increment reduction
     ├── booleanity.rs                    lattice-mode Booleanity (same id)
     ├── advice_reconstruction.rs         untrusted (validity + decode legs)
     │                                    and trusted (decode leg) advice
@@ -127,10 +128,10 @@ crates/jolt-claims/src/protocols/jolt/lattice/
     └── program_image_reconstruction.rs  word -> byte one-hot decode
 ```
 
-There is no store-binding relation file: the fused-inc destination selector is
-the existing `OpFlags(Store)` virtual polynomial, so its opening is settled
-through the bytecode read-raf val stages like every other flag consumer (see
-relation 1 below).
+There is no store-binding relation file and no store-selector opening at all:
+the fused-inc consumer stages substitute the store column into the read-raf
+fold directly (see relation 1 below), so the selector never leaves the
+bytecode val-stage machinery.
 
 Placement rationale: the lattice relations are pinned to the Jolt id families
 (`ConcreteSumcheck` fixes `RelationId = JoltRelationId`, `OpeningId =
@@ -146,8 +147,6 @@ index-based serde codecs stable for existing proofs):
 
 ```rust
 // JoltRelationId — appended variants
-IncVirtualization,
-FusedIncClaimReduction,
 UntrustedAdviceReconstruction,   // byte validity + word-decode legs
 TrustedAdviceReconstruction,     // word-decode leg only
 ProgramImageReconstruction,      // word-decode leg only
@@ -174,9 +173,10 @@ BytecodeImmBytes { chunk },
 ProgramImageBytes,
 
 // JoltVirtualPolynomial — appended variant
-FusedInc,                  // gamma-batched RamInc/RdInc stream; its selector
-                           // is the existing OpFlags(Store), its +2^64 shift
-                           // is folded into the stage-7 hamming reduction
+FusedInc,                  // gamma-batched RamInc/RdInc stream; opened once,
+                           // by the read-raf cycle phase at the shared 6b
+                           // cycle point; its +2^64 shift is folded into the
+                           // stage-7 hamming reduction
 ```
 
 WARNING: enum `Ord` is protocol data for auxiliary objects — `PrefixPacking`
@@ -189,10 +189,8 @@ relation's (house convention) and are aggregated as appended
 `JoltChallengeId`/`JoltDerivedId` variants:
 
 ```rust
-IncVirtualizationChallenge { Gamma }
-IncVirtualizationPublic    { EqRamReadWrite, EqRamValCheck,
-                             EqRegistersReadWrite, EqRegistersValEvaluation }
-FusedIncClaimReductionPublic { EqIncVirtualization }
+BytecodeReadRafPublic::{StageValue, StageCycleEq} index the relation's val
+    stages 0..READ_RAF_CYCLE_STAGES (9 in lattice mode; see relation 1)
 HammingWeightClaimReductionPublic additionally includes IdentityAtAddress
 ```
 
@@ -299,45 +297,57 @@ prototype; every relation below is a `SymbolicSumcheck` impl with typed
 `#[derive(InputClaims/OutputClaims/SumcheckChallenges)]` structs, exactly like
 the existing `relations/**` modules.
 
-### 1. `IncVirtualization` (replaces `IncClaimReduction` in lattice mode)
+### 1. Fused-inc consumer stages inside the bytecode read-RAF
 
 A cycle writes RAM (store) or a register, never both, so one inc stream
-suffices — this halves the one-hot column count ("fused polys").
+suffices — this halves the one-hot column count ("fused polys"). The four
+reduced inc claims are discharged *inside* the lattice bytecode read-RAF
+(`lattice/relations/read_raf.rs`), with no standalone sumcheck and no
+store-selector opening. The load-bearing substitution: bytecode `ra` is
+one-hot per cycle, so
 
-- **Inputs** (same four consumed claims as base `IncClaimReduction`):
-  `RamInc@RamReadWriteChecking`, `RamInc@RamValCheck`,
-  `RdInc@RegistersReadWriteChecking`, `RdInc@RegistersValEvaluation`.
-- **Outputs**: `FusedInc` (virtual) and `OpFlags(Store)`, both at the bound
-  cycle point. Using the existing store circuit-flag polynomial as the
-  selector means its opening is bound to the actual bytecode by the same
-  read-raf val-stage machinery that binds every other flag consumer
-  (`LATTICE_BYTECODE_VAL_STAGES = NUM_BYTECODE_VAL_STAGES + 1` names the extra
-  stage) — no dedicated store-binding relation exists.
-- **Input expr**: `ram_rw + γ·ram_val + γ²·rd_rw + γ³·rd_val`.
-- **Output expr**:
-  `FusedInc · (ram_coeff·store + γ²·rd_coeff·(1 − store))` where
-  `ram_coeff = EqRamReadWrite + γ·EqRamValCheck`,
-  `rd_coeff = EqRegistersReadWrite + γ·EqRegistersValEvaluation` (deriveds).
-- degree 3, `log_T` rounds.
+```text
+Store(j)  = Σ_k val_store(k) · RA(k, j)
+RamInc(j) = FusedInc(j) · Store(j)
+RdInc(j)  = FusedInc(j) · (1 − Store(j))
+```
+
+turns each inc claim into a read-raf-shaped val stage — a bytecode val column
+(`store` / `¬store`), the producing relation's cycle point, and the shared RA
+product — with one shared `FusedInc` cycle factor. The four consumer stages
+join the address-phase input fold at `γ^5..8` (the pc/shift/entry terms shift
+to `γ^9..11`):
+
+```text
+stage 5: (store,     RamInc@RamReadWriteChecking's cycle point)
+stage 6: (store,     RamInc@RamValCheck's cycle point)
+stage 7: (1 − store, RdInc@RegistersReadWriteChecking's cycle point)
+stage 8: (1 − store, RdInc@RegistersValEvaluation's cycle point)
+```
+
+All four input claims exist before stage 6a (stages 2/4/5 produce them), so
+the fold has no timing constraint. Two counts, easy to conflate, are kept
+distinct in code:
+
+- `READ_RAF_CYCLE_STAGES = 9` in lattice mode (5 base flag stages + the 4
+  fused consumers): one cycle point / cycle-eq public per relation stage;
+- `NUM_BYTECODE_VAL_STAGES = 6` (5 base staged values + the raw `Store`
+  column): the committed-mode staged-value *wire* count. The fused stages
+  resolve through the store wire and its complement (`1 − store`), so
+  committed mode adds no staged-value wires.
+
+The `FusedInc` factor raises the cycle-phase degree by one (`d + 2` over the
+base `d + 1`). The cycle phase binds the shared stage-6b batch challenges, so
+its `FusedInc` opening lands directly at the 6b cycle point — the point
+stage 7 consumes — as the relation's own output claim alongside the
+`BytecodeRa` openings.
 
 There is no separate unsigned-shift relation: `+2^64` is a constant, hence
 free at any opening point, and is folded into the Stage 7 decode leg below.
+There is also no second point-alignment sumcheck: the opening is born at the
+shared point.
 
-### 2. `FusedIncClaimReduction` (Stage 6b)
-
-The standalone `IncVirtualization` point is needed early for the Store claim,
-but Stage 7 must consume the fused increment at Stage 6b's shared cycle point.
-`FusedIncClaimReduction` performs exactly that claim reduction:
-
-- input: `FusedInc@IncVirtualization`,
-- output: `FusedInc@FusedIncClaimReduction`,
-- relation: `eq(r_inc, t) * FusedInc(t)`,
-- degree 2, `log_T` rounds, no challenge.
-
-It is a separate Stage 6b batch member, not a generic point-alignment
-protocol and not part of the base Dory path.
-
-### 3. Lattice `Booleanity` (same `JoltRelationId::Booleanity`)
+### 2. Lattice `Booleanity` (same `JoltRelationId::Booleanity`)
 
 Same relation id, lattice-mode shape: the base output sum over `Ra` columns is
 extended with the `UnsignedIncChunk(0..N)` columns and the `UnsignedIncMsb`
@@ -349,7 +359,7 @@ base geometry helpers. Every increment column, including the MSB, is a full
 `(r_address, r_cycle)` point. For each cycle the MSB row is `[1,0,...]` or
 `[0,1,0,...]`.
 
-### 4. Lattice `HammingWeightClaimReduction` (Stage 7)
+### 3. Lattice `HammingWeightClaimReduction` (Stage 7)
 
 The existing RA hamming-weight claim reduction is extended, on the Akita path
 only, with the increment columns. One sumcheck over the `b = log_K` address
@@ -363,7 +373,8 @@ bits batches:
   `Σ_j 2^(b*j) * address(chunk_j) + 2^64 * address(msb)
    = FusedInc + 2^64`.
 
-- **Inputs**: `FusedInc@FusedIncClaimReduction`, `UnsignedIncMsb@Booleanity`,
+- **Inputs**: `FusedInc@BytecodeReadRaf` (the read-raf cycle phase's own
+  output, already at the shared 6b cycle point), `UnsignedIncMsb@Booleanity`,
   `UnsignedIncChunk(j)@Booleanity`.
 - **Outputs**: every RA, increment chunk, and MSB opening at the same full
   `(r_address, r_cycle)` point.
@@ -372,20 +383,22 @@ bits batches:
 There is no standalone increment reconstruction and no additional alignment
 sumcheck after Stage 7.
 
-### 5. Store binding (via the existing flag plumbing)
+### 4. Store binding (via the existing flag plumbing)
 
 The selector must equal the bytecode `Store` circuit-flag column, else a
-malicious prover could route increments to the wrong destination. Because the
-selector *is* `OpFlags(Store)`, the binding is the ordinary flag-opening
-plumbing: the lattice-mode bytecode read-raf batch grows one val stage
-(`LATTICE_BYTECODE_VAL_STAGES`) carrying the `OpFlags(Store)@IncVirtualization`
-claim at its cycle point, exactly as the spartan-outer/shift flag claims enter
-(this is what the prototype's `bind_store` sixth stage was). The offline
+malicious prover could route increments to the wrong destination. The binding
+is structural: the fused consumer stages never open a selector at all — they
+substitute `Σ_k val_store(k)·RA(k, j)` (and its complement) directly, where
+`val_store` is the bytecode store column itself. The raw `Store` column stays
+the sixth staged-value wire in committed-program mode
+(`NUM_BYTECODE_VAL_STAGES = 6`), proven against the committed image by the
+bytecode claim reduction like the other staged values; in full-program mode
+the verifier folds it from the public bytecode. The offline
 store/rd-disjointness check on the public bytecode (`Store` and rd-writing
 selectors never co-occur) completes the argument that per cycle exactly one of
 RAM/registers receives the fused increment.
 
-### 6. `UntrustedAdviceReconstruction` (validity + word virtualization)
+### 5. `UntrustedAdviceReconstruction` (validity + word virtualization)
 
 The untrusted advice byte column is prover-supplied, so its one-hot structure
 is proven in-protocol; this is simultaneously the range check that makes the
@@ -407,7 +420,7 @@ pin `UntrustedAdviceBytes` at a different point. Inputs
 packed statement consumes. degree 3, `8 + 3 + word_vars` rounds. Draws
 `Gamma`.
 
-### 7. `TrustedAdviceReconstruction`
+### 6. `TrustedAdviceReconstruction`
 
 Trusted advice shares the byte encoding but is precommitted by a party the
 verifier trusts, so no validity legs are spent — only the decode leg, which
@@ -419,14 +432,14 @@ Inputs
 `(bound prefix ‖ r_word)` (`ByteDecode` derived). degree 2, `8 + 3` rounds,
 no challenges.
 
-### 8. `ProgramImageReconstruction`
+### 7. `ProgramImageReconstruction`
 
 Identical single-leg shape to trusted advice over the program image byte
 column. Inputs `ProgramImageInit@ProgramImageClaimReduction`; outputs
 `ProgramImageBytes` at `(bound prefix ‖ r_word)` (`ByteDecode` derived).
 degree 2, `8 + 3` rounds, no challenges.
 
-### 9. `BytecodeChunkReconstruction`
+### 8. `BytecodeChunkReconstruction`
 
 Rebuilds every committed `BytecodeChunk(c)` claim (all chunks share the
 `BytecodeClaimReduction` terminus point `(r_lane ‖ r_row)`) from the per-lane
@@ -486,7 +499,8 @@ pub enum LatticeFinalOpening {
 }
 
 pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening;
-// RdInc, RamInc                  -> Virtualized (via IncVirtualization chain)
+// RdInc, RamInc                  -> Virtualized (discharged by the read-raf
+//                                   fused consumer stages)
 // TrustedAdvice/UntrustedAdvice  -> Virtualized (via relations 6/7)
 // BytecodeChunk(i)               -> Virtualized (via relation 9)
 // ProgramImageInit               -> Virtualized (via relation 8)
@@ -508,10 +522,11 @@ base stage-8 RLC order for lattice mode.
 
 ## Verifier and Prover Schedule
 
-- After Stage 5, standalone `IncVirtualization` produces `FusedInc` and the
-  Store claim needed by bytecode read-RAF.
-- Stage 6a/6b runs lattice Booleanity; Stage 6b also runs the separate
-  `FusedIncClaimReduction` member.
+- Stage 6a's bytecode read-RAF address fold consumes the four reduced inc
+  claims (stages `γ^5..8`); no phase runs between Stages 5 and 6a.
+- Stage 6a/6b runs lattice Booleanity; Stage 6b's read-raf cycle phase carries
+  the `FusedInc` factor and produces its opening at the shared cycle point —
+  there is no separate fused-inc member.
 - Stage 7 extends `HammingWeightClaimReduction` with hamming, Booleanity, and
   shifted-decode terms for all increment one-hot columns.
 - Stage 8 opens Wjolt directly with one native same-point Akita batch and runs
