@@ -6,7 +6,7 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
-use crate::{challenge, constant, derived, opening};
+use crate::{challenge, derived, opening};
 
 use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltCommittedPolynomial, JoltExpr,
@@ -245,7 +245,7 @@ where
     output = output
         + store_pair * ra_product.clone() * fused.clone() * store.clone()
         + notstore_pair.clone() * ra_product.clone() * fused.clone()
-        + notstore_pair * ra_product.clone() * fused * store * constant(F::zero() - F::one());
+        - notstore_pair * ra_product.clone() * fused * store;
 
     let raf_coeff = gamma.clone().pow(num_val_stages)
         * derived(BytecodeReadRafPublic::SpartanOuterRaf)
