@@ -5429,8 +5429,36 @@ impl CudaKernelContext {
         chunk_bits: usize,
         m: usize,
     ) -> Result<CudaSlice<u16>, CudaError> {
-        let _ = (lookup_index_lo, lookup_index_hi, num_chunks, chunk_bits, m);
-        Err(CudaError::Unsupported)
+        if num_chunks == 0 || chunk_bits == 0 || chunk_bits > 16 || num_chunks * chunk_bits > 128 {
+            return Err(CudaError::Unsupported);
+        }
+        let mut out: CudaSlice<u16> = self.stream.alloc_zeros((num_chunks * m).max(1))?;
+        if m == 0 {
+            return Ok(out);
+        }
+
+        let cfg = LaunchConfig {
+            grid_dim: ((m as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let num_chunks_arg = num_chunks as u64;
+        let chunk_bits_arg = chunk_bits as u64;
+        let m_arg = m as u64;
+        let kernel = self.readraf_chunk_values.clone();
+        let mut launch = self.stream.launch_builder(&kernel);
+        let _ = launch
+            .arg(&mut out)
+            .arg(lookup_index_lo)
+            .arg(lookup_index_hi)
+            .arg(&num_chunks_arg)
+            .arg(&chunk_bits_arg)
+            .arg(&m_arg);
+        // SAFETY: cycle `c` writes only out[chunk*m + c] for chunk in 0..num_chunks (its
+        // exclusive column across the num_chunks*m output); reads lookup_index_lo/hi[c]. Both
+        // index arrays hold >= m elems and out holds num_chunks*m u16s.
+        let _ = unsafe { launch.launch(cfg) }?;
+        Ok(out)
     }
 
     pub fn raf_weight_phase_update(
