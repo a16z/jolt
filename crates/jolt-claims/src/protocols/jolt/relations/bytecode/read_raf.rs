@@ -63,7 +63,7 @@ impl SymbolicSumcheck for ReadRaf {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        read_raf_address_input_fold(None)
+        read_raf_address_input_fold(Vec::new())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {

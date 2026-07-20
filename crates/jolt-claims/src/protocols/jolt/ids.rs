@@ -38,8 +38,6 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
-    IncVirtualization,
-    FusedIncClaimReduction,
     UntrustedAdviceReconstruction,
     TrustedAdviceReconstruction,
     ProgramImageReconstruction,
@@ -295,24 +293,6 @@ pub enum InstructionRaVirtualizationPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum IncVirtualizationChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum IncVirtualizationPublic {
-    EqRamReadWrite,
-    EqRamValCheck,
-    EqRegistersReadWrite,
-    EqRegistersValEvaluation,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FusedIncClaimReductionPublic {
-    EqIncVirtualization,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UntrustedAdviceReconstructionChallenge {
     Gamma,
 }
@@ -395,7 +375,6 @@ pub enum JoltChallengeId {
     InstructionInput(InstructionInputChallenge),
     InstructionReadRaf(InstructionReadRafChallenge),
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
-    IncVirtualization(IncVirtualizationChallenge),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionChallenge),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionChallenge),
 }
@@ -600,8 +579,6 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
-    IncVirtualization(IncVirtualizationPublic),
-    FusedIncClaimReduction(FusedIncClaimReductionPublic),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
     ProgramImageReconstruction(ProgramImageReconstructionPublic),

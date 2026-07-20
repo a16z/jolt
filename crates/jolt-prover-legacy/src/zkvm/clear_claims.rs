@@ -28,7 +28,8 @@ use jolt_verifier::{
     stages::{
         stage1::outputs::Stage1OutputClaims,
         stage6b::outputs::{
-            BooleanityOutputClaims, IncClaimReductionOutputClaims, Stage6bOutputClaims,
+            BooleanityOutputClaims, BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
+            Stage6bOutputClaims,
         },
         stage7::{
             advice_address_phase::{
@@ -61,10 +62,10 @@ use jolt_verifier::{
             Stage6aOutputClaims,
         },
         stage6b::outputs::{
-            BytecodeReadRafOutputClaims, BytecodeReductionCyclePhaseOutputClaims,
-            InstructionRaVirtualizationOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
-            RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
-            TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
+            BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
+            ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
+            RamRaVirtualizationOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
+            UntrustedAdviceCyclePhaseOutputClaims,
         },
         stage7::committed_reduction_address_phase::{
             BytecodeReductionAddressPhaseOutputClaims,
@@ -630,6 +631,7 @@ impl<F: Field> OpeningClaimMap<F> {
 #[cfg(feature = "akita")]
 mod packed {
     use super::*;
+    use jolt_claims::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
     use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
         self, TrustedAdviceReconstructionOutputClaims, UntrustedAdviceReconstructionOutputClaims,
     };
@@ -637,22 +639,16 @@ mod packed {
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
         self, BytecodeChunkReconstructionOutputClaims,
     };
-    use jolt_claims::protocols::jolt::lattice::relations::fused_inc_claim_reduction::{
-        self, FusedIncClaimReductionOutputClaims,
-    };
     use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
-    use jolt_claims::protocols::jolt::lattice::relations::inc_virtualization::{
-        self, IncVirtualizationOutputClaims,
-    };
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::{
         self, ProgramImageReconstructionOutputClaims,
     };
+    use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
     use jolt_claims::protocols::jolt::{
         BytecodeRegisterLane, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
     };
     use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
     use jolt_verifier::proof::ClearProofClaims;
-    use jolt_verifier::stages::inc_virtualization::IncVirtualizationPhaseOutputClaims;
     use jolt_verifier::stages::stage1::outputs::Stage1OutputClaims;
     use jolt_verifier::stages::stage6b::outputs::Stage6bOutputClaims;
     use jolt_verifier::stages::stage7::advice_address_phase::{
@@ -664,10 +660,10 @@ mod packed {
     use spartan::outer_uniskip_opening;
 
     /// The packed (akita) analog of the base clear-claims projection: the
-    /// base stage payloads plus the inc-virtualization and reconstruction
-    /// phase cells, with the lattice stage-6b/7 shapes (booleanity carries
-    /// the unsigned-inc columns; stage 7 carries the chunk reconstruction;
-    /// there is no stage-6b inc slot).
+    /// base stage payloads plus the reconstruction phase cells, with the
+    /// lattice stage-6b/7 shapes (the read-raf carries the fused-inc opening;
+    /// booleanity carries the unsigned-inc columns; there is no stage-6b inc
+    /// slot).
     pub(crate) fn build_packed_clear_claims<F: Field>(
         claims: impl IntoIterator<Item = (jolt::JoltOpeningId, F)>,
     ) -> Result<ClearProofClaims<F>, VerifierError> {
@@ -683,12 +679,6 @@ mod packed {
             stage3: stage3_claims_from_openings(&claims)?,
             stage4: stage4_claims_from_openings(&claims)?,
             stage5: stage5_claims_from_openings(&claims)?,
-            inc_virtualization: IncVirtualizationPhaseOutputClaims {
-                inc_virtualization: IncVirtualizationOutputClaims {
-                    fused_inc: claims.require(inc_virtualization::fused_inc_opening())?,
-                    store: claims.require(inc_virtualization::fused_inc_store_opening())?,
-                },
-            },
             stage6a: stage6a_claims_from_openings(&claims)?,
             stage6b: packed_stage6b_claims_from_openings(&claims)?,
             stage7: packed_stage7_claims_from_openings(&claims)?,
@@ -776,7 +766,10 @@ mod packed {
         }
 
         Ok(Stage6bOutputClaims {
-            bytecode_read_raf: BytecodeReadRafOutputClaims { bytecode_ra },
+            bytecode_read_raf: LatticeBytecodeReadRafOutputClaims {
+                bytecode_ra,
+                fused_inc: claims.require(fused_inc_read_raf_opening())?,
+            },
             booleanity: LatticeBooleanityOutputClaims {
                 instruction_ra: booleanity_instruction_ra,
                 bytecode_ra: booleanity_bytecode_ra,
@@ -790,9 +783,6 @@ mod packed {
             ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
             instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
                 committed_instruction_ra,
-            },
-            fused_inc_claim_reduction: FusedIncClaimReductionOutputClaims {
-                fused_inc: claims.require(fused_inc_claim_reduction::fused_inc_reduced_opening())?,
             },
             trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
             untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),

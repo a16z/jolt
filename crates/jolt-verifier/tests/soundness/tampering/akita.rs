@@ -31,14 +31,13 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     },
     booleanity::LatticeBooleanityOutputClaims,
     bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims,
-    inc_virtualization::IncVirtualizationOutputClaims,
     program_image_reconstruction::ProgramImageReconstructionOutputClaims,
+    read_raf::LatticeBytecodeReadRafOutputClaims,
 };
 use jolt_field::Field;
 use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaJoltProof, AkitaScheme};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
-    inc_virtualization::IncVirtualizationPhaseOutputClaims,
     stage1::{
         outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
         OuterRemainderOutputClaims,
@@ -64,8 +63,7 @@ use jolt_verifier::stages::{
         Stage6aOutputClaims,
     },
     stage6b::outputs::{
-        BytecodeReadRafOutputClaims, BytecodeReductionCyclePhaseOutputClaims,
-        FusedIncClaimReductionOutputClaims, InstructionRaVirtualizationOutputClaims,
+        BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
         ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
         RamRaVirtualizationOutputClaims, Stage6bOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
         UntrustedAdviceCyclePhaseOutputClaims,
@@ -116,7 +114,6 @@ fn for_each_scalar_mut<F: Field>(claims: &mut ClearProofClaims<F>, f: &mut impl 
         stage3,
         stage4,
         stage5,
-        inc_virtualization,
         stage6a,
         stage6b,
         stage7,
@@ -127,7 +124,6 @@ fn for_each_scalar_mut<F: Field>(claims: &mut ClearProofClaims<F>, f: &mut impl 
     visit_stage3(stage3, f);
     visit_stage4(stage4, f);
     visit_stage5(stage5, f);
-    visit_inc_virtualization(inc_virtualization, f);
     visit_stage6a(stage6a, f);
     visit_stage6b(stage6b, f);
     visit_stage7(stage7, f);
@@ -385,17 +381,6 @@ fn visit_stage5<F: Field>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_inc_virtualization<F: Field>(
-    claims: &mut IncVirtualizationPhaseOutputClaims<F>,
-    f: &mut dyn FnMut(&mut F),
-) {
-    let IncVirtualizationPhaseOutputClaims { inc_virtualization } = claims;
-    let IncVirtualizationOutputClaims { fused_inc, store } = inc_virtualization;
-    for scalar in [fused_inc, store] {
-        f(scalar);
-    }
-}
-
 fn visit_stage6a<F: Field>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6aOutputClaims {
         bytecode_read_raf,
@@ -422,16 +407,19 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
         ram_hamming_booleanity,
         ram_ra_virtualization,
         instruction_ra_virtualization,
-        fused_inc_claim_reduction,
         trusted_advice,
         untrusted_advice,
         bytecode_reduction,
         program_image_reduction,
     } = claims;
-    let BytecodeReadRafOutputClaims { bytecode_ra } = bytecode_read_raf;
+    let LatticeBytecodeReadRafOutputClaims {
+        bytecode_ra,
+        fused_inc,
+    } = bytecode_read_raf;
     for scalar in bytecode_ra.iter_mut() {
         f(scalar);
     }
+    f(fused_inc);
     let LatticeBooleanityOutputClaims {
         instruction_ra,
         bytecode_ra: booleanity_bytecode_ra,
@@ -466,8 +454,6 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
     for scalar in committed_instruction_ra.iter_mut() {
         f(scalar);
     }
-    let FusedIncClaimReductionOutputClaims { fused_inc } = fused_inc_claim_reduction;
-    f(fused_inc);
     if let Some(TrustedAdviceCyclePhaseOutputClaims { trusted }) = trusted_advice {
         f(trusted);
     }
@@ -747,7 +733,7 @@ fn every_commitment_wire_rejects_perturbation() {
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();
     let mut proof = muldiv.proof.clone();
-    proof.stages.inc_virtualization_sumcheck_proof = proof.stages.stage3_sumcheck_proof.clone();
+    proof.stages.stage6b_sumcheck_proof = proof.stages.stage3_sumcheck_proof.clone();
     assert_rejects(muldiv.verify_proof(&proof));
 
     let advice = akita_advice_case();

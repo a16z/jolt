@@ -40,8 +40,6 @@ pub fn verify<PCS, VC, T, ZkProof>(
     stage3: &Stage3Output<PCS::Field, VC::Output>,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
     stage5: &Stage5Output<PCS::Field, VC::Output>,
-    #[cfg(feature = "akita")]
-    inc_virtualization: &crate::stages::inc_virtualization::IncVirtualizationOutput<PCS::Field>,
 ) -> Result<Stage6aOutput<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -137,8 +135,8 @@ where
     address_sumchecks.validate_output_claims(claims)?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
-    // prior clear stage opening (plus, under akita, the `IncVirtualization`
-    // store selector claim at the sixth stage slot); the relation evaluates it
+    // prior clear stage opening (plus, under akita, the four reduced `Inc`
+    // claims at the fused-inc consumer stage slots); the relation evaluates it
     // through its input `Expr` from these wired openings + the per-stage
     // folding gammas.
     let base_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
@@ -152,7 +150,11 @@ where
     let base_input_values =
         jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
             base: base_input_values,
-            store: inc_virtualization.output_values.store,
+            inc: crate::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
+                &stage2.clear()?.output_values,
+                &stage4.clear()?.output_values,
+                &stage5.clear()?.output_values,
+            ),
         };
     let address_input_values = Stage6aInputClaims {
         bytecode_read_raf: base_input_values,

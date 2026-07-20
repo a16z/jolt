@@ -17,8 +17,6 @@ pub use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
     TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
-#[cfg(feature = "akita")]
-pub use super::fused_inc_claim_reduction::FusedIncClaimReductionOutputClaims;
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
@@ -30,8 +28,6 @@ use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
-#[cfg(feature = "akita")]
-use super::fused_inc_claim_reduction::FusedIncClaimReduction;
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -74,12 +70,10 @@ pub struct Stage6bSumchecks<F: Field> {
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
-    /// Absent on the packed path: the inc claims are virtualized by the
-    /// stage-6a `IncVirtualization` phase instead.
+    /// Absent on the packed path: the inc claims are discharged inside the
+    /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
-    #[cfg(feature = "akita")]
-    pub fused_inc_claim_reduction: FusedIncClaimReduction<F>,
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
     pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
@@ -116,9 +110,11 @@ impl<F: Field> Stage6bOutputPoints<F> {
         &self.inc_claim_reduction.ram_inc
     }
 
+    /// The packed fused-inc opening point: the read-raf cycle suffix (the
+    /// stage-6b cycle point).
     #[cfg(feature = "akita")]
     pub fn fused_inc_opening_point(&self) -> &[F] {
-        self.fused_inc_claim_reduction.fused_inc()
+        &self.bytecode_read_raf.fused_inc
     }
 
     /// The advice cycle-phase opening point for `kind`, present only when that

@@ -302,7 +302,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             accumulator
                 .get_virtual_polynomial_opening(
                     VirtualPolynomial::FusedInc,
-                    SumcheckId::FusedIncClaimReduction,
+                    SumcheckId::BytecodeReadRaf,
                 )
                 .1,
         );

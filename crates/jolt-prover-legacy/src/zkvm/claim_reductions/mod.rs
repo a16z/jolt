@@ -4,11 +4,7 @@ pub mod advice_bytes;
 pub mod bytecode;
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub mod bytecode_reconstruction;
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub mod fused_inc_claim_reduction;
 pub mod hamming_weight;
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub mod inc_virtualization;
 pub mod increments;
 pub mod instruction_lookups;
 mod precommitted;
@@ -34,13 +30,9 @@ pub use bytecode::{
 pub use bytecode_reconstruction::{
     BytecodeReconstructionSumcheckParams, BytecodeReconstructionSumcheckProver,
 };
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub use fused_inc_claim_reduction::{FusedIncClaimReductionParams, FusedIncClaimReductionProver};
 #[cfg(feature = "prover")]
 pub use hamming_weight::HammingWeightClaimReductionProver;
 pub use hamming_weight::{HammingWeightClaimReductionParams, HammingWeightClaimReductionVerifier};
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub use inc_virtualization::{IncVirtualizationSumcheckParams, IncVirtualizationSumcheckProver};
 pub use increments::{
     IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
     IncClaimReductionSumcheckVerifier,

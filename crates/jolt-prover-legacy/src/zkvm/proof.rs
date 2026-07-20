@@ -871,10 +871,6 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }
-        prover_opening::SumcheckId::IncVirtualization => JoltRelationId::IncVirtualization,
-        prover_opening::SumcheckId::FusedIncClaimReduction => {
-            JoltRelationId::FusedIncClaimReduction
-        }
         prover_opening::SumcheckId::UntrustedAdviceReconstruction => {
             JoltRelationId::UntrustedAdviceReconstruction
         }

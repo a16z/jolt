@@ -125,7 +125,7 @@ impl FusedIncCycle {
     }
 
     /// [`from_cycle`](Self::from_cycle) plus the store selector itself, so
-    /// witness generation and the `IncVirtualization` instance read one
+    /// witness generation and the read-raf fused stages read one
     /// predicate: the same `OpFlags(Store)` circuit flag the sumcheck
     /// selector opens.
     pub fn from_cycle_with_store(cycle: &tracer::instruction::Cycle) -> (Self, bool) {

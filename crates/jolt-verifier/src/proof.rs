@@ -153,11 +153,6 @@ pub struct ClearProofClaims<F: Field> {
     pub stage3: stage3::outputs::Stage3OutputClaims<F>,
     pub stage4: stage4::outputs::Stage4OutputClaims<F>,
     pub stage5: stage5::outputs::Stage5OutputClaims<F>,
-    /// The inc-virtualization phase's claims, at the head of the stage-6
-    /// region.
-    #[cfg(feature = "akita")]
-    pub inc_virtualization:
-        crate::stages::inc_virtualization::IncVirtualizationPhaseOutputClaims<F>,
     pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
     pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
@@ -184,9 +179,6 @@ where
     pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    /// The inc-virtualization phase, at the head of the stage-6 region.
-    #[cfg(feature = "akita")]
-    pub inc_virtualization_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,

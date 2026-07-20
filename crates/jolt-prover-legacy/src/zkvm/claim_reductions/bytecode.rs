@@ -618,7 +618,7 @@ fn compute_lane_weights<F: JoltField>(
     }
     if eta_powers.len() > NUM_VAL_STAGES {
         // The lattice store stage: one raw circuit-flag lane, no gamma fold
-        // (the S=6 read-raf rv claim consumes the IncVirtualization store
+        // (the lattice read-raf rv claims consume the four reduced inc
         // selector directly). Must mirror jolt-claims `lane_weights`.
         weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
             eta_powers[NUM_VAL_STAGES];

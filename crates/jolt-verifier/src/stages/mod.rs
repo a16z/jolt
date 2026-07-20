@@ -16,13 +16,6 @@ use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
-/// The inc-virtualization stage (akita/packed path): a single-instance sumcheck
-/// virtualizing the four reduced `Inc` claims into the committed `FusedInc`
-/// stream and its `OpFlags(Store)` destination selector. Its own stage between
-/// stage 5 and stage 6a; the store claim feeds stage 6a's read-raf fold and its
-/// bound cycle point anchors the stage-7 chunk reconstruction.
-#[cfg(feature = "akita")]
-pub mod inc_virtualization;
 pub mod relations;
 pub mod stage1;
 pub mod stage2;

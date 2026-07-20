@@ -2,13 +2,14 @@
 //!
 //! Mirrors [`super::prover::JoltCpuProver::prove_parts`] with the lattice
 //! stage swaps: one native Akita commitment group `W_jolt` replaces the
-//! per-polynomial streaming Dory commits, the `IncVirtualization` phase runs
-//! strictly between stage 5 and the stage-6 address phase, the six-stage
-//! bytecode read-raf and the lattice booleanity carry the fused-inc columns,
-//! stage 6b gains `FusedIncClaimReduction`, stage 7 folds the increment
-//! one-hot claims into `HammingWeightClaimReduction`, the reconstruction phase
-//! settles auxiliary advice/bytecode/image columns, and stage 8 uses one native
-//! same-point Akita opening for Wjolt plus packed openings for auxiliaries.
+//! per-polynomial streaming Dory commits, the nine-stage bytecode read-raf
+//! discharges the four reduced inc claims through its fused-inc val stages
+//! (producing the `FusedInc` opening at the shared 6b cycle point), the
+//! lattice booleanity carries the fused-inc columns, stage 7 folds the
+//! increment one-hot claims into `HammingWeightClaimReduction`, the
+//! reconstruction phase settles auxiliary advice/bytecode/image columns, and
+//! stage 8 uses one native same-point Akita opening for Wjolt plus packed
+//! openings for auxiliaries.
 //!
 //! The prover runs over the `AkitaFp128` newtype (the legacy `JoltField`
 //! impl of the same underlying fp128 element the verifier stack uses), so
@@ -61,10 +62,8 @@ use crate::zkvm::bytecode::read_raf_checking::{
 };
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionParams, AdviceClaimReductionProver, BytecodeReconstructionSumcheckParams,
-    BytecodeReconstructionSumcheckProver, FusedIncClaimReductionParams,
-    FusedIncClaimReductionProver, HammingWeightClaimReductionParams,
-    HammingWeightClaimReductionProver, IncVirtualizationSumcheckParams,
-    IncVirtualizationSumcheckProver, PrecommittedClaimReduction,
+    BytecodeReconstructionSumcheckProver, HammingWeightClaimReductionParams,
+    HammingWeightClaimReductionProver, PrecommittedClaimReduction,
     ProgramImageReconstructionSumcheckParams, ProgramImageReconstructionSumcheckProver,
     TrustedAdviceReconstructionSumcheckParams, TrustedAdviceReconstructionSumcheckProver,
     UntrustedAdviceReconstructionSumcheckParams, UntrustedAdviceReconstructionSumcheckProver,
@@ -754,25 +753,6 @@ impl AkitaPackedProver<'_> {
         .expect("Wjolt assembly must cover every native member")
     }
 
-    /// The `IncVirtualization` phase: a single-instance batched sumcheck
-    /// strictly between stage 5 and the stage-6 address phase.
-    fn prove_inc_virtualization_phase(
-        &mut self,
-    ) -> crate::subprotocols::sumcheck::SumcheckInstanceProof<
-        AkitaFp128,
-        AkitaNoCurve,
-        AkitaTranscript,
-    > {
-        let params = IncVirtualizationSumcheckParams::new(
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
-        let mut instance = IncVirtualizationSumcheckProver::initialize(params, self.trace.clone());
-        let (proof, _r, _claim) = self.prove_batched_sumcheck(vec![&mut instance]);
-        proof
-    }
-
     #[tracing::instrument(skip_all, name = "prove_stage6a_lattice")]
     fn prove_stage6a_lattice(
         &mut self,
@@ -801,10 +781,11 @@ impl AkitaPackedProver<'_> {
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
+        let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize_lattice(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
             self.preprocessing.bytecode(),
+            &columns.fused,
         );
         let mut booleanity = LatticeBooleanityAddressSumcheckProver::initialize(
             booleanity_params,
@@ -855,11 +836,12 @@ impl AkitaPackedProver<'_> {
             .iter()
             .map(|gammas| gammas.to_vec())
             .collect();
-        let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
+        let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize_lattice(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
             self.preprocessing.bytecode(),
             &self.opening_accumulator,
+            fused_inc,
         );
         let mut booleanity = LatticeBooleanityCycleSumcheckProver::initialize(
             booleanity_cycle_input,
@@ -875,15 +857,11 @@ impl AkitaPackedProver<'_> {
         );
         let mut lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
-        let fused_inc_params =
-            FusedIncClaimReductionParams::new(self.trace.len(), &self.opening_accumulator);
-        let mut fused_inc_claim_reduction =
-            FusedIncClaimReductionProver::initialize(fused_inc_params, fused_inc);
 
         // The advice claim-reduction cycle phases join at the bundle's
         // canonical tail, exactly as in the base 6b assembly (the lattice
-        // batch has no inc slot — `IncVirtualization` ran between stages 5
-        // and 6a).
+        // batch has no inc slot — the fused-inc claims are discharged inside
+        // the read-raf's fused stages).
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
             self.preprocessing.is_committed_mode(),
@@ -933,7 +911,11 @@ impl AkitaPackedProver<'_> {
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params =
                 crate::zkvm::claim_reductions::BytecodeClaimReductionParams::new(
+                    // The reduction folds one eta slot per STAGED val: the five
+                    // base stages plus the store wire (the fused stages dedup
+                    // through it and carry no staged val of their own).
                     &bytecode_stage_gammas
+                        [..crate::zkvm::bytecode::read_raf_checking::LATTICE_N_STAGED_VALS]
                         .iter()
                         .map(Vec::as_slice)
                         .collect::<Vec<_>>(),
@@ -994,7 +976,6 @@ impl AkitaPackedProver<'_> {
             &mut ram_hamming_booleanity,
             &mut ram_ra_virtual,
             &mut lookups_ra_virtual,
-            &mut fused_inc_claim_reduction,
         ];
         if let Some(ref mut advice) = advice_trusted {
             instances.push(advice);
@@ -1460,7 +1441,6 @@ impl AkitaPackedProver<'_> {
         let (stage3_sumcheck_proof, _r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
-        let inc_virtualization_proof = self.prove_inc_virtualization_phase();
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
             self.prove_stage6a_lattice(&columns);
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
@@ -1603,9 +1583,6 @@ impl AkitaPackedProver<'_> {
             stage3_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage3_sumcheck_proof),
             stage4_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage4_sumcheck_proof),
             stage5_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage5_sumcheck_proof),
-            inc_virtualization_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(
-                inc_virtualization_proof,
-            ),
             stage6a_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage6a_sumcheck_proof),
             stage6b_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage6b_sumcheck_proof),
             stage7_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage7_sumcheck_proof),
@@ -1806,10 +1783,10 @@ mod tests {
         assert!(
             verify(&tamper(&|claims| claims
                 .stage6b
-                .fused_inc_claim_reduction
+                .bytecode_read_raf
                 .fused_inc += one))
             .is_err(),
-            "tampered fused-inc reduced claim must be rejected"
+            "tampered read-raf fused-inc opening must be rejected"
         );
         assert!(
             verify(&tamper(&|claims| claims

@@ -8,7 +8,7 @@
 //! cycle phase) followed, in committed mode, by the `BytecodeValStage` openings.
 //!
 //! Under the `akita` feature the symbolic swaps to the lattice address phase,
-//! whose input fold additionally consumes the `IncVirtualization` store
+//! whose input fold additionally consumes the four reduced `Inc` claims
 
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;

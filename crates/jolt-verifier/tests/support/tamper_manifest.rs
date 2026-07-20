@@ -1031,37 +1031,21 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-/// The Akita-path claim cells: standalone increment virtualization, the fused
-/// increment reduction, lattice Booleanity, the fused Stage-7 Hamming
-/// reduction, and the stage-8 reconstruction leaves. All active: the
-/// fixture-driven sweep in `soundness/tampering/akita.rs`
-/// (`every_clear_claim_wire_rejects_offset`) offsets every clear-claim scalar
-/// of the real packed-prover fixtures and asserts each offset rejects.
+/// The Akita-path claim cells: the read-raf fused-inc opening, lattice
+/// Booleanity, the fused Stage-7 Hamming reduction, and the stage-8
+/// reconstruction leaves. All active: the fixture-driven sweep in
+/// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
+/// offsets every clear-claim scalar of the real packed-prover fixtures and
+/// asserts each offset rejects.
 #[cfg(feature = "akita")]
 pub const AKITA_TARGETS: &[TamperTarget] = &[
     checked_standard(
-        "inc_virtualization.claims.fused_inc",
-        "claims.inc_virtualization.inc_virtualization.fused_inc",
+        "stage6.claims.bytecode_read_raf.fused_inc",
+        "claims.stage6b.bytecode_read_raf.fused_inc",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "the inc-virtualization final-claim fold rejects an offset fused-inc claim",
-    ),
-    checked_standard(
-        "inc_virtualization.claims.store",
-        "claims.inc_virtualization.inc_virtualization.store",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the stage-6a lattice read-raf input fold consumes the store claim",
-    ),
-    checked_standard(
-        "stage6.claims.fused_inc_claim_reduction.fused_inc",
-        "claims.stage6b.fused_inc_claim_reduction.fused_inc",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the Stage-6b fused increment reduction final-claim fold rejects an offset output claim",
+        "the lattice read-raf cycle output fold rejects an offset fused-inc opening",
     ),
     checked_standard(
         "stage6.claims.booleanity.unsigned_inc_chunks",
@@ -1371,15 +1355,6 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
 
     ClearProofClaims {
         #[cfg(feature = "akita")]
-        inc_virtualization:
-            jolt_verifier::stages::inc_virtualization::IncVirtualizationPhaseOutputClaims {
-                inc_virtualization:
-                    jolt_claims::protocols::jolt::lattice::relations::inc_virtualization::IncVirtualizationOutputClaims {
-                        fused_inc: zero,
-                        store: zero,
-                    },
-            },
-        #[cfg(feature = "akita")]
         reconstruction: jolt_verifier::stages::stage8::reconstruction::ReconstructionOutputClaims {
             untrusted_advice: None,
             trusted_advice: None,
@@ -1520,9 +1495,16 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
             },
         },
         stage6b: stage6b::outputs::Stage6bOutputClaims {
+            #[cfg(not(feature = "akita"))]
             bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![zero],
             },
+            #[cfg(feature = "akita")]
+            bytecode_read_raf:
+                stage6b::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims {
+                    bytecode_ra: vec![zero],
+                    fused_inc: zero,
+                },
             #[cfg(not(feature = "akita"))]
             booleanity: stage6b::outputs::BooleanityOutputClaims {
                 instruction_ra: vec![zero],
@@ -1548,9 +1530,6 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                     committed_instruction_ra: vec![zero],
                 },
-            #[cfg(feature = "akita")]
-            fused_inc_claim_reduction:
-                stage6b::outputs::FusedIncClaimReductionOutputClaims { fused_inc: zero },
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                 ram_inc: zero,
