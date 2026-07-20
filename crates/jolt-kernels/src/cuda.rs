@@ -24,6 +24,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/rd_wa_gather.cu"),
     include_str!("cuda/ram_ra_gather.cu"),
     include_str!("cuda/scan_u32.cu"),
+    include_str!("cuda/register_merge.cu"),
     include_str!("cuda/add_scalar.cu"),
     include_str!("cuda/row_dots.cu"),
     include_str!("cuda/dense_outer_fused.cu"),
@@ -137,6 +138,10 @@ pub struct CudaKernelContext {
     ram_ra_gather: CudaFunction,
     scan_u32_block: CudaFunction,
     scan_u32_add_offsets: CudaFunction,
+    #[expect(dead_code, reason = "used once the register_merge body + wiring land")]
+    register_merge_count: CudaFunction,
+    #[expect(dead_code, reason = "used once the register_merge body + wiring land")]
+    register_merge_scatter: CudaFunction,
     add_scalar: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
@@ -1022,19 +1027,40 @@ pub struct CoreBooleanityAddressInputs<'a> {
     pub m: u32,
 }
 
+pub struct RegisterMergeInputs<'a> {
+    pub rs1_addr: &'a [i32],
+    pub rs1_val: &'a [u64],
+    pub rs2_addr: &'a [i32],
+    pub rs2_val: &'a [u64],
+    pub rd_addr: &'a [i32],
+    pub rd_pre: &'a [u64],
+    pub rd_post: &'a [u64],
+}
+
+pub struct RegisterMergeColumns {
+    pub rows: Vec<u32>,
+    pub cols: Vec<u32>,
+    pub prev_val: Vec<u64>,
+    pub next_val: Vec<u64>,
+    pub rs1_flag: Vec<u8>,
+    pub rs2_flag: Vec<u8>,
+    pub rd_flag: Vec<u8>,
+}
+
 pub struct SparseRegisterRoundInputs<'a> {
     pub val: &'a DeviceFrVec,
     pub read_ra: &'a DeviceFrVec,
     pub rd_wa: &'a DeviceFrVec,
     pub prev_val: &'a DeviceFrVec,
     pub next_val: &'a DeviceFrVec,
-    pub even_idx: &'a [i32],
-    pub odd_idx: &'a [i32],
-    pub pair: &'a [u32],
+    pub even_idx: &'a CudaSlice<i32>,
+    pub odd_idx: &'a CudaSlice<i32>,
+    pub pair: &'a CudaSlice<u32>,
     pub rd_inc: &'a DeviceFrVec,
     pub e_in: &'a DeviceFrVec,
     pub e_out: &'a DeviceFrVec,
     pub in_pairs: u32,
+    pub items: usize,
 }
 
 pub struct SparseRegisterBindInputs<'a> {
@@ -1043,8 +1069,9 @@ pub struct SparseRegisterBindInputs<'a> {
     pub rd_wa: &'a DeviceFrVec,
     pub prev_val: &'a DeviceFrVec,
     pub next_val: &'a DeviceFrVec,
-    pub even_idx: &'a [i32],
-    pub odd_idx: &'a [i32],
+    pub even_idx: &'a CudaSlice<i32>,
+    pub odd_idx: &'a CudaSlice<i32>,
+    pub items: usize,
     pub challenge: Fr,
 }
 
@@ -1122,6 +1149,8 @@ impl CudaKernelContext {
             ram_ra_gather: module.load_function("ram_ra_gather")?,
             scan_u32_block: module.load_function("scan_u32_block")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets")?,
+            register_merge_count: module.load_function("register_merge_count")?,
+            register_merge_scatter: module.load_function("register_merge_scatter")?,
             add_scalar: module.load_function("add_scalar")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
@@ -1341,6 +1370,11 @@ impl CudaKernelContext {
         let out = self.stream.clone_dtoh(buf)?;
         self.stream.synchronize()?;
         Ok(out)
+    }
+
+    pub fn register_merge(&self, inputs: RegisterMergeInputs<'_>) -> Result<RegisterMergeColumns, CudaError> {
+        let _ = inputs;
+        Err(CudaError::Unsupported)
     }
 
     pub fn exclusive_scan_u32(&self, input: &[u32]) -> Result<(Vec<u32>, u32), CudaError> {
@@ -2597,16 +2631,10 @@ impl CudaKernelContext {
         inputs: SparseRegisterRoundInputs<'_>,
     ) -> Result<[Fr; 2], CudaError> {
         use num_traits::Zero;
-        let items = inputs.even_idx.len();
-        assert_eq!(inputs.odd_idx.len(), items, "even/odd work-item lists must match");
-        assert_eq!(inputs.pair.len(), items, "pair list must match work-item count");
+        let items = inputs.items;
         if items == 0 {
             return Ok([Fr::zero(); 2]);
         }
-
-        let even_dev = self.clone_htod_tracked(inputs.even_idx)?;
-        let odd_dev = self.clone_htod_tracked(inputs.odd_idx)?;
-        let pair_dev = self.clone_htod_tracked(inputs.pair)?;
 
         const WIDTH: usize = 2;
         let tuple = WIDTH * LIMBS;
@@ -2632,9 +2660,9 @@ impl CudaKernelContext {
             .arg(&inputs.rd_wa.buf)
             .arg(&inputs.prev_val.buf)
             .arg(&inputs.next_val.buf)
-            .arg(&even_dev)
-            .arg(&odd_dev)
-            .arg(&pair_dev)
+            .arg(inputs.even_idx)
+            .arg(inputs.odd_idx)
+            .arg(inputs.pair)
             .arg(&inputs.rd_inc.buf)
             .arg(&inputs.e_in.buf)
             .arg(&inputs.e_out.buf)
@@ -2678,8 +2706,7 @@ impl CudaKernelContext {
         &self,
         inputs: SparseRegisterBindInputs<'_>,
     ) -> Result<SparseRegisterEntries, CudaError> {
-        let items = inputs.even_idx.len();
-        assert_eq!(inputs.odd_idx.len(), items, "even/odd work-item lists must match");
+        let items = inputs.items;
 
         let make = |len: usize| -> Result<DeviceFrVec, CudaError> {
             Ok(DeviceFrVec {
@@ -2698,8 +2725,6 @@ impl CudaKernelContext {
             return Ok(SparseRegisterEntries { val, read_ra, rd_wa, prev_val, next_val });
         }
 
-        let even_dev = self.clone_htod_tracked(inputs.even_idx)?;
-        let odd_dev = self.clone_htod_tracked(inputs.odd_idx)?;
         let challenge_dev = self.upload(&[inputs.challenge])?;
 
         let block = BLOCK;
@@ -2723,8 +2748,8 @@ impl CudaKernelContext {
             .arg(&inputs.rd_wa.buf)
             .arg(&inputs.prev_val.buf)
             .arg(&inputs.next_val.buf)
-            .arg(&even_dev)
-            .arg(&odd_dev)
+            .arg(inputs.even_idx)
+            .arg(inputs.odd_idx)
             .arg(&challenge_dev.buf)
             .arg(&items_arg);
         // SAFETY: one thread per output entry reads its even/odd source (or -1 for
@@ -8279,6 +8304,9 @@ mod tests {
             let rd_inc_dev = c.upload(&rd_inc).unwrap();
             let e_in_dev = c.upload(&e_in).unwrap();
             let e_out_dev = c.upload(&e_out).unwrap();
+            let even_dev = c.upload_i32_slice(&even_idx).unwrap();
+            let odd_dev = c.upload_i32_slice(&odd_idx).unwrap();
+            let pair_dev = c.upload_u32_slice(&pair_arr).unwrap();
             let got = c
                 .sparse_register_round_poly(SparseRegisterRoundInputs {
                     val: &val_dev,
@@ -8286,13 +8314,14 @@ mod tests {
                     rd_wa: &rd_wa_dev,
                     prev_val: &prev_dev,
                     next_val: &next_dev,
-                    even_idx: &even_idx,
-                    odd_idx: &odd_idx,
-                    pair: &pair_arr,
+                    even_idx: &even_dev,
+                    odd_idx: &odd_dev,
+                    pair: &pair_dev,
                     rd_inc: &rd_inc_dev,
                     e_in: &e_in_dev,
                     e_out: &e_out_dev,
                     in_pairs,
+                    items: even_idx.len(),
                 })
                 .unwrap();
             prop_assert_eq!(got.to_vec(), expected.to_vec());
@@ -8389,6 +8418,8 @@ mod tests {
             }
 
             let c = ctx();
+            let even_dev = c.upload_i32_slice(&even_idx).unwrap();
+            let odd_dev = c.upload_i32_slice(&odd_idx).unwrap();
             let entries = c
                 .sparse_register_bind(SparseRegisterBindInputs {
                     val: &c.upload(&val).unwrap(),
@@ -8396,8 +8427,9 @@ mod tests {
                     rd_wa: &c.upload(&rd_wa).unwrap(),
                     prev_val: &c.upload(&prev_val).unwrap(),
                     next_val: &c.upload(&next_val).unwrap(),
-                    even_idx: &even_idx,
-                    odd_idx: &odd_idx,
+                    even_idx: &even_dev,
+                    odd_idx: &odd_dev,
+                    items: even_idx.len(),
                     challenge,
                 })
                 .unwrap();

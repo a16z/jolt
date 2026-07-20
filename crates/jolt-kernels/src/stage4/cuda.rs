@@ -415,4 +415,64 @@ mod tests {
         let got_mat = from_raw.materialize::<Fr>(register_count).unwrap();
         assert_eq!(got_mat, expected_mat, "materialize");
     }
+
+    #[test]
+    fn register_merge_matches_cpu() {
+        use crate::stage4::sparse_register_raw_columns;
+
+        let register_count = 32usize;
+        let trace_len = 1usize << 10;
+        let reg = |seed: usize, salt: usize| (seed.wrapping_mul(2_654_435_761) + salt) % register_count;
+        let accesses: Vec<Stage4RegisterAccess> = (0..trace_len)
+            .map(|row| Stage4RegisterAccess {
+                rs1: (row % 5 != 0).then(|| Stage4RegisterRead {
+                    address: reg(row, 1),
+                    value: (row as u64).wrapping_mul(3) + 1,
+                }),
+                rs2: (row % 3 != 1).then(|| Stage4RegisterRead {
+                    address: reg(row, 2),
+                    value: (row as u64).wrapping_mul(5) + 2,
+                }),
+                rd: (row % 4 != 2).then(|| Stage4RegisterWrite {
+                    address: reg(row, 3),
+                    pre_value: (row as u64).wrapping_mul(7) + 3,
+                    post_value: (row as u64).wrapping_mul(11) + 4,
+                }),
+            })
+            .collect();
+
+        let expected = sparse_register_raw_columns(register_count, &accesses).unwrap();
+
+        let opt = |o: Option<usize>| o.map_or(-1i32, |x| x as i32);
+        let rs1_addr: Vec<i32> = accesses.iter().map(|a| opt(a.rs1.map(|r| r.address))).collect();
+        let rs1_val: Vec<u64> = accesses.iter().map(|a| a.rs1.map_or(0, |r| r.value)).collect();
+        let rs2_addr: Vec<i32> = accesses.iter().map(|a| opt(a.rs2.map(|r| r.address))).collect();
+        let rs2_val: Vec<u64> = accesses.iter().map(|a| a.rs2.map_or(0, |r| r.value)).collect();
+        let rd_addr: Vec<i32> = accesses.iter().map(|a| opt(a.rd.map(|w| w.address))).collect();
+        let rd_pre: Vec<u64> = accesses.iter().map(|a| a.rd.map_or(0, |w| w.pre_value)).collect();
+        let rd_post: Vec<u64> = accesses.iter().map(|a| a.rd.map_or(0, |w| w.post_value)).collect();
+
+        let c = crate::cuda::shared_ctx().unwrap();
+        let got = c
+            .register_merge(crate::cuda::RegisterMergeInputs {
+                rs1_addr: &rs1_addr,
+                rs1_val: &rs1_val,
+                rs2_addr: &rs2_addr,
+                rs2_val: &rs2_val,
+                rd_addr: &rd_addr,
+                rd_pre: &rd_pre,
+                rd_post: &rd_post,
+            })
+            .unwrap();
+
+        let exp_rows: Vec<u32> = expected.rows.iter().map(|&r| r as u32).collect();
+        let exp_cols: Vec<u32> = expected.cols.iter().map(|&c| c as u32).collect();
+        assert_eq!(got.rows, exp_rows, "rows");
+        assert_eq!(got.cols, exp_cols, "cols");
+        assert_eq!(got.prev_val, expected.prev_val, "prev_val");
+        assert_eq!(got.next_val, expected.next_val, "next_val");
+        assert_eq!(got.rs1_flag, expected.rs1_flag, "rs1_flag");
+        assert_eq!(got.rs2_flag, expected.rs2_flag, "rs2_flag");
+        assert_eq!(got.rd_flag, expected.rd_flag, "rd_flag");
+    }
 }
