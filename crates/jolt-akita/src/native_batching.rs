@@ -28,12 +28,11 @@ use tracing::info_span;
 
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, backend_stack,
-    bridge_jolt_statement_challenge, deserialize_akita, invalid_batch, prove_failed, reverse_point,
-    serialize_akita, AkitaBackendCommitment, AkitaBackendFlavor, AkitaBackendHint,
-    AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendProofShape, AkitaBackendScheme,
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHintPolynomials,
-    AkitaOneHotK16BackendScheme, AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup,
-    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    bridge_jolt_statement_challenge, invalid_batch, prove_failed, reverse_point, serialize_akita,
+    AkitaBackendCommitment, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
+    AkitaBackendProof, AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField,
+    AkitaHintPolynomials, AkitaOneHotK16BackendScheme, AkitaOneHotK256BackendScheme,
+    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
@@ -392,6 +391,21 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_polys_per_commitment_group,
             setup.one_hot_k,
         )?;
+        let backend_point = match commitment.backend_flavor {
+            AkitaBackendFlavor::Full => point.to_vec(),
+            AkitaBackendFlavor::OneHot => reverse_point(point),
+        };
+        // Deserializes the proof-controlled backend payloads only after their
+        // shapes are validated against the trusted schedule, so a malformed
+        // proof cannot drive shape-backed allocations (see `shape_guard`).
+        let (backend_commitment, backend_proof) =
+            crate::shape_guard::deserialize_checked_backend_payload(
+                commitment,
+                proof,
+                statement.len(),
+                &backend_point,
+            )?;
+
         let (mut akita_transcript, statement_bridge) =
             bind_statement_transcripts(transcript, setup, statement, commitment, point);
         if proof.statement_bridge != statement_bridge {
@@ -400,18 +414,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         transcript.append(proof);
 
         let backend_verifier = setup.backend_verifier(commitment.backend_flavor)?;
-        let backend_commitment = deserialize_akita::<AkitaBackendCommitment>(
-            &commitment.serialized_backend_bytes,
-            &commitment.backend_coeff_len,
-        )?;
-        let proof_shape =
-            deserialize_akita::<AkitaBackendProofShape>(&proof.serialized_akita_proof_shape, &())?;
-        let backend_proof =
-            deserialize_akita::<AkitaBackendProof>(&proof.serialized_akita_proof, &proof_shape)?;
-        let backend_point = match commitment.backend_flavor {
-            AkitaBackendFlavor::Full => point.to_vec(),
-            AkitaBackendFlavor::OneHot => reverse_point(point),
-        };
         let openings: Vec<AkitaField> = statement
             .iter()
             .map(|claim| claim.evaluation.value)

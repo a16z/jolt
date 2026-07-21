@@ -4,8 +4,8 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-07-02 |
-| Status | draft |
-| PR | TBD |
+| Status | in review |
+| PR | [#1675](https://github.com/a16z/jolt/pull/1675) |
 
 ## Purpose
 
