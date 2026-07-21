@@ -99,7 +99,9 @@ fn catalogs_match_planner_regeneration() {
             let context = |tokens: &[String]| {
                 tokens[index.saturating_sub(8)..(index + 8).min(tokens.len())].join(" ")
             };
-            panic!(
+            assert_eq!(
+                regenerated.get(index),
+                checked_in.get(index),
                 "{} drifted from the planner DP — regenerate via gen_jolt_schedules\n  \
                  first mismatch at token {index}\n  planner:    …{}…\n  checked-in: …{}…",
                 spec.module_name,
