@@ -1,0 +1,21 @@
+pub(crate) mod arithmetic;
+pub(crate) mod base;
+pub(crate) mod cases;
+pub(crate) mod comparison;
+pub(crate) mod data;
+pub(crate) mod ext2;
+pub(crate) mod ext4;
+pub(crate) mod kernel;
+pub(crate) mod parallel;
+pub(crate) mod params;
+pub(crate) mod plonky3;
+pub(crate) mod wide;
+
+pub(crate) use base::bench_base_field_matrix;
+pub(crate) use comparison::bench_comparisons;
+pub(crate) use ext2::bench_ext2_matrix;
+pub(crate) use ext4::bench_ext4_matrix;
+pub(crate) use kernel::bench_kernel_patterns;
+pub(crate) use parallel::bench_parallel_throughput;
+pub(crate) use plonky3::{bench_p3_base_matrix, bench_p3_ext4_matrix, bench_p3_ext5_matrix};
+pub(crate) use wide::bench_wide_ops;

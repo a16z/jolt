@@ -3,15 +3,18 @@ name = "jolt-field"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Field abstractions for the Jolt zkVM"
+description = "Shared field abstractions and optimized BN254 and Solinas backends for Jolt"
 repository = "https://github.com/a16z/jolt"
-keywords = ["SNARK", "cryptography", "finite-fields", "BN254"]
+keywords = ["SNARK", "cryptography", "finite-fields", "BN254", "Solinas"]
 categories = ["cryptography"]
 
 [lints]
 workspace = true
 
 [dependencies]
+# Temporary bootstrap edge for the staged Akita migration: keeps the legacy
+# `akita` adapter buildable until the Akita cutover lands. Removed together
+# with `src/akita.rs` in the final migration PR.
 akita-config = { workspace = true, optional = true }
 akita-field = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
@@ -22,19 +25,34 @@ serde = { workspace = true, features = ["derive"] }
 allocative = { workspace = true, optional = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
+rayon = { workspace = true, optional = true }
+thiserror = { workspace = true }
 
 [features]
+# Preserve Jolt's existing BN254 default during the coordinated cutover.
 default = ["bn254"]
+# Temporary bootstrap feature; see the akita-* dependency note above.
 akita = ["dep:akita-config", "dep:akita-field"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
+solinas = []
+parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
 
 [dev-dependencies]
 ark-std = { workspace = true }
 rand_chacha = { workspace = true }
 criterion = { workspace = true }
+p3-field = "=0.5.3"
+p3-mersenne-31 = "=0.5.3"
+p3-baby-bear = "=0.5.3"
+p3-koala-bear = "=0.5.3"
 
 [[bench]]
 name = "field_arith"
 harness = false
 required-features = ["bn254"]
+
+[[bench]]
+name = "solinas_field_arith"
+harness = false
+required-features = ["bn254", "solinas", "parallel"]
