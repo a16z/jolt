@@ -33,33 +33,35 @@ use jolt_verifier::stages::stage6a::booleanity::{
 };
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, dense_view, eq_table};
-use crate::booleanity::BooleanityAddressProver;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend,
     SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        relation: &BooleanityAddressPhase<F>,
-        dimensions: BooleanityDimensions,
-        reference_address: &[F],
-        reference_cycle: &[F],
-        gamma: F,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let draws = relation
+            .reference_draws()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "booleanity address phase prepared before its reference draws were set",
+            })?;
         Ok(Box::new(BooleanityAddressKernel::new(
             relation,
-            dimensions,
-            reference_address,
-            reference_cycle,
-            gamma,
+            relation.dimensions(),
+            &draws.reference_address,
+            &draws.reference_cycle,
+            draws.gamma,
             witness,
         )?))
     }
@@ -258,7 +260,7 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltVmWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
         let relation = inputs.relation;

@@ -7,7 +7,9 @@ use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
 use super::{
-    booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseInputClaims},
+    booleanity::{
+        BooleanityAddressPhase, BooleanityAddressPhaseInputClaims, BooleanityReferenceDraws,
+    },
     bytecode_read_raf::{
         bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
     },
@@ -17,10 +19,11 @@ use super::{
     },
 };
 use crate::{
+    preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
         stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
-        stage5::Stage5Output, zk::committed,
+        stage5::Stage5Output, stage6b::batch::bytecode_stage_points, zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -32,6 +35,7 @@ use crate::{
 )]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
@@ -50,15 +54,42 @@ where
 
     let committed_program = checked.precommitted.bytecode.is_some();
 
+    // The upstream cycle/register points and entry index ride on the relation
+    // (full geometry at construction) for the prover's address-phase kernel;
+    // the verifier itself never evaluates them here.
+    let stage1_cycle_binding =
+        stage1
+            .cycle_binding()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "Stage 1 remainder point is empty".to_string(),
+            })?;
+    let stage_points = bytecode_stage_points(
+        &stage1_cycle_binding,
+        stage2.batch_output_points(),
+        stage3.output_points(),
+        stage4.output_points(),
+        stage5.output_points(),
+    )?;
+    let entry_bytecode_index = preprocessing
+        .program
+        .entry_bytecode_index()
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: "entry address was not found in bytecode preprocessing".to_string(),
+        })?;
+
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
         proof.one_hot_config.committed_chunk_bits(),
     );
-    let address_sumchecks = Stage6aSumchecks {
+    let mut address_sumchecks = Stage6aSumchecks {
         bytecode_read_raf: BytecodeReadRafAddressPhase::new(
             formula_dimensions.bytecode_read_raf,
             committed_program,
+            stage_points,
+            entry_bytecode_index,
         ),
         booleanity: BooleanityAddressPhase::new(booleanity_dimensions),
     };
@@ -103,6 +134,13 @@ where
         booleanity_reference_cycle,
         booleanity_gamma,
     };
+    address_sumchecks
+        .booleanity
+        .set_reference_draws(BooleanityReferenceDraws {
+            reference_address: carried.booleanity_reference_address.clone(),
+            reference_cycle: carried.booleanity_reference_cycle.clone(),
+            gamma: carried.booleanity_gamma,
+        });
 
     // Every member's input points are empty (the address phase reads only
     // opening values; produced points derive from its own sumcheck point).
@@ -212,6 +250,7 @@ mod tests {
     #[test]
     #[expect(clippy::unwrap_used)]
     fn stage6a_output_claims_append_follows_canonical_order() {
+        use crate::stages::stage6b::batch::BytecodeStagePoints;
         use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
         use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 
@@ -219,6 +258,12 @@ mod tests {
             bytecode_read_raf: BytecodeReadRafAddressPhase::new(
                 BytecodeReadRafDimensions::new(3, 4, 2),
                 true,
+                BytecodeStagePoints {
+                    stage_cycle_points: Default::default(),
+                    register_read_write_point: Vec::new(),
+                    register_val_evaluation_point: Vec::new(),
+                },
+                0,
             ),
             booleanity: BooleanityAddressPhase::new(BooleanityDimensions::new(
                 JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),

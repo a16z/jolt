@@ -2,10 +2,12 @@
 //! transcript and one backend session, and their wire outputs assemble into
 //! the complete [`JoltProof`].
 
+use std::sync::Arc;
+
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_kernels::JoltBackend;
+use jolt_kernels::{JoltBackend, RetainedProgram};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
@@ -67,6 +69,14 @@ where
         + JoltVmStage6Rows,
 {
     let mut session = backend.begin_proof();
+    // Program-data session residency: the stage-6 table folds (bytecode
+    // stage values, reduction chunk grids, program-image words) read the
+    // retained program off the session inside their kernels' `prepare`.
+    if let Some(program) = preprocessing.program() {
+        session.park(RetainedProgram {
+            program: Arc::new(program.clone()),
+        });
+    }
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -116,7 +126,7 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T, W>(
+    let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
         &checked,
@@ -127,7 +137,7 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage6a = prove_stage6a::<F, PCS, VC, VC::Output, T, W>(
+    let stage6a = prove_stage6a::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
         &checked,

@@ -52,8 +52,7 @@ use jolt_verifier::stages::stage6b::{
     stage6b_input_points_from_upstream, stage6b_input_values_from_upstream, stage6b_opening_values,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::precommitted::{scalar_phase_adapter, PrecommittedKernelAdapter};
 use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -85,7 +84,7 @@ pub fn prove_stage6b<F, PCS, VC, C, T>(
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
     stage6a: &Stage6aClearOutput<F>,
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltVmWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage6bProverOutput<F, C>, ProverError<F>>
 where

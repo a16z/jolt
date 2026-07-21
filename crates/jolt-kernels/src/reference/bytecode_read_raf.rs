@@ -24,9 +24,13 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::geometry::bytecode::{bytecode_ra, BytecodeReadRafDimensions};
+use jolt_claims::protocols::jolt::geometry::bytecode::{
+    bytecode_ra, read_raf_stage_values, BytecodeReadRafDimensions, BytecodeReadRafStageValueInputs,
+};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::bytecode_val_stage_opening;
-use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
+use jolt_claims::protocols::jolt::geometry::dimensions::{
+    committed_address_chunks, REGISTER_ADDRESS_BITS,
+};
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
 use jolt_field::Field;
@@ -39,37 +43,60 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::{address_fold, eq_table};
-use crate::bytecode_read_raf::BytecodeReadRafAddressProver;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend,
-    SumcheckKernel, SumcheckKernelError,
+    RetainedProgram, SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
-        relation: &BytecodeReadRafAddressPhase<F>,
-        dimensions: BytecodeReadRafDimensions,
-        stage_values: Vec<[F; 5]>,
-        stage_cycle_points: &[Vec<F>; 5],
-        bytecode_indices: Vec<usize>,
-        entry_bytecode_index: usize,
-        challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
+        session: &mut ProofSession,
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        // The per-row stage-value tables: the verifier's own fold over the
+        // padded bytecode (the session-resident prover-retained program).
+        let program = session
+            .state::<RetainedProgram>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "prover-retained program data was not parked in the proof session",
+            })?
+            .program
+            .clone();
+        let stage_gammas = inputs.challenges.stage_gamma_powers();
+        let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
+            bytecode: &program.bytecode.bytecode,
+            register_read_write_point: &relation.register_read_write_point()
+                [..REGISTER_ADDRESS_BITS],
+            register_val_evaluation_point: &relation.register_val_evaluation_point()
+                [..REGISTER_ADDRESS_BITS],
+            stage1_gammas: &stage_gammas[0],
+            stage2_gammas: &stage_gammas[1],
+            stage3_gammas: &stage_gammas[2],
+            stage4_gammas: &stage_gammas[3],
+            stage5_gammas: &stage_gammas[4],
+        });
+        // The PC pushforward source: the per-cycle bytecode indices from the
+        // typed stage-6 rows.
+        let bytecode_indices: Vec<usize> = witness
+            .stage6_rows()?
+            .iter()
+            .map(|row| row.bytecode_index)
+            .collect();
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
             relation,
-            dimensions,
+            relation.dimensions(),
             stage_values,
-            stage_cycle_points,
+            relation.stage_cycle_points(),
             bytecode_indices,
-            entry_bytecode_index,
-            challenges,
+            relation.entry_bytecode_index(),
+            inputs.challenges,
         )?))
     }
 }
@@ -289,7 +316,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltVmWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {

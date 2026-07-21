@@ -67,6 +67,25 @@ pub use stage3::{
 pub use stage6::{JoltVmStage6Row, JoltVmStage6Rows};
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
+/// The full Jolt-VM witness plane a prover kernel prepares against: the
+/// field-element oracle provider plus the typed-row accessors whose data no
+/// oracle view carries losslessly (the stage-5 lookup rows' index bits and
+/// table selection, the stage-6 rows' per-cycle bytecode indices). Kernels
+/// receive `&dyn JoltVmWitnessPlane<F>` and fetch typed rows themselves, so
+/// no stage recipe stages row vectors on the side. Blanket-implemented; the
+/// supertrait set is exactly the typed accessors kernels consume.
+pub trait JoltVmWitnessPlane<F>:
+    crate::WitnessProvider<F, JoltVmNamespace> + JoltVmStage5InstructionReadRafRows + JoltVmStage6Rows
+{
+}
+
+impl<F, T> JoltVmWitnessPlane<F> for T where
+    T: crate::WitnessProvider<F, JoltVmNamespace>
+        + JoltVmStage5InstructionReadRafRows
+        + JoltVmStage6Rows
+{
+}
+
 pub(crate) use ra::RaChunkSelector;
 pub(crate) use ram::ram_access_address;
 pub(crate) use streams::{JoltVmCommittedStreamKind, JoltVmIncrementStreamKind};

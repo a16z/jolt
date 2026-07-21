@@ -17,8 +17,7 @@ use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::{dense_view, eq_table};
 use crate::{
@@ -29,7 +28,7 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for ReferenceBackend
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltVmWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
     {

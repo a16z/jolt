@@ -10,13 +10,16 @@
 //! contract and are minted per relation through ONE universal trait,
 //! [`PrepareKernel`]: its typed request is the relation instance itself
 //! (inside a `ProverInputs` bundle), so kernels read geometry off relation
-//! accessors instead of restated constructor arguments. Only the bespoke
-//! slots keep hand-shaped trait modules at the crate root: the uni-skip
-//! handoffs ([`spartan_outer`], [`spartan_product`]), the typed-row witness
-//! ([`instruction_read_raf`]), the non-oracle stage-6a address phases
-//! ([`bytecode_read_raf`], [`booleanity`]), the two-batch precommitted
-//! reduction family ([`precommitted_reduction`]), commitment streaming, and
-//! the joint opening. Reference implementations live under [`reference`].
+//! accessors instead of restated constructor arguments. Non-oracle data
+//! reaches a kernel through the two other channels `prepare` receives:
+//! typed witness rows off the [`JoltVmWitnessPlane`](jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane)
+//! accessors, and [`ProofSession`] carries (prover-retained program data,
+//! parked at proof start; cross-stage kernel state). Only the bespoke slots
+//! keep hand-shaped trait modules at the crate root: the uni-skip handoffs
+//! ([`spartan_outer`], [`spartan_product`]), the typed-row witness
+//! ([`instruction_read_raf`]), the two-batch precommitted reduction family
+//! ([`precommitted_reduction`]), commitment streaming, and the joint
+//! opening. Reference implementations live under [`reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness
@@ -32,8 +35,6 @@
 //! polynomials over the proof's shared embedding grid.
 
 mod backend;
-pub mod booleanity;
-pub mod bytecode_read_raf;
 mod commitment;
 pub mod committed_program;
 mod error;
@@ -44,7 +45,7 @@ pub mod reference;
 pub mod spartan_outer;
 pub mod spartan_product;
 
-pub use backend::{JoltBackend, PrepareKernel, ProofSession};
+pub use backend::{JoltBackend, PrepareKernel, ProofSession, RetainedProgram};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 /// Re-exported from `jolt-verifier` (its home since the generated prove

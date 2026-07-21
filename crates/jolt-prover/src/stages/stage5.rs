@@ -8,9 +8,8 @@
 //! wiring (stage 2's instruction claim-reduction triple and RAM openings,
 //! stage 4's RAM val-check and registers-val openings — stage 3 does not
 //! feed stage 5). The read+RAF member's typed relation data is the per-cycle
-//! lookup rows, fetched here through the witness's stage-5 rows accessor —
-//! the reason this stage's witness parameter is generic rather than the
-//! plain provider trait object.
+//! lookup rows, fetched here through the witness plane's stage-5 rows
+//! accessor and staged for the slot's `PrepareSumcheck` bridge.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -33,8 +32,7 @@ use jolt_verifier::stages::stage5::{
     stage5_input_points_from_upstream, stage5_input_values_from_upstream,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage5InstructionReadRafRows};
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::{
     BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError, Stage5PrepareContext,
@@ -50,7 +48,7 @@ pub struct Stage5ProverOutput<F: Field, C> {
 
 /// Prove stage 5 on `transcript` (positioned at the stage-4 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
-pub fn prove_stage5<F, PCS, VC, C, T, W>(
+pub fn prove_stage5<F, PCS, VC, C, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     checked: &CheckedInputs,
@@ -58,7 +56,7 @@ pub fn prove_stage5<F, PCS, VC, C, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage2: &Stage2ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
-    witness: &W,
+    witness: &dyn JoltVmWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage5ProverOutput<F, C>, ProverError<F>>
 where
@@ -67,7 +65,6 @@ where
     VC: VectorCommitment<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage5InstructionReadRafRows,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;

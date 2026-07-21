@@ -531,6 +531,13 @@ mod muldiv {
         // test, against the legacy oracle computed above.
         let assert_backend_matches_legacy = |backend: &JoltBackend<Fr, DoryScheme>| {
             let mut session = backend.begin_proof();
+            // Program-data session residency, as `prove` establishes it at
+            // proof start (this harness drives the stages individually).
+            if let Some(program) = prover_preprocessing.program() {
+                session.park(jolt_prover::RetainedProgram {
+                    program: std::sync::Arc::new(program.clone()),
+                });
+            }
             let stage0 = prove_stage0::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 backend,
                 &mut session,
@@ -701,7 +708,7 @@ mod muldiv {
             // The stage-5 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 5 for the boundary state.
             let stage5 =
-                prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript, _>(
+                prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
                     backend,
                     &mut session,
                     &legacy_pre_stage1.checked,
@@ -746,7 +753,7 @@ mod muldiv {
             // The stage-6a ratchet: prove, then replay legacy's proof through
             // the verifier's stage 6a for the boundary state.
             let stage6a =
-                prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript, _>(
+                prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
                     backend,
                     &mut session,
                     &legacy_pre_stage1.checked,
@@ -770,6 +777,7 @@ mod muldiv {
 
             let legacy_stage6a = jolt_verifier::stages::stage6a::verify(
                 &legacy_pre_stage1.checked,
+                &prover_preprocessing.verifier,
                 &legacy_proof,
                 &formula_dimensions,
                 &mut legacy_transcript,

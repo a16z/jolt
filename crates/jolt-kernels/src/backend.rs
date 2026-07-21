@@ -8,11 +8,13 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, ProverInputs, SumcheckInputClaims,
     SumcheckKernel, SumcheckOutputClaims,
@@ -28,6 +30,8 @@ use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
+use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
+use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
@@ -35,11 +39,8 @@ use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRa
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::booleanity::BooleanityAddressProver;
-use crate::bytecode_read_raf::BytecodeReadRafAddressProver;
 use crate::commitment::CommitWitness;
 use crate::instruction_read_raf::InstructionReadRafProver;
 use crate::opening::JointOpeningPolynomials;
@@ -74,7 +75,7 @@ where
     fn prepare(
         &self,
         session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltVmWitnessPlane<F>,
         inputs: ProverInputs<'_, F, R>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>;
 }
@@ -104,8 +105,8 @@ where
     pub instruction_read_raf: Box<dyn InstructionReadRafProver<F>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
-    pub bytecode_read_raf_address: Box<dyn BytecodeReadRafAddressProver<F>>,
-    pub booleanity_address: Box<dyn BooleanityAddressProver<F>>,
+    pub bytecode_read_raf_address: Box<dyn PrepareKernel<F, BytecodeReadRafAddressPhase<F>>>,
+    pub booleanity_address: Box<dyn PrepareKernel<F, BooleanityAddressPhase<F>>>,
     pub bytecode_read_raf_cycle: Box<dyn PrepareKernel<F, BytecodeReadRafCycle<F>>>,
     pub booleanity_cycle: Box<dyn PrepareKernel<F, Booleanity<F>>>,
     pub ram_hamming_booleanity: Box<dyn PrepareKernel<F, RamHammingBooleanity<F>>>,
@@ -165,4 +166,31 @@ impl ProofSession {
             .get(&TypeId::of::<T>())
             .and_then(|boxed| boxed.downcast_ref::<T>())
     }
+
+    /// Park `value` as a cross-stage carry, replacing any previous carry of
+    /// the same type. The producing side (a stage front or an earlier stage's
+    /// kernel) parks; the consuming kernel's `prepare` reclaims with
+    /// [`take`](Self::take) — a missing or stale carry is a proof-time
+    /// [`KernelError`](crate::KernelError), the accepted cost of keeping every
+    /// batch member uniform.
+    pub fn park<T: Any>(&mut self, value: T) {
+        let _ = self.state.insert(TypeId::of::<T>(), Box::new(value));
+    }
+
+    /// Reclaim (remove and return) a parked carry, if present.
+    pub fn take<T: Any>(&mut self) -> Option<T> {
+        self.state
+            .remove(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast::<T>().ok())
+            .map(|boxed| *boxed)
+    }
+}
+
+/// The prover-retained program data, parked in the [`ProofSession`] at proof
+/// start (a `park`, read non-destructively via [`ProofSession::state`]): the
+/// stage-6 table folds — the bytecode stage-value fold, the reduction chunk
+/// grids, the program-image words — read the full program through this carry
+/// instead of threading preprocessing borrows through every kernel call.
+pub struct RetainedProgram {
+    pub program: Arc<JoltProgramPreprocessing>,
 }
