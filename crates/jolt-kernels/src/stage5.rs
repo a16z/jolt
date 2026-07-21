@@ -2538,8 +2538,6 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let tables = LookupTableKind::<64>::all();
         let table_count = tables.len();
         let ra_chunks = Self::LOG_K / self.ra_virtual_log_k_chunk;
-        let mut fixed_factors = Vec::with_capacity(2);
-        fixed_factors.push(self.u_evals.clone());
 
         #[cfg(feature = "cuda")]
         let use_per_cycle = self.cuda_address.is_some();
@@ -2571,6 +2569,56 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let raf_interleaved = self.gamma * operand_polynomial_eval(&self.address_challenges, true)
             + self.gamma2 * operand_polynomial_eval(&self.address_challenges, false);
         let raf_identity = self.gamma2 * identity_polynomial_eval(&self.address_challenges);
+
+        let chunk_bits = self.ra_virtual_log_k_chunk;
+
+        #[cfg(feature = "cuda")]
+        if use_per_cycle && chunk_bits <= 16 && ra_chunks == 8 {
+            if let Some(state) = self.cuda_address.as_ref() {
+                let device = crate::cuda::xfer_stats::timed(
+                    crate::cuda::xfer_stats::Phase::Materialize,
+                    || {
+                        let tables = (0..ra_chunks)
+                            .map(|chunk| {
+                                let chunk_point = &self.address_challenges
+                                    [chunk * chunk_bits..(chunk + 1) * chunk_bits];
+                                EqPolynomial::<F>::evals(chunk_point, None)
+                            })
+                            .collect::<Vec<_>>();
+                        let values = state.cycle_chunk_values(ra_chunks, chunk_bits).ok()?;
+                        let table_index: Vec<u32> = self
+                            .lookup_table_indices
+                            .par_iter()
+                            .map(|table_index| {
+                                table_index.map_or(u32::MAX, |index| index as u32)
+                            })
+                            .collect();
+                        let ctx = crate::cuda::shared_ctx()?;
+                        let table_index_dev = ctx.upload_u32_slice(&table_index).ok()?;
+                        let combined = state
+                            .cycle_combined(
+                                &table_index_dev,
+                                crate::cuda::as_fr_slice(&table_values_at_address)?,
+                                crate::cuda::into_fr(raf_interleaved)?,
+                                crate::cuda::into_fr(raf_identity)?,
+                            )
+                            .ok()?;
+                        InstructionReadRafCycleState::new_device_native(
+                            &tables,
+                            values,
+                            combined,
+                            &self.r_reduction,
+                        )
+                    },
+                );
+                if let Some(state) = device {
+                    return Ok(state);
+                }
+            }
+        }
+
+        let mut fixed_factors = Vec::with_capacity(2);
+        fixed_factors.push(self.u_evals.clone());
         fixed_factors.push(
             (0..self.trace_len)
                 .into_par_iter()
@@ -2587,7 +2635,6 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                 .collect(),
         );
 
-        let chunk_bits = self.ra_virtual_log_k_chunk;
         let ra_factors = if chunk_bits <= 16 {
             let tables = (0..ra_chunks)
                 .map(|chunk| {
@@ -3033,6 +3080,27 @@ impl<F: Field> InstructionReadRafCycleState<F> {
             cuda,
             #[cfg(feature = "cuda")]
             cuda_eq,
+        })
+    }
+
+    #[cfg(feature = "cuda")]
+    fn new_device_native(
+        tables: &[Vec<F>],
+        values: crate::cuda::CudaSlice<u16>,
+        combined: crate::cuda::DeviceFrVec,
+        r_reduction: &[F],
+    ) -> Option<Self> {
+        let cuda = cuda::CudaInstructionRafCycleSparse::from_round1_device(tables, values, combined)?;
+        let split_eq = GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh);
+        let cuda_eq = crate::cuda::shared_ctx()
+            .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &split_eq))?;
+        Some(Self {
+            fixed_factors: Vec::new(),
+            fixed_factor_scratch: Vec::new(),
+            ra_factors: InstructionReadRafCycleRaFactors::dense(Vec::new()),
+            split_eq,
+            cuda: Some(cuda),
+            cuda_eq: Some(cuda_eq),
         })
     }
 

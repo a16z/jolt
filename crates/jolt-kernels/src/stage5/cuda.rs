@@ -95,6 +95,39 @@ impl CudaAddressPhaseState {
         out.try_into().map_err(|_| CudaError::Pool)
     }
 
+    pub(crate) fn cycle_chunk_values(
+        &self,
+        num_chunks: usize,
+        chunk_bits: usize,
+    ) -> Result<crate::cuda::CudaSlice<u16>, CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        ctx.readraf_chunk_values(
+            &self.lookup_index_lo,
+            &self.lookup_index_hi,
+            num_chunks,
+            chunk_bits,
+            self.trace_len,
+        )
+    }
+
+    pub(crate) fn cycle_combined(
+        &self,
+        table_index: &crate::cuda::CudaSlice<u32>,
+        table_values: &[Fr],
+        raf_interleaved: Fr,
+        raf_identity: Fr,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
+        ctx.readraf_combined(
+            table_index,
+            &self.is_interleaved,
+            table_values,
+            raf_interleaved,
+            raf_identity,
+            self.trace_len,
+        )
+    }
+
     pub(crate) fn raf_banks_device(
         &self,
         suffix_len: usize,
@@ -570,6 +603,44 @@ impl CudaInstructionRafCycleSparse {
             tables: ctx.upload_u64_slice(&flat_tables).ok()?,
             values: ctx.upload_u16_slice(values).ok()?,
             combined: ctx.upload(crate::cuda::as_fr_slice(combined)?).ok()?,
+            combined_scratch: ctx.upload(&[]).ok()?,
+            num_chunks,
+            chunk_domain,
+            source_rows,
+        })
+    }
+
+    pub(crate) fn from_round1_device<F: jolt_field::Field>(
+        tables: &[Vec<F>],
+        values: crate::cuda::CudaSlice<u16>,
+        combined: DeviceFrVec,
+    ) -> Option<Self> {
+        let ctx = crate::cuda::shared_ctx()?;
+        let num_chunks = tables.len();
+        if num_chunks != 8 {
+            return None;
+        }
+        let chunk_domain = tables.first().map_or(0, Vec::len);
+        if chunk_domain == 0 || tables.iter().any(|t| t.len() != chunk_domain) {
+            return None;
+        }
+        let source_rows = combined.len();
+        if source_rows == 0 {
+            return None;
+        }
+
+        let mut flat_tables: Vec<u64> = Vec::with_capacity(num_chunks * chunk_domain * 4);
+        for table in tables {
+            for v in crate::cuda::as_fr_slice(table)? {
+                flat_tables.extend_from_slice(&v.inner_limbs().0);
+            }
+        }
+
+        Some(Self::Sparse {
+            round: 1,
+            tables: ctx.upload_u64_slice(&flat_tables).ok()?,
+            values,
+            combined,
             combined_scratch: ctx.upload(&[]).ok()?,
             num_chunks,
             chunk_domain,
