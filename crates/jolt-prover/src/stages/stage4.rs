@@ -12,7 +12,7 @@
 //! first, then registers, then RAM).
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TraceDimensions};
+use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
@@ -35,7 +35,7 @@ use jolt_verifier::stages::stage4::{
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
@@ -172,38 +172,18 @@ where
         &init_structure,
     );
 
-    let mut preparer = BackendPreparer {
+    // No curation hook: the staged advice/program-image openings ride in from
+    // the RAM value-check kernel (captured off its own consumed input claims
+    // at prepare), and the stage's `no_opening_values` absorb order is the
+    // batch's hand-written `opening_values` replacement (staged openings
+    // first, then registers, then RAM) — the driver's default curation.
+    let proved = sumchecks.prove(
         backend,
         session,
         witness,
-        context: (),
-    };
-    // The curation hook: the staged advice/program-image openings ride on the
-    // RAM value-check claims struct (the naive kernel fills only its own
-    // `Expr` leaves), mirroring the verifier's wire-claim attach; the stage's
-    // `no_opening_values` absorb order is the claims struct's hand-ordered
-    // `opening_values()` (staged openings first, then registers, then RAM).
-    let proved = sumchecks.prove_clear(
-        &mut preparer,
         &inputs,
         &input_points,
         &challenges,
-        |claims, _output_points| {
-            if let Some((_, value)) = &ram_val_check_init.program_image_contribution {
-                claims.ram_val_check.program_image = Some(*value);
-            }
-            for contribution in &ram_val_check_init.advice_contributions {
-                match contribution.kind {
-                    JoltAdviceKind::Trusted => {
-                        claims.ram_val_check.trusted_advice = Some(contribution.opening_value);
-                    }
-                    JoltAdviceKind::Untrusted => {
-                        claims.ram_val_check.untrusted_advice = Some(contribution.opening_value);
-                    }
-                }
-            }
-            Ok(claims.opening_values())
-        },
         ClearSumcheckRecorder::<F, C>::new(),
         transcript,
     )?;

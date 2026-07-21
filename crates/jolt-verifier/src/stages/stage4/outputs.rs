@@ -40,6 +40,18 @@ pub struct Stage4Sumchecks<F: Field> {
     pub ram_val_check: RamValCheck<F>,
 }
 
+impl<F: Field> Stage4Sumchecks<F> {
+    /// The hand-written replacement for the absorb method the
+    /// `no_opening_values` opt-out suppresses: stage 4's canonical order
+    /// interleaves the RAM value-check's staged openings around the register
+    /// openings, so it delegates to the claims aggregate's curated order.
+    /// Same signature as the generated method, so the generated prove
+    /// driver's default curation serves this stage unchanged.
+    pub fn opening_values(&self, claims: &Stage4OutputClaims<F>) -> Vec<F> {
+        claims.opening_values()
+    }
+}
+
 impl<F: Field> Stage4OutputClaims<F> {
     /// The produced opening claims in canonical (Fiat-Shamir) order, matching the
     /// prover's commitment (flush) order exactly: the `Val_init` advice openings,

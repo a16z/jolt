@@ -18,6 +18,19 @@ mod stage3 {
     jolt_verifier::stage3_sumchecks_members!(impl_stage_prover);
 }
 
+mod stage4 {
+    use jolt_verifier::stages::stage4::outputs::{
+        Stage4Challenges, Stage4InputClaims, Stage4InputPoints, Stage4OutputClaims,
+        Stage4OutputPoints, Stage4Sumchecks,
+    };
+    use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
+    use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
+
+    use crate::driver::impl_stage_prover;
+
+    jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
+}
+
 mod stage5 {
     use jolt_verifier::stages::stage5::outputs::{
         Stage5Challenges, Stage5InputClaims, Stage5InputPoints, Stage5OutputClaims,
