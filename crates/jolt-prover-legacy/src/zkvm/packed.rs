@@ -1357,10 +1357,6 @@ impl AkitaPackedProver<'_> {
         trusted_advice: Option<AdviceOneHot>,
         program: Option<ProgramOneHot>,
     ) -> Result<AkitaJoltProof, VerifierError> {
-        assert!(
-            !cfg!(feature = "zk"),
-            "zk x lattice is rejected fail-closed"
-        );
         assert_eq!(
             program.is_some(),
             self.preprocessing.is_committed_mode(),

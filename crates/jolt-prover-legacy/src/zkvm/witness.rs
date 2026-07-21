@@ -266,34 +266,10 @@ impl CommittedPolynomial {
                 ))
             }
             #[cfg(feature = "prover")]
-            CommittedPolynomial::UnsignedIncChunk(i) => {
-                let one_hot_params = one_hot_params.unwrap();
-                let width = one_hot_params.log_k_chunk;
-                let addresses: Vec<_> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        Some(
-                            crate::zkvm::packed_witness::FusedIncValue::from_cycle(cycle)
-                                .chunk_hot_lane_bits(width, *i) as u8,
-                        )
-                    })
-                    .collect();
-                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
-                    addresses,
-                    one_hot_params.k_chunk,
-                ))
-            }
-            #[cfg(feature = "prover")]
-            CommittedPolynomial::UnsignedIncMsb => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        u8::from(
-                            crate::zkvm::packed_witness::FusedIncValue::from_cycle(cycle).msb(),
-                        )
-                    })
-                    .collect();
-                coeffs.into()
+            CommittedPolynomial::UnsignedIncChunk(_) | CommittedPolynomial::UnsignedIncMsb => {
+                panic!(
+                    "OneHotTrace columns commit through the packed witness, not generate_witness"
+                )
             }
             CommittedPolynomial::TrustedAdvice
             | CommittedPolynomial::UntrustedAdvice
