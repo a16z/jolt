@@ -5,8 +5,6 @@ extern "C" __global__ void read_table_round_pairs(
     const unsigned int *__restrict__ table_variant,
     const unsigned int *__restrict__ table_suffix_offset,
     const unsigned int *__restrict__ table_suffix_count,
-    const unsigned int *__restrict__ item_table,
-    const unsigned int *__restrict__ item_row,
     unsigned long len,
     unsigned long half,
     unsigned long items
@@ -17,8 +15,8 @@ extern "C" __global__ void read_table_round_pairs(
 
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i < items) {
-        unsigned int t = item_table[i];
-        unsigned long row = item_row[i];
+        unsigned int t = (unsigned int)(i / half);
+        unsigned long row = i % half;
         unsigned int variant = table_variant[t];
         unsigned long suffix_offset = table_suffix_offset[t];
         unsigned int suffix_count = table_suffix_count[t];

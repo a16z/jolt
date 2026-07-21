@@ -840,8 +840,6 @@ pub struct ReadTableRoundInputs<'a> {
     pub table_variant: &'a CudaSlice<u32>,
     pub table_suffix_offset: &'a CudaSlice<u32>,
     pub table_suffix_count: &'a CudaSlice<u32>,
-    pub item_table: &'a CudaSlice<u32>,
-    pub item_row: &'a CudaSlice<u32>,
     pub len: usize,
     pub items: usize,
 }
@@ -5676,12 +5674,11 @@ impl CudaKernelContext {
             .arg(inputs.table_variant)
             .arg(inputs.table_suffix_offset)
             .arg(inputs.table_suffix_count)
-            .arg(inputs.item_table)
-            .arg(inputs.item_row)
             .arg(&len_arg)
             .arg(&half_arg)
             .arg(&items_arg);
-        // SAFETY: one thread per (table, row) work-item gathers 46 prefix evals (x=0 low, x=2 =
+        // SAFETY: one thread per (table, row) work-item derives (t = i/half, row = i%half),
+        // gathers 46 prefix evals (x=0 low, x=2 =
         // 2*high-low) and the item table's suffix values (left=suffix[row], right=suffix[row+half]),
         // then calls combine_eval 3x to form the 3-lane tuple (combine(pfx0,sL), combine(pfx2,sL),
         // combine(pfx2,sR)); shared holds `block` 3-lane tuples reduced across the block.
@@ -9676,18 +9673,12 @@ mod tests {
         let mut table_variant: Vec<u32> = Vec::new();
         let mut table_suffix_offset: Vec<u32> = Vec::new();
         let mut table_suffix_count: Vec<u32> = Vec::new();
-        let mut item_table: Vec<u32> = Vec::new();
-        let mut item_row: Vec<u32> = Vec::new();
-        for (t, (&code, rt)) in table_codes.iter().zip(&read_tables).enumerate() {
+        for (&code, rt) in table_codes.iter().zip(&read_tables) {
             table_variant.push(code as u32);
             table_suffix_offset.push((suffix_flat.len() / len) as u32);
             table_suffix_count.push(rt.suffix_polys.len() as u32);
             for poly in &rt.suffix_polys {
                 suffix_flat.extend_from_slice(poly);
-            }
-            for row in 0..half {
-                item_table.push(t as u32);
-                item_row.push(row as u32);
             }
         }
 
@@ -9698,10 +9689,8 @@ mod tests {
                 table_variant: &c.upload_u32_slice(&table_variant).unwrap(),
                 table_suffix_offset: &c.upload_u32_slice(&table_suffix_offset).unwrap(),
                 table_suffix_count: &c.upload_u32_slice(&table_suffix_count).unwrap(),
-                item_table: &c.upload_u32_slice(&item_table).unwrap(),
-                item_row: &c.upload_u32_slice(&item_row).unwrap(),
                 len,
-                items: item_table.len(),
+                items: table_codes.len() * half,
             })
             .unwrap();
         assert_eq!(got.to_vec(), expected.to_vec());

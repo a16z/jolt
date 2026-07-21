@@ -302,26 +302,14 @@ impl CudaAddressPhaseRound {
             use num_traits::Zero;
             return Ok([Fr::zero(); 2]);
         }
-        let mut item_table = Vec::with_capacity(self.schedule.num_tables * half);
-        let mut item_row = Vec::with_capacity(self.schedule.num_tables * half);
-        for t in 0..self.schedule.num_tables {
-            for row in 0..half {
-                item_table.push(t as u32);
-                item_row.push(row as u32);
-            }
-        }
-        let item_table_dev = ctx.upload_u32_slice(&item_table)?;
-        let item_row_dev = ctx.upload_u32_slice(&item_row)?;
         ctx.read_table_round_evals(ReadTableRoundInputs {
             prefix_polys: &self.read_prefix_blob,
             suffix_blob: &self.read_suffix_blob,
             table_variant: &self.schedule.variant,
             table_suffix_offset: &self.schedule.suffix_offset,
             table_suffix_count: &self.schedule.suffix_count,
-            item_table: &item_table_dev,
-            item_row: &item_row_dev,
             len,
-            items: item_table.len(),
+            items: self.schedule.num_tables * half,
         })
     }
 
