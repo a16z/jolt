@@ -34,6 +34,10 @@
 //! The commitment kernel streams PCS commitments of the committed witness
 //! polynomials over the proof's shared embedding grid.
 
+// Lets `jolt-kernels-derive` emit absolute `::jolt_kernels::` paths that
+// resolve both here and in downstream crates (the `jolt-claims` convention).
+extern crate self as jolt_kernels;
+
 mod backend;
 mod commitment;
 pub mod committed_program;
@@ -45,10 +49,11 @@ pub mod spartan_outer;
 pub mod spartan_product;
 
 pub use backend::{
-    JoltBackend, PrepareKernel, ProofSession, RetainedProgram, SessionCarriedKernels,
+    HasKernel, JoltBackend, PrepareKernel, ProofSession, RetainedProgram, SessionCarriedKernels,
 };
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
+pub use jolt_kernels_derive::KernelSlots;
 /// Re-exported from `jolt-verifier` (its home since the generated prove
 /// drivers must name it); the kernel crate keeps the path for downstream
 /// stability.

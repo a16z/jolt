@@ -13,6 +13,7 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::Field;
+use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::stages::relations::{
@@ -89,11 +90,59 @@ where
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>;
 }
 
+/// Type-indexed slot resolution on a kernel registry: the one place a
+/// registry's field names are reached from generic driver code. `jolt-prover`'s
+/// generated stage drivers bound their kernel source `B` by one `HasKernel<F,
+/// R>` per batch member, then fetch each member's [`PrepareKernel`] through
+/// [`kernel`](Self::kernel). Never implemented by hand for [`JoltBackend`]:
+/// `#[derive(KernelSlots)]` emits one impl per `Box<dyn PrepareKernel<F, R>>`
+/// field, so the field's own type is the relation→slot mapping and registry
+/// and resolution cannot diverge. Any other registry — a partial backend, a
+/// test double — implements it the same way, derived or by hand.
+///
+/// A relation with no slot is a missing-`HasKernel` bound error at the
+/// consuming stage impl, and so is a slot mis-declared past the derive's
+/// syntactic match:
+///
+/// ```compile_fail
+/// use jolt_field::{Field, Fr};
+/// use jolt_kernels::{HasKernel, KernelSlots, PrepareKernel};
+/// use jolt_verifier::stages::stage3::outputs::{InstructionInput, SpartanShift};
+///
+/// #[derive(KernelSlots)]
+/// struct Registry<F: Field> {
+///     shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
+///     // Not `Box<dyn PrepareKernel<..>>`, so the derive skips it: no impl.
+///     instruction_input: std::sync::Arc<dyn PrepareKernel<F, InstructionInput<F>>>,
+/// }
+///
+/// fn demand<B: HasKernel<Fr, InstructionInput<Fr>>>(_registry: &B) {}
+///
+/// fn mis_declared_slot_has_no_impl(registry: &Registry<Fr>) {
+///     demand(registry);
+/// }
+/// ```
+pub trait HasKernel<F, R>
+where
+    F: Field,
+    R: ConcreteSumcheck<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+{
+    fn kernel(&self) -> &dyn PrepareKernel<F, R>;
+}
+
 /// The kernel registry: one independently swappable slot per kernel entry.
 ///
 /// `F` and `PCS` are deployment constants, not swap targets — the PCS traits
 /// are structurally non-object-safe and their associated types are wire
-/// types, so they stay type parameters.
+/// types, so they stay type parameters. Every batch member's slot is a
+/// `Box<dyn PrepareKernel<F, R>>`, resolved by type through the
+/// `#[derive(KernelSlots)]`-emitted [`HasKernel`] impls; the remaining slots
+/// are the bespoke non-sumcheck duties (commit streaming, the uni-skip
+/// fronts, the advice opening evaluation, the joint opening).
+#[derive(KernelSlots)]
 pub struct JoltBackend<F, PCS>
 where
     F: Field,
@@ -220,4 +269,64 @@ impl ProofSession {
 /// instead of threading preprocessing borrows through every kernel call.
 pub struct RetainedProgram {
     pub program: Arc<JoltProgramPreprocessing>,
+}
+
+// The mis-declared-slot negative (a non-`Box<dyn PrepareKernel<..>>` field
+// yields NO `HasKernel` impl) is the `compile_fail` doctest on [`HasKernel`].
+#[cfg(test)]
+mod kernel_slots_derive_tests {
+    use jolt_field::Fr;
+
+    use super::*;
+
+    struct StubPrepare;
+
+    impl PrepareKernel<Fr, SpartanShift<Fr>> for StubPrepare {
+        fn prepare(
+            &self,
+            _session: &mut ProofSession,
+            _witness: &dyn JoltVmWitnessPlane<Fr>,
+            _inputs: ProverInputs<'_, Fr, SpartanShift<Fr>>,
+        ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = SpartanShift<Fr>>>, KernelError<Fr>>
+        {
+            Err(KernelError::Unsupported {
+                reason: "stub slot for the KernelSlots derive test",
+            })
+        }
+    }
+
+    // Compiling proves the derive skipped the non-kernel fields: an impl
+    // emitted for them would not type-check.
+    #[derive(KernelSlots)]
+    struct ToyRegistry<F: Field> {
+        label: String,
+        shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
+        slot_count: usize,
+    }
+
+    fn slot<R, B>(registry: &B) -> &dyn PrepareKernel<Fr, R>
+    where
+        R: ConcreteSumcheck<Fr>,
+        B: HasKernel<Fr, R>,
+        SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
+        SumcheckOutputClaims<Fr, R>: OutputClaims<Fr>,
+        ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
+    {
+        registry.kernel()
+    }
+
+    #[test]
+    fn derived_has_kernel_resolves_the_declared_slot() {
+        let registry = ToyRegistry::<Fr> {
+            label: "toy".to_string(),
+            shift: Box::new(StubPrepare),
+            slot_count: 1,
+        };
+        assert_eq!(registry.label, "toy");
+        assert_eq!(registry.slot_count, 1);
+
+        let resolved: *const () = std::ptr::from_ref(slot::<SpartanShift<Fr>, _>(&registry)).cast();
+        let field: *const () = std::ptr::from_ref(&*registry.shift).cast();
+        assert_eq!(resolved, field);
+    }
 }

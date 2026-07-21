@@ -18,6 +18,7 @@ parallel = ["dep:rayon", "jolt-poly/parallel"]
 [dependencies]
 jolt-claims.workspace = true
 jolt-field.workspace = true
+jolt-kernels-derive.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }

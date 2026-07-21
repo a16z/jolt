@@ -3435,6 +3435,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-claims",
  "jolt-field",
+ "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
@@ -3447,6 +3448,15 @@ dependencies = [
  "jolt-witness",
  "rayon",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-kernels-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

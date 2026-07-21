@@ -45,6 +45,7 @@ members = [
   "crates/jolt-profiling",
   "crates/jolt-field",
   "crates/jolt-kernels",
+  "crates/jolt-kernels-derive",
   "crates/jolt-prover",
   "crates/jolt-prover-legacy",
   "tracer",
@@ -409,6 +410,7 @@ jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
 jolt-kernels = { path = "./crates/jolt-kernels" }
+jolt-kernels-derive = { path = "./crates/jolt-kernels-derive" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-witness = { path = "./crates/jolt-witness" }
 jolt-poly = { path = "./crates/jolt-poly" }
