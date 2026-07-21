@@ -17,3 +17,17 @@ mod stage3 {
 
     jolt_verifier::stage3_sumchecks_members!(impl_stage_prover);
 }
+
+mod stage5 {
+    use jolt_verifier::stages::stage5::outputs::{
+        Stage5Challenges, Stage5InputClaims, Stage5InputPoints, Stage5OutputClaims,
+        Stage5OutputPoints, Stage5Sumchecks,
+    };
+    use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
+    use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
+    use jolt_verifier::stages::stage5::InstructionReadRaf;
+
+    use crate::driver::impl_stage_prover;
+
+    jolt_verifier::stage5_sumchecks_members!(impl_stage_prover);
+}

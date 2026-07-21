@@ -34,7 +34,7 @@ use jolt_verifier::stages::stage5::{
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 5's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
@@ -94,14 +94,10 @@ where
     let input_points =
         stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
 
-    let mut preparer = BackendPreparer {
+    let proved = sumchecks.prove(
         backend,
         session,
         witness,
-        context: (),
-    };
-    let proved = sumchecks.prove_clear(
-        &mut preparer,
         &inputs,
         &input_points,
         &challenges,
