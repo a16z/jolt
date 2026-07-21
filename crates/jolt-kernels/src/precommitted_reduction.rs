@@ -18,10 +18,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::{ProverInputs, SumcheckKernelError};
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::{ProverInputs, SumcheckKernelError};
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseOutputClaims,
     ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseOutputClaims,

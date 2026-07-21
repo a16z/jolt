@@ -13,11 +13,11 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

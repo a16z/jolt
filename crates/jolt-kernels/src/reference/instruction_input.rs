@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::instruction::{
     imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
     rs1_value, rs2_value, unexpanded_pc,
@@ -16,7 +17,6 @@ use jolt_claims::protocols::jolt::geometry::instruction::{
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

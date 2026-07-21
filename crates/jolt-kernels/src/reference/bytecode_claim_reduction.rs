@@ -20,7 +20,7 @@ use jolt_field::Field;
 use jolt_riscv::JoltInstructionRow;
 use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 
-use jolt_verifier::stages::relations::ProverInputs;
+use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhase;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

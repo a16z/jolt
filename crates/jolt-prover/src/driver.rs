@@ -22,13 +22,12 @@
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::Field;
-use jolt_kernels::{HasKernel, ProofSession};
+use jolt_kernels::{HasKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
 use jolt_sumcheck::{RecordedSumcheck, SumcheckRecorder};
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, ProverInputs, SumcheckInputClaims,
-    SumcheckInputPoints, SumcheckKernel, SumcheckKernelError, SumcheckOutputClaims,
-    SumcheckOutputPoints,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+    SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
@@ -236,11 +235,11 @@ where
 /// passed in by name (macro hygiene).
 macro_rules! __stage_member {
     (kernel_ty required $relation:ident) => {
-        ::std::boxed::Box<dyn ::jolt_verifier::stages::relations::SumcheckKernel<F, Relation = $relation<F>>>
+        ::std::boxed::Box<dyn ::jolt_kernels::SumcheckKernel<F, Relation = $relation<F>>>
     };
     (kernel_ty optional $relation:ident) => {
         ::core::option::Option<
-            ::std::boxed::Box<dyn ::jolt_verifier::stages::relations::SumcheckKernel<F, Relation = $relation<F>>>,
+            ::std::boxed::Box<dyn ::jolt_kernels::SumcheckKernel<F, Relation = $relation<F>>>,
         >
     };
     (prepare required $member:ident, $relation:ident, $source:expr, $batch:expr, $session:expr, $witness:expr, $inputs:expr, $points:expr, $challenges:expr) => {

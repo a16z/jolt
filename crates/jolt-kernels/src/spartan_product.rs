@@ -7,9 +7,9 @@
 //! remainder batch member is served by `PrepareKernel<F, ProductRemainder<F>>`
 //! on [`SessionCarriedKernels`].
 
+use crate::ProverInputs;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmWitnessPlane};
 use jolt_witness::WitnessProvider;

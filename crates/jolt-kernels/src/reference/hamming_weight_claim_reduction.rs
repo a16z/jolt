@@ -13,12 +13,12 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::{
     HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

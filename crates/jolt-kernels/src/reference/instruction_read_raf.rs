@@ -33,6 +33,7 @@
 //! optimizations of the same true polynomials; byte parity needs only
 //! exactness, so this kernel always uses 8-variable phases.)
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
 use jolt_field::Field;
@@ -41,7 +42,6 @@ use jolt_lookup_tables::tables::suffixes::SuffixEval;
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::protocols::jolt_vm::{JoltVmWitnessPlane, Stage5InstructionReadRafRow};
 

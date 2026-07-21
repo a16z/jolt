@@ -42,6 +42,7 @@ mod backend;
 mod commitment;
 pub mod committed_program;
 mod error;
+mod kernel;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod reference;
@@ -54,9 +55,6 @@ pub use backend::{
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
-/// Re-exported from `jolt-verifier` (its home since the generated prove
-/// drivers must name it); the kernel crate keeps the path for downstream
-/// stability.
-pub use jolt_verifier::stages::relations::{SumcheckKernel, SumcheckKernelError};
+pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};
 pub use reference::naive::NaiveSumcheckProver;
 pub use reference::ReferenceBackend;

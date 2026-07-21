@@ -5,7 +5,8 @@
 //! Pure orchestration: the only hand-coded preparation is reading `τ_low`
 //! and the product-remainder point from stage 2's carrier; the whole
 //! prepare→prove→extract→check→finish sequence is the generated
-//! `prove_clear` driver over the backend's slots.
+//! [`StageProver::prove`](crate::StageProver::prove) driver over the
+//! backend's slots.
 
 use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_field::Field;

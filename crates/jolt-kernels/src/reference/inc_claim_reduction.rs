@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
@@ -17,7 +18,6 @@ use jolt_claims::protocols::jolt::{IncClaimReductionPublic, JoltDerivedId};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

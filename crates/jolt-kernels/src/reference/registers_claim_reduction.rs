@@ -9,13 +9,13 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::registers::{
     rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

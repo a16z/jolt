@@ -10,11 +10,11 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::{
     rd_inc_val_evaluation, rd_wa_val_evaluation,
@@ -16,7 +17,6 @@ use jolt_claims::protocols::jolt::geometry::registers::{
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

@@ -8,12 +8,12 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::geometry::ram::committed_ram_ra;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

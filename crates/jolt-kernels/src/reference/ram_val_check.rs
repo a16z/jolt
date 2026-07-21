@@ -13,12 +13,12 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::ram::{ram_inc_val_check, ram_ra_val_check};
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage4::ram_val_check::{
     RamValCheck, RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };

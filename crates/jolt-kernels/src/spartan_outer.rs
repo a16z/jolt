@@ -8,9 +8,9 @@
 //! and hands it the stage's relation (the source of `tau` and the uni-skip
 //! challenge).
 
+use crate::ProverInputs;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmWitnessPlane};
 use jolt_witness::WitnessProvider;

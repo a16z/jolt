@@ -24,6 +24,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     bytecode_ra, read_raf_stage_values, BytecodeReadRafDimensions, BytecodeReadRafStageValueInputs,
 };
@@ -38,7 +39,7 @@ use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::{ConcreteSumcheck, ProverInputs};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
 };

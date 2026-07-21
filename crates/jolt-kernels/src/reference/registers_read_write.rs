@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::registers::{
     rd_inc_read_write, rd_wa_read_write, registers_val_read_write, rs1_ra_read_write,
     rs2_ra_read_write,
@@ -18,7 +19,6 @@ use jolt_claims::protocols::jolt::geometry::registers::{
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
-use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 

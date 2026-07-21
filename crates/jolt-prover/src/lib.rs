@@ -11,7 +11,6 @@
 mod config;
 pub mod driver;
 mod error;
-mod preparer;
 mod preprocessing;
 mod prover;
 pub mod stages;
@@ -20,6 +19,5 @@ pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 pub use driver::{KernelSource, Proved, StageProver};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession, RetainedProgram};
-pub use preparer::BackendPreparer;
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
 pub use prover::prove;

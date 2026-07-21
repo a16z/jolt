@@ -51,27 +51,14 @@
 //!   (clear appends, committed no-ops), never by a runtime flag. Returns the
 //!   engine-form `jolt_sumcheck::BatchPrelude` paired with the stage's named
 //!   `BatchingCoefficients`.
-//! - `prove_clear` — the prove-side stage driver, mirroring `verify_clear`
-//!   member for member: `begin_batch` → per-member kernel `prepare` (through
-//!   the caller's `PrepareSumcheck` impls, in declaration order, `Option`
-//!   members gated on presence) → `jolt_sumcheck::prove_batch` →
-//!   `derive_opening_points` → per-member `validate_derived_tables` → typed
-//!   `output_claims()` into the stage's `OutputClaims` aggregate →
-//!   `validate_output_claims` → the `expected_final_claim` hard self-check →
-//!   `recorder.finish` over the canonical opening values. Returns the
-//!   generated `Proved<Stage>` carrier (recorded proof, typed claims, derived
-//!   points, final claim). Recorder-generic like `begin_batch`. The
-//!   `no_opening_values` opt-out swaps the generated finish values for a
-//!   caller-supplied curation hook (mutate-claims + curated absorb order);
-//!   `no_output_shape` skips the shape validation, exactly as on the verify
-//!   side.
 //! - `<snake_case_struct>_members` — an inert, `#[macro_export]`ed callback
 //!   macro carrying the batch declaration as a structured token list (member
 //!   names, generics-stripped relation paths, presence, aggregate type names,
-//!   output-shape flag), forwarded to a caller-chosen macro. The
-//!   prover-facing single-sourcing handoff: `jolt-prover`'s
-//!   `impl_stage_prover` expands its stage-driver impls from it. See
-//!   `specs/prover-stage-drivers.md`.
+//!   output-shape flag), forwarded to a caller-chosen macro. The derive's
+//!   ONLY prover-facing emission — the single-sourcing handoff from which
+//!   `jolt-prover`'s `impl_stage_prover` expands the prove-side stage-driver
+//!   impls (`StageProver`/`KernelSource`), so no stage's member list, order,
+//!   or presence is ever restated. See `specs/prover-stage-drivers.md`.
 //! - `verify_clear` — the clear-path batched-verify driver: `begin_batch` with a
 //!   clear recorder, then reduce the combined claim through the single-instance
 //!   `SumcheckProof::verify_compressed_boolean`. The batching lives in the
@@ -981,300 +968,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // ------------------------------------------------------------------
-    // The generated prove-side stage driver: `prove_clear` plus its output
-    // carrier (`Proved<Stage>`) and, when the stage declares
-    // `#[sumcheck(external)]` members, the caller-supplied kernel bundle
-    // (`<Stage>ExternalMembers`). See the crate docs.
-    // ------------------------------------------------------------------
-    let proved_name = format_ident!("Proved{base}");
-
-    let proved_struct = quote! {
-        /// A proved stage batch, as assembled by the generated `prove_clear`:
-        /// the recorded wire proof (plus retained witness for a committed
-        /// recorder), the typed output claims and derived opening points, and
-        /// the batch's final running claim (already hard-checked against the
-        /// generated `expected_final_claim`).
-        #vis struct #proved_name<#f: ::jolt_field::Field, __C> {
-            pub recorded: ::jolt_sumcheck::RecordedSumcheck<#f, __C>,
-            pub output_claims: #output_claims_name<#f>,
-            pub output_points: #output_points_name<#f>,
-            pub final_claim: #f,
-        }
-    };
-
-    let prove_clear_method = {
-        let preparer_ident = format_ident!("preparer");
-        let kernel_idents = plans
-            .iter()
-            .map(|plan| format_ident!("__kernel_{}", plan.ident))
-            .collect::<Vec<_>>();
-
-        // Acquire each member's kernel in declaration order, minted through
-        // the preparer. A present `Option` member with an absent cell is a
-        // wiring bug, attributed to the member's relation id.
-        let kernel_bindings = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
-            let id = &plan.ident;
-            let instance = &plan.instance;
-            if plan.is_option {
-                quote! {
-                    let mut #kernel = match (
-                        self.#id.as_ref(),
-                        inputs.#id.as_ref(),
-                        input_points.#id.as_ref(),
-                        challenges.#id.as_ref(),
-                    ) {
-                        (
-                            ::core::option::Option::Some(__member),
-                            ::core::option::Option::Some(__claims),
-                            ::core::option::Option::Some(__points),
-                            ::core::option::Option::Some(__challenges),
-                        ) => ::core::option::Option::Some(
-                            <__P as #relations::PrepareSumcheck<#f, #instance>>::prepare(
-                                #preparer_ident,
-                                #relations::ProverInputs {
-                                    relation: __member,
-                                    claims: __claims,
-                                    points: __points,
-                                    challenges: __challenges,
-                                },
-                            )?,
-                        ),
-                        (::core::option::Option::None, _, _, _) => ::core::option::Option::None,
-                        (::core::option::Option::Some(__member), _, _, _) => {
-                            return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
-                                    stage: __member.id(),
-                                    reason: "present instance is missing an input, point, or \
-                                             challenge cell for prepare"
-                                        .to_string(),
-                                }
-                                .into(),
-                            );
-                        }
-                    };
-                }
-            } else {
-                quote! {
-                    let mut #kernel = <__P as #relations::PrepareSumcheck<#f, #instance>>::prepare(
-                        #preparer_ident,
-                        #relations::ProverInputs {
-                            relation: &self.#id,
-                            claims: &inputs.#id,
-                            points: &input_points.#id,
-                            challenges: &challenges.#id,
-                        },
-                    )?;
-                }
-            }
-        });
-
-        // The engine-facing member slice, in declaration order (`Option`
-        // members join only when present). The `&mut **`/`&mut *` reborrows
-        // upcast `dyn SumcheckKernel` to its `ProveRounds` supertrait.
-        let member_pushes = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
-            if plan.is_option {
-                quote! {
-                    if let ::core::option::Option::Some(__kernel) = #kernel.as_mut() {
-                        __members.push(&mut **__kernel);
-                    }
-                }
-            } else {
-                quote!(__members.push(&mut *#kernel);)
-            }
-        });
-
-        let validate_tables = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
-            let id = &plan.ident;
-            if plan.is_option {
-                quote! {
-                    if let (
-                        ::core::option::Option::Some(__kernel),
-                        ::core::option::Option::Some(__member),
-                        ::core::option::Option::Some(__input_points_cell),
-                        ::core::option::Option::Some(__output_points_cell),
-                        ::core::option::Option::Some(__challenges_cell),
-                    ) = (
-                        #kernel.as_mut(),
-                        self.#id.as_ref(),
-                        input_points.#id.as_ref(),
-                        __output_points.#id.as_ref(),
-                        challenges.#id.as_ref(),
-                    ) {
-                        __kernel.validate_derived_tables(
-                            __member,
-                            __input_points_cell,
-                            __output_points_cell,
-                            __challenges_cell,
-                        )?;
-                    }
-                }
-            } else {
-                quote! {
-                    #kernel.validate_derived_tables(
-                        &self.#id,
-                        &input_points.#id,
-                        &__output_points.#id,
-                        &challenges.#id,
-                    )?;
-                }
-            }
-        });
-
-        let claim_fields = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
-            let id = &plan.ident;
-            if plan.is_option {
-                quote! {
-                    #id: match #kernel.as_mut() {
-                        ::core::option::Option::Some(__kernel) => {
-                            ::core::option::Option::Some(__kernel.output_claims()?)
-                        }
-                        ::core::option::Option::None => ::core::option::Option::None,
-                    }
-                }
-            } else {
-                quote!(#id: #kernel.output_claims()?)
-            }
-        });
-
-        let preparer_bounds = plans
-            .iter()
-            .map(|plan| {
-                let instance = &plan.instance;
-                quote!(+ #relations::PrepareSumcheck<#f, #instance>)
-            })
-            .collect::<Vec<_>>();
-
-        let (claims_binding, curate_param, opening_values_stmt) = if options.no_opening_values {
-            (
-                quote!(let mut __output_claims),
-                quote! {
-                    curate_opening_values: impl ::core::ops::FnOnce(
-                        &mut #output_claims_name<#f>,
-                        &#output_points_name<#f>,
-                    )
-                        -> ::core::result::Result<::std::vec::Vec<#f>, crate::VerifierError>,
-                },
-                quote! {
-                    let __opening_values =
-                        curate_opening_values(&mut __output_claims, &__output_points)?;
-                },
-            )
-        } else {
-            (
-                quote!(let __output_claims),
-                quote!(),
-                quote!(let __opening_values = self.opening_values(&__output_claims);),
-            )
-        };
-        let validate_shape = if options.no_output_shape {
-            quote!()
-        } else {
-            quote!(self.validate_output_claims(&__output_claims)?;)
-        };
-        // The base signature sits exactly at clippy's argument limit; the
-        // curation hook pushes one past it.
-        let expect_arg_count = if options.no_opening_values {
-            quote! {
-                #[expect(
-                    clippy::too_many_arguments,
-                    reason = "the stage's curation hook rides on the driver's fixed protocol \
-                              signature"
-                )]
-            }
-        } else {
-            quote!()
-        };
-
-        quote! {
-            /// The generated prove-side stage driver, mirroring `verify_clear`
-            /// member for member: `begin_batch` (the shared head) → per-member
-            /// kernel `prepare` in declaration order → the engine round loop
-            /// → derived opening
-            /// points → per-member `validate_derived_tables` → typed output
-            /// extraction → shape validation → the `expected_final_claim` hard
-            /// self-check → `recorder.finish` over the canonical opening
-            /// values. Recorder-generic: the clear/ZK seam is the recorder
-            /// TYPE, exactly as in `begin_batch`.
-            #expect_arg_count
-            pub fn prove_clear<__P, __Rec, __T>(
-                &self,
-                #preparer_ident: &mut __P,
-                inputs: &#input_claims_name<#f>,
-                input_points: &#input_points_name<#f>,
-                challenges: &#challenges_name<#f>,
-                #curate_param
-                mut recorder: __Rec,
-                transcript: &mut __T,
-            ) -> ::core::result::Result<
-                #proved_name<#f, <__Rec as ::jolt_sumcheck::SumcheckRecorder<#f>>::Commitment>,
-                <__P as #relations::SumcheckPreparer<#f>>::Error,
-            >
-            where
-                __P: #relations::SumcheckPreparer<#f> #(#preparer_bounds)*,
-                __Rec: ::jolt_sumcheck::SumcheckRecorder<#f>,
-                __T: ::jolt_transcript::Transcript<Challenge = #f>,
-            {
-                use #relations::ConcreteSumcheck as _;
-                use #relations::SumcheckKernel as _;
-
-                let (__batch, __coefficients) =
-                    self.begin_batch(inputs, challenges, &mut recorder, transcript)?;
-
-                #(#kernel_bindings)*
-
-                let mut __members: ::std::vec::Vec<&mut dyn ::jolt_sumcheck::ProveRounds<#f>> =
-                    ::std::vec::Vec::new();
-                #(#member_pushes)*
-                let __proved = ::jolt_sumcheck::prove_batch(
-                    &__batch,
-                    &mut __members,
-                    &mut recorder,
-                    transcript,
-                )?;
-
-                let __output_points = self.derive_opening_points(&__proved.challenges, input_points)?;
-                #(#validate_tables)*
-
-                #claims_binding = #output_claims_name {
-                    #(#claim_fields,)*
-                };
-
-                #opening_values_stmt
-                #validate_shape
-
-                let __expected = self.expected_final_claim(
-                    &__coefficients,
-                    input_points,
-                    &__output_claims,
-                    &__output_points,
-                    challenges,
-                )?;
-                if __expected != __proved.final_claim {
-                    return ::core::result::Result::Err(
-                        crate::VerifierError::StageClaimSumcheckFailed {
-                            stage: self.#stage_id_ident.id(),
-                            reason: ::std::format!(
-                                "prover final claim {:?} disagrees with the expected output fold {:?}",
-                                __proved.final_claim,
-                                __expected,
-                            ),
-                        }
-                        .into(),
-                    );
-                }
-
-                let __recorded = recorder.finish(&__opening_values, transcript)?;
-                ::core::result::Result::Ok(#proved_name {
-                    recorded: __recorded,
-                    output_claims: __output_claims,
-                    output_points: __output_points,
-                    final_claim: __proved.final_claim,
-                })
-            }
-        }
-    };
-
     // The prover-facing single-sourcing handoff: an inert, exported callback
     // macro carrying this batch's declaration — member names, relation paths
     // (generics stripped; the consumer re-applies its own field parameter),
@@ -1343,7 +1036,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #draw_challenges_method
 
             #begin_batch_method
-            #prove_clear_method
             #verify_clear_method
             #verify_zk_method
             #derive_points_method
@@ -1408,8 +1100,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #clear_batch_struct
-
-        #proved_struct
 
         #members_macro
 

@@ -17,7 +17,7 @@ use jolt_field::Field;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
-use jolt_verifier::stages::relations::ProverInputs;
+use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };

@@ -17,8 +17,7 @@ use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, ProverInputs, SumcheckInputClaims,
-    SumcheckKernel, SumcheckOutputClaims,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
@@ -56,6 +55,7 @@ use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeight
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::commitment::CommitWitness;
+use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::spartan_outer::SpartanOuterProver;
 use crate::spartan_product::SpartanProductProver;
