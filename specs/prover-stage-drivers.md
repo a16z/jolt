@@ -88,11 +88,17 @@ Key abstractions introduced or modified:
   jolt-verifier needs to name it. Kernels own no relation copy — the stage's relation is the
   single source of geometry, threaded back through `validate_derived_tables`.
 - **`HasKernel<F, R>`** (jolt-kernels): type-indexed slot resolution on the backend —
-  `fn kernel(&self) -> &dyn PrepareKernel<F, R>`. Implemented once per slot, adjacent to the
-  `JoltBackend` field declarations (a small `macro_rules!` emits field + impl together, so
-  registry and resolution cannot diverge). This replaces v1's `BackendPreparer` as "the one
-  place backend field names are spelled" — and unlike `BackendPreparer`, any registry
-  (e.g. `ReferenceBackend` directly, or a test double) can implement it.
+  `fn kernel(&self) -> &dyn PrepareKernel<F, R>`. Macro expansion is syntactic and cannot
+  match a backend field by relation type; trait resolution is the only by-type lookup Rust
+  has, so this trait is what keeps the consumer-macro invocations argument-free. Its impls
+  are never written by hand: `JoltBackend` stays a **plainly declared struct** carrying
+  `#[derive(KernelSlots)]` (new proc-macro crate `jolt-kernels-derive`, following the
+  `jolt-claims-derive`/`jolt-verifier-derive` pattern), which emits one `HasKernel<F, R>`
+  impl per field of type `Box<dyn PrepareKernel<F, R>>` and skips all other fields
+  (`commit`, `joint_opening`, the fronts). The field's own type IS the relation→slot
+  mapping — declared once, restated nowhere; a missing or mis-typed slot surfaces as a
+  missing-`HasKernel` bound error at the stage impl. This replaces v1's `BackendPreparer`,
+  and any other registry (a partial backend, a test double) implements `HasKernel` by hand.
 - **`StageProver<F>`** (jolt-prover): the driver trait, implemented for each stage batch
   struct (local trait, foreign type — orphan-rule clean):
   ```rust
@@ -134,7 +140,10 @@ Key abstractions introduced or modified:
   { name: ..., presence: optional }, ... ] }` (fully-qualified relation paths; exact token
   grammar settled in implementation). This is the single-sourcing handoff: jolt-prover's
   consumer `macro_rules! impl_stage_prover` expands the `StageProver` + `KernelSource`
-  impls from it, so no stage's member list, order, or presence is ever restated. The derive
+  impls from it, so no stage's member list, order, or presence is ever restated. The
+  invocations are argument-free — `stage3_sumchecks_members!(impl_stage_prover);` — because
+  slot resolution rides on the `HasKernel` bounds the compiler discharges; only 6b's
+  invocation carries its curation override block. The derive
   emits **no other prover-facing code**: v1's `prove_clear`, `ProvedStageN`, and
   `<Stage>ExternalMembers` emissions are removed. Escalation path: if the consumer outgrows
   `macro_rules!` (it should not — the aggregate-level calls remain ordinary generated
@@ -292,7 +301,8 @@ jolt-verifier        ConcreteSumcheck + relations (with accessor blocks),
                      generated begin_batch + verify_clear + aggregates +
                      member-list callback macros                            [protocol; prover-free]
 jolt-kernels         SumcheckKernel, ProverInputs, PrepareKernel,
-                     HasKernel, JoltBackend/ProofSession,
+                     HasKernel, plain JoltBackend + #[derive(KernelSlots)]
+                     (jolt-kernels-derive), ProofSession,
                      commit/joint_opening slots, reference/ impls           [compute]
 jolt-prover          StageProver + KernelSource + Proved + consumer macro
                      (impls expanded per stage), stage fronts, stage 0/8    [orchestration]
@@ -381,8 +391,18 @@ hard check → `curate_opening_values` (default: generated canonical order) →
   F-valued instance data kernels need (bound points, carried challenge vectors, public
   inputs), and extending it would break the one-symbolic-object-any-field property.
 - **Slot resolution via a generated `StageNSlots` struct.** Rejected in v0 and still: the
-  struct would be filled field-by-field per recipe. `HasKernel` puts the field spelling
-  adjacent to the field declaration itself, macro-paired so they cannot diverge.
+  struct would be filled field-by-field per recipe. `HasKernel` derives the field spelling
+  from the field declaration itself.
+- **`jolt_backend_registry!` declaration macro** (implemented mid-v2, rejected): a
+  `macro_rules!` wrapping the `JoltBackend` declaration to emit field + `HasKernel` impl
+  pairs. Rejected: the backend struct must stay a plainly declared, readable struct;
+  `#[derive(KernelSlots)]` on the plain struct emits the same impls idiomatically, from the
+  field types themselves.
+- **Slot-name lists at the consumer invocations** (`stage3_sumchecks_members!(
+  impl_stage_prover, slots(spartan_shift, ...))`): workable — the member↔slot pairing is
+  compile-checked (relation types are unique per slot), and lockstep two-list expansion is
+  native `macro_rules!`. Rejected: it restates the relation→slot mapping once per stage and
+  clutters every invocation; the derive declares the mapping zero extra times.
 - **Generate the round loop too (full generated prover).** Rejected in
   `specs/jolt-prover-model-crate.md` and reaffirmed: the loop is stage-invariant engine code
   with real algebra that benefits from being ordinary, testable Rust in one place.
@@ -401,7 +421,7 @@ driver, the member-list callback handoff, and `PrepareKernel`.
 generates the head" statement becomes "head and driver"). Crate-level rustdoc: `jolt-kernels`
 (`PrepareKernel`, `HasKernel`, session-carry conventions), `jolt-verifier-derive` (member-list
 emission), `jolt-prover` (`StageProver`, consumer macro), `jolt-sumcheck` (`ProveRounds`
-contract, done in v1).
+contract, done in v1); `jolt-kernels-derive` (`KernelSlots`).
 
 ## Execution
 
@@ -425,8 +445,9 @@ below is gated by the stage-granular byte-diff run.
       `Stage6aPrepareContext`/remaining context plumbing.
 2. **Derive swap**: emit member-list callback macros; delete `prove_clear`/`ProvedStageN`/
    `ExternalMembers`/`#[sumcheck(external)]` emission (no member is external anymore).
-3. **jolt-prover driver**: `StageProver`, `KernelSource`, `Proved`, `HasKernel` registry
-   macro in jolt-kernels, consumer `impl_stage_prover` macro; migrate stages 3 → 5 → 4 → 1 →
+3. **jolt-prover driver**: `StageProver`, `KernelSource`, `Proved`, consumer
+   `impl_stage_prover` macro; `HasKernel` + `jolt-kernels-derive` with
+   `#[derive(KernelSlots)]` on the plain `JoltBackend`; migrate stages 3 → 5 → 4 → 1 →
    2 → 6a → 7 → 6b (curation override), byte-diff after each; move
    `SumcheckKernel`/`SumcheckKernelError`/`ProverInputs` to jolt-kernels and delete
    `PrepareSumcheck`/`SumcheckPreparer`/`BackendPreparer` as their last consumers go.
