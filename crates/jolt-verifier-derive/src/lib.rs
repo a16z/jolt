@@ -60,16 +60,18 @@
 //!   `validate_output_claims` → the `expected_final_claim` hard self-check →
 //!   `recorder.finish` over the canonical opening values. Returns the
 //!   generated `Proved<Stage>` carrier (recorded proof, typed claims, derived
-//!   points, final claim). Recorder-generic like `begin_batch`. A
-//!   `#[sumcheck(external)]` FIELD attribute marks members whose kernel the
-//!   preparer cannot mint (uni-skip remainder handoffs, the precommitted
-//!   6b→7 phase spans): the driver takes them as caller-supplied
-//!   `&mut dyn SumcheckKernel` bundles (the generated
-//!   `<Stage>ExternalMembers`), appended to the round loop in declaration
-//!   order. The `no_opening_values` opt-out swaps the generated finish values
-//!   for a caller-supplied curation hook (mutate-claims + curated absorb
-//!   order); `no_output_shape` skips the shape validation, exactly as on the
-//!   verify side.
+//!   points, final claim). Recorder-generic like `begin_batch`. The
+//!   `no_opening_values` opt-out swaps the generated finish values for a
+//!   caller-supplied curation hook (mutate-claims + curated absorb order);
+//!   `no_output_shape` skips the shape validation, exactly as on the verify
+//!   side.
+//! - `<snake_case_struct>_members` — an inert, `#[macro_export]`ed callback
+//!   macro carrying the batch declaration as a structured token list (member
+//!   names, generics-stripped relation paths, presence, aggregate type names,
+//!   output-shape flag), forwarded to a caller-chosen macro. The
+//!   prover-facing single-sourcing handoff: `jolt-prover`'s
+//!   `impl_stage_prover` expands its stage-driver impls from it. See
+//!   `specs/prover-stage-drivers.md`.
 //! - `verify_clear` — the clear-path batched-verify driver: `begin_batch` with a
 //!   clear recorder, then reduce the combined claim through the single-instance
 //!   `SumcheckProof::verify_compressed_boolean`. The batching lives in the
@@ -129,7 +131,7 @@ use syn::{
 /// suppressing generated methods that would be wrong to call on the flagged
 /// stage, which supplies its own replacement where one is needed. The
 /// aggregate structs and their derives are emitted unchanged.
-#[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch, sumcheck))]
+#[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand(input)
@@ -140,16 +142,10 @@ pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
 /// One instance field of the source struct: its name and `ConcreteSumcheck`
 /// instance type. `is_option` records a conditional instance (`Option<Instance>`),
 /// whose projections become `Option<..>` and chain only when present.
-/// `is_external` records a `#[sumcheck(external)]` member: the generated
-/// `prove_clear` takes its kernel as a caller-supplied
-/// `&mut dyn SumcheckKernel` (the escape hatch for the uni-skip remainders
-/// and the precommitted 6b→7 family) instead of minting it through the
-/// preparer.
 struct InstanceField {
     ident: Ident,
     instance: Type,
     is_option: bool,
-    is_external: bool,
 }
 
 /// Wrap `body` in the member-presence scaffold shared by the per-member driver
@@ -992,8 +988,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // (`<Stage>ExternalMembers`). See the crate docs.
     // ------------------------------------------------------------------
     let proved_name = format_ident!("Proved{base}");
-    let externals_name = format_ident!("{base}ExternalMembers");
-    let has_externals = plans.iter().any(|plan| plan.is_external);
 
     let proved_struct = quote! {
         /// A proved stage batch, as assembled by the generated `prove_clear`:
@@ -1009,91 +1003,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    let externals_struct = if has_externals {
-        let external_fields = plans.iter().filter(|plan| plan.is_external).map(|plan| {
-            let id = &plan.ident;
-            let instance = &plan.instance;
-            let kernel = quote!(&'__m mut dyn #relations::SumcheckKernel<#f, Relation = #instance>);
-            if plan.is_option {
-                quote!(pub #id: ::core::option::Option<#kernel>)
-            } else {
-                quote!(pub #id: #kernel)
-            }
-        });
-        quote! {
-            /// The caller-supplied kernels for this stage's
-            /// `#[sumcheck(external)]` members — the members whose lifecycle
-            /// the preparer cannot mint (uni-skip remainder handoffs, the
-            /// precommitted 6b→7 phase spans). `prove_clear` appends them to
-            /// the round loop in declaration order and extracts their typed
-            /// output claims like any other member.
-            #vis struct #externals_name<'__m, #f: ::jolt_field::Field> {
-                #(#external_fields,)*
-            }
-        }
-    } else {
-        quote!()
-    };
-
     let prove_clear_method = {
-        // An all-external stage never touches the preparer value (only its
-        // associated `Error` type), so the parameter is underscore-named to
-        // keep the generated code warning-free.
-        let preparer_ident = if plans.iter().all(|plan| plan.is_external) {
-            format_ident!("_preparer")
-        } else {
-            format_ident!("preparer")
-        };
+        let preparer_ident = format_ident!("preparer");
         let kernel_idents = plans
             .iter()
             .map(|plan| format_ident!("__kernel_{}", plan.ident))
             .collect::<Vec<_>>();
 
-        // Acquire each member's kernel in declaration order: minted through
-        // the preparer for regular members, taken from `externals` for
-        // external ones. A present `Option` member with an absent cell (or a
-        // presence disagreement with its external kernel) is a wiring bug,
-        // attributed to the member's relation id.
+        // Acquire each member's kernel in declaration order, minted through
+        // the preparer. A present `Option` member with an absent cell is a
+        // wiring bug, attributed to the member's relation id.
         let kernel_bindings = plans.iter().zip(&kernel_idents).map(|(plan, kernel)| {
             let id = &plan.ident;
             let instance = &plan.instance;
-            if plan.is_external {
-                if plan.is_option {
-                    quote! {
-                        let mut #kernel = match (self.#id.as_ref(), externals.#id) {
-                            (::core::option::Option::Some(_), ::core::option::Option::Some(__k)) => {
-                                ::core::option::Option::Some(__k)
-                            }
-                            (::core::option::Option::None, ::core::option::Option::None) => {
-                                ::core::option::Option::None
-                            }
-                            (::core::option::Option::Some(__member), ::core::option::Option::None) => {
-                                return ::core::result::Result::Err(
-                                    crate::VerifierError::StageClaimSumcheckFailed {
-                                        stage: __member.id(),
-                                        reason: "present external instance was supplied no kernel"
-                                            .to_string(),
-                                    }
-                                    .into(),
-                                );
-                            }
-                            (::core::option::Option::None, ::core::option::Option::Some(_)) => {
-                                return ::core::result::Result::Err(
-                                    crate::VerifierError::StageClaimSumcheckFailed {
-                                        stage: <<#instance as #relations::ConcreteSumcheck<#f>>::Symbolic
-                                            as ::jolt_claims::SymbolicSumcheck>::id(),
-                                        reason: "external kernel supplied for an absent instance"
-                                            .to_string(),
-                                    }
-                                    .into(),
-                                );
-                            }
-                        };
-                    }
-                } else {
-                    quote!(let #kernel = externals.#id;)
-                }
-            } else if plan.is_option {
+            if plan.is_option {
                 quote! {
                     let mut #kernel = match (
                         self.#id.as_ref(),
@@ -1216,18 +1139,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         let preparer_bounds = plans
             .iter()
-            .filter(|plan| !plan.is_external)
             .map(|plan| {
                 let instance = &plan.instance;
                 quote!(+ #relations::PrepareSumcheck<#f, #instance>)
             })
             .collect::<Vec<_>>();
 
-        let externals_param = if has_externals {
-            quote!(externals: #externals_name<'_, #f>,)
-        } else {
-            quote!()
-        };
         let (claims_binding, curate_param, opening_values_stmt) = if options.no_opening_values {
             (
                 quote!(let mut __output_claims),
@@ -1256,13 +1173,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(self.validate_output_claims(&__output_claims)?;)
         };
         // The base signature sits exactly at clippy's argument limit; the
-        // externals bundle and the curation hook each push one past it.
-        let expect_arg_count = if has_externals || options.no_opening_values {
+        // curation hook pushes one past it.
+        let expect_arg_count = if options.no_opening_values {
             quote! {
                 #[expect(
                     clippy::too_many_arguments,
-                    reason = "the stage's external-member bundle / curation hook ride on the \
-                              driver's fixed protocol signature"
+                    reason = "the stage's curation hook rides on the driver's fixed protocol \
+                              signature"
                 )]
             }
         } else {
@@ -1272,8 +1189,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote! {
             /// The generated prove-side stage driver, mirroring `verify_clear`
             /// member for member: `begin_batch` (the shared head) → per-member
-            /// kernel `prepare` in declaration order (external members are
-            /// caller-supplied) → the engine round loop → derived opening
+            /// kernel `prepare` in declaration order → the engine round loop
+            /// → derived opening
             /// points → per-member `validate_derived_tables` → typed output
             /// extraction → shape validation → the `expected_final_claim` hard
             /// self-check → `recorder.finish` over the canonical opening
@@ -1286,7 +1203,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 inputs: &#input_claims_name<#f>,
                 input_points: &#input_points_name<#f>,
                 challenges: &#challenges_name<#f>,
-                #externals_param
                 #curate_param
                 mut recorder: __Rec,
                 transcript: &mut __T,
@@ -1355,6 +1271,69 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     output_points: __output_points,
                     final_claim: __proved.final_claim,
                 })
+            }
+        }
+    };
+
+    // The prover-facing single-sourcing handoff: an inert, exported callback
+    // macro carrying this batch's declaration — member names, relation paths
+    // (generics stripped; the consumer re-applies its own field parameter),
+    // presence, the aggregate type names, and the output-shape flag — as a
+    // structured token list forwarded to a caller-chosen macro. `jolt-prover`'s
+    // `impl_stage_prover` expands its `StageProver`/`KernelSource` impls from
+    // it, so no stage's member list, order, or presence is ever restated.
+    // Tokens resolve at the consumer's invocation site (which imports the
+    // batch's relation and aggregate names); extra invocation tokens (e.g. a
+    // curation override) are forwarded ahead of the list.
+    let members_macro = {
+        let macro_name = format_ident!("{}_members", snake_case(&name.to_string()));
+        let macro_doc = format!(
+            "The member-list callback macro for [`{name}`], emitted by \
+             `#[derive(SumcheckBatch)]`: forwards the batch's declaration (member names, \
+             relation paths, presence, aggregate names, output-shape flag) to a caller-chosen \
+             macro. See `specs/prover-stage-drivers.md`."
+        );
+        let shape = if options.no_output_shape {
+            format_ident!("unchecked")
+        } else {
+            format_ident!("checked")
+        };
+        let member_entries = plans
+            .iter()
+            .map(|plan| {
+                let id = &plan.ident;
+                let relation = relation_path(&plan.instance)?;
+                let presence = if plan.is_option {
+                    format_ident!("optional")
+                } else {
+                    format_ident!("required")
+                };
+                Ok(quote! {
+                    { name: #id, relation: #relation, presence: #presence },
+                })
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        quote! {
+            #[doc = #macro_doc]
+            #[macro_export]
+            macro_rules! #macro_name {
+                ($cb:ident $($extra:tt)*) => {
+                    $cb! {
+                        $($extra)*
+                        batch = #name,
+                        aggregates = {
+                            input_claims = #input_claims_name,
+                            input_points = #input_points_name,
+                            output_claims = #output_claims_name,
+                            output_points = #output_points_name,
+                            challenges = #challenges_name,
+                        },
+                        shape = #shape,
+                        members = [
+                            #(#member_entries)*
+                        ]
+                    }
+                };
             }
         }
     };
@@ -1432,7 +1411,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         #proved_struct
 
-        #externals_struct
+        #members_macro
 
         #driver_impl
     })
@@ -1546,36 +1525,46 @@ fn plan_field(field: &syn::Field) -> syn::Result<InstanceField> {
         Some(inner) => (true, inner.clone()),
         None => (false, field.ty.clone()),
     };
-    let mut is_external = false;
-    for attr in &field.attrs {
-        if !attr.path().is_ident("sumcheck") {
-            continue;
-        }
-        let flags =
-            attr.parse_args_with(syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated)?;
-        for flag in flags {
-            let Meta::Path(path) = &flag else {
-                return Err(syn::Error::new_spanned(
-                    &flag,
-                    "expected a bare `sumcheck` field flag (e.g. `external`)",
-                ));
-            };
-            if path.is_ident("external") {
-                is_external = true;
-            } else {
-                return Err(syn::Error::new_spanned(
-                    path,
-                    "unknown `sumcheck` field flag (supported: `external`)",
-                ));
-            }
-        }
-    }
     Ok(InstanceField {
         ident,
         instance,
         is_option,
-        is_external,
     })
+}
+
+/// `CamelCase` → `snake_case` for the emitted member-list macro's name
+/// (`Stage1BatchSumchecks` → `stage1_batch_sumchecks`).
+fn snake_case(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index != 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The relation path of a member field with its generic arguments stripped
+/// (`SpartanShift<F>` → `SpartanShift`): the consumer macro re-applies its own
+/// field-type parameter, so the emitted token needs no hygiene agreement on
+/// the parameter name.
+fn relation_path(instance: &Type) -> syn::Result<syn::Path> {
+    let Type::Path(path) = instance else {
+        return Err(syn::Error::new_spanned(
+            instance,
+            "SumcheckBatch member types must be paths",
+        ));
+    };
+    let mut path = path.path.clone();
+    if let Some(segment) = path.segments.last_mut() {
+        segment.arguments = PathArguments::None;
+    }
+    Ok(path)
 }
 
 /// If `ty` is syntactically `Option<Inner>`, return `Inner`.

@@ -2048,7 +2048,6 @@ mod prove_clear_tests {
     struct ToyDriverSumchecks<F: Field> {
         alpha: ToyAlpha<F>,
         beta: Option<ToyBeta<F>>,
-        #[sumcheck(external)]
         gamma: ToyGamma<F>,
     }
 
@@ -2197,6 +2196,20 @@ mod prove_clear_tests {
         }
     }
 
+    impl PrepareSumcheck<Fr, ToyGamma<Fr>> for ToyPreparer {
+        fn prepare(
+            &mut self,
+            inputs: ProverInputs<'_, Fr, ToyGamma<Fr>>,
+        ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = ToyGamma<Fr>>>, ToyError> {
+            self.calls.push("gamma");
+            Ok(Box::new(DenseKernel::<ToyGamma<Fr>>::with_sum(
+                inputs.relation.rounds(),
+                inputs.claims.claimed_sum,
+                23,
+            )))
+        }
+    }
+
     const ALPHA_ROUNDS: usize = 3;
     const BETA_ROUNDS: usize = 2;
     const GAMMA_ROUNDS: usize = 3;
@@ -2230,8 +2243,6 @@ mod prove_clear_tests {
         let sumchecks = fixture(beta);
         let inputs = inputs(beta);
         let mut preparer = ToyPreparer { calls: Vec::new() };
-        let mut gamma_kernel =
-            DenseKernel::<ToyGamma<Fr>>::with_sum(GAMMA_ROUNDS, inputs.gamma.claimed_sum, 23);
 
         let mut prover_transcript = Blake2bTranscript::new(b"prove-clear-twin");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
@@ -2242,9 +2253,6 @@ mod prove_clear_tests {
                 &inputs,
                 &input_points,
                 &challenges,
-                ToyDriverExternalMembers {
-                    gamma: &mut gamma_kernel,
-                },
                 ClearSumcheckRecorder::<Fr, Fr>::new(),
                 &mut prover_transcript,
             )
@@ -2285,9 +2293,8 @@ mod prove_clear_tests {
     #[test]
     fn prove_clear_twin_with_present_option_member() {
         let (proved, calls) = drive(true);
-        // Prepare ran in declaration order; the external member never touched
-        // the preparer.
-        assert_eq!(calls, vec!["alpha", "beta"]);
+        // Prepare ran in declaration order.
+        assert_eq!(calls, vec!["alpha", "beta", "gamma"]);
         assert!(proved.output_claims.beta.is_some());
         // Typed extraction filled every slot, external included.
         assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
@@ -2297,24 +2304,19 @@ mod prove_clear_tests {
     #[test]
     fn prove_clear_twin_with_absent_option_member() {
         let (proved, calls) = drive(false);
-        assert_eq!(calls, vec!["alpha"]);
+        assert_eq!(calls, vec!["alpha", "gamma"]);
         assert!(proved.output_claims.beta.is_none());
     }
 
     /// `prove_clear` is generic over the recorder: this compiles it against
     /// the committed recorder even though nothing wires the ZK path yet.
     #[expect(dead_code, reason = "compile-only recorder-generality witness")]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "mirrors the generated driver's signature it type-checks"
-    )]
     fn prove_clear_type_checks_with_committed_recorder(
         sumchecks: &ToyDriverSumchecks<Fr>,
         preparer: &mut ToyPreparer,
         inputs: &ToyDriverInputClaims<Fr>,
         input_points: &ToyDriverInputPoints<Fr>,
         challenges: &ToyDriverChallenges<Fr>,
-        externals: ToyDriverExternalMembers<'_, Fr>,
         recorder: CommittedSumcheckRecorder<
             '_,
             Fr,
@@ -2328,7 +2330,6 @@ mod prove_clear_tests {
             inputs,
             input_points,
             challenges,
-            externals,
             recorder,
             transcript,
         )
