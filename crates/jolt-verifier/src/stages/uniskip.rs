@@ -158,3 +158,63 @@ where
         challenge,
     })
 }
+
+/// Twin-transcript lock for the shared uni-skip verification core against
+/// `jolt_sumcheck::prove_uniskip_clear`, asserting byte-identical transcript
+/// states. Kept beside [`verify_clear`], whose contract it pins; the batched
+/// engine twins live in `jolt-prover`.
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod uniskip_twin_tests {
+    use jolt_crypto::Bn254G1;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+    use jolt_r1cs::constraints::jolt::{
+        SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+    };
+    use jolt_sumcheck::{prove_uniskip_clear, CenteredIntegerDomain, ClearRound, SumcheckDomain};
+    use jolt_transcript::{Blake2bTranscript, Transcript};
+
+    use super::{verify_clear, UniskipParams};
+
+    #[test]
+    fn uniskip_prover_twin_matches_uniskip_verify_clear() {
+        let degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
+        let domain_size = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
+        let poly = UnivariatePoly::new(
+            (0..=degree as u64)
+                .map(|k| Fr::from_u64(3 * k + 2))
+                .collect(),
+        );
+        let coefficients = CenteredIntegerDomain::new(domain_size)
+            .round_sum_coefficients(UnivariatePolynomial::degree(&poly))
+            .unwrap();
+        let input_claim = <UnivariatePoly<Fr> as ClearRound<Fr>>::coefficient_linear_combination(
+            &poly,
+            &coefficients,
+        );
+
+        let mut prover_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
+        let proved = prove_uniskip_clear::<Fr, Bn254G1, _>(
+            poly,
+            input_claim,
+            degree,
+            domain_size,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
+        let challenge = verify_clear(
+            &proved.proof,
+            &UniskipParams::spartan_outer(),
+            input_claim,
+            proved.output_claim,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+
+        assert_eq!(challenge, proved.challenge);
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    }
+}

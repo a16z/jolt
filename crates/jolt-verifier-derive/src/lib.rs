@@ -204,7 +204,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    let relations = quote!(crate::stages::relations);
+    let relations = quote!(::jolt_verifier::stages::relations);
 
     let project = |alias: &TokenStream2, plan: &InstanceField| {
         let instance = &plan.instance;
@@ -356,7 +356,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::None, _, _) => ::core::option::Option::None,
                         (::core::option::Option::Some(__member), __inputs, _) => {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
+                                ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
                                     stage: __member.id(),
                                     reason: if __inputs.is_none() {
                                         "present instance is missing its input values"
@@ -468,7 +468,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
             ) -> ::core::result::Result<
                 (::jolt_sumcheck::BatchPrelude<#f>, #batching_coefficients_name<#f>),
-                crate::VerifierError,
+                ::jolt_verifier::VerifierError,
             >
             where
                 __R: ::jolt_sumcheck::SumcheckRecorder<#f>,
@@ -512,7 +512,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             challenges: &#challenges_name<#f>,
             proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
             transcript: &mut __T,
-        ) -> ::core::result::Result<#clear_batch_name<#f>, crate::VerifierError>
+        ) -> ::core::result::Result<#clear_batch_name<#f>, ::jolt_verifier::VerifierError>
         where
             __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
             __T: ::jolt_transcript::Transcript<Challenge = #f>,
@@ -530,7 +530,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     __batch.claimed_sum,
                     transcript,
                 )
-                .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
+                .map_err(|error| ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
                     stage: self.#stage_id_ident.id(),
                     reason: error.to_string(),
                 })?;
@@ -578,7 +578,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
             ) -> ::core::result::Result<
                 ::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
-                crate::VerifierError,
+                ::jolt_verifier::VerifierError,
             >
             where
                 __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
@@ -595,7 +595,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
                 let __consistency = proof
                     .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
-                    .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
+                    .map_err(|error| ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
                         stage: self.#stage_id_ident.id(),
                         reason: error.to_string(),
                     })?;
@@ -634,7 +634,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::None, _) => ::core::option::Option::None,
                         (::core::option::Option::Some(__member), ::core::option::Option::None) => {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
+                                ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
                                     stage: __member.id(),
                                     reason: "present instance is missing its input opening points"
                                         .to_string(),
@@ -663,7 +663,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 &self,
                 batch_point: &[#f],
                 input_points: &#input_points_name<#f>,
-            ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError> {
+            ) -> ::core::result::Result<#output_points_name<#f>, ::jolt_verifier::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
 
                 #(#point_bindings)*
@@ -726,7 +726,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn validate_aliases(
                 &self,
                 output_values: &#output_claims_name<#f>,
-            ) -> ::core::result::Result<(), crate::VerifierError> {
+            ) -> ::core::result::Result<(), ::jolt_verifier::VerifierError> {
                 use ::jolt_claims::OutputClaims as _;
                 let __resolve = |__id: &::jolt_claims::protocols::jolt::JoltOpeningId| {
                     ::core::option::Option::<#f>::None
@@ -762,7 +762,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                             challenges.#id.as_ref(),
                         ) else {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
+                                ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
                                     stage: __member.id(),
                                     reason: "present instance is missing a coefficient, claim, \
                                              point, or challenge cell for the final-claim fold"
@@ -797,7 +797,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 output_values: &#output_claims_name<#f>,
                 output_points: &#output_points_name<#f>,
                 challenges: &#challenges_name<#f>,
-            ) -> ::core::result::Result<#f, crate::VerifierError> {
+            ) -> ::core::result::Result<#f, ::jolt_verifier::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 // The fold consumes the aliased wire copies, so their equality
                 // with the canonical sources is enforced here, unskippably.
@@ -899,7 +899,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn validate_output_claims(
                 &self,
                 claims: &#output_claims_name<#f>,
-            ) -> ::core::result::Result<(), crate::VerifierError> {
+            ) -> ::core::result::Result<(), ::jolt_verifier::VerifierError> {
                 #(#validate_checks)*
                 ::core::result::Result::Ok(())
             }
@@ -923,7 +923,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn draw_challenges<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
                 &self,
                 transcript: &mut __T,
-            ) -> ::core::result::Result<#challenges_name<#f>, crate::VerifierError> {
+            ) -> ::core::result::Result<#challenges_name<#f>, ::jolt_verifier::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 ::core::result::Result::Ok(#challenges_name {
                     #(#draw_fields,)*
