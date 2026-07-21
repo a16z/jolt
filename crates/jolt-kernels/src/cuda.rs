@@ -61,6 +61,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/prefix_combine.cu"),
     include_str!("cuda/read_table_round.cu"),
     include_str!("cuda/prefix_suffix_round.cu"),
+    include_str!("cuda/prefix_suffix_round3.cu"),
     include_str!("cuda/bind_high_to_low.cu"),
     include_str!("cuda/batched_bind_high_to_low.cu"),
     include_str!("cuda/mul_scalar.cu"),
@@ -124,6 +125,7 @@ pub struct CudaKernelContext {
     prefix_combine_probe: CudaFunction,
     read_table_round_pairs: CudaFunction,
     prefix_suffix_round_pairs: CudaFunction,
+    prefix_suffix_round_pairs3: CudaFunction,
     bind_high_to_low_kernel: CudaFunction,
     batched_bind_high_to_low_kernel: CudaFunction,
     mul_scalar: CudaFunction,
@@ -851,6 +853,17 @@ pub struct PrefixSuffixRoundInputs<'a> {
     pub len: usize,
 }
 
+pub struct PrefixSuffixRoundTriple<'a> {
+    pub prefix: &'a DeviceFrVec,
+    pub q0: &'a DeviceFrVec,
+    pub q1: &'a DeviceFrVec,
+}
+
+pub struct PrefixSuffixRound3Inputs<'a> {
+    pub triples: [PrefixSuffixRoundTriple<'a>; 3],
+    pub len: usize,
+}
+
 pub struct RamRwCycleRoundInputs<'a> {
     pub val_coeff: &'a DeviceFrVec,
     pub ra_coeff: &'a DeviceFrVec,
@@ -1174,6 +1187,7 @@ impl CudaKernelContext {
             prefix_combine_probe: module.load_function("prefix_combine_probe")?,
             read_table_round_pairs: module.load_function("read_table_round_pairs")?,
             prefix_suffix_round_pairs: module.load_function("prefix_suffix_round_pairs")?,
+            prefix_suffix_round_pairs3: module.load_function("prefix_suffix_round_pairs3")?,
             bind_high_to_low_kernel: module.load_function("bind_high_to_low_kernel")?,
             batched_bind_high_to_low_kernel: module
                 .load_function("batched_bind_high_to_low_kernel")?,
@@ -5785,6 +5799,14 @@ impl CudaKernelContext {
         Ok((eval_0, eval_2_right + eval_2_right - eval_2_left))
     }
 
+    pub fn prefix_suffix_round_evals3(
+        &self,
+        inputs: PrefixSuffixRound3Inputs<'_>,
+    ) -> Result<[(Fr, Fr); 3], CudaError> {
+        let _ = inputs;
+        Err(CudaError::Unsupported)
+    }
+
     pub fn rd_wa_gather(
         &self,
         address_eq: &[Fr],
@@ -9727,6 +9749,68 @@ mod tests {
                 .unwrap();
             assert_eq!(got, expected);
         }
+    }
+
+    #[test]
+    fn prefix_suffix_round_evals3_matches_cpu() {
+        use crate::stage5::prefix_suffix_round_evals;
+
+        let c = ctx();
+        let len = 32usize;
+        let seed = Fr::from_u64(4242);
+        let build = |base: u64| -> (Vec<Fr>, Vec<Fr>, Vec<Fr>) {
+            let prefix = (0..len)
+                .map(|j| seed + Fr::from_u64(base + j as u64))
+                .collect::<Vec<_>>();
+            let q0 = (0..len)
+                .map(|j| seed + Fr::from_u64(base + 100 + j as u64))
+                .collect::<Vec<_>>();
+            let q1 = (0..len)
+                .map(|j| seed + Fr::from_u64(base + 200 + j as u64))
+                .collect::<Vec<_>>();
+            (prefix, q0, q1)
+        };
+        let triples = [build(1), build(1000), build(2000)];
+
+        let expected: Vec<(Fr, Fr)> = triples
+            .iter()
+            .map(|(prefix, q0, q1)| prefix_suffix_round_evals(Some(prefix.as_slice()), q0, q1))
+            .collect();
+
+        let dev: Vec<(DeviceFrVec, DeviceFrVec, DeviceFrVec)> = triples
+            .iter()
+            .map(|(prefix, q0, q1)| {
+                (
+                    c.upload(prefix).unwrap(),
+                    c.upload(q0).unwrap(),
+                    c.upload(q1).unwrap(),
+                )
+            })
+            .collect();
+
+        let got = c
+            .prefix_suffix_round_evals3(PrefixSuffixRound3Inputs {
+                triples: [
+                    PrefixSuffixRoundTriple {
+                        prefix: &dev[0].0,
+                        q0: &dev[0].1,
+                        q1: &dev[0].2,
+                    },
+                    PrefixSuffixRoundTriple {
+                        prefix: &dev[1].0,
+                        q0: &dev[1].1,
+                        q1: &dev[1].2,
+                    },
+                    PrefixSuffixRoundTriple {
+                        prefix: &dev[2].0,
+                        q0: &dev[2].1,
+                        q1: &dev[2].2,
+                    },
+                ],
+                len,
+            })
+            .unwrap();
+        assert_eq!(got.to_vec(), expected);
     }
 
     #[test]
