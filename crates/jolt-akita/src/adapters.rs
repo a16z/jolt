@@ -729,7 +729,14 @@ pub(crate) fn deserialize_akita<T>(bytes: &[u8], ctx: &T::Context) -> Result<T, 
 where
     T: AkitaDeserialize,
 {
-    T::deserialize_compressed(Cursor::new(bytes), ctx).map_err(akita_error)
+    let mut cursor = Cursor::new(bytes);
+    let value = T::deserialize_compressed(&mut cursor, ctx).map_err(akita_error)?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(invalid_batch(
+            "Akita payload has trailing bytes after deserialization",
+        ));
+    }
+    Ok(value)
 }
 
 pub(crate) fn invalid_batch(message: impl Into<String>) -> OpeningsError {

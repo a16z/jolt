@@ -47,8 +47,36 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
-/// Regenerates both family modules through the planner DP and compares them
-/// byte-for-byte against the checked-in tables. Slow (re-runs every DP
+/// Splits Rust source into a whitespace-insensitive token stream:
+/// identifier/number runs stay whole, every other non-whitespace character is
+/// its own token. The planner emits unformatted source while the checked-in
+/// modules are rustfmt-formatted (outside the `#[rustfmt::skip]` tables), so a
+/// byte-for-byte oracle reports pure formatting as drift; token equality
+/// detects every semantic change while ignoring layout. The checked-in file's
+/// formatting itself is enforced by the workspace `cargo fmt` lane.
+fn source_tokens(source: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for ch in source.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            current.push(ch);
+        } else {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            if !ch.is_whitespace() {
+                tokens.push(ch.to_string());
+            }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// Regenerates both family modules through the planner DP and compares their
+/// token streams against the checked-in tables. Slow (re-runs every DP
 /// solve) — run explicitly:
 /// `cargo nextest run -p jolt-akita catalogs_match_planner --run-ignored all`
 #[test]
@@ -63,10 +91,21 @@ fn catalogs_match_planner_regeneration() {
                 .join(format!("{}.rs", spec.module_name)),
         )
         .expect("checked-in table must exist");
-        assert_eq!(
-            regenerated, checked_in,
-            "{} drifted from the planner DP — regenerate via gen_jolt_schedules",
-            spec.module_name
-        );
+        let regenerated = source_tokens(&regenerated);
+        let checked_in = source_tokens(&checked_in);
+        if let Some(index) = (0..regenerated.len().max(checked_in.len()))
+            .find(|&index| regenerated.get(index) != checked_in.get(index))
+        {
+            let context = |tokens: &[String]| {
+                tokens[index.saturating_sub(8)..(index + 8).min(tokens.len())].join(" ")
+            };
+            panic!(
+                "{} drifted from the planner DP — regenerate via gen_jolt_schedules\n  \
+                 first mismatch at token {index}\n  planner:    …{}…\n  checked-in: …{}…",
+                spec.module_name,
+                context(&regenerated),
+                context(&checked_in),
+            );
+        }
     }
 }
