@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784243058164,
+  "lastUpdate": 1784676087397,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -124366,6 +124366,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 872088,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "software@randomwalks.xyz",
+            "name": "Ari",
+            "username": "abiswas3"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e2aa512506304021b1e674895bd8a9e98bbf542",
+          "message": "Rust to lean bytecode expansiosn (#1666)\n\n* Minimal changes to grammar; expansions in test\n\nJust making the grammar printable has given us a huge leg up\n\n* negative intermediate printing\n\n* For the other ai to read.\n\n* Updating nested vs flattened logic.\n\n* updated doc:\n\nThings look like they'll work out but fuck only knows till we build it.\n\n* Add jolt-lean-gen: generate Lean expansions from the Rust expander\n\nNew CLI crate that runs the real bytecode expander (expand_instruction)\nfor a source instruction and prints the result as a Lean Program, so the\nRust expander is the source of truth for the hand-written Lean expansions\nin JoltISA/Expansions/. Both arms of the rd==x0 branch are emitted.\n\n- Classify each source-only kind as Expand / Unsupported / NotExpandable;\n  leave System/CSR, load-reserved (LRW/LRD), store-conditional (SCW/SCD)\n  and Inline hand-coded for now.\n- Split the LD fault class from the alignment-assert exception class: a\n  plain store's read-modify-write read is a normal load (.normal), while\n  only true atomics (AMO/LR/SC) use the .amo read side. The class is\n  unreachable at runtime for the always-aligned internal read and only\n  selects the Sail exception class the proof layer expects.\n- Expose is_source_only from jolt-program so the generator gates on the\n  same expand-vs-native decision the expander uses.\n- Drop the superseded prototype dump-recipe tests now covered by the crate.\n\nVerified the generated output matches the hand-written Lean across all 57\nsupported instructions (DivRem, loads, atomics, ALU/Mul, stores); the only\nremaining divergences are the advice-load rd==x0 handling (a Lean-side bug)\nand the SRLIW/SRAIW bitmask spelling (provably equal values).\n\n* Add jolt-lean-gen: generate Lean expansions from the Rust expander\n\nNew CLI crate that runs the real bytecode expander (expand_instruction)\nfor a source instruction and prints the result as a Lean Program, so the\nRust expander is the source of truth for the hand-written Lean expansions\nin JoltISA/Expansions/. Both arms of the rd==x0 branch are emitted.\n\n- Classify each source-only kind as Expand / Unsupported / NotExpandable;\n  leave System/CSR, load-reserved (LRW/LRD), store-conditional (SCW/SCD)\n  and Inline hand-coded for now.\n- Split the LD fault class from the alignment-assert exception class: a\n  plain store's read-modify-write read is a normal load (.normal), while\n  only true atomics (AMO/LR/SC) use the .amo read side. The class is\n  unreachable at runtime for the always-aligned internal read and only\n  selects the Sail exception class the proof layer expects.\n- Expose is_source_only from jolt-program so the generator gates on the\n  same expand-vs-native decision the expander uses.\n- Drop the superseded prototype dump-recipe tests now covered by the crate.\n\nVerified the generated output matches the hand-written Lean across all 57\nsupported instructions (DivRem, loads, atomics, ALU/Mul, stores); the only\nremaining divergences are the advice-load rd==x0 handling (a Lean-side bug)\nand the SRLIW/SRAIW bitmask spelling (provably equal values).\n\n* jolt-lean-gen: add --lean command to emit a compilable Lean file\n\n`--lean` prints one `<name>ProgramAuto` def per supported source\ninstruction as a single Lean file (namespace JoltISA), mirroring the\nhand-written programs in JoltISA/Expansions/. rd-writing kinds render\nboth arms of the rd==x0 branch as `if isX0 rd then … else …`; stores\n(no rd) render a single body.\n\n- Render registers as valid Lean terms: virtual temps as `inlineTmp n`\n  (inlineTmp0 = v40), x0 as `regidx.Regidx 0`; source operands stay\n  bare parameters rd/rs1/rs2 and the pass-through immediate a BitVec 12.\n- Reuse the immediate helpers (slliMultiplier/sraiBitmask/srliBitmask)\n  from Expansions.ALU rather than inlining raw bitmasks.\n- Factor the fault-class/alignment logic into fault_info and the row\n  rendering into arm_lines, shared by the existing --all dump.\n\nVerified the output builds: lake build JoltBytecode.JoltISA.ExpansionsAutomated.\n\n* jolt-lean-gen: emit advice values as symbolic parameters\n\nAdvice instructions (VirtualAdvice/VirtualAdviceLoad) carry an oracle\nvalue the trace supplies; the concrete immediate the expander emits there\nis only a placeholder. Baking it (e.g. 0) modelled the wrong program, so\nrender each advice operand as a fresh symbolic `adviceN : BitVec 64`\nparameter instead.\n\n- Detect advice rows via the canonical `CircuitFlags::Advice` flag rather\n  than matching opcode names.\n- Determine a def's parameters (rd/rs1/rs2/imm) from the expansion's row\n  operand fields instead of scanning the rendered text.\n- Fault classification stays name-based (a Lean-side synthesized concept\n  with no Rust source of truth).\n\nThis makes the generated DivRem/advice programs general over the advice\nvalues, matching the hand-written Lean.\n\n* Ready for merge!\n\n* Remove documentation.\n\n* Fix typos in jolt-lean-gen comments\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* Fixed Michaels comment, and one line Lean generator\n\nThe way we generate lean translations is by leveraging the existing\nexpander. for LB rd imm, we give a fake value for rd=x1 and imm=37.\nAnd then tell the printer if you see imm=37 use imm else use the actual\nconstant.\nNow if ANY expansion used 37 as the hardcoded value, we'd screw up. We\nwould not use the harcoded value, we would use imm. And generate\ngarbage. Currently it does not but it could later. So we add in a check\nby using both 37 and 41, and if in both cases the row.imm equals 37 and\n41, then we know that immediate is not hardcoded.\n\n* Readme update\n\n* Delete notes/source-to-source-transpiler.md\n\n* Delete notes/transpiler-plan.md\n\n* Cocked up Cargo.lock on merge -- fixed now\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-07-21T15:17:24-07:00",
+          "tree_id": "9b789fa5ee8e796a50dcc7352488870a2e94671c",
+          "url": "https://github.com/a16z/jolt/commit/7e2aa512506304021b1e674895bd8a9e98bbf542"
+        },
+        "date": 1784676082621,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.1846,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 870004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3088,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 506976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 508976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7203,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 496956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5871,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 496724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.9532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 501004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9383,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 201724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4295,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 867236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5651,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4662,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 504380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.4189,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.0928,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 499468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.7575,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1058256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.4189,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 627688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 96.4356,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2130752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4956,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 509048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5314,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 506932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.7927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 872044,
             "unit": "KB",
             "extra": ""
           }
