@@ -265,13 +265,13 @@ macro_rules! __stage_member {
             $challenges.$member.as_ref(),
         )?
     };
-    (push required $member:ident, $rounds:ident) => {
-        $rounds.push(&mut *$member);
+    (round_slot required $member:ident) => {
+        ::core::option::Option::Some(&mut *$member as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
     };
-    (push optional $member:ident, $rounds:ident) => {
-        if let ::core::option::Option::Some(__kernel) = $member.as_mut() {
-            $rounds.push(&mut **__kernel);
-        }
+    (round_slot optional $member:ident) => {
+        $member
+            .as_mut()
+            .map(|__kernel| &mut **__kernel as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
     };
     (validate required $member:ident, $self:expr, $input_points:expr, $output_points:expr, $challenges:expr) => {
         $member.validate_derived_tables(
@@ -389,8 +389,10 @@ macro_rules! impl_stage_prover {
                 )?;
 
                 let mut __rounds: ::std::vec::Vec<&mut dyn ::jolt_sumcheck::ProveRounds<F>> =
-                    ::std::vec::Vec::new();
-                $($crate::driver::__stage_member!(push $presence $member, __rounds);)+
+                    [$($crate::driver::__stage_member!(round_slot $presence $member),)+]
+                        .into_iter()
+                        .flatten()
+                        .collect();
                 let __proved = ::jolt_sumcheck::prove_batch(
                     &__batch,
                     &mut __rounds,

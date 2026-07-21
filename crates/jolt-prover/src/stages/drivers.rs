@@ -6,6 +6,34 @@
 //! surface — no stage's member list, order, or presence appears anywhere
 //! else in this crate.
 
+mod stage1 {
+    use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+    use jolt_verifier::stages::stage1::outputs::{
+        Stage1BatchChallenges, Stage1BatchInputClaims, Stage1BatchInputPoints,
+        Stage1BatchOutputClaims, Stage1BatchOutputPoints, Stage1BatchSumchecks,
+    };
+
+    use crate::driver::impl_stage_prover;
+
+    jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover);
+}
+
+mod stage2 {
+    use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
+    use jolt_verifier::stages::stage2::outputs::{
+        Stage2BatchChallenges, Stage2BatchInputClaims, Stage2BatchInputPoints,
+        Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2BatchSumchecks,
+    };
+    use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+    use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
+    use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
+    use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
+
+    use crate::driver::impl_stage_prover;
+
+    jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover);
+}
+
 mod stage3 {
     use jolt_verifier::stages::stage3::outputs::{
         InstructionInput, RegistersClaimReduction, SpartanShift, Stage3Challenges,

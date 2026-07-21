@@ -40,7 +40,7 @@ use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_f
 use jolt_verifier::VerifierError;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{BackendPreparer, ProverConfig, ProverError};
+use crate::{ProverConfig, ProverError, StageProver as _};
 
 /// Stage 2's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
@@ -150,14 +150,10 @@ where
     // Park the uni-skip-bound instance: the remainder member's `prepare`
     // reclaims it and binds it to the stage's relation.
     session.park(ParkedProductInstance(product));
-    let mut preparer = BackendPreparer {
+    let proved = sumchecks.prove(
         backend,
         session,
         witness,
-        context: (),
-    };
-    let proved = sumchecks.prove_clear(
-        &mut preparer,
         &inputs,
         &input_points,
         &challenges,
