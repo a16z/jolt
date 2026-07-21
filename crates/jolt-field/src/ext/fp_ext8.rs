@@ -430,8 +430,6 @@ impl<F: FieldCore + FromPrimitiveInt> FromPrimitiveInt for FpExt8<F> {
     }
 }
 
-impl<F: FieldCore + BalancedDigitLookup> BalancedDigitLookup for FpExt8<F> {}
-
 macro_rules! impl_fp_ext8_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
         impl<const $p: $pty> HasUnreducedOps for FpExt8<$base<$p>> {

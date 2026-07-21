@@ -28,7 +28,7 @@ impl<F: FieldCore + FromPrimitiveInt> FpExt2Config<F> for TwoNr {
     #[inline]
     fn mul_non_residue<A, B>(x: A, _from_base: B) -> A
     where
-        A: ExtensionCoeff<F>,
+        A: Copy + Add<Output = A> + Sub<Output = A> + Mul<Output = A>,
         B: FnOnce(F) -> A,
     {
         x + x
@@ -50,7 +50,7 @@ pub trait FpExt2Config<F: FieldCore> {
     #[inline]
     fn mul_non_residue<A, B>(x: A, from_base: B) -> A
     where
-        A: ExtensionCoeff<F>,
+        A: Copy + Add<Output = A> + Sub<Output = A> + Mul<Output = A>,
         B: FnOnce(F) -> A,
     {
         if Self::IS_NEG_ONE {
@@ -315,8 +315,6 @@ impl<F: FieldCore + FromPrimitiveInt, C: FpExt2Config<F>> FromPrimitiveInt for F
         Self::new(F::from_i128(val), F::zero())
     }
 }
-
-impl<F: FieldCore + BalancedDigitLookup, C: FpExt2Config<F>> BalancedDigitLookup for FpExt2<F, C> {}
 
 /// Identity-stub `HasUnreducedOps` for `FpExt2` variants without a dedicated
 /// delayed-reduction accumulator. `ProductAccum = Self`, so every multiply

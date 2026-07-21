@@ -4,9 +4,8 @@ use rand_core::RngCore;
 use crate::{
     AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
     FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt,
-    NaiveAccumulator, NaiveSignedProductAccumulator, NaiveSignedScalarAccumulator, RandomSampling,
-    ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator,
-    WithSmallScalarAccumulator,
+    NaiveAccumulator, RandomSampling, ReducingBytes, RingCore, TranscriptChallenge,
+    WithAccumulator,
 };
 
 impl AdditiveGroup for AkitaField {}
@@ -98,14 +97,6 @@ impl CanonicalU64 for AkitaField {
 
 impl WithAccumulator for AkitaField {
     type Accumulator = NaiveAccumulator<Self>;
-}
-
-impl WithSmallScalarAccumulator for AkitaField {
-    type SmallScalarAccumulator = NaiveSignedScalarAccumulator<Self>;
-}
-
-impl WithSignedProductAccumulator for AkitaField {
-    type SignedProductAccumulator = NaiveSignedProductAccumulator<Self>;
 }
 
 impl Field for AkitaField {}

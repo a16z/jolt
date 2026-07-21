@@ -28,21 +28,18 @@ pub trait HalvingField: FieldCore {
     }
 }
 
-/// Balanced signed-digit lookup support for small power-of-two bases.
-pub trait BalancedDigitLookup: FromPrimitiveInt + Zero + Copy {
-    /// Builds the balanced digit table for `1 <= log_basis <= 6`.
-    fn digit_lut(log_basis: u32) -> [Self; 64] {
-        debug_assert!(log_basis > 0 && log_basis <= 6);
-        let basis = 1usize << log_basis;
-        let half_basis = (basis >> 1) as i64;
-        std::array::from_fn(|i| {
-            if i < basis {
-                Self::from_i64(i as i64 - half_basis)
-            } else {
-                Self::zero()
-            }
-        })
-    }
+/// Builds the balanced signed-digit table for `1 <= log_basis <= 6`.
+pub fn balanced_digit_lut<F: FromPrimitiveInt + Zero + Copy>(log_basis: u32) -> [F; 64] {
+    debug_assert!(log_basis > 0 && log_basis <= 6);
+    let basis = 1usize << log_basis;
+    let half_basis = (basis >> 1) as i64;
+    std::array::from_fn(|i| {
+        if i < basis {
+            F::from_i64(i as i64 - half_basis)
+        } else {
+            F::zero()
+        }
+    })
 }
 
 /// Metadata for a pseudo-Mersenne modulus `2^k - c`.
@@ -52,13 +49,4 @@ pub trait PseudoMersenneField: CanonicalField {
 
     /// Offset `c` in `2^k - c`.
     const MODULUS_OFFSET: u128;
-}
-
-/// Field with a precomputed primitive root of a supported smooth subgroup.
-pub trait SmoothFftField: CanonicalField + PseudoMersenneField {
-    /// Order of the supported smooth multiplicative subgroup.
-    const SMOOTH_SUBGROUP_ORDER: usize;
-
-    /// Canonical representation of its primitive root.
-    const SMOOTH_OMEGA: u128;
 }

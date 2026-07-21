@@ -28,8 +28,8 @@
 //! # Solinas types (feature `solinas`)
 //!
 //! The Solinas backend provides optimized 32-, 64-, and 128-bit prime fields,
-//! extension fields, packed NEON/AVX2/AVX-512 implementations, unreduced
-//! accumulators, and smooth-domain FFT helpers. Akita adopts these types
+//! extension fields, packed NEON/AVX2/AVX-512 implementations, and unreduced
+//! accumulators. Akita adopts these types
 //! directly in its cutover to `jolt-field`. Until that cutover lands, the
 //! temporary `akita` feature retains the legacy adapter for the pre-cutover
 //! `akita-field` types; it is a bootstrap edge, not the target architecture,
@@ -60,8 +60,6 @@ mod mul_primitive_int;
 mod random_sampling;
 mod reducing_bytes;
 mod ring_core;
-mod signed_product_accumulator;
-mod small_scalar_accumulator;
 #[cfg(feature = "solinas")]
 mod solinas_traits;
 mod transcript_challenge;
@@ -86,16 +84,8 @@ pub use num_traits::{One, Zero};
 pub use random_sampling::RandomSampling;
 pub use reducing_bytes::ReducingBytes;
 pub use ring_core::RingCore;
-pub use signed_product_accumulator::{
-    NaiveSignedProductAccumulator, SignedProductAccumulator, WithSignedProductAccumulator,
-};
-pub use small_scalar_accumulator::{
-    NaiveSignedScalarAccumulator, SignedScalarAccumulator, WithSmallScalarAccumulator,
-};
 #[cfg(feature = "solinas")]
-pub use solinas_traits::{
-    BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField, SmoothFftField,
-};
+pub use solinas_traits::{balanced_digit_lut, CanonicalField, HalvingField, PseudoMersenneField};
 pub use transcript_challenge::TranscriptChallenge;
 pub use with_accumulator::WithAccumulator;
 
@@ -106,8 +96,6 @@ pub mod signed;
 
 #[cfg(feature = "solinas")]
 mod ext;
-#[cfg(feature = "solinas")]
-pub mod fft;
 #[cfg(feature = "solinas")]
 pub mod packed;
 #[cfg(feature = "solinas")]
@@ -141,9 +129,5 @@ pub mod arkworks;
 pub use arkworks::bn254::Fr;
 #[cfg(feature = "bn254")]
 pub use arkworks::bn254_fq::Fq;
-#[cfg(feature = "bn254")]
-pub use arkworks::signed_product_accumulator::FrSignedProductAccumulator;
-#[cfg(feature = "bn254")]
-pub use arkworks::small_scalar_accumulator::FrSmallScalarAccumulator;
 #[cfg(feature = "bn254")]
 pub use arkworks::wide_accumulator::WideAccumulator;

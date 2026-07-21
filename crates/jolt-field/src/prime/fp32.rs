@@ -9,7 +9,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use crate::{FromPrimitiveInt, Invertible, RandomSampling};
 use rand_core::RngCore;
 
-use crate::{BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField};
+use crate::{CanonicalField, HalvingField, PseudoMersenneField};
 
 /// Prime field element for primes `p = 2^k − c` stored as `u32`.
 ///
@@ -420,8 +420,6 @@ impl<const P: u32> FromPrimitiveInt for Fp32<P> {
         }
     }
 }
-
-impl<const P: u32> BalancedDigitLookup for Fp32<P> {}
 
 impl<const P: u32> CanonicalField for Fp32<P> {
     fn to_canonical_u128(self) -> u128 {

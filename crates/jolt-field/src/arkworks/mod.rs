@@ -10,8 +10,6 @@ pub mod bn254;
 pub mod bn254_fq;
 pub(crate) mod bn254_ops;
 pub mod montgomery_impl;
-pub mod signed_product_accumulator;
-pub mod small_scalar_accumulator;
 pub mod wide_accumulator;
 
 impl<const N: usize> From<Limbs<N>> for BigInt<N> {

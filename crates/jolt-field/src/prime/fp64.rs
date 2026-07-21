@@ -9,7 +9,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use crate::{FromPrimitiveInt, Invertible, RandomSampling};
 use rand_core::RngCore;
 
-use crate::{BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField};
+use crate::{CanonicalField, HalvingField, PseudoMersenneField};
 
 use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 
@@ -508,8 +508,6 @@ impl<const P: u64> FromPrimitiveInt for Fp64<P> {
         }
     }
 }
-
-impl<const P: u64> BalancedDigitLookup for Fp64<P> {}
 
 impl<const P: u64> CanonicalField for Fp64<P> {
     fn to_canonical_u128(self) -> u128 {

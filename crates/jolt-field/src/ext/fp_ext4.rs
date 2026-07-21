@@ -12,10 +12,9 @@ use super::*;
 
 /// Multiply ring-subfield quartic coefficient arrays in `[1, e1, e2, e3]` basis.
 #[inline]
-pub(crate) fn fp_ext4_mul_coeffs<F, A>(a: [A; 4], b: [A; 4]) -> [A; 4]
+pub(crate) fn fp_ext4_mul_coeffs<A>(a: [A; 4], b: [A; 4]) -> [A; 4]
 where
-    F: FieldCore,
-    A: ExtensionCoeff<F>,
+    A: Copy + Add<Output = A> + Sub<Output = A> + Mul<Output = A>,
 {
     let [a0, a1, a2, a3] = a;
     let [b0, b1, b2, b3] = b;
@@ -30,10 +29,9 @@ where
 
 /// Square ring-subfield quartic coefficient arrays in `[1, e1, e2, e3]` basis.
 #[inline]
-pub(crate) fn fp_ext4_square_coeffs<F, A>(a: [A; 4]) -> [A; 4]
+pub(crate) fn fp_ext4_square_coeffs<A>(a: [A; 4]) -> [A; 4]
 where
-    F: FieldCore,
-    A: ExtensionCoeff<F>,
+    A: Copy + Add<Output = A> + Sub<Output = A> + Mul<Output = A>,
 {
     let [a0, a1, a2, a3] = a;
     let x0 = a0;
@@ -96,13 +94,13 @@ pub trait FpExt4MulBackend: FieldCore {
     /// Multiply two ring-subfield coefficient arrays in `[1, e1, e2, e3]` basis.
     #[inline(always)]
     fn fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
-        fp_ext4_mul_coeffs::<Self, Self>(a, b)
+        fp_ext4_mul_coeffs::<Self>(a, b)
     }
 
     /// Square one ring-subfield coefficient array in `[1, e1, e2, e3]` basis.
     #[inline(always)]
     fn fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
-        fp_ext4_square_coeffs::<Self, Self>(a)
+        fp_ext4_square_coeffs::<Self>(a)
     }
 }
 
@@ -511,8 +509,6 @@ impl<F: FieldCore + FromPrimitiveInt> FromPrimitiveInt for FpExt4<F> {
         Self::new([F::from_i128(val), F::zero(), F::zero(), F::zero()])
     }
 }
-
-impl<F: FieldCore + BalancedDigitLookup> BalancedDigitLookup for FpExt4<F> {}
 
 impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     type MulU64Accum = Self;

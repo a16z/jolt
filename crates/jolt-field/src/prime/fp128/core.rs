@@ -104,23 +104,4 @@ impl<const P: u128> Fp128<P> {
             ))
         }
     }
-
-    /// Const-evaluable lookup table for balanced digits in `[-b/2, b/2)`
-    /// where `b = 2^log_basis`. Requires `log_basis <= 6`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `log_basis` is outside `1..=6`.
-    pub const fn digit_lut(log_basis: u32) -> [Self; 64] {
-        assert!(log_basis > 0 && log_basis <= 6);
-        let b = 1u32 << log_basis;
-        let half_b = (b / 2) as i64;
-        let mut lut = [Self(pack(0, 0)); 64];
-        let mut i = 0u32;
-        while i < b {
-            lut[i as usize] = Self::from_i64_const(i as i64 - half_b);
-            i += 1;
-        }
-        lut
-    }
 }

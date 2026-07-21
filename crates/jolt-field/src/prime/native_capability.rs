@@ -12,8 +12,7 @@ use super::{Fp128, Fp32, Fp64};
 use crate::{
     CanonicalBitLength, CanonicalBytes, CanonicalField, CanonicalU64, Field, FieldCore,
     FixedByteSize, FixedBytes, FromPrimitiveInt, MulPow2, MulPrimitiveInt, NaiveAccumulator,
-    NaiveSignedProductAccumulator, NaiveSignedScalarAccumulator, ReducingBytes,
-    TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator, WithSmallScalarAccumulator,
+    ReducingBytes, TranscriptChallenge, WithAccumulator,
 };
 
 macro_rules! impl_prime_native_capability {
@@ -74,14 +73,6 @@ macro_rules! impl_prime_native_capability {
 
         impl<const $p: $p_ty> WithAccumulator for $ty<$p> {
             type Accumulator = NaiveAccumulator<Self>;
-        }
-
-        impl<const $p: $p_ty> WithSmallScalarAccumulator for $ty<$p> {
-            type SmallScalarAccumulator = NaiveSignedScalarAccumulator<Self>;
-        }
-
-        impl<const $p: $p_ty> WithSignedProductAccumulator for $ty<$p> {
-            type SignedProductAccumulator = NaiveSignedProductAccumulator<Self>;
         }
 
         impl<const $p: $p_ty> Field for $ty<$p> {}

@@ -151,12 +151,6 @@ impl<const P: u128> FromPrimitiveInt for Fp128<P> {
     }
 }
 
-impl<const P: u128> BalancedDigitLookup for Fp128<P> {
-    fn digit_lut(log_basis: u32) -> [Self; 64] {
-        Self::digit_lut(log_basis)
-    }
-}
-
 impl<const P: u128> CanonicalField for Fp128<P> {
     fn to_canonical_u128(self) -> u128 {
         to_u128(self.0)

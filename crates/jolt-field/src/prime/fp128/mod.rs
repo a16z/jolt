@@ -37,7 +37,7 @@ use crate::{FromPrimitiveInt, Invertible, RandomSampling};
 use rand_core::RngCore;
 
 use crate::{
-    BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField, SmoothFftField,
+    CanonicalField, HalvingField, PseudoMersenneField,
 };
 
 use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
