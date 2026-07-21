@@ -134,12 +134,10 @@ where
         .advice_blocks
         .iter()
         .map(|(kind, block)| {
-            let opening_value = backend.advice_claim_reduction.evaluate(
-                session,
-                *kind,
-                &block.opening_point,
-                witness,
-            )?;
+            let opening_value =
+                backend
+                    .advice_opening
+                    .evaluate(session, *kind, &block.opening_point, witness)?;
             Ok(VerifiedRamValCheckAdviceContribution {
                 kind: *kind,
                 selector: block.selector,

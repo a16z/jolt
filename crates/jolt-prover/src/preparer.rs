@@ -86,5 +86,13 @@ forward_prepare!(
     jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization<F> => ram_ra_virtualization,
     jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization<F> => instruction_ra_virtualization,
     jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction<F> => inc_claim_reduction,
+    jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::TrustedAdviceCyclePhase<F> => trusted_advice_cycle,
+    jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::UntrustedAdviceCyclePhase<F> => untrusted_advice_cycle,
+    jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhase<F> => bytecode_reduction_cycle,
+    jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::ProgramImageReductionCyclePhase<F> => program_image_reduction_cycle,
     jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction<F> => hamming_weight_claim_reduction,
+    jolt_verifier::stages::stage7::advice_address_phase::TrustedAdviceAddressPhase<F> => trusted_advice_address,
+    jolt_verifier::stages::stage7::advice_address_phase::UntrustedAdviceAddressPhase<F> => untrusted_advice_address,
+    jolt_verifier::stages::stage7::committed_reduction_address_phase::BytecodeReductionAddressPhase<F> => bytecode_reduction_address,
+    jolt_verifier::stages::stage7::committed_reduction_address_phase::ProgramImageReductionAddressPhase<F> => program_image_reduction_address,
 );

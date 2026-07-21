@@ -101,6 +101,16 @@ impl<F: Field> TrustedAdviceCyclePhase<F> {
             reference_opening_point,
         }
     }
+
+    pub fn layout(&self) -> &AdviceClaimReductionLayout {
+        &self.layout
+    }
+
+    /// The staged RAM value-check advice point the kernel's eq table binds
+    /// against (`None` in ZK, where no clear kernel runs).
+    pub fn reference_opening_point(&self) -> Option<&[F]> {
+        self.reference_opening_point.as_deref()
+    }
 }
 
 impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
@@ -178,6 +188,16 @@ impl<F: Field> UntrustedAdviceCyclePhase<F> {
             layout: layout.clone(),
             reference_opening_point,
         }
+    }
+
+    pub fn layout(&self) -> &AdviceClaimReductionLayout {
+        &self.layout
+    }
+
+    /// The staged RAM value-check advice point the kernel's eq table binds
+    /// against (`None` in ZK, where no clear kernel runs).
+    pub fn reference_opening_point(&self) -> Option<&[F]> {
+        self.reference_opening_point.as_deref()
     }
 }
 
@@ -268,6 +288,16 @@ impl<F: Field> ProgramImageReductionCyclePhase<F> {
             r_addr_rw,
         }
     }
+
+    pub fn layout(&self) -> &ProgramImageClaimReductionLayout {
+        &self.layout
+    }
+
+    /// The RAM address component of the stage-2 `RamVal` opening the kernel's
+    /// shifted eq slice binds against.
+    pub fn r_addr_rw(&self) -> &[F] {
+        &self.r_addr_rw
+    }
 }
 
 fn program_image_public_failed(reason: impl ToString) -> VerifierError {
@@ -355,6 +385,10 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
     /// rather than recomputing them.
     pub fn weights(&self) -> &BytecodeReductionWeights<F> {
         &self.weights
+    }
+
+    pub fn layout(&self) -> &BytecodeClaimReductionLayout {
+        &self.layout
     }
 }
 

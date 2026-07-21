@@ -851,10 +851,6 @@ mod muldiv {
                     &prover_preprocessing,
                     &stage4.clear_output,
                     &stage6b.clear_output,
-                    stage6b.trusted_advice_member,
-                    stage6b.untrusted_advice_member,
-                    stage6b.bytecode_reduction_member,
-                    stage6b.program_image_member,
                     &witness,
                     &mut new_transcript,
                 )

@@ -2,9 +2,10 @@
 //! phases, RAM Hamming booleanity, both RA virtualizations, the increment
 //! claim reduction, and the present precommitted claim-reduction cycle
 //! phases (advice, committed bytecode, program image — head-aligned
-//! members). A precommitted member with active address-phase rounds stages
-//! its intermediate claim here and its kernel object is carried to stage 7
-//! for the address phase.
+//! members). A precommitted member's cycle kernel parks its shared two-phase
+//! state in the proof session; when the schedule has active address-phase
+//! rounds it stages its intermediate claim here and stage 7's address-phase
+//! member reclaims the carry.
 //!
 //! Pure orchestration mirroring `stage6b::verify`: the bytecode gamma is
 //! carried from stage 6a's squeeze (no draw here), the instruction-RA and
@@ -18,11 +19,10 @@
 //! a multiple of the committed chunk width).
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, PrecommittedReductionLayout};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_kernels::precommitted_reduction::PrecommittedReductionProver;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
@@ -37,16 +37,11 @@ use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
 use jolt_verifier::stages::stage6b::batch::Stage6bBuildParts;
 use jolt_verifier::stages::stage6b::booleanity::BooleanityCyclePhaseChallenges;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCyclePhaseCommittedChallenges;
-use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
-    BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseOutputClaims,
-    ProgramImageReductionCyclePhaseOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
-    UntrustedAdviceCyclePhaseOutputClaims,
-};
+use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhaseChallenges;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReductionChallenges;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualizationChallenges;
 use jolt_verifier::stages::stage6b::outputs::{
-    Stage6bChallenges, Stage6bClearOutput, Stage6bExternalMembers, Stage6bOutputClaims,
-    Stage6bSumchecks,
+    Stage6bChallenges, Stage6bClearOutput, Stage6bOutputClaims, Stage6bSumchecks,
 };
 use jolt_verifier::stages::stage6b::{
     stage6b_input_points_from_upstream, stage6b_input_values_from_upstream, stage6b_opening_values,
@@ -54,20 +49,16 @@ use jolt_verifier::stages::stage6b::{
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use super::precommitted::{scalar_phase_adapter, PrecommittedKernelAdapter};
 use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// Stage 6b's outputs: the wire proof, the wire claims, the verifier-typed
-/// cross-stage carrier stage 7 consumes, and the still-bound advice reduction
-/// kernels (present when scheduled) that span into stage 7's address phase.
+/// Stage 6b's outputs: the wire proof, the wire claims, and the verifier-typed
+/// cross-stage carrier stage 7 consumes. The precommitted reduction kernels
+/// that span into stage 7's address phase travel as `ProofSession` carries,
+/// not output fields.
 pub struct Stage6bProverOutput<F: Field, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
-    pub trusted_advice_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
-    pub untrusted_advice_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
-    pub bytecode_reduction_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
-    pub program_image_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
 }
 
 /// Prove stage 6b on `transcript` (positioned at the stage-6a boundary).
@@ -221,132 +212,12 @@ where
     );
 
     // The committed-program weights: read back off the batch member (the
-    // `build_from_parts` fold), for the bytecode reduction kernel and the
-    // clear carrier stage 7 consumes.
+    // `build_from_parts` fold), for the clear carrier stage 7 consumes (the
+    // bytecode reduction kernel reads them off its relation).
     let bytecode_weights = sumchecks
         .bytecode_reduction
         .as_ref()
         .map(|member| member.weights().clone());
-
-    let prepare_advice =
-        |session: &mut ProofSession,
-         kind: JoltAdviceKind,
-         layout: Option<&jolt_claims::protocols::jolt::AdviceClaimReductionLayout>|
-         -> Result<Option<Box<dyn PrecommittedReductionProver<F>>>, ProverError<F>> {
-            let Some(layout) = layout else {
-                return Ok(None);
-            };
-            let reference = advice_reference(kind).ok_or(ProverError::InvariantViolation {
-                reason: "stage 4 staged no advice opening for a scheduled advice reduction",
-            })?;
-            Ok(Some(
-                backend
-                    .advice_claim_reduction
-                    .prepare(session, kind, layout, &reference, witness)?,
-            ))
-        };
-    let mut trusted_advice_member = prepare_advice(
-        session,
-        JoltAdviceKind::Trusted,
-        precommitted.trusted_advice.as_ref(),
-    )?;
-    let mut untrusted_advice_member = prepare_advice(
-        session,
-        JoltAdviceKind::Untrusted,
-        precommitted.untrusted_advice.as_ref(),
-    )?;
-    let mut bytecode_reduction_member = precommitted
-        .bytecode
-        .as_ref()
-        .zip(bytecode_weights.as_ref())
-        .map(|(layout, weights)| {
-            backend.bytecode_claim_reduction.prepare(
-                session,
-                layout,
-                weights,
-                &program.bytecode.bytecode,
-            )
-        })
-        .transpose()?;
-    let mut program_image_member = precommitted
-        .program_image
-        .as_ref()
-        .map(|layout| {
-            let (point, _) = stage4
-                .ram_val_check_init
-                .program_image_contribution
-                .as_ref()
-                .ok_or(ProverError::InvariantViolation {
-                    reason: "stage 4 staged no program-image contribution",
-                })?;
-            backend
-                .program_image_claim_reduction
-                .prepare(
-                    session,
-                    layout,
-                    point,
-                    layout.start_index(),
-                    &program.ram.bytecode_words,
-                )
-                .map_err(ProverError::from)
-        })
-        .transpose()?;
-
-    // The external adapters: each precommitted member's wire claim is the
-    // intermediate handoff claim when its schedule continues into the stage-7
-    // address phase, else the final (fully bound) opening.
-    let mut trusted_adapter = trusted_advice_member
-        .as_mut()
-        .zip(precommitted.trusted_advice.as_ref())
-        .map(|(member, layout)| {
-            scalar_phase_adapter(
-                &mut **member,
-                layout.dimensions().has_address_phase(),
-                |trusted| TrustedAdviceCyclePhaseOutputClaims { trusted },
-            )
-        });
-    let mut untrusted_adapter = untrusted_advice_member
-        .as_mut()
-        .zip(precommitted.untrusted_advice.as_ref())
-        .map(|(member, layout)| {
-            scalar_phase_adapter(
-                &mut **member,
-                layout.dimensions().has_address_phase(),
-                |untrusted| UntrustedAdviceCyclePhaseOutputClaims { untrusted },
-            )
-        });
-    let mut bytecode_adapter = bytecode_reduction_member
-        .as_mut()
-        .zip(precommitted.bytecode.as_ref())
-        .map(|(member, layout)| {
-            let has_address_phase = layout.dimensions().has_address_phase();
-            PrecommittedKernelAdapter::new(
-                &mut **member,
-                move |member: &dyn PrecommittedReductionProver<F>| {
-                    Ok(if has_address_phase {
-                        BytecodeReductionCyclePhaseOutputClaims {
-                            intermediate: Some(member.cycle_intermediate_claim()),
-                            chunks: Vec::new(),
-                        }
-                    } else {
-                        BytecodeReductionCyclePhaseOutputClaims {
-                            intermediate: None,
-                            chunks: member.final_aux_claims()?,
-                        }
-                    })
-                },
-            )
-        });
-    let mut program_image_adapter = program_image_member
-        .as_mut()
-        .zip(precommitted.program_image.as_ref())
-        .map(|(member, layout)| {
-            scalar_phase_adapter(
-                &mut **member,
-                layout.dimensions().has_address_phase(),
-                |program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image },
-            )
-        });
 
     let mut preparer = BackendPreparer {
         backend,
@@ -361,12 +232,6 @@ where
         &inputs,
         &input_points,
         &cycle_challenges,
-        Stage6bExternalMembers {
-            trusted_advice: trusted_adapter.as_mut().map(|adapter| adapter as _),
-            untrusted_advice: untrusted_adapter.as_mut().map(|adapter| adapter as _),
-            bytecode_reduction: bytecode_adapter.as_mut().map(|adapter| adapter as _),
-            program_image_reduction: program_image_adapter.as_mut().map(|adapter| adapter as _),
-        },
         |claims, output_points| {
             let booleanity_opening_point =
                 output_points.booleanity_opening_point().ok_or_else(|| {
@@ -385,14 +250,6 @@ where
         transcript,
     )?;
 
-    // The boxed extraction closures carry the member borrows' lifetime in
-    // their type, so the adapters must be dropped before the kernels move
-    // into the output (dropck would otherwise extend the borrows to the end
-    // of scope).
-    drop(trusted_adapter);
-    drop(untrusted_adapter);
-    drop(program_image_adapter);
-
     Ok(Stage6bProverOutput {
         sumcheck_proof: proved.recorded.proof,
         claims: proved.output_claims.clone(),
@@ -401,9 +258,5 @@ where
             output_points: proved.output_points,
             bytecode_reduction_weights: bytecode_weights,
         },
-        trusted_advice_member,
-        untrusted_advice_member,
-        bytecode_reduction_member,
-        program_image_member,
     })
 }

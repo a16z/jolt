@@ -37,18 +37,25 @@ use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
+use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
+    BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
+    UntrustedAdviceCyclePhase,
+};
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
+use jolt_verifier::stages::stage7::advice_address_phase::{
+    TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
+};
+use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
+    BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
+};
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::commitment::CommitWitness;
-use crate::opening::JointOpeningPolynomials;
-use crate::precommitted_reduction::{
-    AdviceClaimReduction, BytecodeClaimReduction, ProgramImageClaimReduction,
-};
+use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::spartan_outer::SpartanOuterProver;
 use crate::spartan_product::SpartanProductProver;
 use crate::KernelError;
@@ -106,6 +113,7 @@ where
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
+    pub advice_opening: Box<dyn AdviceOpeningEvaluation<F>>,
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
@@ -117,10 +125,17 @@ where
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
-    pub advice_claim_reduction: Box<dyn AdviceClaimReduction<F>>,
-    pub bytecode_claim_reduction: Box<dyn BytecodeClaimReduction<F>>,
-    pub program_image_claim_reduction: Box<dyn ProgramImageClaimReduction<F>>,
+    pub trusted_advice_cycle: Box<dyn PrepareKernel<F, TrustedAdviceCyclePhase<F>>>,
+    pub untrusted_advice_cycle: Box<dyn PrepareKernel<F, UntrustedAdviceCyclePhase<F>>>,
+    pub bytecode_reduction_cycle: Box<dyn PrepareKernel<F, BytecodeReductionCyclePhase<F>>>,
+    pub program_image_reduction_cycle:
+        Box<dyn PrepareKernel<F, ProgramImageReductionCyclePhase<F>>>,
     pub hamming_weight_claim_reduction: Box<dyn PrepareKernel<F, HammingWeightClaimReduction<F>>>,
+    pub trusted_advice_address: Box<dyn PrepareKernel<F, TrustedAdviceAddressPhase<F>>>,
+    pub untrusted_advice_address: Box<dyn PrepareKernel<F, UntrustedAdviceAddressPhase<F>>>,
+    pub bytecode_reduction_address: Box<dyn PrepareKernel<F, BytecodeReductionAddressPhase<F>>>,
+    pub program_image_reduction_address:
+        Box<dyn PrepareKernel<F, ProgramImageReductionAddressPhase<F>>>,
     pub joint_opening: Box<dyn JointOpeningPolynomials<F>>,
 }
 
