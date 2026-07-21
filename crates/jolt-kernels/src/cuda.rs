@@ -5803,8 +5803,66 @@ impl CudaKernelContext {
         &self,
         inputs: PrefixSuffixRound3Inputs<'_>,
     ) -> Result<[(Fr, Fr); 3], CudaError> {
-        let _ = inputs;
-        Err(CudaError::Unsupported)
+        use num_traits::Zero;
+        let half = inputs.len / 2;
+        if half == 0 {
+            return Ok([(Fr::zero(), Fr::zero()); 3]);
+        }
+
+        const WIDTH: usize = 3;
+        let tuple = WIDTH * LIMBS;
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let blocks = (half as u32).div_ceil(block);
+        if blocks != 1 {
+            return Err(CudaError::Unsupported);
+        }
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(3 * tuple)?;
+
+        let has_prefix_arg: u32 = 1;
+        let half_arg = half as u64;
+        let len_arg = inputs.len as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 3, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.prefix_suffix_round_pairs3.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&inputs.triples[0].prefix.buf)
+            .arg(&inputs.triples[0].q0.buf)
+            .arg(&inputs.triples[0].q1.buf)
+            .arg(&inputs.triples[1].prefix.buf)
+            .arg(&inputs.triples[1].q0.buf)
+            .arg(&inputs.triples[1].q1.buf)
+            .arg(&inputs.triples[2].prefix.buf)
+            .arg(&inputs.triples[2].q0.buf)
+            .arg(&inputs.triples[2].q1.buf)
+            .arg(&has_prefix_arg)
+            .arg(&half_arg)
+            .arg(&len_arg);
+        // SAFETY: blockIdx.y in {0,1,2} selects one (prefix, q0, q1) triple; each triple's single
+        // block reduces its `half` rows into a 3-lane tuple (eval_0, eval_2_left, eval_2_right)
+        // written to out[triple]. shared holds `block` 3-lane tuples; out holds 3 tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..3 * tuple))?;
+        self.stream.synchronize()?;
+        let mut out = [(Fr::zero(), Fr::zero()); 3];
+        for (t, slot) in out.iter_mut().enumerate() {
+            let base = t * tuple;
+            let eval_0 = limbs_to_fr([raw[base], raw[base + 1], raw[base + 2], raw[base + 3]]);
+            let eval_2_left =
+                limbs_to_fr([raw[base + 4], raw[base + 5], raw[base + 6], raw[base + 7]]);
+            let eval_2_right =
+                limbs_to_fr([raw[base + 8], raw[base + 9], raw[base + 10], raw[base + 11]]);
+            *slot = (eval_0, eval_2_right + eval_2_right - eval_2_left);
+        }
+        Ok(out)
     }
 
     pub fn rd_wa_gather(
