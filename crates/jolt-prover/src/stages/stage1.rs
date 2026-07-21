@@ -12,6 +12,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_field::Field;
+use jolt_kernels::spartan_outer::ParkedOuterInstance;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder, SumcheckProof};
@@ -20,8 +21,7 @@ use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
 use jolt_verifier::stages::stage1::outputs::{
-    Stage1BatchExternalMembers, Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput,
-    Stage1OutputClaims,
+    Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
@@ -81,7 +81,9 @@ where
         ),
     };
 
-    let mut member = instance.into_remainder(&sumchecks.outer_remainder)?;
+    // Park the uni-skip-bound instance: the remainder member's `prepare`
+    // reclaims it and binds it to the stage's relation.
+    session.park(ParkedOuterInstance(instance));
     let mut preparer = BackendPreparer {
         backend,
         session,
@@ -93,9 +95,6 @@ where
         &inputs,
         &input_points,
         &challenges,
-        Stage1BatchExternalMembers {
-            outer_remainder: &mut *member,
-        },
         ClearSumcheckRecorder::<F, C>::new(),
         transcript,
     )?;

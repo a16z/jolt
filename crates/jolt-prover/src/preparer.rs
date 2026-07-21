@@ -64,7 +64,9 @@ macro_rules! forward_prepare {
 }
 
 forward_prepare!(
+    jolt_verifier::stages::stage1::outer_remainder::OuterRemainder<F> => outer_remainder,
     jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking<F> => ram_read_write,
+    jolt_verifier::stages::stage2::product_remainder::ProductRemainder<F> => product_remainder,
     jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction<F> => instruction_claim_reduction,
     jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation<F> => ram_raf_evaluation,
     jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck<F> => ram_output_check,

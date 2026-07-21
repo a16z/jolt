@@ -44,7 +44,9 @@ pub mod reference;
 pub mod spartan_outer;
 pub mod spartan_product;
 
-pub use backend::{JoltBackend, PrepareKernel, ProofSession, RetainedProgram};
+pub use backend::{
+    JoltBackend, PrepareKernel, ProofSession, RetainedProgram, SessionCarriedKernels,
+};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 /// Re-exported from `jolt-verifier` (its home since the generated prove

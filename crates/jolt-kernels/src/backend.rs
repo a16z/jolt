@@ -19,7 +19,9 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, ProverInputs, SumcheckInputClaims,
     SumcheckKernel, SumcheckOutputClaims,
 };
+use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
+use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
@@ -92,7 +94,9 @@ where
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
     pub spartan_outer: Box<dyn SpartanOuterProver<F>>,
+    pub outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
     pub spartan_product: Box<dyn SpartanProductProver<F>>,
+    pub product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
     pub ram_raf_evaluation: Box<dyn PrepareKernel<F, RamRafEvaluation<F>>>,
@@ -131,6 +135,14 @@ where
         ProofSession::default()
     }
 }
+
+/// The slot server for batch members whose kernel state is a [`ProofSession`]
+/// carry rather than freshly minted compute: the uni-skip remainders reclaim
+/// the instance their stage front parked, and the stage-7 precommitted
+/// address phases reclaim the shared two-phase state their stage-6b cycle
+/// kernels parked. Backend-agnostic — the carries are crate-level trait
+/// objects — so every registry can use it verbatim.
+pub struct SessionCarriedKernels;
 
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///

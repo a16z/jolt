@@ -17,6 +17,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_field::Field;
+use jolt_kernels::spartan_product::ParkedProductInstance;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
@@ -26,7 +27,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::outputs::{
-    Stage2BatchExternalMembers, Stage2BatchSumchecks, Stage2ClearOutput, Stage2OutputClaims,
+    Stage2BatchSumchecks, Stage2ClearOutput, Stage2OutputClaims,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::product_uniskip::{
@@ -146,7 +147,9 @@ where
     let input_points = sumchecks.empty_input_points();
     let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);
 
-    let mut product_remainder = product.into_remainder(&sumchecks.product_remainder)?;
+    // Park the uni-skip-bound instance: the remainder member's `prepare`
+    // reclaims it and binds it to the stage's relation.
+    session.park(ParkedProductInstance(product));
     let mut preparer = BackendPreparer {
         backend,
         session,
@@ -158,9 +161,6 @@ where
         &inputs,
         &input_points,
         &challenges,
-        Stage2BatchExternalMembers {
-            product_remainder: &mut *product_remainder,
-        },
         ClearSumcheckRecorder::<F, C>::new(),
         transcript,
     )?;

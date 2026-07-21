@@ -44,10 +44,10 @@ pub struct Stage2OutputClaims<F: Field> {
 #[derive(SumcheckBatch)]
 pub struct Stage2BatchSumchecks<F: Field> {
     pub ram_read_write: RamReadWriteChecking<F>,
-    /// External on the prove side: the remainder member is minted by the
-    /// product uni-skip pre-phase (`SpartanProductInstance::into_remainder`),
-    /// not by a preparer slot.
-    #[sumcheck(external)]
+    /// On the prove side the remainder kernel is minted from the product
+    /// uni-skip pre-phase instance the stage front parked in the proof
+    /// session (`SpartanProductInstance::into_remainder`), through a regular
+    /// `PrepareKernel` slot.
     pub product_remainder: ProductRemainder<F>,
     pub instruction_claim_reduction: InstructionClaimReduction<F>,
     pub ram_raf_evaluation: RamRafEvaluation<F>,

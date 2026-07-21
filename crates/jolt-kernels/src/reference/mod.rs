@@ -13,7 +13,7 @@
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
-use crate::JoltBackend;
+use crate::{JoltBackend, SessionCarriedKernels};
 
 pub mod advice_claim_reduction;
 pub mod booleanity;
@@ -66,7 +66,9 @@ where
         Self {
             commit: Box::new(ReferenceBackend),
             spartan_outer: Box::new(ReferenceBackend),
+            outer_remainder: Box::new(SessionCarriedKernels),
             spartan_product: Box::new(ReferenceBackend),
+            product_remainder: Box::new(SessionCarriedKernels),
             ram_read_write: Box::new(ReferenceBackend),
             instruction_claim_reduction: Box::new(ReferenceBackend),
             ram_raf_evaluation: Box::new(ReferenceBackend),
