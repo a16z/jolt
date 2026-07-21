@@ -26,7 +26,7 @@ use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 8 consumes.
@@ -87,14 +87,10 @@ where
     let inputs = stage7_input_values_from_upstream(&sumchecks, stage6b)?;
     let input_points = sumchecks.empty_input_points();
 
-    let mut preparer = BackendPreparer {
+    let proved = sumchecks.prove(
         backend,
         session,
         witness,
-        context: (),
-    };
-    let proved = sumchecks.prove_clear(
-        &mut preparer,
         &inputs,
         &input_points,
         &challenges,

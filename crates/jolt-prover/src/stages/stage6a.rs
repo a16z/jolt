@@ -42,7 +42,7 @@ use jolt_verifier::stages::stage6b::batch::bytecode_stage_points;
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 6b consumes.
@@ -176,14 +176,10 @@ where
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
-    let mut preparer = BackendPreparer {
+    let proved = sumchecks.prove(
         backend,
         session,
         witness,
-        context: (),
-    };
-    let proved = sumchecks.prove_clear(
-        &mut preparer,
         &inputs,
         &input_points,
         &address_challenges,

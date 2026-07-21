@@ -59,6 +59,37 @@ mod stage4 {
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }
 
+mod stage6a {
+    use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
+    use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
+    use jolt_verifier::stages::stage6a::outputs::{
+        Stage6aChallenges, Stage6aInputClaims, Stage6aInputPoints, Stage6aOutputClaims,
+        Stage6aOutputPoints, Stage6aSumchecks,
+    };
+
+    use crate::driver::impl_stage_prover;
+
+    jolt_verifier::stage6a_sumchecks_members!(impl_stage_prover);
+}
+
+mod stage7 {
+    use jolt_verifier::stages::stage7::advice_address_phase::{
+        TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
+    };
+    use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
+        BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
+    };
+    use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
+    use jolt_verifier::stages::stage7::outputs::{
+        Stage7Challenges, Stage7InputClaims, Stage7InputPoints, Stage7OutputClaims,
+        Stage7OutputPoints, Stage7Sumchecks,
+    };
+
+    use crate::driver::impl_stage_prover;
+
+    jolt_verifier::stage7_sumchecks_members!(impl_stage_prover);
+}
+
 mod stage5 {
     use jolt_verifier::stages::stage5::outputs::{
         Stage5Challenges, Stage5InputClaims, Stage5InputPoints, Stage5OutputClaims,
