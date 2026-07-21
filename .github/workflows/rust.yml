@@ -64,10 +64,9 @@ jobs:
       # by the workspace-wide invocations above.
       - name: cargo clippy -p jolt-verifier --features akita
         run: cargo clippy -p jolt-verifier --all-targets --features akita
-      # The akita fixture-driven tamper suite compiles under akita,prover-fixtures
-      # (the real packed prover generates its fixtures). Lint it explicitly.
-      - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures
-        run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
+      # The akita,prover-fixtures combo (the fixture-driven tamper suite) only
+      # compiles once jolt-prover-legacy gains its akita feature; its clippy
+      # and test lanes land with the stacked packed-prover PR.
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
