@@ -34,21 +34,21 @@
 //! exactness, so this kernel always uses 8-variable phases.)
 
 use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-use jolt_claims::protocols::jolt::relations::instruction::{
-    InstructionReadRafChallenges, InstructionReadRafOutputClaims,
-};
+use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
 use jolt_field::Field;
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::SuffixEval;
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ProverInputs;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::protocols::jolt_vm::Stage5InstructionReadRafRow;
+use jolt_witness::protocols::jolt_vm::{JoltVmWitnessPlane, Stage5InstructionReadRafRow};
 
 use super::views::eq_table;
-use crate::instruction_read_raf::InstructionReadRafProver;
-use crate::{KernelError, ProofSession, ReferenceBackend, SumcheckKernel, SumcheckKernelError};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel, SumcheckKernelError,
+};
 
 /// Address variables bound per phase. Fixed at 8 (the legacy prover picks 8
 /// or 16 by trace size, but the emitted polynomials are identical — see the
@@ -56,20 +56,23 @@ use crate::{KernelError, ProofSession, ReferenceBackend, SumcheckKernel, Sumchec
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-impl<F: Field> InstructionReadRafProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: InstructionReadRafDimensions,
-        r_reduction: &[F],
-        rows: Vec<Stage5InstructionReadRafRow>,
-        challenges: &InstructionReadRafChallenges<F>,
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
+        let dimensions = inputs.relation.dimensions();
+        // The per-cycle lookup rows (index bits, table selection, operand
+        // interleaving) — data no field-element oracle view carries
+        // losslessly, fetched off the witness plane's typed accessor.
+        let rows = witness.stage5_instruction_read_raf_rows(dimensions.log_t())?;
         Ok(Box::new(InstructionReadRafKernel::new(
             dimensions,
-            r_reduction,
+            &inputs.points.lookup_output,
             rows,
-            challenges.gamma,
+            inputs.challenges.gamma,
         )?))
     }
 }

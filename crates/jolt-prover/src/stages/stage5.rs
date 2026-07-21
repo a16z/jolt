@@ -8,8 +8,8 @@
 //! wiring (stage 2's instruction claim-reduction triple and RAM openings,
 //! stage 4's RAM val-check and registers-val openings — stage 3 does not
 //! feed stage 5). The read+RAF member's typed relation data is the per-cycle
-//! lookup rows, fetched here through the witness plane's stage-5 rows
-//! accessor and staged for the slot's `PrepareSumcheck` bridge.
+//! lookup rows, fetched by its kernel's `prepare` off the witness plane's
+//! typed stage-5 rows accessor — never staged here.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -34,9 +34,7 @@ use jolt_verifier::stages::stage5::{
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{
-    BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError, Stage5PrepareContext,
-};
+use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 5's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
@@ -100,9 +98,7 @@ where
         backend,
         session,
         witness,
-        context: Stage5PrepareContext {
-            instruction_read_raf_rows: Some(witness.stage5_instruction_read_raf_rows(log_t)?),
-        },
+        context: (),
     };
     let proved = sumchecks.prove_clear(
         &mut preparer,

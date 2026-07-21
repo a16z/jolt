@@ -30,6 +30,7 @@ use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
+use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
@@ -42,7 +43,6 @@ use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeight
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::commitment::CommitWitness;
-use crate::instruction_read_raf::InstructionReadRafProver;
 use crate::opening::JointOpeningPolynomials;
 use crate::precommitted_reduction::{
     AdviceClaimReduction, BytecodeClaimReduction, ProgramImageClaimReduction,
@@ -102,7 +102,7 @@ where
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
-    pub instruction_read_raf: Box<dyn InstructionReadRafProver<F>>,
+    pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
     pub bytecode_read_raf_address: Box<dyn PrepareKernel<F, BytecodeReadRafAddressPhase<F>>>,

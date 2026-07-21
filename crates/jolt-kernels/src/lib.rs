@@ -16,8 +16,8 @@
 //! accessors, and [`ProofSession`] carries (prover-retained program data,
 //! parked at proof start; cross-stage kernel state). Only the bespoke slots
 //! keep hand-shaped trait modules at the crate root: the uni-skip handoffs
-//! ([`spartan_outer`], [`spartan_product`]), the typed-row witness
-//! ([`instruction_read_raf`]), the two-batch precommitted reduction family
+//! ([`spartan_outer`], [`spartan_product`]), the two-batch precommitted
+//! reduction family
 //! ([`precommitted_reduction`]), commitment streaming, and the joint
 //! opening. Reference implementations live under [`reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
@@ -38,7 +38,6 @@ mod backend;
 mod commitment;
 pub mod committed_program;
 mod error;
-pub mod instruction_read_raf;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod reference;

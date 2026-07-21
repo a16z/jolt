@@ -16,8 +16,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_verifier::stages::relations::{
     PrepareSumcheck, ProverInputs, SumcheckKernel, SumcheckPreparer,
 };
-use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::protocols::jolt_vm::{JoltVmWitnessPlane, Stage5InstructionReadRafRow};
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::ProverError;
 
@@ -64,40 +63,6 @@ macro_rules! forward_prepare {
     )*};
 }
 
-/// Stage 5's non-oracle witness channel: the typed per-cycle lookup rows the
-/// instruction read+RAF slot consumes (index bits, table selection, operand
-/// interleaving) — data no field-element oracle view carries losslessly. The
-/// recipe fetches them through the witness's typed-rows accessor and stages
-/// them here; the slot's `PrepareSumcheck` bridge takes them exactly once.
-pub struct Stage5PrepareContext {
-    pub instruction_read_raf_rows: Option<Vec<Stage5InstructionReadRafRow>>,
-}
-
-impl<F, PCS> PrepareSumcheck<F, InstructionReadRaf<F>>
-    for BackendPreparer<'_, F, PCS, Stage5PrepareContext>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F>,
-{
-    fn prepare(
-        &mut self,
-        inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, Self::Error> {
-        let rows = self.context.instruction_read_raf_rows.take().ok_or(
-            ProverError::InvariantViolation {
-                reason: "stage-5 instruction rows were staged once but consumed twice",
-            },
-        )?;
-        Ok(self.backend.instruction_read_raf.prepare(
-            self.session,
-            inputs.relation.dimensions(),
-            &inputs.points.lookup_output,
-            rows,
-            inputs.challenges,
-        )?)
-    }
-}
-
 forward_prepare!(
     jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking<F> => ram_read_write,
     jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction<F> => instruction_claim_reduction,
@@ -108,6 +73,7 @@ forward_prepare!(
     jolt_verifier::stages::stage3::outputs::RegistersClaimReduction<F> => registers_claim_reduction,
     jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking<F> => registers_read_write,
     jolt_verifier::stages::stage4::ram_val_check::RamValCheck<F> => ram_val_check,
+    jolt_verifier::stages::stage5::InstructionReadRaf<F> => instruction_read_raf,
     jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction<F> => ram_ra_claim_reduction,
     jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation<F> => registers_val_evaluation,
     jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase<F> => bytecode_read_raf_address,
