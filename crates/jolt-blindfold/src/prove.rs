@@ -1,5 +1,5 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{Field, RingAccumulator, WithAccumulator};
+use jolt_field::Field;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
 use jolt_sumcheck::{CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
@@ -127,8 +127,6 @@ where
         entry_point: &[F],
         name: &'static str,
     ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>>
-    where
-        <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
     {
         open_committed_rows::<F, VC>(setup, rows, blindings, row_point, entry_point, name)
     }
@@ -166,7 +164,6 @@ where
     VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
     R: RngCore,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let mut row_committer = DirectBlindFoldRowCommitter;
     prove_with_row_committer::<F, VC, T, R, DirectBlindFoldRowCommitter>(
@@ -194,7 +191,6 @@ where
     T: Transcript<Challenge = F>,
     R: RngCore,
     C: BlindFoldRowCommitter<F, VC>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     validate_witness::<F, VC>(setup, protocol, witness)?;
 
@@ -696,7 +692,6 @@ fn open_committed_rows<F, VC>(
 where
     F: Field,
     VC: VectorCommitment<Field = F>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let row_count = basis_len_from_point_len("row point", row_point.len())?;
     ensure_len(name, row_count, rows.len())?;
@@ -1038,7 +1033,6 @@ where
     F: Field,
     VC: VectorCommitment<Field = F>,
     C: BlindFoldRowCommitter<F, VC>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let row_vars = log2_power_of_two("witness row count", witness_rows.len())?;
     let entry_vars = log2_power_of_two("witness row length", witness_rows[0].len())?;

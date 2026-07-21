@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_field::{AdditiveAccumulator, Fr, ReducingBytes, RingAccumulator, WideAccumulator};
+use jolt_field::{Accumulator, Fr, ReducingBytes, WideAccumulator};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

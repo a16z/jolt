@@ -101,7 +101,7 @@ mod tests {
     //! `--no-default-features --features solinas` as well as combined builds.
     use super::*;
     use crate::Prime128Offset275;
-    use crate::{AdditiveAccumulator, RingAccumulator};
+    use crate::Accumulator;
 
     /// Asserts the full canonical byte round-trip on the native traits.
     fn assert_native_byte_roundtrip<F, const N: usize>(value: F, expected: [u8; N])

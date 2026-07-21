@@ -3,7 +3,7 @@ use std::{
     fmt::{self, Debug},
 };
 
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, WithAccumulator};
+use jolt_field::{Accumulator, Field, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -70,8 +70,6 @@ pub trait VectorCommitment:
         row_point: &[Self::Field],
         entry_point: &[Self::Field],
     ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError>
-    where
-        <Self::Field as WithAccumulator>::Accumulator: RingAccumulator<Element = Self::Field>,
     {
         let row_count = point_len_to_basis_len(row_point.len())?;
         validate_row_len(row_len, entry_point.len())?;
@@ -117,7 +115,6 @@ pub trait VectorCommitment:
     ) -> Result<Self::Field, VectorOpeningError>
     where
         Self::Output: HomomorphicCommitment<Self::Field>,
-        <Self::Field as WithAccumulator>::Accumulator: RingAccumulator<Element = Self::Field>,
     {
         let row_count = point_len_to_basis_len(row_point.len())?;
         if row_commitments.len() != row_count {
@@ -280,8 +277,6 @@ fn combine_rows<F: Field>(
     row_weights: &[F],
     max_len: usize,
 ) -> Vec<F>
-where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let mut combined_vector = vec![F::zero(); row_len];
 
@@ -322,8 +317,6 @@ fn combine_rows<F: Field>(
     row_weights: &[F],
     _max_len: usize,
 ) -> Vec<F>
-where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let mut combined_vector = vec![F::zero(); row_len];
 
@@ -341,8 +334,6 @@ where
 }
 
 fn inner_product<F: Field>(lhs: &[F], rhs: &[F]) -> F
-where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     #[cfg(feature = "parallel")]
     {

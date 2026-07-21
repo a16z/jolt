@@ -1,5 +1,5 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{Field, FieldCore, RingAccumulator, WithAccumulator};
+use jolt_field::{Field, FieldCore};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
@@ -18,7 +18,6 @@ impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     pub fn verify<VC, T>(
         &self,
@@ -126,7 +125,6 @@ impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     fn verify_outer_folded_r1cs<VC, T>(
         &self,
@@ -247,7 +245,6 @@ impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     fn verify_folded_eval_witness_bindings<VC, T>(
         &self,
@@ -365,7 +362,6 @@ impl WitnessCoordinate {
         F: Field,
         VC: VectorCommitment<Field = F>,
         VC::Output: Copy + HomomorphicCommitment<F>,
-        <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
     {
         let witness_row_count = folded.witness_row_commitments.len();
         if witness_row_count == 0 || !witness_row_count.is_power_of_two() {
@@ -400,7 +396,6 @@ impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     fn verify_inner_folded_r1cs<VC, T>(
         &self,

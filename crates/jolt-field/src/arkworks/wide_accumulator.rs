@@ -9,7 +9,7 @@
 //! accumulated into eight positional `u128` slots. Carry headroom in each
 //! slot lets the hot loop avoid carry propagation until reduction.
 
-use crate::accumulator::{AdditiveAccumulator, RingAccumulator};
+use crate::accumulator::Accumulator;
 use crate::arkworks::bn254::Fr;
 use ark_ff::BigInt;
 
@@ -19,7 +19,7 @@ use super::bn254_ops;
 ///
 /// Stores the running sum of Montgomery-form products in positional `u128`
 /// slots. Converting to a field element requires one carry propagation pass
-/// and one Montgomery reduction via [`AdditiveAccumulator::reduce`].
+/// and one Montgomery reduction via [`Accumulator::reduce`].
 #[derive(Clone, Copy)]
 pub struct WideAccumulator {
     slots: [u128; 8],
@@ -32,7 +32,7 @@ impl Default for WideAccumulator {
     }
 }
 
-impl AdditiveAccumulator for WideAccumulator {
+impl Accumulator for WideAccumulator {
     type Element = Fr;
 
     #[inline(always)]
@@ -52,9 +52,7 @@ impl AdditiveAccumulator for WideAccumulator {
         // Montgomery reduction divides product terms by R.
         Fr::from_inner(bn254_ops::from_montgomery_reduce(self.normalize()))
     }
-}
 
-impl RingAccumulator for WideAccumulator {
     #[inline(always)]
     fn fmadd(&mut self, a: Fr, b: Fr) {
         let a = a.inner_limbs();
@@ -87,7 +85,7 @@ impl WideAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AdditiveAccumulator, FromPrimitiveInt};
+    use crate::{Accumulator, FromPrimitiveInt};
 
     #[test]
     fn single_fmadd() {

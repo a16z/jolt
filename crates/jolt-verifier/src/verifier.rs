@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::{
     JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{Field, RingAccumulator, WithAccumulator};
+use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
@@ -50,7 +50,6 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let PreStage1VerifierState {
         checked,

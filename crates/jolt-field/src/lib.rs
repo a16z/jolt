@@ -15,7 +15,7 @@
 //! # Core traits
 //!
 //! - [`Field`] — Jolt compatibility umbrella
-//! - [`RingAccumulator`] — deferred-reduction fused multiply-add
+//! - [`Accumulator`] — deferred-reduction fused multiply-add
 //! - [`OptimizedMul`] — fast-path short-circuits for zero/one
 //! - [`MontgomeryConstants`] — Montgomery form constants for GPU backends
 //!
@@ -63,9 +63,8 @@ mod ring_core;
 #[cfg(feature = "solinas")]
 mod solinas_traits;
 mod transcript_challenge;
-mod with_accumulator;
 
-pub use accumulator::{AdditiveAccumulator, NaiveAccumulator, RingAccumulator};
+pub use accumulator::{Accumulator, NaiveAccumulator, WithAccumulator};
 pub use additive_group::AdditiveGroup;
 pub use canonical_bit_length::CanonicalBitLength;
 pub use canonical_bytes::CanonicalBytes;
@@ -87,7 +86,6 @@ pub use ring_core::RingCore;
 #[cfg(feature = "solinas")]
 pub use solinas_traits::{balanced_digit_lut, CanonicalField, HalvingField, PseudoMersenneField};
 pub use transcript_challenge::TranscriptChallenge;
-pub use with_accumulator::WithAccumulator;
 
 pub mod limbs;
 pub use limbs::Limbs;
