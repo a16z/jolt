@@ -22,7 +22,7 @@ use jolt_verifier::stages::stage3::outputs::{
 use jolt_verifier::stages::stage3::stage3_input_values_from_upstream;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{BackendPreparer, ProverConfig, ProverError};
+use crate::{ProverConfig, ProverError, StageProver as _};
 
 /// Stage 3's outputs: the wire proof, the wire claims (the raw batch
 /// aggregate — no uni-skip wrapper), and the verifier-typed cross-stage
@@ -68,14 +68,10 @@ where
     let input_points = sumchecks.empty_input_points();
     let inputs = stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);
 
-    let mut preparer = BackendPreparer {
+    let proved = sumchecks.prove(
         backend,
         session,
         witness,
-        context: (),
-    };
-    let proved = sumchecks.prove_clear(
-        &mut preparer,
         &inputs,
         &input_points,
         &challenges,

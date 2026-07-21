@@ -9,6 +9,7 @@
 //! assembly, and proof assembly. See `specs/clean-slate-prover.md`.
 
 mod config;
+pub mod driver;
 mod error;
 mod preparer;
 mod preprocessing;
@@ -16,6 +17,7 @@ mod prover;
 pub mod stages;
 
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
+pub use driver::{KernelSource, Proved, StageProver};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession, RetainedProgram};
 pub use preparer::BackendPreparer;
