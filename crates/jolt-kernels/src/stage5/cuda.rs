@@ -317,6 +317,46 @@ impl CudaAddressPhaseRound {
         let ctx = crate::cuda::shared_ctx().ok_or(CudaError::Pool)?;
         let len = self.cur_len();
         let read = self.read_table_round_evals()?;
+        let [left, right, identity] = self.prefix_suffix_evals(ctx, len)?;
+        let eval_at_0 = (read[0] + self.gamma * left.0 + self.gamma2 * (right.0 + identity.0))
+            * self.active_scale;
+        let eval_at_2 = (read[1] + self.gamma * left.1 + self.gamma2 * (right.1 + identity.1))
+            * self.active_scale;
+        Ok(UnivariatePoly::from_evals_and_hint(
+            previous_claim,
+            &[eval_at_0, eval_at_2],
+        ))
+    }
+
+    fn prefix_suffix_evals(
+        &self,
+        ctx: &crate::cuda::CudaKernelContext,
+        len: usize,
+    ) -> Result<[(Fr, Fr); 3], CudaError> {
+        if let Ok(evals) =
+            ctx.prefix_suffix_round_evals3(crate::cuda::PrefixSuffixRound3Inputs {
+                triples: [
+                    crate::cuda::PrefixSuffixRoundTriple {
+                        prefix: &self.left_operand_prefix,
+                        q0: &self.raf_shift_half_q,
+                        q1: &self.raf_left_q,
+                    },
+                    crate::cuda::PrefixSuffixRoundTriple {
+                        prefix: &self.right_operand_prefix,
+                        q0: &self.raf_shift_half_q,
+                        q1: &self.raf_right_q,
+                    },
+                    crate::cuda::PrefixSuffixRoundTriple {
+                        prefix: &self.identity_prefix,
+                        q0: &self.raf_shift_full_q,
+                        q1: &self.raf_identity_q,
+                    },
+                ],
+                len,
+            })
+        {
+            return Ok(evals);
+        }
         let left = ctx.prefix_suffix_round_evals(PrefixSuffixRoundInputs {
             prefix: Some(&self.left_operand_prefix),
             q0: &self.raf_shift_half_q,
@@ -335,14 +375,7 @@ impl CudaAddressPhaseRound {
             q1: &self.raf_identity_q,
             len,
         })?;
-        let eval_at_0 = (read[0] + self.gamma * left.0 + self.gamma2 * (right.0 + identity.0))
-            * self.active_scale;
-        let eval_at_2 = (read[1] + self.gamma * left.1 + self.gamma2 * (right.1 + identity.1))
-            * self.active_scale;
-        Ok(UnivariatePoly::from_evals_and_hint(
-            previous_claim,
-            &[eval_at_0, eval_at_2],
-        ))
+        Ok([left, right, identity])
     }
 
     pub(crate) fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
