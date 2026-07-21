@@ -18,13 +18,11 @@
 //! bytecode read-RAF points (which fires when the bytecode address width is
 //! a multiple of the committed chunk width).
 
-use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -85,19 +83,14 @@ where
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let precommitted = &checked.precommitted;
-    let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
-        log_t,
-        2 * RISCV_XLEN,
+    let formula_dimensions = super::formula_dimensions(
+        checked,
+        config,
         preprocessing.verifier.program.bytecode_len(),
-        checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: error.to_string(),
-    })?;
+        JoltRelationId::BytecodeReadRaf,
+    )?;
     let chunk_bits = config.one_hot_config.committed_chunk_bits();
     let committed_program = precommitted.bytecode.is_some();
 

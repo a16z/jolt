@@ -15,7 +15,6 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -23,7 +22,7 @@ use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
-use jolt_verifier::{CheckedInputs, VerifierError};
+use jolt_verifier::CheckedInputs;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
@@ -56,21 +55,13 @@ where
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
     let precommitted = &checked.precommitted;
-    let formula_dimensions =
-        jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions::try_from(
-            config.one_hot_config.dimensions(
-                log_t,
-                2 * RISCV_XLEN,
-                preprocessing.verifier.program.bytecode_len(),
-                checked.ram_K,
-            ),
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
+    let formula_dimensions = super::formula_dimensions(
+        checked,
+        config,
+        preprocessing.verifier.program.bytecode_len(),
+        JoltRelationId::HammingWeightClaimReduction,
+    )?;
     let hamming_dimensions = HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
         config.one_hot_config.committed_chunk_bits(),

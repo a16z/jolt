@@ -14,12 +14,10 @@
 //! rows — both fetched inside `prepare`, never staged here.
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -79,16 +77,12 @@ where
     // Committed-program mode stages the five raw bound `Val_s` values as
     // extra wire claims; the sumcheck itself is unchanged.
     let committed_program = checked.precommitted.bytecode.is_some();
-    let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
-        log_t,
-        2 * RISCV_XLEN,
+    let formula_dimensions = super::formula_dimensions(
+        checked,
+        config,
         preprocessing.verifier.program.bytecode_len(),
-        checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: error.to_string(),
-    })?;
+        JoltRelationId::BytecodeReadRaf,
+    )?;
 
     // The relation carries the upstream cycle/register points and the entry
     // index (full geometry at construction) — the kernel's read path.

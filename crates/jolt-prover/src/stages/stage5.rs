@@ -11,12 +11,10 @@
 //! lookup rows, fetched by its kernel's `prepare` off the witness plane's
 //! typed stage-5 rows accessor — never staged here.
 
-use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -31,7 +29,7 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluat
 use jolt_verifier::stages::stage5::{
     stage5_input_points_from_upstream, stage5_input_values_from_upstream,
 };
-use jolt_verifier::{CheckedInputs, VerifierError};
+use jolt_verifier::CheckedInputs;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
@@ -64,21 +62,13 @@ where
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
-    // The same construction as the verifier's `build_formula_dimensions`
-    // (which reads the one-hot config off the proof; the prover reads it off
-    // its own derived config — stage 0 wrote that same value to the wire).
-    let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
-        log_t,
-        2 * RISCV_XLEN,
+    let formula_dimensions = super::formula_dimensions(
+        checked,
+        config,
         preprocessing.verifier.program.bytecode_len(),
-        checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::InstructionReadRaf,
-        reason: error.to_string(),
-    })?;
+        JoltRelationId::InstructionReadRaf,
+    )?;
     let trace_dimensions = formula_dimensions.trace;
 
     let sumchecks = Stage5Sumchecks {
