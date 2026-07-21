@@ -72,6 +72,48 @@ mod stage6a {
     jolt_verifier::stage6a_sumchecks_members!(impl_stage_prover);
 }
 
+mod stage6b {
+    use jolt_claims::protocols::jolt::JoltRelationId;
+    use jolt_verifier::stages::stage6b::booleanity::Booleanity;
+    use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
+    use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
+        BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
+        UntrustedAdviceCyclePhase,
+    };
+    use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
+    use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
+    use jolt_verifier::stages::stage6b::outputs::{
+        Stage6bChallenges, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutputClaims,
+        Stage6bOutputPoints, Stage6bSumchecks,
+    };
+    use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
+    use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
+    use jolt_verifier::stages::stage6b::stage6b_opening_values;
+    use jolt_verifier::VerifierError;
+
+    use crate::driver::impl_stage_prover;
+
+    // The stage's `no_opening_values` curation: the promoted verifier
+    // helper's canonical order, including the runtime dedup of booleanity's
+    // `BytecodeRa` claims against the bytecode read-RAF points.
+    jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover
+        curate = |_batch, claims, points| {
+            let booleanity_opening_point =
+                points.booleanity_opening_point().ok_or_else(|| {
+                    VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::Booleanity,
+                        reason: "stage-6b booleanity produced no opening point".to_string(),
+                    }
+                })?;
+            Ok(stage6b_opening_values(
+                claims,
+                &points.bytecode_read_raf.bytecode_ra,
+                booleanity_opening_point,
+            ))
+        },
+    );
+}
+
 mod stage7 {
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,

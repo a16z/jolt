@@ -44,12 +44,12 @@ use jolt_verifier::stages::stage6b::outputs::{
     Stage6bChallenges, Stage6bClearOutput, Stage6bOutputClaims, Stage6bSumchecks,
 };
 use jolt_verifier::stages::stage6b::{
-    stage6b_input_points_from_upstream, stage6b_input_values_from_upstream, stage6b_opening_values,
+    stage6b_input_points_from_upstream, stage6b_input_values_from_upstream,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::{BackendPreparer, JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 6b's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 7 consumes. The precommitted reduction kernels
@@ -219,33 +219,17 @@ where
         .as_ref()
         .map(|member| member.weights().clone());
 
-    let mut preparer = BackendPreparer {
+    // The absorb order is the stage's curation override at its
+    // `impl_stage_prover` invocation site (the promoted verifier helper's
+    // canonical order, including the runtime booleanity-vs-bytecode point
+    // dedup).
+    let proved = sumchecks.prove(
         backend,
         session,
         witness,
-        context: (),
-    };
-    // The curation hook supplies the promoted verifier helper's canonical
-    // order, including the runtime booleanity-vs-bytecode point dedup.
-    let proved = sumchecks.prove_clear(
-        &mut preparer,
         &inputs,
         &input_points,
         &cycle_challenges,
-        |claims, output_points| {
-            let booleanity_opening_point =
-                output_points.booleanity_opening_point().ok_or_else(|| {
-                    VerifierError::StageClaimPublicInputFailed {
-                        stage: JoltRelationId::Booleanity,
-                        reason: "stage-6b booleanity produced no opening point".to_string(),
-                    }
-                })?;
-            Ok(stage6b_opening_values(
-                claims,
-                &output_points.bytecode_read_raf.bytecode_ra,
-                booleanity_opening_point,
-            ))
-        },
         ClearSumcheckRecorder::<F, C>::new(),
         transcript,
     )?;
