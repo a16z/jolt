@@ -18,7 +18,7 @@ __device__ __forceinline__ void csr_row_dot(
     }
 }
 
-extern "C" __global__ void row_dots_kernel(
+extern "C" __global__ void row_dots(
     u64 *__restrict__ a_out,
     u64 *__restrict__ b_out,
     const u64 *__restrict__ witness,

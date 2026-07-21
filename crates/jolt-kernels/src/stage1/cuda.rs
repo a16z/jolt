@@ -182,7 +182,7 @@ pub fn uniskip_extended_evals_cuda<F: Field>(
 
     let witness_dev = ctx.resident_witness(witness).ok()?;
     let (row_dots_a, row_dots_b) = ctx
-        .compute_row_dots_device(
+        .compute_row_dots_dev(
             &witness_dev,
             &a_offsets,
             &a_vars,

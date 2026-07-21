@@ -87,7 +87,7 @@ impl CudaAddressPhaseState {
     }
 
     pub(crate) fn raf_banks(&self, suffix_len: usize) -> Result<[Vec<Fr>; 5], CudaError> {
-        let banks = self.raf_banks_device(suffix_len)?;
+        let banks = self.raf_banks_dev(suffix_len)?;
         let mut out: Vec<Vec<Fr>> = Vec::with_capacity(5);
         for bank in &banks {
             out.push(bank.to_host()?);
@@ -128,7 +128,7 @@ impl CudaAddressPhaseState {
         )
     }
 
-    pub(crate) fn raf_banks_device(
+    pub(crate) fn raf_banks_dev(
         &self,
         suffix_len: usize,
     ) -> Result<[DeviceFrVec; 5], CudaError> {
@@ -145,7 +145,7 @@ impl CudaAddressPhaseState {
         banks.try_into().map_err(|_| CudaError::Pool)
     }
 
-    pub(crate) fn read_suffix_banks_device(
+    pub(crate) fn read_suffix_banks_dev(
         &self,
         table_index: usize,
         suffix_len: usize,
@@ -256,7 +256,7 @@ impl CudaAddressPhaseRound {
                 refs.push(bank);
             }
         }
-        let read_suffix_blob = ctx.concat_device(&refs).ok()?;
+        let read_suffix_blob = ctx.concat_dev(&refs).ok()?;
         let read_suffix_polys_total = offset_polys;
 
         let schedule = ReadTableSchedule {
@@ -631,7 +631,7 @@ impl CudaInstructionRafCycleSparse {
         })
     }
 
-    pub(crate) fn from_round1_device<F: jolt_field::Field>(
+    pub(crate) fn from_round1_dev<F: jolt_field::Field>(
         tables: &[Vec<F>],
         values: crate::cuda::CudaSlice<u16>,
         combined: DeviceFrVec,

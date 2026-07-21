@@ -1,4 +1,4 @@
-extern "C" __global__ void sub_kernel(u64 *__restrict__ io, const u64 *__restrict__ b, unsigned long n) {
+extern "C" __global__ void sub(u64 *__restrict__ io, const u64 *__restrict__ b, unsigned long n) {
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         u64 x[4], y[4];

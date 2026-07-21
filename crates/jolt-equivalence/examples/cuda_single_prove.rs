@@ -135,14 +135,14 @@ fn main() {
     dump("cuda");
 
     let d = |i: usize| after[i].saturating_sub(before[i]);
-    let h2d_raw_mb = d(16) as f64 / (1024.0 * 1024.0);
-    let h2d_raw_ms = d(18) as f64 / 1e6;
-    let h2d_all_mb = d(2) as f64 / (1024.0 * 1024.0);
-    let upload_ms = d(11) as f64 / 1e6;
+    let h2d_raw_mb = d(14) as f64 / (1024.0 * 1024.0);
+    let h2d_raw_ms = d(16) as f64 / 1e6;
+    let h2d_all_mb = d(0) as f64 / (1024.0 * 1024.0);
+    let upload_ms = d(9) as f64 / 1e6;
     println!(
         "  cuda xfer: h2d_raw={h2d_raw_mb:.1} MB in {h2d_raw_ms:.1} ms ({} calls); \
          h2d_total={h2d_all_mb:.1} MB; upload_span={upload_ms:.1} ms",
-        d(17)
+        d(15)
     );
     println!(
         "  h2d_raw share of cuda prove: {:.1}%",

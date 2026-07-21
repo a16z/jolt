@@ -222,8 +222,8 @@ impl CudaRamReadWriteState {
     fn cycle_round_poly(&self, previous_claim: Fr) -> Option<UnivariatePoly<Fr>> {
         let ctx = crate::cuda::shared_ctx()?;
         let schedule = self.cycle_schedules.get(self.round)?;
-        let e_in = self.cycle_eq.e_in_device();
-        let e_out = self.cycle_eq.e_out_device();
+        let e_in = self.cycle_eq.e_in_dev();
+        let e_out = self.cycle_eq.e_out_dev();
         let in_pairs = if e_in.len() > 1 { (e_in.len() / 2) as u32 } else { 0 };
         let (q_constant, q_quadratic) = ctx
             .ram_rw_cycle_round_coefficients(RamRwCycleRoundInputs {

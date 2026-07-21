@@ -28,7 +28,7 @@ pub(crate) enum CudaBytecodeReadRafState {
 }
 
 impl CudaBytecodeReadRafState {
-    pub(crate) fn new_address_device<F: Field>(
+    pub(crate) fn new_address_dev<F: Field>(
         stage_factors: Vec<DeviceFrVec>,
         stage_values: &[Vec<F>],
         entry_trace: &[F],
@@ -85,7 +85,7 @@ impl CudaBytecodeReadRafState {
         })
     }
 
-    pub(crate) fn new_cycle_device<F: Field>(
+    pub(crate) fn new_cycle_dev<F: Field>(
         cycle_chunks: &[Vec<F>],
         combined_eq: &DeviceFrVec,
         degree: usize,
@@ -100,7 +100,7 @@ impl CudaBytecodeReadRafState {
         Self::from_device_cycle(factors, num_chunks, degree)
     }
 
-    pub(crate) fn new_cycle_sparse_device<F: Field>(
+    pub(crate) fn new_cycle_sparse_dev<F: Field>(
         tables: &[Vec<F>],
         indices: &[Vec<Option<u8>>],
         combined_eq: &DeviceFrVec,

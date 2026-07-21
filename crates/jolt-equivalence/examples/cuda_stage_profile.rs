@@ -127,19 +127,17 @@ fn main() {
     println!("  xfer_stats (whole prove, host-attributed):");
     println!(
         "    materialize={:.1}ms upload={:.1}ms d2h={:.1}ms bind={:.1}ms ({} bind calls)",
-        ms(s[10]),
+        ms(s[8]),
+        ms(s[9]),
         ms(s[11]),
-        ms(s[13]),
-        ms(s[14]),
-        s[15],
+        ms(s[12]),
+        s[13],
     );
     println!(
-        "    h2d={:.1}MB ({} calls)  d2h={:.1}MB ({} calls)  pack_d2d={:.1}MB ({} calls)",
-        mb(s[2]),
-        s[3],
-        mb(s[4]),
-        s[5],
+        "    h2d={:.1}MB ({} calls)  d2h={:.1}MB ({} calls)",
         mb(s[0]),
         s[1],
+        mb(s[2]),
+        s[3],
     );
 }

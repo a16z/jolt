@@ -109,11 +109,11 @@ impl<'a> CudaSplitEqState<'a> {
         self.e_out.to_host()
     }
 
-    pub fn e_in_device(&self) -> &DeviceFrVec {
+    pub fn e_in_dev(&self) -> &DeviceFrVec {
         &self.e_in
     }
 
-    pub fn e_out_device(&self) -> &DeviceFrVec {
+    pub fn e_out_dev(&self) -> &DeviceFrVec {
         &self.e_out
     }
 
@@ -180,11 +180,11 @@ impl CudaGruenSplitEq {
         })
     }
 
-    pub fn e_in_device(&self) -> &DeviceFrVec {
+    pub fn e_in_dev(&self) -> &DeviceFrVec {
         &self.e_in_levels[self.live_e_in - 1]
     }
 
-    pub fn e_out_device(&self) -> &DeviceFrVec {
+    pub fn e_out_dev(&self) -> &DeviceFrVec {
         &self.e_out_levels[self.live_e_out - 1]
     }
 
@@ -253,12 +253,12 @@ mod cuda_tests {
 
             for round in 0..num_vars {
                 prop_assert_eq!(
-                    gpu.e_in_device().to_host().unwrap(),
+                    gpu.e_in_dev().to_host().unwrap(),
                     host.e_in_current().to_vec(),
                     "round {}", round
                 );
                 prop_assert_eq!(
-                    gpu.e_out_device().to_host().unwrap(),
+                    gpu.e_out_dev().to_host().unwrap(),
                     host.e_out_current().to_vec(),
                     "round {}", round
                 );

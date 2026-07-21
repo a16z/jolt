@@ -17,7 +17,7 @@ __device__ __forceinline__ void group_matvec(
     }
 }
 
-extern "C" __global__ void dense_outer_kernel(
+extern "C" __global__ void dense_outer(
     u64 *__restrict__ eq_out,
     u64 *__restrict__ az_out,
     u64 *__restrict__ bz_out,

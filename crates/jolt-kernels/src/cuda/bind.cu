@@ -1,4 +1,4 @@
-extern "C" __global__ void bind_kernel(u64 *__restrict__ out, const u64 *__restrict__ values, const u64 *__restrict__ challenge, unsigned long half) {
+extern "C" __global__ void bind(u64 *__restrict__ out, const u64 *__restrict__ values, const u64 *__restrict__ challenge, unsigned long half) {
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i < half) {
         u64 lo[4], hi[4], c[4];

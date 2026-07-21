@@ -2078,14 +2078,14 @@ impl<F: Field> BytecodeReadRafCycleFactors<F> {
 
     #[cfg(feature = "cuda")]
     #[cfg(feature = "cuda")]
-    fn build_cuda_cycle_sparse_device(
+    fn build_cuda_cycle_sparse_dev(
         &self,
         combined_eq: &crate::cuda::DeviceFrVec,
         degree: usize,
     ) -> Option<cuda::CudaBytecodeReadRafState> {
         match self {
             Self::SparseRound1 { tables, indices } => {
-                cuda::CudaBytecodeReadRafState::new_cycle_sparse_device(
+                cuda::CudaBytecodeReadRafState::new_cycle_sparse_dev(
                     tables, indices, combined_eq, degree,
                 )
             }
@@ -2918,10 +2918,10 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 || {
                     let combined = combined?;
                     self.cycle_factors
-                        .build_cuda_cycle_sparse_device(&combined, degree_bound)
+                        .build_cuda_cycle_sparse_dev(&combined, degree_bound)
                         .or_else(|| {
                             self.cycle_factors.dense_chunk_vecs().and_then(|chunk_vecs| {
-                                cuda::CudaBytecodeReadRafState::new_cycle_device(
+                                cuda::CudaBytecodeReadRafState::new_cycle_dev(
                                     &chunk_vecs,
                                     &combined,
                                     degree_bound,
@@ -3519,7 +3519,7 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         #[cfg(feature = "cuda")]
         if let (Some(cuda), Some(cuda_eq)) = (&self.cuda_address, &self.cuda_eq_b) {
             if let Some(q) =
-                cuda.round_poly_q(f_values, cuda_eq.e_in_device(), cuda_eq.e_out_device(), m)
+                cuda.round_poly_q(f_values, cuda_eq.e_in_dev(), cuda_eq.e_out_dev(), m)
             {
                 if let (Some(q0), Some(q1)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
@@ -3571,7 +3571,7 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     fn cycle_round_poly(&self, previous_claim: F) -> Result<UnivariatePoly<F>, Stage6KernelError> {
         #[cfg(feature = "cuda")]
         if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq_d) {
-            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_device(), cuda_eq.e_out_device()) {
+            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_dev(), cuda_eq.e_out_dev()) {
                 if let (Some(q0), Some(q1)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
                 {
@@ -4307,7 +4307,7 @@ impl<F: Field> HammingBooleanityStage6State<F> {
         }
         #[cfg(feature = "cuda")]
         if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
-            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_device(), cuda_eq.e_out_device()) {
+            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_dev(), cuda_eq.e_out_dev()) {
                 if let (Some(q_constant), Some(q_top)) =
                     (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
                 {
@@ -5783,7 +5783,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         #[cfg(feature = "cuda")]
         if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
             if let Some(q) =
-                cuda.round_poly_evals(cuda_eq.e_in_device(), cuda_eq.e_out_device())
+                cuda.round_poly_evals(cuda_eq.e_in_dev(), cuda_eq.e_out_dev())
             {
                 let evals: Option<Vec<F>> = q
                     .iter()
@@ -6473,7 +6473,7 @@ fn cuda_bytecode_address_state<F: Field>(
         let eq = ctx.eq_evals(crate::cuda::as_fr_slice(point)?, None).ok()?;
         stage_factors.push(ctx.scatter_add_eq(&eq, &addr_dev, trace_len, expected_entries).ok()?);
     }
-    cuda::CudaBytecodeReadRafState::new_address_device(
+    cuda::CudaBytecodeReadRafState::new_address_dev(
         stage_factors,
         stage_values,
         entry_trace,

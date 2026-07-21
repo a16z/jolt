@@ -335,8 +335,8 @@ impl CudaSparseRegistersState {
     pub(crate) fn round_poly_q(&self) -> Option<[Fr; 2]> {
         let ctx = crate::cuda::shared_ctx()?;
         let schedule = self.schedules.get(self.round)?;
-        let e_in_dev = self.eq_cycle.e_in_device();
-        let e_out_dev = self.eq_cycle.e_out_device();
+        let e_in_dev = self.eq_cycle.e_in_dev();
+        let e_out_dev = self.eq_cycle.e_out_dev();
         let in_pairs = if e_in_dev.len() > 1 { (e_in_dev.len() / 2) as u32 } else { 0 };
         ctx.sparse_register_round_poly(SparseRegisterRoundInputs {
             val: &self.entries.val,

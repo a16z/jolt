@@ -23,7 +23,7 @@ __device__ __forceinline__ void csr_group_dot(
     }
 }
 
-extern "C" __global__ void dense_outer_fused_kernel(
+extern "C" __global__ void dense_outer_fused(
     u64 *__restrict__ eq_out,
     u64 *__restrict__ az_out,
     u64 *__restrict__ bz_out,

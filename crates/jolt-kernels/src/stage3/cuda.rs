@@ -85,8 +85,8 @@ impl CudaSumOfProductsState {
             term_coeffs: &self.term_coeffs,
             term_factor_offsets: &term_factor_offsets,
             term_factor_indices: &term_factor_indices,
-            e_in: self.split_eq.e_in_device(),
-            e_out: self.split_eq.e_out_device(),
+            e_in: self.split_eq.e_in_dev(),
+            e_out: self.split_eq.e_out_dev(),
             degree,
         })?;
         Ok((q[0], q[1]))

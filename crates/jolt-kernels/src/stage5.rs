@@ -2091,7 +2091,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             upload(&built.identity_prefix)?,
         ];
 
-        let mut raf_banks = state.raf_banks_device(suffix_len).ok()?;
+        let mut raf_banks = state.raf_banks_dev(suffix_len).ok()?;
         let shift_half_value = 1u128 << (suffix_len / 2);
         let shift_full_value = 1u128 << suffix_len;
         if shift_half_value != 1 {
@@ -2112,7 +2112,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             let variant = tables.iter().position(|t| *t == read_table.table)? as u32;
             let table_index = variant as usize;
             table_variants.push(variant);
-            read_suffix_banks.push(state.read_suffix_banks_device(table_index, suffix_len).ok()?);
+            read_suffix_banks.push(state.read_suffix_banks_dev(table_index, suffix_len).ok()?);
         }
 
         cuda::CudaAddressPhaseRound::new(
@@ -3090,7 +3090,7 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         combined: crate::cuda::DeviceFrVec,
         r_reduction: &[F],
     ) -> Option<Self> {
-        let cuda = cuda::CudaInstructionRafCycleSparse::from_round1_device(tables, values, combined)?;
+        let cuda = cuda::CudaInstructionRafCycleSparse::from_round1_dev(tables, values, combined)?;
         let split_eq = GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh);
         let cuda_eq = crate::cuda::shared_ctx()
             .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &split_eq))?;
@@ -3113,7 +3113,7 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         #[cfg(feature = "cuda")]
         if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
             if let Some(raw) =
-                cuda.round_poly_evals(cuda_eq.e_in_device(), cuda_eq.e_out_device())
+                cuda.round_poly_evals(cuda_eq.e_in_dev(), cuda_eq.e_out_dev())
             {
                 let evals = raw
                     .into_iter()

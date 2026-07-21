@@ -126,8 +126,8 @@ pub struct CudaKernelContext {
     read_table_round_pairs: CudaFunction,
     prefix_suffix_round_pairs: CudaFunction,
     prefix_suffix_round_pairs3: CudaFunction,
-    bind_high_to_low_kernel: CudaFunction,
-    batched_bind_high_to_low_kernel: CudaFunction,
+    bind_high_to_low: CudaFunction,
+    batched_bind_high_to_low: CudaFunction,
     mul_scalar: CudaFunction,
     read_suffix_scatter: CudaFunction,
     readraf_chunk_values: CudaFunction,
@@ -178,7 +178,7 @@ pub struct CudaKernelContext {
     core_booleanity_cycle_pairs: CudaFunction,
     core_booleanity_address_pairs: CudaFunction,
     sparse_register_round_pairs: CudaFunction,
-    sparse_register_bind_kernel: CudaFunction,
+    sparse_register_bind: CudaFunction,
     instruction_raf_cycle_pairs: CudaFunction,
     instruction_raf_cycle_sparse_pairs: CudaFunction,
     instruction_raf_cycle_sparse_collapse: CudaFunction,
@@ -371,8 +371,6 @@ pub mod xfer_stats {
 
     #[derive(Default)]
     pub struct Counters {
-        pub pack_d2d_bytes: AtomicU64,
-        pub pack_d2d_calls: AtomicU64,
         pub h2d_bytes: AtomicU64,
         pub h2d_calls: AtomicU64,
         pub d2h_bytes: AtomicU64,
@@ -400,15 +398,6 @@ pub mod xfer_stats {
     pub fn enabled() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| std::env::var_os("JOLT_CUDA_XFER_STATS").is_some())
-    }
-
-    #[inline]
-    #[expect(dead_code)]
-    pub(crate) fn add_pack_d2d(bytes: usize) {
-        if enabled() {
-            let _ = counters().pack_d2d_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
-            let _ = counters().pack_d2d_calls.fetch_add(1, Ordering::Relaxed);
-        }
     }
 
     #[inline]
@@ -477,11 +466,9 @@ pub mod xfer_stats {
         out
     }
 
-    pub fn snapshot() -> [u64; 19] {
+    pub fn snapshot() -> [u64; 17] {
         let c = counters();
         [
-            c.pack_d2d_bytes.load(Ordering::Relaxed),
-            c.pack_d2d_calls.load(Ordering::Relaxed),
             c.h2d_bytes.load(Ordering::Relaxed),
             c.h2d_calls.load(Ordering::Relaxed),
             c.d2h_bytes.load(Ordering::Relaxed),
@@ -505,8 +492,6 @@ pub mod xfer_stats {
     pub fn reset() {
         let c = counters();
         for a in [
-            &c.pack_d2d_bytes,
-            &c.pack_d2d_calls,
             &c.h2d_bytes,
             &c.h2d_calls,
             &c.d2h_bytes,
@@ -1170,12 +1155,12 @@ impl CudaKernelContext {
         let module = ctx.load_module(compile_ptx_with_opts(KERNEL_SRC, opts)?)?;
         let one_dev = stream.clone_htod(&fr_to_limbs(<Fr as num_traits::One>::one()))?;
         Ok(Self {
-            add: module.load_function("add_kernel")?,
-            sub: module.load_function("sub_kernel")?,
-            mul: module.load_function("mul_kernel")?,
+            add: module.load_function("add")?,
+            sub: module.load_function("sub")?,
+            mul: module.load_function("mul")?,
             fma: module.load_function("fma_kernel")?,
-            bind: module.load_function("bind_kernel")?,
-            bind_many: module.load_function("bind_many_kernel")?,
+            bind: module.load_function("bind")?,
+            bind_many: module.load_function("bind_many")?,
             eq_double: module.load_function("eq_double")?,
             lt_double: module.load_function("lt_double")?,
             raf_q_scatter: module.load_function("raf_q_scatter")?,
@@ -1188,9 +1173,9 @@ impl CudaKernelContext {
             read_table_round_pairs: module.load_function("read_table_round_pairs")?,
             prefix_suffix_round_pairs: module.load_function("prefix_suffix_round_pairs")?,
             prefix_suffix_round_pairs3: module.load_function("prefix_suffix_round_pairs3")?,
-            bind_high_to_low_kernel: module.load_function("bind_high_to_low_kernel")?,
-            batched_bind_high_to_low_kernel: module
-                .load_function("batched_bind_high_to_low_kernel")?,
+            bind_high_to_low: module.load_function("bind_high_to_low")?,
+            batched_bind_high_to_low: module
+                .load_function("batched_bind_high_to_low")?,
             mul_scalar: module.load_function("mul_scalar")?,
             read_suffix_scatter: module.load_function("read_suffix_scatter")?,
             readraf_chunk_values: module.load_function("readraf_chunk_values")?,
@@ -1215,9 +1200,9 @@ impl CudaKernelContext {
             schedule_round_emit: module.load_function("schedule_round_emit")?,
             add_scalar: module.load_function("add_scalar")?,
             add_scalar_at: module.load_function("add_scalar_at")?,
-            dense_outer: module.load_function("dense_outer_kernel")?,
-            dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
-            row_dots: module.load_function("row_dots_kernel")?,
+            dense_outer: module.load_function("dense_outer")?,
+            dense_outer_fused: module.load_function("dense_outer_fused")?,
+            row_dots: module.load_function("row_dots")?,
             cubic_pairs: module.load_function("cubic_pairs")?,
             cubic_tuple_reduce: module.load_function("cubic_tuple_reduce")?,
             round_poly_pairs: module.load_function("round_poly_pairs")?,
@@ -1248,7 +1233,7 @@ impl CudaKernelContext {
                 .load_function("core_booleanity_address_pairs")?,
             sparse_register_round_pairs: module
                 .load_function("sparse_register_round_pairs")?,
-            sparse_register_bind_kernel: module
+            sparse_register_bind: module
                 .load_function("sparse_register_bind")?,
             instruction_raf_cycle_pairs: module
                 .load_function("instruction_raf_cycle_pairs")?,
@@ -1363,7 +1348,7 @@ impl CudaKernelContext {
         Ok(out)
     }
 
-    pub fn concat_device(&self, parts: &[&DeviceFrVec]) -> Result<DeviceFrVec, CudaError> {
+    pub fn concat_dev(&self, parts: &[&DeviceFrVec]) -> Result<DeviceFrVec, CudaError> {
         let total: usize = parts.iter().map(|p| p.len).sum();
         let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(total.max(1) * LIMBS)?;
         let mut offset = 0;
@@ -2033,7 +2018,7 @@ impl CudaKernelContext {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub fn compute_row_dots_device(
+    pub fn compute_row_dots_dev(
         &self,
         witness: &DeviceFrVec,
         a_offsets: &[u32],
@@ -2116,7 +2101,7 @@ impl CudaKernelContext {
             return Ok((Vec::new(), Vec::new()));
         }
         let witness_dev = self.upload(witness)?;
-        let (a, b) = self.compute_row_dots_device(
+        let (a, b) = self.compute_row_dots_dev(
             &witness_dev,
             a_offsets,
             a_vars,
@@ -3021,7 +3006,7 @@ impl CudaKernelContext {
             block_dim: (block, 1, 1),
             shared_mem_bytes: 0,
         };
-        let f = self.sparse_register_bind_kernel.clone();
+        let f = self.sparse_register_bind.clone();
         let mut launch = self.stream.launch_builder(&f);
         let _ = launch
             .arg(&mut val.buf)
@@ -4363,7 +4348,7 @@ impl CudaKernelContext {
             shared_mem_bytes: 0,
         };
         let half_arg = half as u64;
-        let f = self.bind_high_to_low_kernel.clone();
+        let f = self.bind_high_to_low.clone();
         xfer_stats::timed(xfer_stats::Phase::Bind, || {
             let mut launch = self.stream.launch_builder(&f);
             let _ = launch
@@ -4417,7 +4402,7 @@ impl CudaKernelContext {
         };
         let half_arg = half as u64;
         let num_polys_arg = num_polys as u64;
-        let f = self.batched_bind_high_to_low_kernel.clone();
+        let f = self.batched_bind_high_to_low.clone();
         xfer_stats::timed(xfer_stats::Phase::Bind, || {
             let mut launch = self.stream.launch_builder(&f);
             let _ = launch
@@ -6012,11 +5997,11 @@ impl CudaKernelContext {
         Ok(host[0])
     }
 
-    pub fn sum_device(&self, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+    pub fn sum_dev(&self, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         self.reduce_to_device(true, values)
     }
 
-    pub fn product_device(&self, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+    pub fn product_dev(&self, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         self.reduce_to_device(false, values)
     }
 }
@@ -6587,7 +6572,7 @@ mod tests {
         fn sum_device_matches_cpu(a in fr_vec_strategy(2000)) {
             let expected: Fr = a.iter().copied().sum();
             let c = ctx();
-            let got = c.sum_device(&c.upload(&a).unwrap()).unwrap();
+            let got = c.sum_dev(&c.upload(&a).unwrap()).unwrap();
             prop_assert_eq!(got.len(), 1);
             prop_assert_eq!(got.to_host().unwrap(), vec![expected]);
         }
@@ -6596,7 +6581,7 @@ mod tests {
         fn product_device_matches_cpu(a in fr_vec_strategy(2000)) {
             let expected: Fr = a.iter().copied().product();
             let c = ctx();
-            let got = c.product_device(&c.upload(&a).unwrap()).unwrap();
+            let got = c.product_dev(&c.upload(&a).unwrap()).unwrap();
             prop_assert_eq!(got.len(), 1);
             prop_assert_eq!(got.to_host().unwrap(), vec![expected]);
         }

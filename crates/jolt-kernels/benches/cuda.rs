@@ -189,7 +189,7 @@ fn gpu_reduce_chain_device(ctx: &CudaKernelContext, a: &[Fr], b: &[Fr], steps: u
     let mut total = ctx.upload(&[Fr::from_u64(0)]).unwrap();
     for _ in 0..steps {
         ctx.mul(&mut acc, &b_dev).unwrap();
-        let partial = ctx.sum_device(&acc).unwrap();
+        let partial = ctx.sum_dev(&acc).unwrap();
         ctx.add(&mut total, &partial).unwrap();
     }
     total.to_host().unwrap()[0]
@@ -242,7 +242,7 @@ fn gpu_reduce_burst_device(ctx: &CudaKernelContext, a: &[Fr], rounds: usize) -> 
     let a_dev = ctx.upload(a).unwrap();
     let mut total = ctx.upload(&[Fr::from_u64(0)]).unwrap();
     for _ in 0..rounds {
-        let partial = ctx.sum_device(&a_dev).unwrap();
+        let partial = ctx.sum_dev(&a_dev).unwrap();
         ctx.add(&mut total, &partial).unwrap();
     }
     total.to_host().unwrap()[0]
