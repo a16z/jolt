@@ -3401,6 +3401,10 @@ mod tests {
         let prove_start = Instant::now();
         let (proof, _) = prover.prove().expect("dory prover should produce a proof");
         eprintln!("dory prove: {:.2?}", prove_start.elapsed());
+        eprintln!(
+            "dory proof size (postcard): {} bytes",
+            postcard::to_stdvec(&proof).unwrap().len()
+        );
         let verifier_preprocessing_start = Instant::now();
         let verifier_preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
         eprintln!(
