@@ -20,3 +20,5 @@ pub use verifier::{
     validate_inputs_from_parts, verify, verify_until_stage1, CheckedInputs, PreStage1VerifierState,
     ProofTranscriptConfig,
 };
+#[cfg(not(feature = "akita"))]
+pub use verifier::{verify_stages, VerifiedStages};
