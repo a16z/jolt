@@ -179,6 +179,21 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
         openings
     }
 
+    fn input_carried_outputs() -> Vec<(JoltOpeningId, JoltOpeningId)> {
+        // The dual-role `Val_init` contribution openings (see the module's
+        // WARNING): each staged wire cell carries the same evaluation the input
+        // claim consumed, under one shared opening id, so every pair maps an id
+        // to itself. Presence tracks the consumed claim's `Option` cell.
+        [
+            ram::val_check_advice_opening(JoltAdviceKind::Untrusted),
+            ram::val_check_advice_opening(JoltAdviceKind::Trusted),
+            program_image::ram_val_check_contribution_opening(),
+        ]
+        .into_iter()
+        .map(|id| (id, id))
+        .collect()
+    }
+
     /// Reproduces the stage-4 inline RAM value-check gamma draw: the
     /// `b"ram_val_check_gamma"` domain separator (an empty labeled append) followed
     /// by `ram_val_check_gamma = challenge_scalar()`. The separator's empty append

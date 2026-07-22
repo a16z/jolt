@@ -74,8 +74,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for ReferenceBack
         )]);
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            inputs.challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

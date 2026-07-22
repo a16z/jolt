@@ -297,8 +297,7 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
         )]);
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            inputs.challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

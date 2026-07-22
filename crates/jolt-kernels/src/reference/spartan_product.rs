@@ -24,7 +24,6 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     write_lookup_output_to_rd_product,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
-use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
@@ -36,6 +35,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
 use crate::spartan_product::{SpartanProductInstance, SpartanProductProver};
+use crate::ProverInputs;
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> SpartanProductProver<F> for ReferenceBackend {
@@ -132,11 +132,11 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
     /// table); `TauKernel` is the `LK(τ_high, r₀)`-scaled eq-cycle table.
     fn into_remainder(
         self: Box<Self>,
-        relation: &ProductRemainder<F>,
+        inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
         let this = *self;
-        let tau_high = relation.tau_high();
-        let uniskip_challenge = relation.uniskip_challenge();
+        let tau_high = inputs.relation.tau_high();
+        let uniskip_challenge = inputs.relation.uniskip_challenge();
         let cycles = 1usize << this.log_t;
         let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)?;
         let scale = centered_lagrange_kernel::<F>(
@@ -186,8 +186,7 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
         ]);
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            &NoChallenges::default(),
+            inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

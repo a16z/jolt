@@ -23,7 +23,6 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
-use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
@@ -35,6 +34,7 @@ use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, replicate_stream_lsb, stream_pair_lsb};
 use crate::spartan_outer::{SpartanOuterInstance, SpartanOuterProver};
+use crate::ProverInputs;
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> SpartanOuterProver<F> for ReferenceBackend {
@@ -165,10 +165,10 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
     /// one multilinear table.
     fn into_remainder(
         self: Box<Self>,
-        relation: &OuterRemainder<F>,
+        inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
         let this = *self;
-        let uniskip_challenge = relation.uniskip_challenge();
+        let uniskip_challenge = inputs.relation.uniskip_challenge();
         let kernel = centered_lagrange_kernel::<F>(
             OUTER_UNISKIP_DOMAIN_SIZE,
             this.tau[this.log_t + 1],
@@ -243,8 +243,7 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
             .collect();
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            &NoChallenges::default(),
+            inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

@@ -387,8 +387,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
         );
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            inputs.challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

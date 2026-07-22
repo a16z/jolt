@@ -30,14 +30,14 @@ pub trait SpartanOuterProver<F: Field> {
 
 /// A prepared Spartan-outer instance: the uni-skip first-round polynomial,
 /// then — once the uni-skip challenge is drawn — the remainder batch member.
-/// `relation` is the stage's batch instance (the source of the drawn `tau`
-/// and the uni-skip challenge; the kernel owns no copy).
+/// `inputs.relation` is the stage's batch instance (the source of the drawn
+/// `tau` and the uni-skip challenge; the kernel owns no copy).
 pub trait SpartanOuterInstance<F: Field> {
     fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>>;
 
     fn into_remainder(
         self: Box<Self>,
-        relation: &OuterRemainder<F>,
+        inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>>;
 }
 
@@ -58,6 +58,6 @@ impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for SessionCarriedKernels {
                 .ok_or(KernelError::InvariantViolation {
                     reason: "the stage-1 front parked no outer instance for the remainder member",
                 })?;
-        instance.into_remainder(inputs.relation)
+        instance.into_remainder(&inputs)
     }
 }

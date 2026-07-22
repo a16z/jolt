@@ -50,8 +50,7 @@ impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for ReferenceBackend {
         )]);
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            inputs.challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

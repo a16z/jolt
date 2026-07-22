@@ -175,6 +175,34 @@ where
         Vec::new()
     }
 
+    /// This relation's dual-role openings, as `(wire output, consumed input)` id
+    /// pairs: each output cell's value equals the member's own consumed `input`
+    /// claim — the same evaluation, staged on this relation's wire claims for
+    /// downstream consumers — and is NOT a leaf of the output `Expr` (the
+    /// relation's fold never reads it, so no kernel has a table for it).
+    /// `RamValCheck`'s staged advice / program-image `Val_init` contributions are
+    /// the concrete case: consumed by its input `Expr`'s init decomposition and
+    /// re-staged as stage-4 wire openings.
+    ///
+    /// The generic kernel layer resolves the pairs mechanically: the naive
+    /// prover snapshots each declared `input` value off the member's consumed
+    /// claims at construction and attaches it to the `output` cell during typed
+    /// extraction, so no hand-written kernel re-states the relation's wire
+    /// structure. An input cell that is absent (an `Option` claim whose
+    /// commitment is not present) attaches nothing — presence follows the
+    /// consumed claim.
+    ///
+    /// Like [`aliased_output_openings`](Self::aliased_output_openings), this is
+    /// an associated function: the pairing is a constant of the relation,
+    /// consumable without constructing one (presence is resolved against the
+    /// instance's claims at attach time).
+    fn input_carried_outputs() -> Vec<(JoltOpeningId, JoltOpeningId)>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+
     /// The opening ids this instance absorbs into the transcript (and commits in
     /// ZK): the output-`Expr`-referenced set minus the aliased openings (absorbed
     /// once via their canonical source). The generated `output_claim_count` sums

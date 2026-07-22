@@ -30,15 +30,15 @@ pub trait SpartanProductProver<F: Field> {
 
 /// A prepared product-virtualization instance: the uni-skip first-round
 /// polynomial (once `τ_high` is drawn), then the remainder batch member (once
-/// the uni-skip challenge binds). `relation` is the stage's batch instance
-/// (the source of `τ_high` and the uni-skip challenge; the kernel owns no
-/// copy).
+/// the uni-skip challenge binds). `inputs.relation` is the stage's batch
+/// instance (the source of `τ_high` and the uni-skip challenge; the kernel
+/// owns no copy).
 pub trait SpartanProductInstance<F: Field> {
     fn uniskip_first_round_poly(&self, tau_high: F) -> Result<UnivariatePoly<F>, KernelError<F>>;
 
     fn into_remainder(
         self: Box<Self>,
-        relation: &ProductRemainder<F>,
+        inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>>;
 }
 
@@ -60,6 +60,6 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for SessionCarriedKernels {
                 .ok_or(KernelError::InvariantViolation {
                     reason: "the stage-2 front parked no product instance for the remainder member",
                 })?;
-        instance.into_remainder(inputs.relation)
+        instance.into_remainder(&inputs)
     }
 }

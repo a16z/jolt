@@ -53,8 +53,7 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for ReferenceBacke
         )]);
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            inputs.challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,
