@@ -60,7 +60,7 @@ This is a refactor of trait boundaries, not of arithmetic. The `jolt-eval` invar
 - [x] The three `native_algebra.rs` files are deleted; one shared macro provides the supertrait glue, invoked from each concrete type's own file.
 - [x] `Fp32`, `Fp64`, `Fp128`, `FpExt2`, `FpExt4`, `FpExt8` implement `serde::Serialize`/`Deserialize` with canonical encoding; a bincode round-trip test covers each.
 - [x] The degree-4 extension mul/square schedule exists in exactly one place (shared between scalar and packed backends, as degree-8 already is).
-- [x] `muldiv` e2e passes in both modes. (Byte-for-byte proof comparison against a main-built proof not yet run; the Fiat-Shamir and `Fr` serialization paths were moved verbatim.)
+- [x] `muldiv` e2e passes in both modes. (Byte-for-byte proof comparison against a main-built proof verified 2026-07-22: standard-mode `muldiv` proofs are identical in all 63,371 bytes, proving is deterministic run-to-run, and the main-built verifier accepts the branch-built proof. Caveat for reproduction: `cfg(test)` builds randomize the Dory URS per process via `DoryGlobals::configure_test_cache_root`, so cross-process comparison requires pinning both builds to a shared URS cache.)
 - [x] Serialized size tests: each Solinas field element bincode-encodes to exactly `NUM_BYTES` bytes; a `Vec` of $n$ elements encodes to $n \cdot \texttt{NUM\_BYTES}$ plus a single length prefix.
 - [x] `mersenne61_compat` passes with updated bounds and still no arkworks dependency.
 
