@@ -3602,6 +3602,7 @@ name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
  "common",
+ "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
