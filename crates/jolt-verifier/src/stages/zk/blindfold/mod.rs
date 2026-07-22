@@ -54,7 +54,9 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
+use jolt_blindfold::{
+    BlindFoldConstruction, BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias,
+};
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
@@ -142,7 +144,7 @@ type Builder<F, C> = BlindFoldProtocolBuilder<F, JoltOpeningId, C, VerifierPubli
 type VerifierExpr<F> = Expr<F, JoltOpeningId, VerifierPublicId>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VerifierPublicId {
+pub enum VerifierPublicId {
     Jolt(JoltDerivedId),
     SpartanOuter(JoltSpartanOuterPublic),
     /// Gamma values that remain as `JoltChallengeId` variants (not moved to Public) but are
@@ -161,9 +163,28 @@ struct SourceValues<F: Field> {
     publics: Vec<(VerifierPublicId, F)>,
 }
 
+/// The Jolt-shaped [`BlindFoldConstruction`]: protocol plus the statement and
+/// baked sources the prover's witness assembly re-runs the constraint pass
+/// with.
+pub type JoltBlindFoldConstruction<F, C> =
+    BlindFoldConstruction<F, JoltOpeningId, C, VerifierPublicId, usize>;
+
 pub fn build<PCS, VC, ZkProof>(
     input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
 ) -> Result<BlindFoldProtocol<PCS::Field, VC::Output>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    VC::Output: Clone,
+{
+    build_construction(input).map(|construction| construction.protocol)
+}
+
+/// Lower the verified stage outputs into the BlindFold protocol while keeping
+/// the statement and baked sources — the prover-side entry point.
+pub fn build_construction<PCS, VC, ZkProof>(
+    input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
+) -> Result<JoltBlindFoldConstruction<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -189,16 +210,14 @@ where
         builder = builder.public(id, value);
     }
 
-    let protocol = builder
+    builder
         .final_opening(
             input.stage8.opening_ids.clone(),
             input.stage8.constraint_coefficients.clone(),
             input.stage8.hiding_evaluation_commitment,
         )
-        .build()
-        .map_err(blindfold_error)?;
-
-    Ok(protocol)
+        .build_construction()
+        .map_err(blindfold_error)
 }
 
 #[expect(

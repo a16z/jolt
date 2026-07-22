@@ -49,9 +49,113 @@ where
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    use crate::stages::zk::{blindfold, inputs::BlindFoldInputs};
+    use crate::stages::zk::blindfold;
 
-    let (checked, mut transcript) = validate_and_seed_transcript::<PCS, VC, T, _>(
+    let (stages, mut transcript) = verify_stages::<F, PCS, VC, T, _>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+    )?;
+
+    if stages.checked.zk {
+        let blindfold = blindfold::build(stages.blindfold_inputs(preprocessing, proof)?)?;
+        let vc_setup = preprocessing
+            .vc_setup
+            .as_ref()
+            .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
+        transcript.append(&Label(b"BlindFold"));
+        blindfold
+            .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
+            .map_err(|error| VerifierError::BlindFoldVerificationFailed {
+                reason: error.to_string(),
+            })?;
+        return Ok(());
+    }
+
+    let stage8::Stage8Output::Clear(_) = stages.stage8 else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
+    };
+
+    Ok(())
+}
+
+/// The outputs of the staged verification spine — everything `verify` derives
+/// before its clear/ZK tail. Shared by [`verify`], the ZK audit harness, and
+/// the modular prover's ZK replay (which re-runs the verifier on its own
+/// assembled proof to obtain the exact `BlindFoldProtocol` the verifier will
+/// build).
+#[cfg(not(feature = "akita"))]
+pub struct VerifiedStages<PCS, VC>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    pub checked: CheckedInputs,
+    pub stage1: stage1::Stage1Output<PCS::Field, VC::Output>,
+    pub stage2: stage2::Stage2Output<PCS::Field, VC::Output>,
+    pub stage3: stage3::Stage3Output<PCS::Field, VC::Output>,
+    pub stage4: stage4::Stage4Output<PCS::Field, VC::Output>,
+    pub stage5: stage5::Stage5Output<PCS::Field, VC::Output>,
+    pub stage6a: stage6a::Stage6aOutput<PCS::Field, VC::Output>,
+    pub stage6b: stage6b::Stage6bOutput<PCS::Field, VC::Output>,
+    pub stage7: stage7::Stage7Output<PCS::Field, VC::Output>,
+    pub stage8: stage8::Stage8Output<PCS::Field, PCS::Output, VC::Output>,
+}
+
+#[cfg(not(feature = "akita"))]
+impl<PCS, VC> VerifiedStages<PCS, VC>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    /// Borrow the per-stage ZK outputs as the BlindFold lowering's input
+    /// bundle. Errors with the offending stage if any output is clear.
+    pub fn blindfold_inputs<'a, ZkProof>(
+        &'a self,
+        preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
+        proof: &'a JoltProof<PCS, VC, ZkProof>,
+    ) -> Result<crate::stages::zk::inputs::BlindFoldInputs<'a, PCS, VC, ZkProof>, VerifierError>
+    {
+        Ok(crate::stages::zk::inputs::BlindFoldInputs {
+            checked: &self.checked,
+            preprocessing,
+            proof,
+            stage1: self.stage1.zk()?,
+            stage2: self.stage2.zk()?,
+            stage3: self.stage3.zk()?,
+            stage4: self.stage4.zk()?,
+            stage5: self.stage5.zk()?,
+            stage6a: self.stage6a.zk()?,
+            stage6b: self.stage6b.zk()?,
+            stage7: self.stage7.zk()?,
+            stage8: self.stage8.zk()?,
+        })
+    }
+}
+
+/// Run the staged verification spine: validate inputs, seed the transcript,
+/// and verify stages 1–8, returning every stage output plus the transcript
+/// positioned at the stage-8 boundary (where the clear tail ends and the
+/// BlindFold tail begins).
+#[cfg(not(feature = "akita"))]
+pub fn verify_stages<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+) -> Result<(VerifiedStages<PCS, VC>, T), VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    T: Transcript<Challenge = F>,
+{
+    let (checked, mut transcript) = validate_and_seed_transcript::<PCS, VC, T, ZkProof>(
         preprocessing,
         public_io,
         proof,
@@ -131,39 +235,21 @@ where
         &stage7,
     )?;
 
-    if checked.zk {
-        let blindfold = blindfold::build(BlindFoldInputs {
-            checked: &checked,
-            preprocessing,
-            proof,
-            stage1: stage1.zk()?,
-            stage2: stage2.zk()?,
-            stage3: stage3.zk()?,
-            stage4: stage4.zk()?,
-            stage5: stage5.zk()?,
-            stage6a: stage6a.zk()?,
-            stage6b: stage6b.zk()?,
-            stage7: stage7.zk()?,
-            stage8: stage8.zk()?,
-        })?;
-        let vc_setup = preprocessing
-            .vc_setup
-            .as_ref()
-            .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-        transcript.append(&Label(b"BlindFold"));
-        blindfold
-            .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
-            .map_err(|error| VerifierError::BlindFoldVerificationFailed {
-                reason: error.to_string(),
-            })?;
-        return Ok(());
-    }
-
-    let stage8::Stage8Output::Clear(_) = stage8 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
-    };
-
-    Ok(())
+    Ok((
+        VerifiedStages {
+            checked,
+            stage1,
+            stage2,
+            stage3,
+            stage4,
+            stage5,
+            stage6a,
+            stage6b,
+            stage7,
+            stage8,
+        },
+        transcript,
+    ))
 }
 
 /// The Akita verification path: the same stage spine, with the reconstruction
