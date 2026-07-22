@@ -54,6 +54,10 @@ pub struct AkitaSetupParams {
     /// full-flavor setup for the same shape is large and slow, and a packed
     /// one-hot commitment object never touches it.
     pub(crate) one_hot_only: bool,
+    /// When set, only the full flavor's backend setup is built — the one-hot
+    /// flavor dominates the setup cost (~30x the full flavor at advice
+    /// shapes), and a sparse-unit or dense commitment object never touches it.
+    pub(crate) full_only: bool,
 }
 
 impl AkitaSetupParams {
@@ -68,6 +72,7 @@ impl AkitaSetupParams {
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
+            full_only: false,
         }
     }
 
@@ -86,6 +91,26 @@ impl AkitaSetupParams {
             default_layout_digest,
             one_hot_k,
             one_hot_only: true,
+            full_only: false,
+        }
+    }
+
+    /// Setup parameters for a commitment object that only ever commits and
+    /// opens through the full flavor (sparse-unit or dense polynomials, e.g.
+    /// the advice byte columns and the precommitted program): skips building
+    /// the one-hot backend setup of the same shape.
+    pub fn full_only(
+        max_num_vars: usize,
+        max_num_polys_per_commitment_group: usize,
+        default_layout_digest: AkitaLayoutDigest,
+    ) -> Self {
+        Self {
+            max_num_vars,
+            max_num_polys_per_commitment_group,
+            default_layout_digest,
+            one_hot_k: AKITA_ONE_HOT_K256,
+            one_hot_only: false,
+            full_only: true,
         }
     }
 

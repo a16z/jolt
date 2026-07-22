@@ -2393,6 +2393,12 @@ pub struct JoltProverPreprocessing<
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing<PCS>,
     pub committed_program_prover_data: Option<CommittedProgramProverData<PCS>>,
+    /// Derived state: the untrusted-advice commitment object's setup, a pure
+    /// function of `shared.memory_layout.max_untrusted_advice_size`. Built on
+    /// first use so per-prove advice commits stop rebuilding it; skipped by
+    /// serialization and rebuilt on the deserialized side.
+    #[cfg(feature = "akita")]
+    pub untrusted_advice_object_setup: std::sync::OnceLock<jolt_akita::AkitaProverSetup>,
     _curve: std::marker::PhantomData<C>,
 }
 
@@ -2464,6 +2470,8 @@ where
             generators,
             shared,
             committed_program_prover_data,
+            #[cfg(feature = "akita")]
+            untrusted_advice_object_setup: std::sync::OnceLock::new(),
             _curve: std::marker::PhantomData,
         };
         if matches!(validate, ark_serialize::Validate::Yes) {
@@ -2492,6 +2500,8 @@ where
             generators,
             shared,
             committed_program_prover_data: None,
+            #[cfg(feature = "akita")]
+            untrusted_advice_object_setup: std::sync::OnceLock::new(),
             _curve: std::marker::PhantomData,
         }
     }
@@ -2509,6 +2519,8 @@ where
             generators,
             shared,
             committed_program_prover_data: Some(committed_program_prover_data),
+            #[cfg(feature = "akita")]
+            untrusted_advice_object_setup: std::sync::OnceLock::new(),
             _curve: std::marker::PhantomData,
         }
     }

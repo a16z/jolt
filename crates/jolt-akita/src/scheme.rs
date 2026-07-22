@@ -311,6 +311,10 @@ impl CommitmentScheme for AkitaScheme {
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
         let invalid_setup =
             |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
+        debug_assert!(
+            !(params.one_hot_only && params.full_only),
+            "a setup cannot skip both backend flavors"
+        );
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
             .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) = if params
@@ -337,7 +341,7 @@ impl CommitmentScheme for AkitaScheme {
             one_hot_backend_prover_setup,
             prepared_one_hot_backend_setup,
             one_hot_backend_verifier_setup,
-        ) = if params.max_num_vars >= one_hot_log_k {
+        ) = if params.max_num_vars >= one_hot_log_k && !params.full_only {
             let backend_prover_setup = crate::adapters::one_hot_setup_prover(
                 params.one_hot_k,
                 params.max_num_vars,

@@ -395,9 +395,29 @@ fn transparent_object_setup(
     ),
     jolt_openings::OpeningsError,
 > {
-    <AkitaScheme as VerifierCommitmentScheme>::setup(jolt_akita::AkitaSetupParams::new(
+    // Every auxiliary packed object (advice byte columns, the precommitted
+    // program) commits through the sparse-unit/full flavor, so the one-hot
+    // backend setup — which dominates the setup cost at these shapes — is
+    // never built.
+    <AkitaScheme as VerifierCommitmentScheme>::setup(jolt_akita::AkitaSetupParams::full_only(
         num_vars, 1, [0u8; 32],
     ))
+}
+
+/// Builds the advice commitment object's prover setup from the public advice
+/// shape alone — preprocessing-time data, so per-prove commits reuse it via
+/// [`JoltProverPreprocessing::untrusted_advice_object_setup`].
+pub fn advice_object_setup(
+    max_advice_bytes: usize,
+) -> Result<<AkitaScheme as VerifierCommitmentScheme>::ProverSetup, VerifierError> {
+    let word_vars = (max_advice_bytes / 8).next_power_of_two().log_2();
+    let cell_vars = word_byte_num_vars(word_vars);
+    let (setup, _verifier_setup) = transparent_object_setup(cell_vars).map_err(|error| {
+        VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(setup)
 }
 
 /// A packed advice commitment object (`UntrustedAdviceOneHot` per proof, `TrustedAdviceOneHot`
@@ -419,6 +439,7 @@ pub struct AdviceOneHot {
 pub fn commit_advice_one_hot(
     advice_bytes: &[u8],
     max_advice_bytes: usize,
+    setup: &<AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
 ) -> Result<AdviceOneHot, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
 
@@ -427,6 +448,11 @@ pub fn commit_advice_one_hot(
 
     let word_vars = words.len().next_power_of_two().log_2();
     let cell_vars = word_byte_num_vars(word_vars);
+    debug_assert_eq!(
+        setup.max_num_vars(),
+        cell_vars,
+        "advice object setup shape must match the advice cell domain"
+    );
     let limb_bits = WORD_BYTES.log_2();
     let mut one_positions = Vec::with_capacity(WORD_BYTES << word_vars);
     for limb in 0..WORD_BYTES {
@@ -437,28 +463,27 @@ pub fn commit_advice_one_hot(
     }
     let byte_column = SparseUnitPolynomial::<AkitaField>::new(cell_vars, one_positions);
 
-    let (setup, _verifier_setup) =
-        transparent_object_setup(cell_vars).map_err(|error| commit_failed(error.to_string()))?;
-    let (commitment, hint) =
-        <AkitaScheme as VerifierCommitmentScheme>::commit(&byte_column, &setup)
-            .map_err(|error| commit_failed(error.to_string()))?;
+    let (commitment, hint) = <AkitaScheme as VerifierCommitmentScheme>::commit(&byte_column, setup)
+        .map_err(|error| commit_failed(error.to_string()))?;
     Ok(AdviceOneHot {
         words,
         byte_column,
         commitment,
         hint,
-        setup,
+        setup: setup.clone(),
     })
 }
 
 /// Precommits the trusted-advice byte one-hot column (`TrustedAdviceOneHot`) out of band.
 /// The caller passes the returned object to the packed prove and its
-/// commitment to the verifier.
+/// commitment to the verifier. Runs at preprocessing time, so it builds its
+/// own object setup.
 pub fn commit_trusted_advice_one_hot(
     trusted_advice_bytes: &[u8],
     max_trusted_advice_bytes: usize,
 ) -> Result<AdviceOneHot, VerifierError> {
-    commit_advice_one_hot(trusted_advice_bytes, max_trusted_advice_bytes)
+    let setup = advice_object_setup(max_trusted_advice_bytes)?;
+    commit_advice_one_hot(trusted_advice_bytes, max_trusted_advice_bytes, &setup)
 }
 
 /// The precommitted `ProgramOneHot` commitment object (committed-program mode):
@@ -735,10 +760,20 @@ impl AkitaPackedProver<'_> {
         if self.program_io.untrusted_advice.is_empty() {
             return Ok(None);
         }
-        let object = commit_advice_one_hot(
-            &self.program_io.untrusted_advice,
-            self.program_io.memory_layout.max_untrusted_advice_size as usize,
-        )?;
+        let max_advice_bytes = self.program_io.memory_layout.max_untrusted_advice_size as usize;
+        // The object setup depends only on the (preprocessing-time) advice
+        // shape; build it once per preprocessing instead of per prove.
+        let setup = match self.preprocessing.untrusted_advice_object_setup.get() {
+            Some(setup) => setup,
+            None => {
+                let built = advice_object_setup(max_advice_bytes)?;
+                self.preprocessing
+                    .untrusted_advice_object_setup
+                    .get_or_init(|| built)
+            }
+        };
+        let object =
+            commit_advice_one_hot(&self.program_io.untrusted_advice, max_advice_bytes, setup)?;
         append_length_prefixed(
             &mut self.transcript,
             b"untrusted_advice",
