@@ -113,16 +113,16 @@ Trait disposition, all 46 accounted for:
 | `ReduceTo<F>` | `ScaleI32` | same three wide-limb implementors |
 | `PackedField` | `PackedValue` | identical 13 implementors; nothing bounds on `PackedValue` alone |
 
-**Kept as-is (14):** `AdditiveGroup`, `RingCore`, `Field` (umbrella), `WithAccumulator` (the additive-layer accumulator association that lets rings use `NaiveAccumulator` without field capabilities, per #1484), `OptimizedMul` (consumed by jolt-prover-legacy; candidate to relocate there in a later sweep), `CanonicalField`, `HalvingField` (implemented by extension fields, so it cannot fold into `CanonicalField`), `PseudoMersenneField`, `MulBaseUnreduced`, `FpExt2Config`, `HasUnreducedOps`, `HasOptimizedFold`, `HasWide`, `HasPacking`.
+**Kept as-is (14):** `AdditiveGroup`, `RingCore`, `Field` (umbrella), `WithAccumulator` (the additive-layer accumulator association that lets rings use `NaiveAccumulator` without field capabilities, per #1484), `CanonicalField`, `HalvingField` (implemented by extension fields, so it cannot fold into `CanonicalField`), `PseudoMersenneField`, `MulBaseUnreduced`, `FpExt2Config`, `HasUnreducedOps`, `HasOptimizedFold`, `HasWide`, `HasPacking`.
 
-Final count: 7 survivors + 14 kept = at most 22 public traits (21 if `MontgomeryConstants`' deletion is confirmed and `OptimizedMul` relocates).
+Final count: 22 public traits (21 if `MontgomeryConstants`' deletion is confirmed). Amendment during implementation: `OptimizedMul` was deleted outright rather than kept; jolt-prover-legacy defines its own identical trait and never consumed jolt-field's copy.
 
 **Serialization split.** Two distinct concerns, two mechanisms:
 
 - Proof/wire format: serde + bincode. Solinas types serialize their canonical form (never an internal representation), exactly as `arkworks/bn254.rs` already does for `Fr`. Extension fields serialize as arrays of base-field elements. Nothing replicates akita-serialization's `FpExt2Config`-bound custom encode/decode.
 - Fiat-Shamir: `CanonicalRepr`'s explicit little-endian canonical encoding. A transcript needs a specified encoding, not whatever an encoder version emits, so this deliberately does not route through bincode.
 
-**File layout.** Crate root: `algebra.rs` (`AdditiveGroup`, `RingCore`, `FieldCore`, `FromPrimitiveInt`, `OptimizedMul`), `canonical.rs` (`CanonicalRepr`), `accumulator.rs` (`Accumulator`, `WithAccumulator`, `NaiveAccumulator`), `field.rs` (`Field` umbrella). Solinas traits (`CanonicalField`, `HalvingField`, `PseudoMersenneField`) move into `prime/mod.rs`. Each concrete type's file shows its full trait surface bn254.rs-style; shared macros are limited to:
+**File layout.** Crate root: `algebra.rs` (`AdditiveGroup`, `RingCore`, `FieldCore`, `FromPrimitiveInt`, `OptimizedMul`), `canonical.rs` (`CanonicalRepr`), `accumulator.rs` (`Accumulator`, `WithAccumulator`, `NaiveAccumulator`), `field.rs` (`Field` umbrella). Solinas traits (`CanonicalField`, `HalvingField`, `PseudoMersenneField`, and the `balanced_digit_lut` helper) move into `prime/traits.rs`, re-exported through `prime`. `montgomery_constants.rs` remains a separate root file until the `MontgomeryConstants` open question resolves. Each concrete type's file shows its full trait surface bn254.rs-style; shared macros are limited to:
 
 1. one `impl_native_algebra!` macro (replacing the three `native_algebra.rs` files and the 230 hand-written lines in `ext/native_algebra.rs`), invoked inside each type's file;
 2. one operator-matrix macro in the style of `bn254.rs`'s `delegate_binop!` and legacy's `impl_field_ops_inline!`, deduplicating the hand-written `Add`/`Sub`/`Mul`/`Neg`/`*Assign`/by-reference blocks in `fp32.rs`, `fp64.rs`, `fp128/`, and the ext types (reduction bodies stay hand-written per type; `fp64`'s `C_SHIFT` specialization is math, not boilerplate);

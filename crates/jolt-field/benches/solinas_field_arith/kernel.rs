@@ -36,7 +36,7 @@ fn sumcheck_bench<F, PF>(
     rng: &mut StdRng,
     n: u64,
 ) where
-    F: FieldCore + FieldCore + 'static,
+    F: FieldCore + 'static,
     PF: PackedField<Scalar = F> + Copy + 'static,
 {
     let eq: Vec<F> = (0..n).map(|_| F::random(rng)).collect();

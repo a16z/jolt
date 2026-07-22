@@ -50,8 +50,6 @@ mod field_error;
 mod montgomery_constants;
 #[cfg(feature = "solinas")]
 mod native_algebra;
-#[cfg(feature = "solinas")]
-mod solinas_traits;
 
 pub use accumulator::{Accumulator, NaiveAccumulator, WithAccumulator};
 pub use algebra::{AdditiveGroup, FieldCore, FromPrimitiveInt, RingCore};
@@ -60,8 +58,6 @@ pub use field::Field;
 pub use field_error::FieldError;
 pub use montgomery_constants::MontgomeryConstants;
 pub use num_traits::{One, Zero};
-#[cfg(feature = "solinas")]
-pub use solinas_traits::{balanced_digit_lut, CanonicalField, HalvingField, PseudoMersenneField};
 
 pub mod limbs;
 pub use limbs::Limbs;
@@ -88,10 +84,11 @@ pub use ext::lift::{
 pub use ext::{Ext2, ExtMulBackend, FpExt2, FpExt2Config, FpExt4, FpExt8, NegOneNr, TwoNr};
 #[cfg(feature = "solinas")]
 pub use prime::{
-    is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec, Fp128, Fp32,
-    Fp64, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
-    Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195,
-    Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
+    balanced_digit_lut, is_registered_prime_offset, pseudo_mersenne_modulus,
+    registered_prime_offset_spec, CanonicalField, Fp128, Fp32, Fp64, HalvingField,
+    Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, Prime24Offset3,
+    Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59,
+    Prime56Offset27, Prime64Offset59, PrimeOffsetSpec, PseudoMersenneField,
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 

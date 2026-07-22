@@ -18,6 +18,9 @@ pub(crate) mod native_capability;
 pub(crate) mod pseudo_mersenne;
 pub(crate) mod util;
 
+mod traits;
+pub use traits::{balanced_digit_lut, CanonicalField, HalvingField, PseudoMersenneField};
+
 pub use fp128::{
     Fp128, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
 };

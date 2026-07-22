@@ -9,9 +9,6 @@ use jolt_field::{CanonicalRepr, FieldCore, FromPrimitiveInt};
 pub trait SumcheckScalar:
     FieldCore
     + FromPrimitiveInt
-    + FromPrimitiveInt
-    + CanonicalRepr
-    + CanonicalRepr
     + CanonicalRepr
     + Copy
     + Default
