@@ -312,7 +312,7 @@ stage supplies its own consistent trio) while still generating the struct and th
 | 7 | ✅ members + `Option` | ✅ members + `Option` | ✅ member + `NoChallenges` | none |
 | 3 | ✅ members | ✅ members; opt-out opening order | ✅ members | inherent alias-curated `opening_values` + `validate` |
 | 4 | ✅ members | ✅ members + bare `Option<C>` | ✅ members | bare program-image opening; `advice` sub-group; `ram_val_check_gamma` separator in `verify` |
-| 2 | ✅ members | ✅ inner-batch members; opt-out opening order | ⚠️ partial: member gammas + non-instance scalars/`Vec` | inherent alias `opening_values`+`validate`; uniskip scalar + `tau_high` + `output_address_challenges` in `verify` |
+| 2 | ✅ members | ✅ inner-batch members; opt-out opening order | ✅ members (the output-check address `Vec` via a member `draw_challenges` override) + non-instance uniskip scalars | inherent alias `opening_values`+`validate`; uniskip scalar + `tau_high` in `verify` |
 | 6 | ✅ members + `Option` | ⚠️ members + `Option` + phase-group/enum/array | ⚠️ partial: member gammas + cross-stage `Vec`s + powers | inherent for address-phase group, `BytecodeCyclePhase` enum, `[C; N]`; gamma `Vec`s in `verify` |
 | 1 | — (no inputs) | ⚠️ uniskip scalar + Spartan-outer R1CS struct | ⚠️ partial: `tau` `Vec` + uniskip scalar | R1CS-input assembly + `tau` draw in `verify` |
 | 8 | excluded | excluded | excluded | — |

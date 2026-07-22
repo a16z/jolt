@@ -121,7 +121,7 @@ where
             reason: error.to_string(),
         }
     })?;
-    let mut sumchecks = Stage2BatchSumchecks {
+    let sumchecks = Stage2BatchSumchecks {
         ram_read_write: RamReadWriteChecking::new(
             read_write_dimensions,
             log_k,
@@ -144,30 +144,17 @@ where
             lowest_address,
             uniskip.tau_low.clone(),
         ),
-        // Two-phase construction: the output-check address reference point is
-        // drawn AFTER the batch gammas, so the instance starts with a placeholder
-        // and is completed right after the draws below (see
-        // `set_output_address_challenges`).
-        ram_output_check: RamOutputCheck::new(read_write_dimensions, Vec::new(), public_memory),
+        ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
 
-    // Draw each relation's batching gamma in declaration order: the RAM read-write
+    // Draw each relation's challenges in declaration order: the RAM read-write
     // gamma, then the instruction claim-reduction gamma (each a single
-    // `challenge_scalar`; the other three batch relations draw nothing —
-    // `NoChallenges`). The drawn challenges feed the input/output claims and
-    // populate the stage aggregate carried downstream.
+    // `challenge_scalar`), then the RAM output-check address reference point
+    // (the last member's `draw_challenges` override — one raw `challenge()` per
+    // RAM address variable, landing after both gammas as the inline draw did).
+    // The drawn challenges feed the input/output claims and populate the stage
+    // aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
-
-    // The RAM output-check address reference point, drawn after both gammas. MUST
-    // stay `challenge()` (not `challenge_scalar()`): both decode the same 16-byte
-    // squeeze, but differently, so switching would silently change the address
-    // point values without changing the transcript bytes.
-    let output_address_challenges = (0..log_k)
-        .map(|_| transcript.challenge())
-        .collect::<Vec<_>>();
-    sumchecks
-        .ram_output_check
-        .set_output_address_challenges(output_address_challenges.clone());
 
     // Every member's input points are empty (each derives its output points from its
     // own sumcheck point).
@@ -195,7 +182,6 @@ where
             product_uniskip_challenge: uniskip.challenge,
             product_tau_low: uniskip.tau_low,
             product_tau_high: uniskip.tau_high,
-            output_address_challenges,
             product_uniskip_consistency: product_uniskip.consistency,
             product_uniskip_output_claims: product_uniskip.output_claims,
             batch_consistency: consistency,

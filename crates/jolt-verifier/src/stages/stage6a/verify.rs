@@ -8,22 +8,23 @@ use jolt_transcript::Transcript;
 
 use super::{
     booleanity::{
-        BooleanityAddressPhase, BooleanityAddressPhaseInputClaims, BooleanityReferenceDraws,
+        BooleanityAddressPhase, BooleanityAddressPhaseChallenges, BooleanityAddressPhaseInputClaims,
     },
     bytecode_read_raf::{
         bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
     },
     outputs::{
-        Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutput,
-        Stage6aSumchecks, Stage6aZkOutput,
+        Stage6aCarriedChallenges, Stage6aChallenges, Stage6aClearOutput, Stage6aInputClaims,
+        Stage6aOutput, Stage6aSumchecks, Stage6aZkOutput,
     },
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
-        stage5::Stage5Output, stage6b::batch::bytecode_stage_points, zk::committed,
+        relations::ConcreteSumcheck as _, stage1::Stage1Output, stage2::Stage2Output,
+        stage3::Stage3Output, stage4::Stage4Output, stage5::Stage5Output,
+        stage6b::batch::bytecode_stage_points, zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -84,7 +85,7 @@ where
         log_t,
         proof.one_hot_config.committed_chunk_bits(),
     );
-    let mut address_sumchecks = Stage6aSumchecks {
+    let address_sumchecks = Stage6aSumchecks {
         bytecode_read_raf: BytecodeReadRafAddressPhase::new(
             formula_dimensions.bytecode_read_raf,
             committed_program,
@@ -94,21 +95,24 @@ where
         booleanity: BooleanityAddressPhase::new(booleanity_dimensions),
     };
 
-    // Six squeezes: the bytecode fold gamma plus the five per-stage folding
-    // gammas, each formerly an inline `challenge_scalar_powers(..)` whose single
-    // squeeze's degree-1 power equals the squeezed scalar. Byte- and value-equal
-    // (test-locked in `bytecode_read_raf.rs`); the drawn scalars ride downstream
-    // verbatim, and stage 6b's folds expand the power vectors they consume via
-    // `stage_gamma_powers` (the same recurrence `challenge_scalar_powers` uses;
-    // test-locked below).
-    let address_challenges = address_sumchecks.draw_challenges(transcript)?;
+    // Hand-assembled (the generated `draw_challenges` is suppressed): the
+    // bytecode member's six squeezes (the fold gamma plus the five per-stage
+    // folding gammas, each formerly an inline `challenge_scalar_powers(..)`
+    // whose single squeeze's degree-1 power equals the squeezed scalar; byte-
+    // and value-equal, test-locked in `bytecode_read_raf.rs` — stage 6b's folds
+    // expand the power vectors via `stage_gamma_powers`, test-locked below),
+    // then the booleanity hand draws.
+    let bytecode_read_raf_challenges = address_sumchecks
+        .bytecode_read_raf
+        .draw_challenges(transcript)?;
 
-    // WHY these draws live in stage 6a but feed only stage 6b: the prover's
-    // booleanity subprotocol samples its gamma — and pads the reference address
-    // with a fresh `challenge_vector` draw — before the 6a batch runs, so the
-    // transcript schedule fixes them here. Stage 6b's booleanity member is their
-    // only consumer, so they ride downstream as typed upstream values (the same
-    // idiom as `Stage2ZkOutput`'s `product_tau_high`).
+    // WHY these draws live in stage 6a but feed 6b too: the prover's booleanity
+    // subprotocol samples its gamma — and pads the reference address with a
+    // fresh `challenge_vector` draw — before the 6a batch runs, so the
+    // transcript schedule fixes them here. The 6a address-phase kernel and
+    // stage 6b's booleanity member consume them, so they ride downstream as
+    // typed upstream values (the same idiom as `Stage2ZkOutput`'s
+    // `product_tau_high`).
     let stage5_points = stage5.output_points();
     let stage5_instruction_address = stage5.instruction_r_address();
     let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
@@ -128,19 +132,20 @@ where
     booleanity_reference_cycle.reverse();
     let booleanity_gamma = transcript.challenge();
 
+    let address_challenges = Stage6aChallenges {
+        bytecode_read_raf: bytecode_read_raf_challenges,
+        booleanity: BooleanityAddressPhaseChallenges {
+            reference_address: booleanity_reference_address,
+            reference_cycle: booleanity_reference_cycle,
+            gamma: booleanity_gamma,
+        },
+    };
     let carried = Stage6aCarriedChallenges {
         bytecode_read_raf: address_challenges.bytecode_read_raf,
-        booleanity_reference_address,
-        booleanity_reference_cycle,
-        booleanity_gamma,
+        booleanity_reference_address: address_challenges.booleanity.reference_address.clone(),
+        booleanity_reference_cycle: address_challenges.booleanity.reference_cycle.clone(),
+        booleanity_gamma: address_challenges.booleanity.gamma,
     };
-    address_sumchecks
-        .booleanity
-        .set_reference_draws(BooleanityReferenceDraws {
-            reference_address: carried.booleanity_reference_address.clone(),
-            reference_cycle: carried.booleanity_reference_cycle.clone(),
-            gamma: carried.booleanity_gamma,
-        });
 
     // Every member's input points are empty (the address phase reads only
     // opening values; produced points derive from its own sumcheck point).

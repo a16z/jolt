@@ -52,17 +52,13 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend 
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
         let relation = inputs.relation;
-        let draws = relation
-            .reference_draws()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "booleanity address phase prepared before its reference draws were set",
-            })?;
+        let challenges = inputs.challenges;
         Ok(Box::new(BooleanityAddressKernel::new(
             relation,
             relation.dimensions(),
-            &draws.reference_address,
-            &draws.reference_cycle,
-            draws.gamma,
+            &challenges.reference_address,
+            &challenges.reference_cycle,
+            challenges.gamma,
             witness,
         )?))
     }

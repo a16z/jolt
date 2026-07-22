@@ -38,7 +38,7 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for ReferenceBackend {
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamOutputCheck<F>>>, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.read_write_dimensions();
-        let output_address_challenges = relation.output_address_challenges();
+        let output_address_challenges = inputs.challenges.output_address.as_slice();
         let ram_log_k = output_address_challenges.len();
         let public_memory = relation.public_memory();
         if dimensions.output_check_rounds() != ram_log_k {

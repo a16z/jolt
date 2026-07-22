@@ -5,8 +5,8 @@
 //! Pure orchestration: the challenge draws, batch head, point derivation,
 //! final-claim fold, and absorb order are `jolt-verifier`'s generated drivers
 //! plus the same hand-coded choreography its `stage2::verify` performs (the
-//! `τ_high` draw, the uni-skip, the post-gamma output-address draws); all
-//! compute is behind the backend's stage-2 slots.
+//! `τ_high` draw, the uni-skip); all compute is behind the backend's stage-2
+//! slots.
 
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::geometry::dimensions::{
@@ -101,9 +101,7 @@ where
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type. The RAM
-    // output check starts with a placeholder address point, completed right
-    // after the gamma draws — the verifier's own two-phase construction.
+    // The generated stage drivers, on the verifier's own batch type.
     let lowest_address = public_io.memory_layout.get_lowest_address();
     let public_memory = PublicIoMemory::new(public_io).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
@@ -111,7 +109,7 @@ where
             reason: error.to_string(),
         }
     })?;
-    let mut sumchecks = Stage2BatchSumchecks {
+    let sumchecks = Stage2BatchSumchecks {
         ram_read_write: RamReadWriteChecking::new(read_write_dimensions, log_k, tau_low.clone()),
         product_remainder: ProductRemainder::new(
             product_dimensions,
@@ -130,19 +128,11 @@ where
             lowest_address,
             tau_low.clone(),
         ),
-        ram_output_check: RamOutputCheck::new(
-            read_write_dimensions,
-            Vec::new(),
-            public_memory.clone(),
-        ),
+        ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
+    // Both batch gammas, then the RAM output-check address reference point (the
+    // last member's `draw_challenges` override) — the verifier's exact schedule.
     let challenges = sumchecks.draw_challenges(transcript)?;
-    // MUST stay `challenge()` (not `challenge_scalar()`), mirroring the
-    // verifier: both decode the same squeeze differently.
-    let output_address_challenges: Vec<F> = (0..log_k).map(|_| transcript.challenge()).collect();
-    sumchecks
-        .ram_output_check
-        .set_output_address_challenges(output_address_challenges.clone());
 
     let input_points = sumchecks.empty_input_points();
     let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);

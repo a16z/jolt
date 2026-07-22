@@ -30,8 +30,16 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// committed-program-only staged `BytecodeValStage` openings (see its
 /// `wire_output_openings` override), so the generated output-shape
 /// count/validator cover the val-stage presence and count.
+///
+/// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
+/// booleanity member's challenges are the hand pre-batch draws (the reference
+/// address padded with fresh squeezes, the underived reference cycle, the
+/// gamma), so the fronts draw the bytecode member's six gammas via its own
+/// `draw_challenges`, perform the booleanity hand draws at the frozen wire
+/// positions, and hand-assemble `Stage6aChallenges` — a generated per-member
+/// draw could not produce the reference vectors.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(crate = "crate")]
+#[sumcheck_batch(no_draw_challenges, crate = "crate")]
 pub struct Stage6aSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,
