@@ -55,7 +55,7 @@ pub fn assert_zk_rejects(result: Result<(), VerifierError>) {
 #[cfg(feature = "prover-fixtures")]
 pub mod proof_claims;
 pub mod tamper_manifest;
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "akita")))]
 pub mod verifier_fixtures;
 #[cfg(feature = "zk")]
 pub mod zk_audit;

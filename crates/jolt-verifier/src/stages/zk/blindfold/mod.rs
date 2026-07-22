@@ -669,9 +669,9 @@ where
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
                 stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
+                    stage1_cycle.as_slice(),
+                    stage2_cycle.as_slice(),
+                    stage3_cycle.as_slice(),
                     stage4_cycle,
                     stage5_cycle,
                 ],
@@ -1147,7 +1147,7 @@ fn stage_sumcheck_error<F: Field>(
     error: jolt_sumcheck::SumcheckError<F>,
 ) -> VerifierError {
     VerifierError::StageClaimSumcheckFailed {
-        stage,
+        stage: format!("{stage:?}"),
         reason: error.to_string(),
     }
 }

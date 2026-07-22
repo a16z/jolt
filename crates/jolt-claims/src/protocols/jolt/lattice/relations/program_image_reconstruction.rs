@@ -35,7 +35,7 @@ pub struct ProgramImageReconstructionOutputClaims<C> {
 }
 
 /// The consumed word claim: the base program-image reduction's terminus.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct ProgramImageReconstructionInputClaims<C> {
     #[opening(committed = ProgramImageInit, from = ProgramImageClaimReduction)]
     pub word: C,

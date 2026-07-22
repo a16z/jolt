@@ -1031,8 +1031,90 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
+/// The Akita-path claim cells: the read-raf fused-inc opening, lattice
+/// Booleanity, the fused Stage-7 Hamming reduction, and the stage-8
+/// reconstruction leaves. All active: the fixture-driven sweep in
+/// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
+/// offsets every clear-claim scalar of the real packed-prover fixtures and
+/// asserts each offset rejects.
+#[cfg(feature = "akita")]
+pub const AKITA_TARGETS: &[TamperTarget] = &[
+    checked_standard(
+        "stage6.claims.bytecode_read_raf.fused_inc",
+        "claims.stage6b.bytecode_read_raf.fused_inc",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the lattice read-raf cycle output fold rejects an offset fused-inc opening",
+    ),
+    checked_standard(
+        "stage6.claims.booleanity.unsigned_inc_chunks",
+        "claims.stage6b.booleanity.unsigned_inc_chunks",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the lattice booleanity output fold covers every chunk cell",
+    ),
+    checked_standard(
+        "stage6.claims.booleanity.unsigned_inc_msb",
+        "claims.stage6b.booleanity.unsigned_inc_msb",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the lattice booleanity output fold covers the msb cell",
+    ),
+    checked_standard(
+        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_chunks",
+        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_chunks",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the hamming-weight reduction final-claim fold covers every increment chunk",
+    ),
+    checked_standard(
+        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_msb",
+        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_msb",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the hamming-weight reduction final-claim fold covers the increment MSB",
+    ),
+    checked_standard(
+        "reconstruction.claims.untrusted_advice",
+        "claims.reconstruction.untrusted_advice",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the reconstruction final-claim fold covers the untrusted advice leaf",
+    ),
+    checked_standard(
+        "reconstruction.claims.trusted_advice",
+        "claims.reconstruction.trusted_advice",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the reconstruction final-claim fold covers the trusted advice leaf",
+    ),
+    checked_standard(
+        "reconstruction.claims.bytecode",
+        "claims.reconstruction.bytecode",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the reconstruction final-claim fold covers every bytecode lane leaf",
+    ),
+    checked_standard(
+        "reconstruction.claims.program_image",
+        "claims.reconstruction.program_image",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the reconstruction final-claim fold covers the program image leaf",
+    ),
+];
+
 pub fn all_targets() -> Vec<TamperTarget> {
-    PREAMBLE_TARGETS
+    let targets = PREAMBLE_TARGETS
         .iter()
         .chain(COMMITMENT_TARGETS)
         .chain(PROOF_SHAPE_TARGETS)
@@ -1043,9 +1125,10 @@ pub fn all_targets() -> Vec<TamperTarget> {
         .chain(STAGE5_TARGETS)
         .chain(STAGE6_TARGETS)
         .chain(STAGE7_TARGETS)
-        .chain(FUTURE_STAGE_TARGETS)
-        .copied()
-        .collect()
+        .chain(FUTURE_STAGE_TARGETS);
+    #[cfg(feature = "akita")]
+    let targets = targets.chain(AKITA_TARGETS);
+    targets.copied().collect()
 }
 
 #[expect(
@@ -1137,7 +1220,11 @@ pub fn assert_zk_target_active(name: &str) {
     );
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "akita")
+))]
 pub fn assert_verifier_fixture_tamper_rejects(
     target: TamperTarget,
     base: &crate::support::verifier_fixtures::VerifierFixtureCase,
@@ -1267,6 +1354,13 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
     let optional = fill_optionals.then_some(zero);
 
     ClearProofClaims {
+        #[cfg(feature = "akita")]
+        reconstruction: jolt_verifier::stages::stage8::reconstruction::ReconstructionOutputClaims {
+            untrusted_advice: None,
+            trusted_advice: None,
+            bytecode: None,
+            program_image: None,
+        },
         stage1: stage1::outputs::Stage1OutputClaims {
             uniskip_output_claim: zero,
             outer: stage1::outputs::Stage1BatchOutputClaims {
@@ -1401,14 +1495,31 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
             },
         },
         stage6b: stage6b::outputs::Stage6bOutputClaims {
+            #[cfg(not(feature = "akita"))]
             bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![zero],
             },
+            #[cfg(feature = "akita")]
+            bytecode_read_raf:
+                stage6b::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims {
+                    bytecode_ra: vec![zero],
+                    fused_inc: zero,
+                },
+            #[cfg(not(feature = "akita"))]
             booleanity: stage6b::outputs::BooleanityOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
+            #[cfg(feature = "akita")]
+            booleanity:
+                jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
+                    instruction_ra: vec![zero],
+                    bytecode_ra: vec![zero],
+                    ram_ra: vec![zero],
+                    unsigned_inc_chunks: vec![zero],
+                    unsigned_inc_msb: zero,
+                },
             ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
@@ -1419,6 +1530,7 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 stage6b::outputs::InstructionRaVirtualizationOutputClaims {
                     committed_instruction_ra: vec![zero],
                 },
+            #[cfg(not(feature = "akita"))]
             inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                 ram_inc: zero,
                 rd_inc: zero,
@@ -1447,6 +1559,10 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
+                    #[cfg(feature = "akita")]
+                    unsigned_inc_chunks: vec![zero],
+                    #[cfg(feature = "akita")]
+                    unsigned_inc_msb: zero,
                 },
             trusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::TrustedAdviceAddressPhaseOutputClaims {

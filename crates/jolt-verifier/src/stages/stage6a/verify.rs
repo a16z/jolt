@@ -135,37 +135,41 @@ where
     address_sumchecks.validate_output_claims(claims)?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
-    // prior clear stage opening; the relation evaluates it through its input
-    // `Expr` from these wired openings + the per-stage folding gammas.
+    // prior clear stage opening (plus, under akita, the four reduced `Inc`
+    // claims at the fused-inc consumer stage slots); the relation evaluates it
+    // through its input `Expr` from these wired openings + the per-stage
+    // folding gammas.
+    let base_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
+        &stage1.clear()?.output_values,
+        &stage2.clear()?.output_values,
+        &stage3.clear()?.output_values,
+        &stage4.clear()?.output_values,
+        &stage5.clear()?.output_values,
+    );
+    #[cfg(feature = "akita")]
+    let base_input_values =
+        jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+            base: base_input_values,
+            inc: crate::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
+                &stage2.clear()?.output_values,
+                &stage4.clear()?.output_values,
+                &stage5.clear()?.output_values,
+            ),
+        };
     let address_input_values = Stage6aInputClaims {
-        bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.clear()?.output_values,
-            &stage2.clear()?.output_values,
-            &stage3.clear()?.output_values,
-            &stage4.clear()?.output_values,
-            &stage5.clear()?.output_values,
-        ),
+        bytecode_read_raf: base_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
-    let batch = address_sumchecks.verify_clear(
+    let output_points = address_sumchecks.verify_clear(
         &address_input_values,
+        &address_input_points,
         &address_challenges,
+        claims,
         &proof.stages.stage6a_sumcheck_proof,
         transcript,
+        6,
     )?;
-    let output_points = address_sumchecks
-        .derive_opening_points(batch.reduction.point.as_slice(), &address_input_points)?;
-    let expected_final_claim = address_sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &address_input_points,
-        claims,
-        &output_points,
-        &address_challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 6 });
-    }
 
     // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
     // then booleanity `intermediate`) is single-sourced from the generated

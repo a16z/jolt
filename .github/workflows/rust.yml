@@ -60,6 +60,13 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures
       - name: cargo clippy -p jolt-verifier --features prover-fixtures,zk
         run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,zk
+      # The akita feature selects the lattice (Akita) PIOP; it is not enabled
+      # by the workspace-wide invocations above.
+      - name: cargo clippy -p jolt-verifier --features akita
+        run: cargo clippy -p jolt-verifier --all-targets --features akita
+      # The akita,prover-fixtures combo (the fixture-driven tamper suite) only
+      # compiles once jolt-prover-legacy gains its akita feature; its clippy
+      # and test lanes land with the stacked packed-prover PR.
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -288,6 +295,23 @@ jobs:
           done
       - name: Test lookup table prover ABI
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
+      - name: Test jolt-verifier with akita feature
+        run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
+
+  test-akita-schedules:
+    name: Akita schedule catalog drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # Regenerates every checked-in schedule through the planner DP and
+      # compares token streams — guards the generated catalogs against
+      # planner drift. Ignored by default (minutes of DP solves), so it needs
+      # its own lane.
+      - name: Regenerate schedule catalogs through the planner
+        run: cargo nextest run --release -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
       - name: Test crates with field-inline
         shell: bash
         run: |

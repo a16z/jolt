@@ -7,6 +7,10 @@
 //! the staged `BytecodeReadRafAddrClaim` intermediate produced by the stage-6a
 //! address phase.
 
+pub use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
+#[cfg(feature = "akita")]
+pub use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafCyclePhaseChallenges, BytecodeReadRafCyclePhaseCommittedChallenges,
@@ -18,7 +22,7 @@ use jolt_claims::protocols::jolt::{
             self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafDimensions,
             BytecodeReadRafPublicValues, BytecodeReadRafStageValueInputs,
         },
-        claim_reductions::bytecode::bytecode_val_stage_opening,
+        claim_reductions::bytecode::{bytecode_val_stage_opening, NUM_BYTECODE_VAL_STAGES},
         dimensions::committed_address_chunks,
     },
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltRelationId,
@@ -30,6 +34,24 @@ use jolt_riscv::JoltInstructionRow;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
+
+#[cfg(not(feature = "akita"))]
+type CycleSymbolic = relations::bytecode::ReadRafCyclePhase;
+#[cfg(feature = "akita")]
+type CycleSymbolic =
+    jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafCyclePhase;
+#[cfg(not(feature = "akita"))]
+type CycleSymbolicCommitted = relations::bytecode::ReadRafCyclePhaseCommitted;
+#[cfg(feature = "akita")]
+type CycleSymbolicCommitted =
+    jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafCyclePhaseCommitted;
+
+/// The cycle-phase produced-claims type: `BytecodeRa` openings, plus (packed)
+/// the `FusedInc` opening at the bound cycle point.
+#[cfg(not(feature = "akita"))]
+pub type BytecodeReadRafCycleOutputClaims<C> = BytecodeReadRafOutputClaims<C>;
+#[cfg(feature = "akita")]
+pub type BytecodeReadRafCycleOutputClaims<C> = LatticeBytecodeReadRafOutputClaims<C>;
 
 /// Clear-only aux for the full-program cycle relation's bytecode-table fold:
 /// the borrowed table rows plus the register points and per-stage gammas that
@@ -45,16 +67,38 @@ pub struct BytecodeReadRafTableFoldInputs<'a, F: Field> {
 }
 
 /// Construction inputs for the full-program bytecode cycle relation.
-/// `stage_cycle_points` are the verifier's per-stage (1..=5) cycle bindings.
+/// `stage_cycle_points` are the verifier's per-stage cycle bindings.
 /// `table_fold` is `Some` only in clear mode — ZK never runs `expected_output`,
 /// so it skips the `O(2^log_k)` fold entirely.
 pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
     pub dimensions: BytecodeReadRafDimensions,
     pub r_address: Vec<F>,
-    pub stage_cycle_points: [Vec<F>; 5],
+    pub stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
     pub entry_bytecode_index: usize,
     pub committed_chunk_bits: usize,
     pub table_fold: Option<BytecodeReadRafTableFoldInputs<'a, F>>,
+}
+
+fn cycle_symbolic(dimensions: BytecodeReadRafDimensions) -> CycleSymbolic {
+    #[cfg(not(feature = "akita"))]
+    {
+        CycleSymbolic::new((dimensions, NUM_BYTECODE_VAL_STAGES))
+    }
+    #[cfg(feature = "akita")]
+    {
+        CycleSymbolic::new(dimensions)
+    }
+}
+
+fn cycle_symbolic_committed(dimensions: BytecodeReadRafDimensions) -> CycleSymbolicCommitted {
+    #[cfg(not(feature = "akita"))]
+    {
+        CycleSymbolicCommitted::new((dimensions, NUM_BYTECODE_VAL_STAGES))
+    }
+    #[cfg(feature = "akita")]
+    {
+        CycleSymbolicCommitted::new(dimensions)
+    }
 }
 
 /// The stage-6b bytecode read-RAF cycle phase, full-program mode.
@@ -67,16 +111,18 @@ pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
 /// attached in [`ConcreteSumcheck::expected_output`], which it OVERRIDES to
 /// evaluate the publics once and reuse the [`expected_output_from_publics`] helper.
 pub struct BytecodeReadRaf<F: Field> {
-    symbolic: relations::bytecode::ReadRafCyclePhase,
+    symbolic: CycleSymbolic,
     dimensions: BytecodeReadRafDimensions,
     r_address: Vec<F>,
-    stage_cycle_points: [Vec<F>; 5],
+    stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
     entry_bytecode_index: usize,
     committed_chunk_bits: usize,
-    /// The address-only bytecode-table fold: `Σ_row row_values[stage] *
-    /// eq(r_address, row)` — the pre-cycle half of `read_raf_public_values`'
-    /// `stage_values`. `None` in ZK, where `expected_output` never runs.
-    stage_values_at_r_address: Option<[F; 5]>,
+    /// The address-only bytecode-table fold: each staged row value (five base
+    /// stages, plus the lattice store stage — whose fold and complement feed
+    /// the four fused-inc consumer stages) folded against
+    /// `eq(r_address, row)` — the pre-cycle half of the read-raf publics.
+    /// `None` in ZK, where `expected_output` never runs.
+    stage_values_at_r_address: Option<[F; NUM_BYTECODE_VAL_STAGES]>,
 }
 
 impl<F: Field> BytecodeReadRaf<F> {
@@ -86,7 +132,7 @@ impl<F: Field> BytecodeReadRaf<F> {
             .map(|fold| fold_stage_values(&inputs.r_address, fold))
             .transpose()?;
         Ok(Self {
-            symbolic: relations::bytecode::ReadRafCyclePhase::new(inputs.dimensions),
+            symbolic: cycle_symbolic(inputs.dimensions),
             dimensions: inputs.dimensions,
             r_address: inputs.r_address,
             stage_cycle_points: inputs.stage_cycle_points,
@@ -97,14 +143,15 @@ impl<F: Field> BytecodeReadRaf<F> {
     }
 }
 
-/// The address-only half of `read_raf_public_values`' `stage_values`: the
-/// bytecode rows' per-stage values (shared `read_raf_stage_values` formula)
-/// folded against `eq(r_address)`. The cycle-eq factors are attached later, at
+/// The address-only half of the staged read-raf publics: the bytecode rows'
+/// per-stage values (shared `read_raf_stage_values` formula, which carries
+/// the lattice store stage as its last element) folded against
+/// `eq(r_address)`. The cycle-eq factors are attached later, at
 /// `expected_output` time, so the fold can run before the cycle sumcheck.
 fn fold_stage_values<F: Field>(
     r_address: &[F],
     fold: BytecodeReadRafTableFoldInputs<'_, F>,
-) -> Result<[F; 5], VerifierError> {
+) -> Result<[F; NUM_BYTECODE_VAL_STAGES], VerifierError> {
     let expected_domain = 1usize
         .checked_shl(r_address.len() as u32)
         .ok_or_else(|| public_input_failed("bytecode address domain overflows"))?;
@@ -125,7 +172,7 @@ fn fold_stage_values<F: Field>(
         stage4_gammas: fold.stage_gammas[3],
         stage5_gammas: fold.stage_gammas[4],
     });
-    let mut stage_values = [F::zero(); 5];
+    let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
     for (row_values, eq_address) in row_values.into_iter().zip(address_eq_evals) {
         for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
             *stage_value += row_value * eq_address;
@@ -151,6 +198,7 @@ fn r_cycle_suffix<F: Field>(log_t: usize, opening_point: &[F]) -> Result<&[F], V
 
 /// Evaluate the full-program bytecode read-RAF output expression at the produced
 /// `BytecodeRa` openings and public values.
+#[cfg(not(feature = "akita"))]
 fn expected_output_from_publics<F: Field>(
     dimensions: BytecodeReadRafDimensions,
     public_values: &bytecode::BytecodeReadRafPublicValues<F>,
@@ -192,7 +240,7 @@ fn expected_output_from_publics<F: Field>(
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
-    type Symbolic = relations::bytecode::ReadRafCyclePhase;
+    type Symbolic = CycleSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -202,20 +250,16 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
         &self,
         sumcheck_point: &[F],
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-    ) -> Result<BytecodeReadRafOutputClaims<Vec<F>>, VerifierError> {
+    ) -> Result<BytecodeReadRafCycleOutputClaims<Vec<F>>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
-        let bytecode_ra = committed_address_chunks(&self.r_address, self.committed_chunk_bits)
-            .into_iter()
-            .map(|chunk| [chunk.as_slice(), r_cycle.as_slice()].concat())
-            .collect();
-        Ok(BytecodeReadRafOutputClaims { bytecode_ra })
+        derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
 
     fn expected_output(
         &self,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-        output_values: &BytecodeReadRafOutputClaims<F>,
-        output_points: &BytecodeReadRafOutputClaims<Vec<F>>,
+        output_values: &BytecodeReadRafCycleOutputClaims<F>,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
         challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening_point = output_points
@@ -228,7 +272,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
             .ok_or_else(|| public_input_failed("bytecode table fold is unavailable"))?;
         // The cycle-dependent public factors (`stage_cycle_eqs`, the RAF terms,
         // `entry`) are exactly the committed-mode publics; combining them with the
-        // construction-time address fold reproduces `read_raf_public_values`.
+        // construction-time address fold reproduces the full-mode publics.
         let committed = bytecode::read_raf_committed_public_values::<F>(
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &self.r_address,
@@ -237,34 +281,121 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                 entry_bytecode_index: self.entry_bytecode_index,
             },
         );
-        let mut stage_values = [F::zero(); 5];
-        for ((stage_value, pre_cycle), stage_cycle_eq) in stage_values
-            .iter_mut()
-            .zip(stage_values_at_r_address)
-            .zip(committed.stage_cycle_eqs)
-        {
-            *stage_value = pre_cycle * stage_cycle_eq;
-        }
-        let public_values = BytecodeReadRafPublicValues {
-            stage_values,
+        // The base monolith publics carry the five gamma'd stages; the
+        // lattice store fold feeds the fused-inc stage resolution below.
+        let base_public_values = BytecodeReadRafPublicValues {
+            stage_values: core::array::from_fn(|stage| {
+                stage_values_at_r_address[stage] * committed.stage_cycle_eqs[stage]
+            }),
             spartan_outer_raf: committed.spartan_outer_raf,
             spartan_shift_raf: committed.spartan_shift_raf,
             entry: committed.entry,
         };
-        expected_output_from_publics(
-            self.dimensions,
-            &public_values,
-            &output_values.bytecode_ra,
-            challenges.gamma,
-        )
+        #[cfg(not(feature = "akita"))]
+        {
+            expected_output_from_publics(
+                self.dimensions,
+                &base_public_values,
+                &output_values.bytecode_ra,
+                challenges.gamma,
+            )
+        }
+        // The packed fused-inc stages: the store fold (and its complement)
+        // bound to the four consuming relations' cycle points, resolved
+        // through the lattice cycle output expression against the `FusedInc`
+        // opening.
+        #[cfg(feature = "akita")]
+        {
+            // The four fused-inc consumer stages resolve from the staged store
+            // fold (its complement for the register legs) against their own
+            // cycle eqs; the `FusedInc` factor is the relation's own opening.
+            let base_stages = NUM_BYTECODE_VAL_STAGES - 1;
+            let store_at_r_address = stage_values_at_r_address[base_stages];
+            let fused_stage_value = |stage: usize| -> Result<F, VerifierError> {
+                let address_fold = if stage < base_stages + 2 {
+                    store_at_r_address
+                } else {
+                    F::one() - store_at_r_address
+                };
+                let cycle_eq = committed
+                    .stage_cycle_eqs
+                    .get(stage)
+                    .ok_or_else(|| public_input_failed("missing fused stage cycle point"))?;
+                Ok(address_fold * *cycle_eq)
+            };
+            let public_values = base_public_values;
+            let output_openings = bytecode::read_raf_output_openings(self.dimensions);
+            if output_values.bytecode_ra.len() != output_openings.bytecode_ra.len() {
+                return Err(public_input_failed(format!(
+                    "bytecode RA claim count mismatch: expected {}, got {}",
+                    output_openings.bytecode_ra.len(),
+                    output_values.bytecode_ra.len()
+                )));
+            }
+            self.symbolic().output_expression::<F>().try_evaluate(
+                |id| {
+                    if *id == bytecode::fused_inc_read_raf_opening() {
+                        return Ok(output_values.fused_inc);
+                    }
+                    for (index, opening_id) in output_openings.bytecode_ra.iter().enumerate() {
+                        if *id == *opening_id {
+                            return Ok(output_values.bytecode_ra[index]);
+                        }
+                    }
+                    Err(VerifierError::MissingOpeningClaim { id: *id })
+                },
+                |id| match id {
+                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
+                        Ok(challenges.gamma)
+                    }
+                    _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                },
+                |id| match id {
+                    JoltDerivedId::BytecodeReadRaf(
+                        jolt_claims::protocols::jolt::BytecodeReadRafPublic::StageValue(stage),
+                    ) if *stage >= base_stages => fused_stage_value(*stage),
+                    JoltDerivedId::BytecodeReadRaf(public_id) => public_values
+                        .value(*public_id)
+                        .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
+                    _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                },
+            )
+        }
+    }
+}
+
+/// Derive the cycle-phase produced opening points: one `(chunk ++ r_cycle)`
+/// point per committed `BytecodeRa` chunk, plus (packed) the `FusedInc` cycle
+/// point.
+fn derive_cycle_opening_points<F: Field>(
+    r_address: &[F],
+    committed_chunk_bits: usize,
+    r_cycle: Vec<F>,
+) -> Result<BytecodeReadRafCycleOutputClaims<Vec<F>>, VerifierError> {
+    let bytecode_ra = committed_address_chunks(r_address, committed_chunk_bits)
+        .into_iter()
+        .map(|chunk| [chunk.as_slice(), r_cycle.as_slice()].concat())
+        .collect();
+    #[cfg(not(feature = "akita"))]
+    {
+        Ok(BytecodeReadRafOutputClaims { bytecode_ra })
+    }
+    #[cfg(feature = "akita")]
+    {
+        Ok(LatticeBytecodeReadRafOutputClaims {
+            bytecode_ra,
+            fused_inc: r_cycle,
+        })
     }
 }
 
 /// Construction inputs for the committed-program bytecode cycle relation.
+/// One cycle point per relation stage — five in base mode, nine on the packed
+/// path (the four fused-inc consumer points follow the base five).
 pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
     pub dimensions: BytecodeReadRafDimensions,
     pub r_address: Vec<F>,
-    pub stage_cycle_points: [Vec<F>; 5],
+    pub stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
     pub entry_bytecode_index: usize,
     pub committed_chunk_bits: usize,
     /// The staged `BytecodeValStage` opening values from the address phase.
@@ -281,10 +412,10 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 /// [`ConcreteSumcheck::expected_output`]: the staged Val openings are inputs mixed
 /// into the output, and the committed public values are evaluated once.
 pub struct BytecodeReadRafCommitted<F: Field> {
-    symbolic: relations::bytecode::ReadRafCyclePhaseCommitted,
+    symbolic: CycleSymbolicCommitted,
     dimensions: BytecodeReadRafDimensions,
     r_address: Vec<F>,
-    stage_cycle_points: [Vec<F>; 5],
+    stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
     entry_bytecode_index: usize,
     committed_chunk_bits: usize,
     val_stages: Vec<F>,
@@ -293,7 +424,7 @@ pub struct BytecodeReadRafCommitted<F: Field> {
 impl<F: Field> BytecodeReadRafCommitted<F> {
     pub fn new(inputs: BytecodeReadRafCommittedCycleInputs<F>) -> Self {
         Self {
-            symbolic: relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
+            symbolic: cycle_symbolic_committed(inputs.dimensions),
             dimensions: inputs.dimensions,
             r_address: inputs.r_address,
             stage_cycle_points: inputs.stage_cycle_points,
@@ -305,7 +436,7 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
-    type Symbolic = relations::bytecode::ReadRafCyclePhaseCommitted;
+    type Symbolic = CycleSymbolicCommitted;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -315,20 +446,16 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         &self,
         sumcheck_point: &[F],
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-    ) -> Result<BytecodeReadRafOutputClaims<Vec<F>>, VerifierError> {
+    ) -> Result<BytecodeReadRafCycleOutputClaims<Vec<F>>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
-        let bytecode_ra = committed_address_chunks(&self.r_address, self.committed_chunk_bits)
-            .into_iter()
-            .map(|chunk| [chunk.as_slice(), r_cycle.as_slice()].concat())
-            .collect();
-        Ok(BytecodeReadRafOutputClaims { bytecode_ra })
+        derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
 
     fn expected_output(
         &self,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-        output_values: &BytecodeReadRafOutputClaims<F>,
-        output_points: &BytecodeReadRafOutputClaims<Vec<F>>,
+        output_values: &BytecodeReadRafCycleOutputClaims<F>,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
     ) -> Result<F, VerifierError> {
         let opening_point = output_points
@@ -348,6 +475,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         let output_openings = bytecode::read_raf_output_openings(self.dimensions);
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
+                #[cfg(feature = "akita")]
+                if *id == bytecode::fused_inc_read_raf_opening() {
+                    return Ok(output_values.fused_inc);
+                }
                 for (stage, value) in self.val_stages.iter().enumerate() {
                     if *id == bytecode_val_stage_opening(stage) {
                         return Ok(*value);
@@ -390,21 +521,21 @@ enum BytecodeReadRafCycleVariant<F: Field> {
 /// `Stage6bSumchecks` member directly.
 pub struct BytecodeReadRafCycle<F: Field> {
     /// The `ConcreteSumcheck` anchor symbolic (see the invariant on the impl).
-    anchor: relations::bytecode::ReadRafCyclePhaseCommitted,
+    anchor: CycleSymbolicCommitted,
     variant: BytecodeReadRafCycleVariant<F>,
 }
 
 impl<F: Field> BytecodeReadRafCycle<F> {
     pub fn full(inputs: BytecodeReadRafCycleInputs<'_, F>) -> Result<Self, VerifierError> {
         Ok(Self {
-            anchor: relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
+            anchor: cycle_symbolic_committed(inputs.dimensions),
             variant: BytecodeReadRafCycleVariant::Full(BytecodeReadRaf::new(inputs)?),
         })
     }
 
     pub fn committed(inputs: BytecodeReadRafCommittedCycleInputs<F>) -> Self {
         Self {
-            anchor: relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
+            anchor: cycle_symbolic_committed(inputs.dimensions),
             variant: BytecodeReadRafCycleVariant::Committed(BytecodeReadRafCommitted::new(inputs)),
         }
     }
@@ -421,7 +552,7 @@ impl<F: Field> BytecodeReadRafCycle<F> {
 /// committed output `Expr` references the staged `BytecodeValStage` openings,
 /// which the full mode never produces).
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
-    type Symbolic = relations::bytecode::ReadRafCyclePhaseCommitted;
+    type Symbolic = CycleSymbolicCommitted;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.anchor
@@ -431,7 +562,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
         &self,
         sumcheck_point: &[F],
         input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-    ) -> Result<BytecodeReadRafOutputClaims<Vec<F>>, VerifierError> {
+    ) -> Result<BytecodeReadRafCycleOutputClaims<Vec<F>>, VerifierError> {
         match &self.variant {
             BytecodeReadRafCycleVariant::Full(relation) => {
                 relation.derive_opening_points(sumcheck_point, input_points)
@@ -445,8 +576,8 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
     fn expected_output(
         &self,
         input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-        output_values: &BytecodeReadRafOutputClaims<F>,
-        output_points: &BytecodeReadRafOutputClaims<Vec<F>>,
+        output_values: &BytecodeReadRafCycleOutputClaims<F>,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
     ) -> Result<F, VerifierError> {
         match &self.variant {

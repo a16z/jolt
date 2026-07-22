@@ -1,11 +1,13 @@
 //! Opening-claim projection for verifier-native prover proofs.
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::increments;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
     self as native,
     geometry::{
         booleanity, bytecode,
         claim_reductions::registers as registers_claim_reduction,
-        claim_reductions::{advice, increments, instruction as instruction_claim_reduction},
+        claim_reductions::{advice, instruction as instruction_claim_reduction},
         instruction, ram, registers, spartan,
         spartan::{outer_opening, outer_uniskip_opening, product_uniskip_opening},
     },
@@ -441,6 +443,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
             return Some(opening_claim);
         }
     }
+    #[cfg(not(feature = "akita"))]
     let [ram_inc, rd_inc] = [increments::ram_inc_reduced(), increments::rd_inc_reduced()];
     match id {
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
@@ -449,7 +452,9 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
         id if id == booleanity::booleanity_address_phase_opening() => {
             Some(&mut stage6a.booleanity.intermediate)
         }
+        #[cfg(not(feature = "akita"))]
         id if id == ram_inc => Some(&mut stage6b.inc_claim_reduction.ram_inc),
+        #[cfg(not(feature = "akita"))]
         id if id == rd_inc => Some(&mut stage6b.inc_claim_reduction.rd_inc),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>

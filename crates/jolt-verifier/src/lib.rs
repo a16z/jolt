@@ -13,8 +13,10 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+#[cfg(not(feature = "akita"))]
+pub use verifier::absorb_transcript_commitments;
 pub use verifier::{
-    absorb_committed_program_commitments, absorb_transcript_commitments,
-    absorb_transcript_preamble, validate_inputs_from_parts, verify, verify_until_stage1,
-    CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,
+    absorb_committed_program_commitments, absorb_transcript_preamble, validate_and_seed_transcript,
+    validate_inputs_from_parts, verify, verify_until_stage1, CheckedInputs, PreStage1VerifierState,
+    ProofTranscriptConfig,
 };
