@@ -412,7 +412,6 @@ mod support {
             public_io,
             proof,
             trusted_advice_commitment,
-            false,
         )
         .expect("modular proof must verify end-to-end");
     }
@@ -479,15 +478,13 @@ mod muldiv {
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
-        let legacy_pre_stage1 =
-            verify_until_stage1::<DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &verifier_preprocessing,
-                &public_io,
-                &legacy_proof,
-                None,
-                false,
-            )
-            .expect("legacy proof must verify through stage 0");
+        let legacy_pre_stage1 = verify_until_stage1::<
+            DoryScheme,
+            Pedersen<Bn254G1>,
+            Blake2bTranscript,
+            _,
+        >(&verifier_preprocessing, &public_io, &legacy_proof, None)
+        .expect("legacy proof must verify through stage 0");
 
         // --- New-prover side: trace independently through the modular stack.
         let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
