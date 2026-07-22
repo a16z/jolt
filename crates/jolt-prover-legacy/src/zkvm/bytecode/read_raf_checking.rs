@@ -982,30 +982,6 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         }
     }
 
-    /// Sibling of [`Self::new`] that shapes the read-raf sumcheck by a runtime
-    /// val-stage count (`BASE_N_STAGES` for base, `LATTICE_N_STAGES` for lattice).
-    pub fn new_with_stages<PCS: CommitmentScheme>(
-        program: &ProgramPreprocessing<PCS>,
-        n_cycle_vars: usize,
-        one_hot_params: &OneHotParams,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
-        num_val_stages: usize,
-    ) -> Self {
-        let params = BytecodeReadRafSumcheckParams::gen_with_stages(
-            program,
-            None,
-            n_cycle_vars,
-            one_hot_params,
-            opening_accumulator,
-            transcript,
-            num_val_stages,
-        );
-        Self {
-            params: BytecodeReadRafAddressPhaseParams::new(params),
-        }
-    }
-
     pub fn into_params(self) -> BytecodeReadRafSumcheckParams<F> {
         self.params.into_inner()
     }
