@@ -435,7 +435,6 @@ pub fn commit_advice_one_hot(
             one_positions.push((((byte << limb_bits) | limb) << word_vars) | word_index);
         }
     }
-    one_positions.sort_unstable();
     let byte_column = SparseUnitPolynomial::<AkitaField>::new(cell_vars, one_positions);
 
     let (setup, _verifier_setup) =

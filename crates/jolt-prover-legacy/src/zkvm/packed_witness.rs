@@ -30,17 +30,22 @@ pub struct SparseUnitPolynomial<F> {
 }
 
 impl<F: jolt_field::Field> SparseUnitPolynomial<F> {
+    /// Sorts the positions ascending once here — the invariant
+    /// `for_each_row`'s row scan and `for_each_one`'s yield order rely on.
+    /// Duplicates are neither deduplicated nor rejected.
+    ///
     /// # Panics
     ///
     /// Panics if a position lies outside the `2^num_vars` domain.
     #[must_use]
-    pub fn new(num_vars: usize, one_positions: Vec<usize>) -> Self {
+    pub fn new(num_vars: usize, mut one_positions: Vec<usize>) -> Self {
         assert!(
             one_positions
                 .iter()
                 .all(|position| position >> num_vars == 0),
             "one position outside the 2^{num_vars} domain"
         );
+        one_positions.sort_unstable();
         Self {
             num_vars,
             one_positions,
@@ -80,9 +85,7 @@ impl<F: jolt_field::Field> jolt_poly::MultilinearPoly<F> for SparseUnitPolynomia
         let row_len = 1usize << sigma;
         let num_rows = 1usize << (self.num_vars - sigma);
         let mut row = vec![F::zero(); row_len];
-        let mut positions = self.one_positions.clone();
-        positions.sort_unstable();
-        let mut next = positions.iter().peekable();
+        let mut next = self.one_positions.iter().peekable();
         for row_index in 0..num_rows {
             row.fill(F::zero());
             while let Some(&&position) = next.peek() {
@@ -317,7 +320,6 @@ pub fn assemble_precommitted_witness<F: JoltField>(
             }
         }
     }
-    one_positions.sort_unstable();
     Ok(one_positions)
 }
 
@@ -366,6 +368,27 @@ mod tests {
         for index in 0..chunking().chunk_count() {
             assert_eq!(padding.chunk_hot_lane_bits(LOG_K_CHUNK, index), 0);
         }
+    }
+
+    #[test]
+    fn sparse_unit_positions_sort_ascending_on_construction() {
+        use jolt_field::{Fr, FromPrimitiveInt};
+        use jolt_poly::MultilinearPoly;
+
+        let poly = SparseUnitPolynomial::<Fr>::new(4, vec![9, 2, 11, 0, 2]);
+        assert_eq!(poly.one_positions(), [0, 2, 2, 9, 11]);
+
+        let mut yielded = Vec::new();
+        poly.for_each_one(&mut |position| yielded.push(position));
+        assert_eq!(yielded, [0, 2, 2, 9, 11]);
+
+        let mut rows = vec![Vec::new(); 4];
+        poly.for_each_row(2, &mut |row_index, row| rows[row_index] = row.to_vec());
+        let expected = |bits: [u64; 4]| bits.map(Fr::from_u64);
+        assert_eq!(rows[0], expected([1, 0, 1, 0]));
+        assert_eq!(rows[1], expected([0, 0, 0, 0]));
+        assert_eq!(rows[2], expected([0, 1, 0, 1]));
+        assert_eq!(rows[3], expected([0, 0, 0, 0]));
     }
 }
 
