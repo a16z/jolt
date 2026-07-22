@@ -80,7 +80,7 @@ impl InstructionFormat for FormatI {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::RISCV_REGISTER_COUNT;
+        use jolt_common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
             imm: rng.next_u64(),

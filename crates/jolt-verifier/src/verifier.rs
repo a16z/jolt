@@ -1,6 +1,6 @@
 //! Top-level verifier entry point.
 
-use common::jolt_device::JoltDevice;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 #[cfg(not(feature = "akita"))]
@@ -470,7 +470,7 @@ where
         .vc_setup
         .as_ref()
         .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-    let required = common::constants::MAX_BLINDFOLD_GENERATORS;
+    let required = jolt_common::constants::MAX_BLINDFOLD_GENERATORS;
     let got = VC::capacity(setup);
     if got < required {
         return Err(VerifierError::InvalidVectorCommitmentCapacity { required, got });
@@ -1033,7 +1033,7 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
-    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     #[cfg(feature = "zk")]
     use jolt_crypto::PedersenSetup;
@@ -1629,7 +1629,7 @@ mod tests {
     }
 
     fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
+        let memory_layout = jolt_common::jolt_device::MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 0,
             max_untrusted_advice_size: 0,

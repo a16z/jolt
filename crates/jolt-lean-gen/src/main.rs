@@ -15,7 +15,7 @@
 
 use std::{fmt::Write as _, fs, path::Path};
 
-use common::constants::RISCV_REGISTER_COUNT;
+use jolt_common::constants::RISCV_REGISTER_COUNT;
 use jolt_program::expand::{
     expand_instruction, is_source_only, ExpansionAllocator, ExpansionError,
 };

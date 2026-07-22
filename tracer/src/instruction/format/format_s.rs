@@ -83,7 +83,7 @@ impl InstructionFormat for FormatS {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::RISCV_REGISTER_COUNT;
+        use jolt_common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
             // rs1 should never be 0 for memory operations (x0 is hardwired to 0)

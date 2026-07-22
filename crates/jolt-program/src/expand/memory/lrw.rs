@@ -1,4 +1,4 @@
-use common::constants::RAM_START_ADDRESS;
+use jolt_common::constants::RAM_START_ADDRESS;
 
 use super::*;
 

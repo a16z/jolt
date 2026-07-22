@@ -2,7 +2,7 @@ extern crate proc_macro;
 
 use core::panic;
 
-use common::{
+use jolt_common::{
     attributes::parse_attributes,
     jolt_device::{MemoryConfig, MemoryLayout},
 };

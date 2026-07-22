@@ -37,7 +37,7 @@ use crate::{
     },
 };
 use allocative::Allocative;
-use common::constants::XLEN;
+use jolt_common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 

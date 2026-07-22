@@ -40,7 +40,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 

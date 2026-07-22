@@ -23,7 +23,7 @@ use super::{Instruction, RISCVInstruction, RISCVTrace};
 
 use crate::emulator::terminal::DummyTerminal;
 
-use common::constants::RISCV_REGISTER_COUNT;
+use jolt_common::constants::RISCV_REGISTER_COUNT;
 
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -118,18 +118,18 @@ where
             );
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
-        let memory_config = common::jolt_device::MemoryConfig {
+        let memory_config = jolt_common::jolt_device::MemoryConfig {
             heap_size: TEST_MEMORY_CAPACITY,
             program_size: Some(1024), // Set a small program size for tests
             ..Default::default()
         };
         original_cpu.get_mut_mmu().jolt_device =
-            Some(common::jolt_device::JoltDevice::new(&memory_config));
+            Some(jolt_common::jolt_device::JoltDevice::new(&memory_config));
         original_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
         let mut virtual_cpu = Cpu::new(Box::new(DummyTerminal::default()));
         virtual_cpu.get_mut_mmu().jolt_device =
-            Some(common::jolt_device::JoltDevice::new(&memory_config));
+            Some(jolt_common::jolt_device::JoltDevice::new(&memory_config));
         virtual_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
         // Initialize memory with test values for AMO operations

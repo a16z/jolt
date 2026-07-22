@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use allocative::Allocative;
 use ark_std::Zero;
-use common::constants::REGISTER_COUNT;
+use jolt_common::constants::REGISTER_COUNT;
 use num::Integer;
 
 use crate::field::JoltField;

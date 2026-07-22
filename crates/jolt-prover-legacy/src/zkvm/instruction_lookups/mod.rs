@@ -1,4 +1,4 @@
-use common::constants::XLEN;
+use jolt_common::constants::XLEN;
 
 pub mod ra_virtual;
 pub mod read_raf_checking;

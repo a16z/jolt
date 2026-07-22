@@ -1,6 +1,6 @@
 //! Verifier preprocessing inputs.
 
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};

@@ -1,4 +1,4 @@
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 
 use allocative::Allocative;
@@ -487,7 +487,7 @@ mod tests {
         zkvm::witness::VirtualPolynomial,
     };
     use ark_bn254::Fr;
-    use common::jolt_device::JoltDevice;
+    use jolt_common::jolt_device::JoltDevice;
 
     fn make_challenges(n: usize) -> Vec<<Fr as JoltField>::Challenge> {
         (0..n)

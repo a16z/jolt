@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs::File, io, path::PathBuf};
 
-use common::jolt_device::JoltDevice;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_program::execution::TraceRow;
 use jolt_riscv::JoltInstructionRow;
 use serde::{Deserialize, Serialize};

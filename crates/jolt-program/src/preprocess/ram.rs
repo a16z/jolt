@@ -1,7 +1,7 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
-use common::jolt_device::{JoltDevice, MemoryLayout, MemoryLayoutError};
+use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
+use jolt_common::jolt_device::{JoltDevice, MemoryLayout, MemoryLayoutError};
 
 use super::public_io::PublicMemorySegment;
 
@@ -152,7 +152,7 @@ impl PublicInitialRam {
 #[cfg(test)]
 mod tests {
     use super::{compute_max_ram_k, compute_min_ram_k, PublicInitialRam, RAMPreprocessing};
-    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 
     #[test]
     fn preprocesses_memory_bytes_into_words() {

@@ -13,7 +13,7 @@ use std::{
 #[cfg(unix)]
 use std::{os::fd::AsRawFd, os::raw::c_int};
 
-use common::jolt_device::JoltDevice;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;

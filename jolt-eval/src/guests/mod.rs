@@ -9,8 +9,8 @@ use jolt_prover_legacy::transcripts::Blake2bTranscript;
 use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 pub use jolt_verifier::VerifierError;
 
-use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
-use common::jolt_device::MemoryConfig;
+use jolt_common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
+use jolt_common::jolt_device::MemoryConfig;
 
 pub use fibonacci::Fibonacci;
 pub use jolt_prover_legacy::guest::program::Program as GuestProgram;

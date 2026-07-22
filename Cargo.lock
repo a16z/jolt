@@ -1682,16 +1682,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
-name = "common"
-version = "0.2.0"
-dependencies = [
- "allocative",
- "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "serde",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "const-hex"
 version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3092,9 +3082,9 @@ dependencies = [
  "anyhow",
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "clap",
- "common",
  "env_logger",
  "eyre",
+ "jolt-common",
  "jolt-prover-legacy",
  "jolt-sdk",
  "log",
@@ -3173,6 +3163,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-common"
+version = "0.2.0"
+dependencies = [
+ "allocative",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "serde",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "jolt-crypto"
 version = "0.1.0"
 dependencies = [
@@ -3225,11 +3225,11 @@ dependencies = [
  "arbitrary",
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "clap",
- "common",
  "criterion",
  "enumset",
  "eyre",
  "hex",
+ "jolt-common",
  "jolt-crypto",
  "jolt-dory",
  "jolt-eval-macros",
@@ -3456,7 +3456,7 @@ dependencies = [
 name = "jolt-lean-gen"
 version = "0.1.0"
 dependencies = [
- "common",
+ "jolt-common",
  "jolt-program",
  "jolt-riscv",
 ]
@@ -3557,8 +3557,8 @@ name = "jolt-program"
 version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "common",
  "hex",
+ "jolt-common",
  "jolt-riscv",
  "object 0.39.1",
  "serde",
@@ -3571,8 +3571,8 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
- "common",
  "jolt-claims",
+ "jolt-common",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3605,7 +3605,6 @@ dependencies = [
  "blake2 0.11.0-rc.6",
  "chrono",
  "clap",
- "common",
  "criterion",
  "derive_more",
  "dory-pcs",
@@ -3616,6 +3615,7 @@ dependencies = [
  "itertools 0.15.0",
  "jolt-blindfold",
  "jolt-claims",
+ "jolt-common",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3689,7 +3689,7 @@ dependencies = [
  "bincode 2.0.1",
  "bytemuck",
  "cfg-if",
- "common",
+ "jolt-common",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3710,7 +3710,7 @@ dependencies = [
 name = "jolt-sdk-macros"
 version = "0.1.0"
 dependencies = [
- "common",
+ "jolt-common",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3755,10 +3755,10 @@ version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
- "common",
  "jolt-blindfold",
  "jolt-claims",
  "jolt-claims-derive",
+ "jolt-common",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3793,8 +3793,8 @@ dependencies = [
 name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
- "common",
  "jolt-claims",
+ "jolt-common",
  "jolt-field",
  "jolt-lookup-tables",
  "jolt-poly",
@@ -6755,11 +6755,11 @@ dependencies = [
  "addr2line 0.26.1",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "clap",
- "common",
  "derive_more",
  "fnv",
  "inventory",
  "itertools 0.15.0",
+ "jolt-common",
  "jolt-field",
  "jolt-platform",
  "jolt-program",
@@ -7511,7 +7511,7 @@ dependencies = [
 name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
- "common",
+ "jolt-common",
  "jolt-prover-legacy",
  "paste",
  "tracer",
@@ -7729,7 +7729,7 @@ dependencies = [
  "ark-std 0.5.0",
  "build-fs-tree",
  "clap",
- "common",
+ "jolt-common",
  "jolt-prover-legacy",
  "num-bigint",
  "proptest",

@@ -17,7 +17,7 @@ parallel = ["jolt-kernels/parallel"]
 prover-fixtures = ["jolt-prover-legacy/host"]
 
 [dependencies]
-common.workspace = true
+jolt-common.workspace = true
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true

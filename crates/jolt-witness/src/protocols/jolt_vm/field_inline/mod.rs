@@ -967,7 +967,7 @@ const fn op(flag: FieldInlineOpFlag) -> FieldInlineOp {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use common::constants::RAM_START_ADDRESS;
+    use jolt_common::constants::RAM_START_ADDRESS;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_program::{

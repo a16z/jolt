@@ -15,7 +15,7 @@ use crate::subprotocols::read_write_matrix::ReadWriteMatrixAddressMajor;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::ram::remap_address;
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, RAMAccess};
 

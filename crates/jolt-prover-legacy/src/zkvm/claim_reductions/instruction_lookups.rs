@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use ark_std::Zero;
-use common::constants::XLEN;
+use jolt_common::constants::XLEN;
 
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;

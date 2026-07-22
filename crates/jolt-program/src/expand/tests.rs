@@ -1,6 +1,6 @@
 use super::*;
 
-use common::constants::RAM_START_ADDRESS;
+use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{
     JoltInstruction, JoltInstructionProfile, SourceExtension, SourceInlineKey,
     SourceInstructionRow, RV64IMAC_JOLT,

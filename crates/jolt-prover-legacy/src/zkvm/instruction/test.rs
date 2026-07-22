@@ -1,5 +1,5 @@
 use crate::{field::JoltField, zkvm::instruction::LookupQuery};
-use common::constants::XLEN;
+use jolt_common::constants::XLEN;
 use jolt_riscv::JoltInstructionRowData;
 use rand::prelude::*;
 use tracer::{
@@ -165,7 +165,7 @@ mod flags {
     #[test]
     fn branch_lookup_output_is_boolean() {
         use crate::zkvm::instruction::LookupQuery;
-        use common::constants::XLEN;
+        use jolt_common::constants::XLEN;
 
         for cycle in Cycle::iter() {
             let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
@@ -211,7 +211,7 @@ mod flags {
 /// `Rs1Value` / `Rs2Value` / `Imm` / `UnexpandedPC` — causing a Stage 3 sumcheck
 /// verification failure whenever any high-order bits of a register value are set.
 mod r1cs_consistency {
-    use common::constants::XLEN;
+    use jolt_common::constants::XLEN;
     use rand::{rngs::StdRng, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::instruction::Cycle;

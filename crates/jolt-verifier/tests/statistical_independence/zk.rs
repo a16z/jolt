@@ -116,7 +116,7 @@ fn statistical_sample_count() -> usize {
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, PartialEq)]
 struct StableZkProofShape {
-    public_io: common::jolt_device::JoltDevice,
+    public_io: jolt_common::jolt_device::JoltDevice,
     preprocessing_digest: [u8; 32],
     trace_length: usize,
     ram_k: usize,

@@ -45,7 +45,7 @@
 //!
 //! Variables are bound low-to-high, matching the polynomial layout.
 
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 

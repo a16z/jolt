@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::exit;
 
 use clap::Parser;
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 
 use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 

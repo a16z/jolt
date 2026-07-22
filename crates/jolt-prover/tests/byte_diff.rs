@@ -26,7 +26,7 @@
 #[cfg(feature = "prover-fixtures")]
 #[expect(clippy::expect_used)]
 mod support {
-    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::{bytecode, program_image};
     use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};

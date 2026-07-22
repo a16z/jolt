@@ -101,7 +101,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         let num_variables = 2 * J::XLEN;
         let interleaving = self.interleaving;
         let lookup_table = match jolt_prover_legacy::zkvm::instruction::InstructionLookup::<
-            { common::constants::XLEN },
+            { jolt_common::constants::XLEN },
         >::lookup_table(&self.row)
         .map(|t| ZkLeanLookupTable::from(t).name())
         {

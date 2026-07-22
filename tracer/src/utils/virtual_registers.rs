@@ -1,4 +1,4 @@
-use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT};
+use jolt_common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT};
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 

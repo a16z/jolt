@@ -143,7 +143,7 @@ use crate::{
 
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::jolt_device::MemoryConfig;
+use jolt_common::jolt_device::MemoryConfig;
 use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
 use tracer::{
@@ -388,7 +388,7 @@ impl<
 
         #[cfg(feature = "zk")]
         let pedersen_generators = {
-            use common::constants::MAX_BLINDFOLD_GENERATORS;
+            use jolt_common::constants::MAX_BLINDFOLD_GENERATORS;
             preprocessing.pedersen_generators(MAX_BLINDFOLD_GENERATORS)
         };
 
@@ -2528,7 +2528,7 @@ where
     where
         PCS: ZkEvalCommitment<C>,
     {
-        use common::constants::MAX_BLINDFOLD_GENERATORS;
+        use jolt_common::constants::MAX_BLINDFOLD_GENERATORS;
 
         let (g1s, h1) = PCS::zk_generators(&self.generators, MAX_BLINDFOLD_GENERATORS)
             .expect("PCS does not support ZK Pedersen generators");
@@ -2703,7 +2703,7 @@ mod tests {
     fn canonical_verify_result(
         preprocessing: &JoltProverPreprocessing<Fr, Bn254Curve, DoryCommitmentScheme>,
         proof: VerifierRV64IMACProof,
-        public_io: common::jolt_device::JoltDevice,
+        public_io: jolt_common::jolt_device::JoltDevice,
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
     ) -> Result<(), jolt_verifier::VerifierError> {
         let preprocessing = verifier_preprocessing_from_prover(preprocessing);
@@ -2726,7 +2726,7 @@ mod tests {
     fn verify_verifier_proof(
         preprocessing: &JoltProverPreprocessing<Fr, Bn254Curve, DoryCommitmentScheme>,
         proof: VerifierRV64IMACProof,
-        public_io: common::jolt_device::JoltDevice,
+        public_io: jolt_common::jolt_device::JoltDevice,
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
     ) {
         canonical_verify_result(preprocessing, proof, public_io, trusted_advice_commitment)
@@ -2748,7 +2748,7 @@ mod tests {
         bytecode: Vec<JoltInstructionRow>,
         init_memory_state: Vec<(u64, u8)>,
         entry_address: u64,
-        memory_layout: common::jolt_device::MemoryLayout,
+        memory_layout: jolt_common::jolt_device::MemoryLayout,
         max_trace_len: usize,
     ) -> Result<(JoltSharedPreprocessing, Arc<ProgramPreprocessing>), PreprocessingError> {
         let program = ProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)?;
@@ -2761,7 +2761,7 @@ mod tests {
         bytecode: Vec<JoltInstructionRow>,
         init_memory_state: Vec<(u64, u8)>,
         entry_address: u64,
-        memory_layout: common::jolt_device::MemoryLayout,
+        memory_layout: jolt_common::jolt_device::MemoryLayout,
         max_trace_len: usize,
         bytecode_chunk_count: usize,
     ) -> Result<TestCommittedSharedPreprocessing, PreprocessingError> {

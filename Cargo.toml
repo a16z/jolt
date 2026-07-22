@@ -49,7 +49,7 @@ members = [
   "crates/jolt-prover",
   "crates/jolt-prover-legacy",
   "tracer",
-  "common",
+  "crates/jolt-common",
   "jolt-platform",
   "jolt-sdk",
   "jolt-sdk/macros",
@@ -151,7 +151,7 @@ ark-bn254.workspace = true
 
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-prover-legacy = { workspace = true, features = ["default"] }
-common = { workspace = true, features = ["std"] }
+jolt-common = { workspace = true, features = ["std"] }
 
 [profile.test]
 opt-level = 3
@@ -397,7 +397,7 @@ reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", featur
 secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 
 # Internal dependencies
-common = { path = "./common", default-features = false }
+jolt-common = { path = "./crates/jolt-common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
 jolt-akita = { path = "./crates/jolt-akita" }

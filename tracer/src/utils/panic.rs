@@ -1,7 +1,7 @@
 use crate::emulator::cpu::get_register_name;
 use crate::emulator::Emulator;
 use crate::instruction::format::NormalizedOperands;
-use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
+use jolt_common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 
 /// Represents a single function call for stack trace
 #[derive(Clone, Copy, Debug)]

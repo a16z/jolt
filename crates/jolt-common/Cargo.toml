@@ -1,5 +1,5 @@
 [package]
-name = "common"
+name = "jolt-common"
 version = "0.2.0"
 edition = "2021"
 

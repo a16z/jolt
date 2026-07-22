@@ -28,7 +28,7 @@ use crate::zkvm::claim_reductions::{
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS};
 use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use common::constants::{REGISTER_COUNT, XLEN};
+use jolt_common::constants::{REGISTER_COUNT, XLEN};
 use strum::EnumCount;
 
 use super::precommitted::{PrecommittedParams, PrecommittedProver};

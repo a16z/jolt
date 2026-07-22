@@ -1,6 +1,6 @@
 #![cfg(test)]
 use crate::template_format;
-use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
+use jolt_common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 use std::env;
 use std::fmt::Write;
 use tracer::{

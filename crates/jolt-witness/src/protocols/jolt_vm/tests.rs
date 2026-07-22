@@ -1,4 +1,4 @@
-use common::{
+use jolt_common::{
     constants::RAM_START_ADDRESS,
     jolt_device::{JoltDevice, MemoryConfig, MemoryLayout},
 };

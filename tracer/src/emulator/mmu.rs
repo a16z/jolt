@@ -4,8 +4,8 @@ pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
 use crate::emulator::memory::Memory;
 use crate::instruction::{RAMRead, RAMWrite};
-use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::JoltDevice;
+use jolt_common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
+use jolt_common::jolt_device::JoltDevice;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
 use super::terminal::Terminal;
@@ -1132,7 +1132,7 @@ impl MemoryWrapper {
 mod test_mmu {
     use super::*;
     use crate::emulator::terminal::DummyTerminal;
-    use common::jolt_device::MemoryConfig;
+    use jolt_common::jolt_device::MemoryConfig;
 
     fn setup_mmu() -> Mmu {
         let terminal = Box::new(DummyTerminal::default());

@@ -1,4 +1,4 @@
-use common::constants::RAM_START_ADDRESS;
+use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
 use object::{Object, ObjectSection, SectionKind};
 use std::collections::BTreeMap;

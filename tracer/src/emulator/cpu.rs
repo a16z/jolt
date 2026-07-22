@@ -5,7 +5,7 @@ extern crate fnv;
 use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
-use common::constants::REGISTER_COUNT;
+use jolt_common::constants::REGISTER_COUNT;
 use tracing::{info, warn};
 
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};

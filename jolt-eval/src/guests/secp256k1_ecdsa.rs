@@ -1,4 +1,4 @@
-use common::jolt_device::MemoryConfig;
+use jolt_common::jolt_device::MemoryConfig;
 
 use super::GuestConfig;
 
@@ -51,7 +51,7 @@ impl GuestConfig for Secp256k1EcdsaVerify {
         "secp256k1-ecdsa-verify-guest"
     }
     fn memory_config(&self) -> MemoryConfig {
-        use common::constants::{
+        use jolt_common::constants::{
             DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
         };
         MemoryConfig {

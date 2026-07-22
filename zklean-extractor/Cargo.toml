@@ -27,7 +27,7 @@ allocative.workspace = true
 num-bigint = "0.4"
 
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
-common = { path = "../common" }
+jolt-common = { workspace = true, features = ["std"] }
 tracer = { path = "../tracer" }
 
 [dev-dependencies]

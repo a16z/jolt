@@ -1,6 +1,6 @@
 use allocative::Allocative;
-use common::constants::XLEN;
-use common::jolt_device::MemoryLayout;
+use jolt_common::constants::XLEN;
+use jolt_common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 

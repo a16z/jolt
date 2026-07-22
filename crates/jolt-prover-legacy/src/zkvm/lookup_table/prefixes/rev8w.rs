@@ -1,5 +1,5 @@
 use crate::zkvm::instruction_lookups::LOG_K;
-use common::constants::XLEN;
+use jolt_common::constants::XLEN;
 use tracer::instruction::virtual_rev8w::rev8w;
 
 use crate::{

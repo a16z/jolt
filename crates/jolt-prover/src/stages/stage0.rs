@@ -8,7 +8,7 @@
 //! construction. The commitment compute is delegated to the `jolt-kernels`
 //! witness-commitment kernel; only the absorbs happen here.
 
-use common::jolt_device::JoltDevice;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;

@@ -1,4 +1,4 @@
-use common::{
+use jolt_common::{
     constants::RAM_START_ADDRESS,
     jolt_device::{JoltDevice, MemoryLayoutError},
 };
@@ -69,7 +69,7 @@ mod tests {
     #![expect(clippy::expect_used, reason = "tests should fail loudly")]
 
     use super::*;
-    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 
     #[test]
     fn materializes_public_io_segments() {

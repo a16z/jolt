@@ -1,5 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 
 use crate::{
     curve::JoltCurve,
@@ -242,7 +242,7 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
 
     #[inline]
     pub(crate) fn compute_max_total_vars(&self, include_committed: bool) -> (usize, usize) {
-        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
+        use jolt_common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_t_any = self.max_padded_trace_length.next_power_of_two();
         let max_log_t = max_t_any.log_2();
         let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {

@@ -25,7 +25,7 @@ path = "src/main.rs"
 default = ["std"]
 std = [
   "jolt-platform/std",
-  "common/std",
+  "jolt-common/std",
   "fnv/std",
   "object/std",
   "tracing/std",
@@ -62,7 +62,7 @@ paste.workspace = true
 itertools.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
-common = { workspace = true, default-features = false }
+jolt-common = { workspace = true, default-features = false }
 postcard.workspace = true
 addr2line.workspace = true
 

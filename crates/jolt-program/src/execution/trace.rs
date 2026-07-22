@@ -1,4 +1,4 @@
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{JoltCycle, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 use std::sync::Arc;
 

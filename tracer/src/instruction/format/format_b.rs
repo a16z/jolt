@@ -81,7 +81,7 @@ impl InstructionFormat for FormatB {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::RISCV_REGISTER_COUNT;
+        use jolt_common::constants::RISCV_REGISTER_COUNT;
         use rand::{Rng, RngCore};
         Self {
             imm: rng.gen(),

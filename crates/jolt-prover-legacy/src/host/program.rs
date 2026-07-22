@@ -2,12 +2,12 @@ use crate::field::JoltField;
 use crate::guest;
 use crate::host::analyze::ProgramSummary;
 use crate::host::{Program, DEFAULT_TARGET_DIR};
-use common::constants::{
+use jolt_common::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
     RAM_START_ADDRESS,
 };
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 use jolt_program::{JoltProgram, ProgramError};
 #[cfg(feature = "field-inline")]

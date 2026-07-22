@@ -31,4 +31,4 @@ rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-common.workspace = true
+jolt-common.workspace = true

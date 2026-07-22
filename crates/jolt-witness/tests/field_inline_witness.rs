@@ -1,7 +1,7 @@
 #![cfg(feature = "field-inline")]
 #![cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 
-use common::constants::RAM_START_ADDRESS;
+use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::{
     field_inline::{
         FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlineVirtualPolynomial,

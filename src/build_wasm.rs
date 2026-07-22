@@ -1,5 +1,5 @@
-use common::attributes::{parse_attributes, Attributes};
-use common::jolt_device::{MemoryConfig, MemoryLayout};
+use jolt_common::attributes::{parse_attributes, Attributes};
+use jolt_common::jolt_device::{MemoryConfig, MemoryLayout};
 
 use std::{
     fs::{self, File},

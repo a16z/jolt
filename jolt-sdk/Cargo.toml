@@ -28,7 +28,7 @@ host = [
   "jolt-prover-legacy/default",
   "dep:bincode",
   "jolt-platform/std",
-  "dep:common",
+  "dep:jolt-common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
   "dep:jolt-field",
@@ -54,7 +54,7 @@ guest-std = [
 guest-verifier = [
   "guest-std",
   "dep:bincode",
-  "dep:common",
+  "dep:jolt-common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
   "dep:jolt-field",
@@ -102,7 +102,7 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 jolt-sdk-macros.workspace = true
 # Host-only dependencies
 bincode = { workspace = true, optional = true }
-common = { workspace = true, optional = true }
+jolt-common = { workspace = true, optional = true }
 jolt-prover-legacy = { workspace = true, default-features = false, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }

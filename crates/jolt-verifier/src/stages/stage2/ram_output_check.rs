@@ -157,7 +157,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_field::Fr;
 
     /// The `instance_point_offset` override must reproduce the legacy phase-1

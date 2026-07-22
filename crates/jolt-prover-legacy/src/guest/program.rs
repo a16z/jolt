@@ -1,5 +1,5 @@
-use common::constants::RAM_START_ADDRESS;
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_common::constants::RAM_START_ADDRESS;
+use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
 use std::path::PathBuf;
 use tracer::emulator::memory::Memory;

@@ -65,7 +65,7 @@ use crate::{
 };
 use std::vec;
 
-use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
+use jolt_common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 pub use jolt_program::preprocess::RAMPreprocessing;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
@@ -852,8 +852,8 @@ mod tests {
     use super::*;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
     use ark_ff::UniformRand;
-    use common::constants::RAM_START_ADDRESS;
-    use common::jolt_device::MemoryConfig;
+    use jolt_common::constants::RAM_START_ADDRESS;
+    use jolt_common::jolt_device::MemoryConfig;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     #[test]
@@ -931,7 +931,7 @@ mod tests {
             program_size: Some(4096),
             ..Default::default()
         };
-        let layout = common::jolt_device::MemoryLayout::new(&memory_config);
+        let layout = jolt_common::jolt_device::MemoryLayout::new(&memory_config);
 
         let max_ram_K = compute_max_ram_K(&layout);
 

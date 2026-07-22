@@ -26,7 +26,7 @@ transcript-poseidon = []
 
 [dependencies]
 ark-serialize.workspace = true
-common.workspace = true
+jolt-common.workspace = true
 jolt-blindfold.workspace = true
 jolt-claims.workspace = true
 jolt-claims-derive.workspace = true

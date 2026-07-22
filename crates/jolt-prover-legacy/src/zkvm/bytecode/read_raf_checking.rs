@@ -52,7 +52,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::constants::{REGISTER_COUNT, XLEN};
+use jolt_common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{zip_eq, Itertools};
 use jolt_riscv::JoltInstructionRow;
 use rayon::prelude::*;

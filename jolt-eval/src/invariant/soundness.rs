@@ -3,8 +3,8 @@ use std::process::Command;
 
 use arbitrary::{Arbitrary, Unstructured};
 
-use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
-use common::jolt_device::MemoryConfig;
+use jolt_common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
+use jolt_common::jolt_device::MemoryConfig;
 use jolt_prover_legacy::host::Program;
 
 use tracer::instruction::Cycle;
@@ -14,7 +14,7 @@ use crate::guests;
 
 /// Guest memory layout parameters.
 ///
-/// Serializable mirror of `common::jolt_device::MemoryConfig` for use
+/// Serializable mirror of `jolt_common::jolt_device::MemoryConfig` for use
 /// in JSON-based counterexamples.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct GuestMemoryConfig {

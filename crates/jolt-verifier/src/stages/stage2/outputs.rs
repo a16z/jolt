@@ -168,7 +168,7 @@ mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use crate::stages::relations::ConcreteSumcheck;
-    use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::geometry::{
         dimensions::{ReadWriteDimensions, TraceDimensions},
         ram::RamRafEvaluationDimensions,

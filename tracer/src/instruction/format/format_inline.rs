@@ -91,7 +91,7 @@ impl InstructionFormat for FormatInline {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::RISCV_REGISTER_COUNT;
+        use jolt_common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
             rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),

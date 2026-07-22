@@ -8,7 +8,7 @@
 //! `τ_high` draw, the uni-skip, the post-gamma output-address draws); all
 //! compute is behind the backend's stage-2 slots.
 
-use common::jolt_device::JoltDevice;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };

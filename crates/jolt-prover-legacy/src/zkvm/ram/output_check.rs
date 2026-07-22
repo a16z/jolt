@@ -28,7 +28,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
+use jolt_common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 use rayon::prelude::*;
 use tracer::JoltDevice;
 

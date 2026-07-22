@@ -41,8 +41,8 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::constants::REGISTER_COUNT;
-use common::jolt_device::MemoryLayout;
+use jolt_common::constants::REGISTER_COUNT;
+use jolt_common::jolt_device::MemoryLayout;
 use num::Integer;
 use num_traits::Zero;
 use rayon::prelude::*;

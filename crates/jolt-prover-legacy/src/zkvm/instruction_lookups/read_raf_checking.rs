@@ -4,7 +4,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::constants::XLEN;
+use jolt_common::constants::XLEN;
 use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};

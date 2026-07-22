@@ -62,7 +62,7 @@ mod test {
     use super::VirtualRev8WTable;
     use crate::zkvm::lookup_table::test::lookup_table_mle_random_test;
     use crate::zkvm::lookup_table::test::prefix_suffix_test;
-    use common::constants::XLEN;
+    use jolt_common::constants::XLEN;
 
     #[test]
     fn mle_random() {

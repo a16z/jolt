@@ -83,7 +83,7 @@ impl InstructionFormat for FormatLoad {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::RISCV_REGISTER_COUNT;
+        use jolt_common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
             // Keep imm small to avoid going out of bounds when added to rs1

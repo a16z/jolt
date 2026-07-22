@@ -9,6 +9,6 @@ description = "Generates Lean expansion programs from the Jolt bytecode expander
 workspace = true
 
 [dependencies]
-common = { workspace = true }
+jolt-common = { workspace = true }
 jolt-program = { workspace = true, features = ["std", "serialization"] }
 jolt-riscv = { workspace = true }

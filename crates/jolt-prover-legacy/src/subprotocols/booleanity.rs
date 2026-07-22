@@ -23,7 +23,7 @@ use ark_std::Zero;
 use rayon::prelude::*;
 use std::iter::zip;
 
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]

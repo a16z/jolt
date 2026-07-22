@@ -6,7 +6,7 @@ use crate::zkvm::instruction::{
     Flags, InstructionLookup, InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use crate::zkvm::lookup_table::LookupTables;
-use common::constants::{REGISTER_COUNT, XLEN};
+use jolt_common::constants::{REGISTER_COUNT, XLEN};
 use jolt_riscv::JoltInstructionRow;
 
 /// Total number of lanes encoded by committed-bytecode rows.

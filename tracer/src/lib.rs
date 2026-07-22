@@ -11,7 +11,7 @@ use tracing::{error, info};
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use common::{self, jolt_device::MemoryConfig};
+use jolt_common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 use jolt_riscv::RV64IMAC_JOLT;
@@ -23,7 +23,7 @@ mod jolt_cycle_adapter;
 pub mod trace_row;
 pub mod utils;
 
-pub use common::jolt_device::JoltDevice;
+pub use jolt_common::jolt_device::JoltDevice;
 pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
 pub use execution_backend::TracerBackend;
 pub use instruction::inline::{
@@ -708,7 +708,7 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::jolt_device::MemoryConfig;
+    use jolt_common::jolt_device::MemoryConfig;
 
     fn minimal_elf() -> Vec<u8> {
         vec![
@@ -790,7 +790,7 @@ mod tests {
                 "-p",
                 guest,
                 "--stack-size",
-                &common::constants::DEFAULT_STACK_SIZE.to_string(),
+                &jolt_common::constants::DEFAULT_STACK_SIZE.to_string(),
                 "--heap-size",
                 "32768",
                 "--",

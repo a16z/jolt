@@ -31,7 +31,7 @@ use self::cpu::Cpu;
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
-use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
+use jolt_common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
 use std::io::Write;
 use std::path::Path;
 

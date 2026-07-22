@@ -1,4 +1,4 @@
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 use std::{array, iter::zip, sync::Arc};
 use tracer::{instruction::Cycle, JoltDevice};

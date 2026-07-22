@@ -2,7 +2,7 @@
 //! transcript and one backend session, and their wire outputs assemble into
 //! the complete [`JoltProof`].
 
-use common::jolt_device::JoltDevice;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_kernels::JoltBackend;

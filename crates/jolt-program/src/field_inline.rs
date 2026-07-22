@@ -365,7 +365,7 @@ fn field_register(
 
 fn x_register(register: Option<u8>, operand: &'static str) -> Result<u8, FieldInlineMetadataError> {
     let register = register.ok_or(FieldInlineMetadataError::MissingOperand { operand })?;
-    if register < common::constants::RISCV_REGISTER_COUNT {
+    if register < jolt_common::constants::RISCV_REGISTER_COUNT {
         Ok(register)
     } else {
         Err(FieldInlineMetadataError::InvalidXRegister { operand, register })

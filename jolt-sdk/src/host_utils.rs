@@ -24,7 +24,7 @@ pub use jolt_program::execution::{
 #[cfg(feature = "host")]
 pub use tracer::TracerBackend;
 
-pub use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+pub use jolt_common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 pub use jolt_prover_legacy::ark_bn254::Fr as F;
 pub use jolt_prover_legacy::curve::Bn254Curve as Curve;
 pub use jolt_prover_legacy::curve::JoltCurve;

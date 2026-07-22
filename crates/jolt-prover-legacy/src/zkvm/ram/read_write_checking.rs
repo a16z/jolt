@@ -1,4 +1,4 @@
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use num::Integer;
 use num_traits::Zero;
 

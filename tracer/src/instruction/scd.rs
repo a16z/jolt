@@ -80,12 +80,12 @@ mod tests {
 
     fn setup_cpu() -> Cpu {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
-        let memory_config = common::jolt_device::MemoryConfig {
+        let memory_config = jolt_common::jolt_device::MemoryConfig {
             heap_size: TEST_MEM_SIZE,
             program_size: Some(1024),
             ..Default::default()
         };
-        cpu.get_mut_mmu().jolt_device = Some(common::jolt_device::JoltDevice::new(&memory_config));
+        cpu.get_mut_mmu().jolt_device = Some(jolt_common::jolt_device::JoltDevice::new(&memory_config));
         cpu.get_mut_mmu().init_memory(TEST_MEM_SIZE);
         cpu
     }

@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::LOG_K;
-use common::constants::{
+use jolt_common::constants::{
     INSTRUCTION_PHASES_THRESHOLD_LOG_T, ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT,
 };
 

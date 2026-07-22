@@ -1,4 +1,4 @@
-use common::{constants, jolt_device::MemoryConfig};
+use jolt_common::{constants, jolt_device::MemoryConfig};
 
 /// Groups the constants used for a specific instruction set / decomposition strategy / memory
 /// layout. Jolt currently just has one of these, but we abstract over them here for future

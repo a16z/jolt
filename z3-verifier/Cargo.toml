@@ -6,6 +6,6 @@ edition = "2021"
 paste.workspace = true
 
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
-common = { path = "../common" }
+jolt-common = { workspace = true, features = ["std"] }
 tracer = { path = "../tracer" }
 z3 = "0.20.0"

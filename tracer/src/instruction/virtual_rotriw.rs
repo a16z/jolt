@@ -1,4 +1,4 @@
-use common::constants::XLEN;
+use jolt_common::constants::XLEN;
 use serde::{Deserialize, Serialize};
 
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;

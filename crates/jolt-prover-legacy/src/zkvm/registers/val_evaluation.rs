@@ -34,7 +34,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use common::{constants::REGISTER_COUNT, jolt_device::MemoryLayout};
+use jolt_common::{constants::REGISTER_COUNT, jolt_device::MemoryLayout};
 use rayon::prelude::*;
 
 // Register value evaluation sumcheck

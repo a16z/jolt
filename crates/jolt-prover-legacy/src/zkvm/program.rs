@@ -16,7 +16,7 @@ use crate::zkvm::bytecode::{
     BytecodePreprocessing, PreprocessingError, TrustedBytecodeCommitments, TrustedBytecodeHints,
 };
 use crate::zkvm::ram::RAMPreprocessing;
-use common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::instruction::Cycle;
 

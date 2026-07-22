@@ -36,8 +36,8 @@ use crate::zkvm::bytecode::{get_pc_for_cycle, BytecodePreprocessing};
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
-use common::constants::XLEN;
-use common::jolt_device::MemoryLayout;
+use jolt_common::constants::XLEN;
+use jolt_common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
