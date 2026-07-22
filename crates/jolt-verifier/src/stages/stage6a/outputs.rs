@@ -31,25 +31,25 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// `wire_output_openings` override), so the generated output-shape
 /// count/validator cover the val-stage presence and count.
 ///
-/// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
-/// booleanity member's challenges are the hand pre-batch draws (the reference
-/// address padded with fresh squeezes, the underived reference cycle, the
-/// gamma), so the fronts draw the bytecode member's six gammas via its own
-/// `draw_challenges`, perform the booleanity hand draws at the frozen wire
-/// positions, and hand-assemble `Stage6aChallenges` — a generated per-member
-/// draw could not produce the reference vectors.
+/// The generated `draw_challenges` draws each member in declaration order —
+/// the bytecode member's six gammas (its default per-field draw), then the
+/// booleanity member's `draw_challenges` override (the reference-address pad
+/// draw and the gamma; the reference vectors derive from the stage-5
+/// instruction point the relation carries as construction geometry) —
+/// reproducing the pre-batch draw schedule squeeze-for-squeeze, so both fronts
+/// call it directly.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(no_draw_challenges, crate = "crate")]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage6aSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,
 }
 
-/// The stage-6a Fiat-Shamir draws sampled before/around the address-phase batch
-/// but consumed only by stage 6b. The prover's booleanity subprotocol samples its
+/// The stage-6a Fiat-Shamir draws sampled by the batch's `draw_challenges` but
+/// consumed downstream too. The prover's booleanity subprotocol samples its
 /// gamma (and the reference-address padding) before the 6a batch runs, and the
-/// per-stage folding gammas are drawn with the 6a batch's bytecode fold; only
-/// stage 6b's members consume them, so 6a carries them downstream as typed
+/// per-stage folding gammas are drawn with the 6a batch's bytecode fold; stage
+/// 6b's members consume them as well, so 6a carries them downstream as typed
 /// upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aCarriedChallenges<F: Field> {

@@ -46,12 +46,14 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// invariant on that impl); the aggregates project through the anchor, which both
 /// variants share cell-for-cell.
 ///
-/// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
-/// members' challenges have stage-level provenance (the bytecode gamma shares
-/// stage 6a's squeeze and the booleanity gamma is drawn pre-6a where the
-/// prover's booleanity subprotocol samples it), so `verify` hand-assembles
-/// `Stage6bChallenges` from the stage-level draws — a generated per-member draw
-/// would squeeze at the wrong transcript position if it existed to be called.
+/// The generated `draw_challenges` is suppressed (`no_draw_challenges` — this
+/// batch is its only production user): the members' challenges have
+/// stage-level provenance (the bytecode gamma shares stage 6a's squeeze and
+/// the booleanity gamma is drawn by stage 6a's aggregate, via its booleanity
+/// member's `draw_challenges` override), so `verify` hand-assembles
+/// `Stage6bChallenges` from the stage-6a carried draws — a generated
+/// per-member draw would squeeze at the wrong transcript position if it
+/// existed to be called.
 ///
 /// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
 /// absorb methods: booleanity's `bytecode_ra` openings

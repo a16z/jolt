@@ -1,14 +1,14 @@
 //! Stage 6a: the two-member address-phase batch (bytecode read+RAF address
 //! phase, booleanity address phase).
 //!
-//! Pure orchestration mirroring `stage6a::verify`: the bytecode member's
-//! six-gamma draw, then the hand pre-batch draws (booleanity reference
-//! address/cycle from the stage-5 instruction point, booleanity gamma) —
-//! which the 6a VERIFIER never evaluates, but this prover's booleanity kernel
-//! consumes immediately (masses, eq tables, gamma weights) — hand-assembled
-//! into the stage challenge aggregate (the kernel's read path) and carried
-//! downstream in `Stage6aCarriedChallenges` for stage 6b. Both members are
-//! universal
+//! Pure orchestration mirroring `stage6a::verify`: the generated aggregate
+//! draw (the bytecode member's six gammas, then the booleanity member's
+//! override — reference address/cycle derived from the stage-5 instruction
+//! point the relation carries, plus the pad draw and gamma) — which the 6a
+//! VERIFIER never evaluates, but this prover's booleanity kernel consumes
+//! immediately (masses, eq tables, gamma weights) off the challenge aggregate,
+//! carried downstream in `Stage6aCarriedChallenges` for stage 6b. Both members
+//! are universal
 //! `PrepareKernel` slots: the bytecode member's stage-value fold reads the
 //! session-resident retained program, and its PC pushforward source (the
 //! per-cycle bytecode indices) comes off the witness plane's typed stage-6
@@ -22,21 +22,20 @@ use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 use jolt_transcript::{AppendToTranscript, Transcript};
-use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::booleanity::{
-    BooleanityAddressPhase, BooleanityAddressPhaseChallenges, BooleanityAddressPhaseInputClaims,
+    BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
 };
 use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
 };
 use jolt_verifier::stages::stage6a::outputs::{
-    Stage6aCarriedChallenges, Stage6aChallenges, Stage6aClearOutput, Stage6aInputClaims,
-    Stage6aOutputClaims, Stage6aSumchecks,
+    Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutputClaims,
+    Stage6aSumchecks,
 };
 use jolt_verifier::stages::stage6b::batch::bytecode_stage_points;
 use jolt_verifier::{CheckedInputs, VerifierError};
@@ -122,39 +121,18 @@ where
             stage_points,
             entry_bytecode_index,
         ),
-        booleanity: BooleanityAddressPhase::new(booleanity_dimensions),
+        booleanity: BooleanityAddressPhase::new(
+            booleanity_dimensions,
+            stage5.instruction_r_address.clone(),
+            stage5.output_points.instruction_r_cycle().to_vec(),
+        ),
     };
-    // Hand-assembled challenges, mirroring the verifier (the generated
-    // `draw_challenges` is suppressed): the bytecode member's six squeezes (the
-    // fold gamma plus the five per-stage gammas), then the hand pre-batch draws
-    // in the verifier's exact order — reference address (reverse, then pad with
-    // fresh draws or truncate to the committed chunk width), reference cycle,
-    // gamma. The 6a verifier only carries the booleanity values; this prover's
-    // booleanity kernel consumes them off the challenge aggregate.
-    let bytecode_read_raf_challenges = sumchecks.bytecode_read_raf.draw_challenges(transcript)?;
-    let chunk_bits = config.one_hot_config.committed_chunk_bits();
-    let mut booleanity_reference_address = stage5.instruction_r_address.clone();
-    booleanity_reference_address.reverse();
-    if booleanity_reference_address.len() < chunk_bits {
-        let missing = chunk_bits - booleanity_reference_address.len();
-        booleanity_reference_address.extend(transcript.challenge_vector(missing));
-    } else {
-        booleanity_reference_address = booleanity_reference_address
-            [booleanity_reference_address.len() - chunk_bits..]
-            .to_vec();
-    }
-    let mut booleanity_reference_cycle = stage5.output_points.instruction_r_cycle().to_vec();
-    booleanity_reference_cycle.reverse();
-    let booleanity_gamma = transcript.challenge();
-
-    let address_challenges = Stage6aChallenges {
-        bytecode_read_raf: bytecode_read_raf_challenges,
-        booleanity: BooleanityAddressPhaseChallenges {
-            reference_address: booleanity_reference_address,
-            reference_cycle: booleanity_reference_cycle,
-            gamma: booleanity_gamma,
-        },
-    };
+    // The generated per-member draw, mirroring the verifier: the bytecode
+    // member's six squeezes (the fold gamma plus the five per-stage gammas),
+    // then the booleanity member's override (the reference-address pad draw
+    // and the gamma). The 6a verifier only carries the booleanity values; this
+    // prover's booleanity kernel consumes them off the challenge aggregate.
+    let address_challenges = sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges {
         bytecode_read_raf: address_challenges.bytecode_read_raf,
         booleanity_reference_address: address_challenges.booleanity.reference_address.clone(),

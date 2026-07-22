@@ -361,7 +361,7 @@ hard check → `curate_opening_values` (default: generated canonical order) →
 
 | Edge | Mechanism |
 |---|---|
-| Mid-head hand draws (stage 2/6a/6b fronts) | Stay in `prove_stageX`, between `draw_challenges` and `prove` — same seam `verify` uses today. The derive's existing draw-suppression opt-outs are unchanged. |
+| Mid-head hand draws (stage 2/6b fronts; stage 6a's booleanity reference draws since moved into its member's `draw_challenges` override) | Stay in `prove_stageX`, between `draw_challenges` and `prove` — same seam `verify` uses today. The derive's existing draw-suppression opt-outs are unchanged. |
 | Uni-skip pre-phases (stages 1–2) | The front runs the uni-skip round (`SpartanOuterInstance` etc.) and parks the bound instance in `ProofSession`; the remainder member is a regular batch member whose `PrepareKernel<F, OuterRemainder>::prepare` reclaims the instance and calls `into_remainder(&relation)`. |
 | Cross-batch 6b→7 precommitted carry | The 6b kernel parks its post-cycle bound state in `ProofSession` at extraction; stage 7's `PrepareKernel` for the address-phase relation reclaims it. Intermediate-vs-final wire claims (`has_address_phase()`) resolve inside the kernel's `output_claims()` — the layout lives on the relation. |
 | Output curation (6b opening-value dedup) | `curate_opening_values` override at the macro invocation site, calling the promoted `stage6b_opening_values`. The derive's `no_opening_values` opt-out continues to suppress the verify-side generated absorb for the same stages. |
