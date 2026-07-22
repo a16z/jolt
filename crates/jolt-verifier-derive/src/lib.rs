@@ -318,6 +318,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         .iter()
         .find(|plan| !plan.is_option)
         .map_or(&plans[0].ident, |plan| &plan.ident);
+    let stage_relation_id_method = quote! {
+        /// The batch's representative relation id for batch-level error
+        /// attribution: the first non-`Option` member's relation id. The single
+        /// source read by the generated verify drivers and by `jolt-prover`'s
+        /// `impl_stage_prover!` expansion.
+        pub fn stage_relation_id(&self) -> ::jolt_claims::protocols::jolt::JoltRelationId {
+            #relations::ConcreteSumcheck::id(&self.#stage_id_ident)
+        }
+    };
 
     // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
     // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
@@ -549,7 +558,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     transcript,
                 )
                 .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
-                    stage: self.#stage_id_ident.id(),
+                    stage: self.stage_relation_id(),
                     reason: error.to_string(),
                 })?;
 
@@ -614,7 +623,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let __consistency = proof
                     .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
                     .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
-                        stage: self.#stage_id_ident.id(),
+                        stage: self.stage_relation_id(),
                         reason: error.to_string(),
                     })?;
 
@@ -1051,6 +1060,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
+            #stage_relation_id_method
             #draw_challenges_method
 
             #begin_batch_method

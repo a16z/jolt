@@ -419,13 +419,9 @@ macro_rules! impl_stage_prover {
                     challenges,
                 )?;
                 if __expected != __proved.final_claim {
-                    let __stage_id = [$(
-                        <<$relation<F> as ::jolt_verifier::stages::relations::ConcreteSumcheck<F>>
-                            ::Symbolic as ::jolt_claims::SymbolicSumcheck>::id(),
-                    )+][0];
                     return ::core::result::Result::Err(
                         ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
-                            stage: __stage_id,
+                            stage: self.stage_relation_id(),
                             reason: ::std::format!(
                                 "prover final claim {:?} disagrees with the expected output fold {:?}",
                                 __proved.final_claim,
