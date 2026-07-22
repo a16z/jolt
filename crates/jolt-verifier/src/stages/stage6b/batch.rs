@@ -6,10 +6,9 @@
 //! points, the stage-6a address openings) plus the clear-only value aux
 //! (`table_fold`, `address_val_stages`, advice reference points — each
 //! empty/`None` in ZK, where `expected_output` never runs) as a single contiguous
-//! block, preserving the fallible-check precedence, before constructing the
-//! members. The four `Option` members are present exactly when their precommitted
-//! layout is committed, in both proving modes, so the batch's instance count
-//! matches the prover's.
+//! block before constructing the members. The four `Option` members are present
+//! exactly when their precommitted layout is committed, in both proving modes,
+//! so the batch's instance count matches the prover's.
 
 use jolt_claims::protocols::jolt::{
     geometry::{
@@ -80,7 +79,10 @@ impl<F: Field> BytecodeStagePoints<F> {
 
 /// Derive the [`BytecodeStagePoints`] from the mode-agnostic upstream opening
 /// points. Shared by [`Stage6bSumchecks::build`] (both proving modes) and the
-/// prove-side stage-6a/6b recipes, so the five-leg wiring cannot drift.
+/// prove-side stage-6a/6b recipes, single-sourcing the five-leg wiring on the
+/// clear-mode paths. The BlindFold ZK input derivation
+/// (`crate::stages::zk::blindfold`) assembles its own legs from the committed
+/// consistency points and does not route through this helper.
 pub fn bytecode_stage_points<F: Field>(
     stage1_cycle_binding: &[F],
     stage2: &Stage2BatchOutputPoints<F>,
