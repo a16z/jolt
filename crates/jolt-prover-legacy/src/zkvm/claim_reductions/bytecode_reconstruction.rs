@@ -25,6 +25,8 @@
 use allocative::Allocative;
 #[cfg(feature = "prover")]
 use jolt_riscv::JoltInstructionRow;
+#[cfg(feature = "prover")]
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 #[cfg(feature = "prover")]
@@ -256,169 +258,182 @@ impl<F: JoltField> BytecodeReconstructionSumcheckProver<F> {
             bytes
         };
 
-        let mut legs = Vec::new();
-        for (chunk, gamma) in params.gamma_powers.iter().enumerate() {
-            let start = (chunk * rows).min(bytecode.len());
-            let end = ((chunk + 1) * rows).min(bytecode.len());
-            let chunk_rows = &bytecode[start..end];
+        // Chunk-invariant byte-decode kernels, scaled per chunk below.
+        let pc_kernel = byte_kernel(place_bits);
+        let imm_kernel = byte_kernel(imm_limb_bits);
 
-            // Register selectors: one-hot per row when the operand exists.
-            for (lane, block_start) in [
-                (0usize, layout.rs1_start),
-                (1, layout.rs2_start),
-                (2, layout.rd_start),
-            ] {
-                let weight: Vec<F> = (0..register_count)
-                    .map(|register| *gamma * eq_lane[block_start + register])
-                    .collect();
-                let mut column = vec![F::zero(); register_count];
-                for (row, instruction) in chunk_rows.iter().enumerate() {
-                    let register = match lane {
-                        0 => instruction.operands.rs1,
-                        1 => instruction.operands.rs2,
-                        _ => instruction.operands.rd,
+        // One fused sweep per chunk fills every leg's accumulator in a single
+        // pass over the instruction rows (the per-leg passes re-streamed the
+        // bytecode ~40x); chunks are independent and build in parallel. Each
+        // destination sees the same addends in the same row order as the
+        // per-leg passes did, so every sum is unchanged.
+        let legs: Vec<Leg<F>> = params
+            .gamma_powers
+            .par_iter()
+            .enumerate()
+            .map(|(chunk, gamma)| {
+                let start = (chunk * rows).min(bytecode.len());
+                let end = ((chunk + 1) * rows).min(bytecode.len());
+                let chunk_rows = &bytecode[start..end];
+
+                let mut reg_columns: [Vec<F>; 3] =
+                    std::array::from_fn(|_| vec![F::zero(); register_count]);
+                let mut circuit_flag_values = vec![F::zero(); NUM_CIRCUIT_FLAGS];
+                let mut instruction_flag_values = vec![F::zero(); NUM_INSTRUCTION_FLAGS];
+                let mut raf_value = F::zero();
+                let mut lookup_column = vec![F::zero(); lookup_cells];
+                let mut pc_column = vec![F::zero(); 1 << (BYTE_BITS + place_bits)];
+                let mut imm_column = vec![F::zero(); 1 << (BYTE_BITS + imm_limb_bits)];
+                for row in 0..rows {
+                    let e = eq_row[row];
+                    let instruction = chunk_rows.get(row);
+                    if let Some(instruction) = instruction {
+                        for (lane, register) in [
+                            instruction.operands.rs1,
+                            instruction.operands.rs2,
+                            instruction.operands.rd,
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            if let Some(register) = register {
+                                reg_columns[lane][register as usize] += e;
+                            }
+                        }
+                        let circuit_flags = instruction.circuit_flags();
+                        for (flag, set) in circuit_flags.iter().enumerate() {
+                            if *set {
+                                circuit_flag_values[flag] += e;
+                            }
+                        }
+                        for (flag, set) in instruction.instruction_flags().iter().enumerate() {
+                            if *set {
+                                instruction_flag_values[flag] += e;
+                            }
+                        }
+                        if !InterleavedBitsMarker::is_interleaved_operands(&circuit_flags) {
+                            raf_value += e;
+                        }
+                        if let Some(table) = InstructionLookup::<XLEN>::lookup_table(instruction) {
+                            lookup_column[LookupTables::<XLEN>::enum_index(&table)] += e;
+                        }
+                    }
+                    // Padding rows scatter byte 0 in the pc and imm lanes,
+                    // matching the committed witness.
+                    let address = instruction.map_or(0, |instruction| instruction.address as u64);
+                    for place in 0..WORD_BYTES {
+                        let byte = ((address >> (8 * place)) & 0xff) as usize;
+                        pc_column[(byte << place_bits) | place] += e;
+                    }
+                    let bytes = match instruction {
+                        Some(instruction) => imm_bytes(instruction.operands.imm),
+                        None => vec![0u8; params.imm_byte_width],
                     };
-                    if let Some(register) = register {
-                        column[register as usize] += eq_row[row];
+                    for (place, byte) in bytes.into_iter().enumerate() {
+                        imm_column[((byte as usize) << imm_limb_bits) | place] += e;
                     }
                 }
-                legs.push(Leg {
-                    polynomial: CommittedPolynomial::BytecodeRegisterSelector(chunk, lane),
-                    own_vars: register_count.log_2(),
+
+                // Leg assembly, in the exact order the per-leg passes pushed.
+                let mut chunk_legs = Vec::new();
+                for (lane, (block_start, column)) in [
+                    (layout.rs1_start, &reg_columns[0]),
+                    (layout.rs2_start, &reg_columns[1]),
+                    (layout.rd_start, &reg_columns[2]),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let weight: Vec<F> = (0..register_count)
+                        .map(|register| *gamma * eq_lane[block_start + register])
+                        .collect();
+                    chunk_legs.push(Leg {
+                        polynomial: CommittedPolynomial::BytecodeRegisterSelector(chunk, lane),
+                        own_vars: register_count.log_2(),
+                        state: LegState::Active {
+                            weight: weight.into(),
+                            column: column.clone().into(),
+                        },
+                    });
+                }
+                let mut flag_leg = |polynomial: CommittedPolynomial, lane: usize, value: F| {
+                    chunk_legs.push(Leg {
+                        polynomial,
+                        own_vars: 0,
+                        state: LegState::Exhausted {
+                            scaled: *gamma * eq_lane[lane] * value,
+                            value,
+                        },
+                    });
+                };
+                for (flag, value) in circuit_flag_values.into_iter().enumerate() {
+                    flag_leg(
+                        CommittedPolynomial::BytecodeCircuitFlag(chunk, flag),
+                        layout.circuit_start + flag,
+                        value,
+                    );
+                }
+                for (flag, value) in instruction_flag_values.into_iter().enumerate() {
+                    flag_leg(
+                        CommittedPolynomial::BytecodeInstructionFlag(chunk, flag),
+                        layout.instr_start + flag,
+                        value,
+                    );
+                }
+                flag_leg(
+                    CommittedPolynomial::BytecodeRafFlag(chunk),
+                    layout.raf_flag_idx,
+                    raf_value,
+                );
+                let weight: Vec<F> = (0..lookup_cells)
+                    .map(|table| {
+                        if table < lookup_count {
+                            *gamma * eq_lane[layout.lookup_start + table]
+                        } else {
+                            F::zero()
+                        }
+                    })
+                    .collect();
+                chunk_legs.push(Leg {
+                    polynomial: CommittedPolynomial::BytecodeLookupSelector(chunk),
+                    own_vars: lookup_cells.log_2(),
                     state: LegState::Active {
                         weight: weight.into(),
-                        column: column.into(),
+                        column: lookup_column.into(),
                     },
                 });
-            }
-
-            // Flag lanes: 0-round legs — scalar weight × the flag column
-            // bound at r_row.
-            let mut flag_leg = |polynomial: CommittedPolynomial, lane: usize, value: F| {
-                legs.push(Leg {
-                    polynomial,
-                    own_vars: 0,
-                    state: LegState::Exhausted {
-                        scaled: *gamma * eq_lane[lane] * value,
-                        value,
+                let pc_scale = *gamma * eq_lane[layout.unexp_pc_idx];
+                chunk_legs.push(Leg {
+                    polynomial: CommittedPolynomial::BytecodeUnexpandedPcBytes(chunk),
+                    own_vars: BYTE_BITS + place_bits,
+                    state: LegState::Active {
+                        weight: pc_kernel
+                            .iter()
+                            .map(|w| pc_scale * *w)
+                            .collect::<Vec<F>>()
+                            .into(),
+                        column: pc_column.into(),
                     },
                 });
-            };
-            for flag in 0..NUM_CIRCUIT_FLAGS {
-                let value = chunk_rows
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, instruction)| instruction.circuit_flags()[flag])
-                    .map(|(row, _)| eq_row[row])
-                    .sum();
-                flag_leg(
-                    CommittedPolynomial::BytecodeCircuitFlag(chunk, flag),
-                    layout.circuit_start + flag,
-                    value,
-                );
-            }
-            for flag in 0..NUM_INSTRUCTION_FLAGS {
-                let value = chunk_rows
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, instruction)| instruction.instruction_flags()[flag])
-                    .map(|(row, _)| eq_row[row])
-                    .sum();
-                flag_leg(
-                    CommittedPolynomial::BytecodeInstructionFlag(chunk, flag),
-                    layout.instr_start + flag,
-                    value,
-                );
-            }
-            let raf_value = chunk_rows
-                .iter()
-                .enumerate()
-                .filter(|(_, instruction)| {
-                    !InterleavedBitsMarker::is_interleaved_operands(&instruction.circuit_flags())
-                })
-                .map(|(row, _)| eq_row[row])
-                .sum();
-            flag_leg(
-                CommittedPolynomial::BytecodeRafFlag(chunk),
-                layout.raf_flag_idx,
-                raf_value,
-            );
-
-            // Lookup-table selector: one-hot over the padded table block.
-            let weight: Vec<F> = (0..lookup_cells)
-                .map(|table| {
-                    if table < lookup_count {
-                        *gamma * eq_lane[layout.lookup_start + table]
-                    } else {
-                        F::zero()
-                    }
-                })
-                .collect();
-            let mut column = vec![F::zero(); lookup_cells];
-            for (row, instruction) in chunk_rows.iter().enumerate() {
-                if let Some(table) = InstructionLookup::<XLEN>::lookup_table(instruction) {
-                    column[LookupTables::<XLEN>::enum_index(&table)] += eq_row[row];
-                }
-            }
-            legs.push(Leg {
-                polynomial: CommittedPolynomial::BytecodeLookupSelector(chunk),
-                own_vars: lookup_cells.log_2(),
-                state: LegState::Active {
-                    weight: weight.into(),
-                    column: column.into(),
-                },
-            });
-
-            // Unexpanded-pc byte decode: padding rows scatter byte 0,
-            // matching the committed witness (weight 0·256^place keeps the
-            // claim unaffected).
-            let mut column = vec![F::zero(); 1 << (BYTE_BITS + place_bits)];
-            for row in 0..rows {
-                let address = chunk_rows
-                    .get(row)
-                    .map_or(0, |instruction| instruction.address as u64);
-                for place in 0..WORD_BYTES {
-                    let byte = ((address >> (8 * place)) & 0xff) as usize;
-                    column[(byte << place_bits) | place] += eq_row[row];
-                }
-            }
-            legs.push(Leg {
-                polynomial: CommittedPolynomial::BytecodeUnexpandedPcBytes(chunk),
-                own_vars: BYTE_BITS + place_bits,
-                state: LegState::Active {
-                    weight: byte_kernel(place_bits)
-                        .into_iter()
-                        .map(|w| *gamma * eq_lane[layout.unexp_pc_idx] * w)
-                        .collect::<Vec<F>>()
-                        .into(),
-                    column: column.into(),
-                },
-            });
-
-            // Immediate byte decode over the canonical field bytes.
-            let mut column = vec![F::zero(); 1 << (BYTE_BITS + imm_limb_bits)];
-            for row in 0..rows {
-                let bytes = match chunk_rows.get(row) {
-                    Some(instruction) => imm_bytes(instruction.operands.imm),
-                    None => vec![0u8; params.imm_byte_width],
-                };
-                for (place, byte) in bytes.into_iter().enumerate() {
-                    column[((byte as usize) << imm_limb_bits) | place] += eq_row[row];
-                }
-            }
-            legs.push(Leg {
-                polynomial: CommittedPolynomial::BytecodeImmBytes(chunk),
-                own_vars: BYTE_BITS + imm_limb_bits,
-                state: LegState::Active {
-                    weight: byte_kernel(imm_limb_bits)
-                        .into_iter()
-                        .map(|w| *gamma * eq_lane[layout.imm_idx] * w)
-                        .collect::<Vec<F>>()
-                        .into(),
-                    column: column.into(),
-                },
-            });
-        }
+                let imm_scale = *gamma * eq_lane[layout.imm_idx];
+                chunk_legs.push(Leg {
+                    polynomial: CommittedPolynomial::BytecodeImmBytes(chunk),
+                    own_vars: BYTE_BITS + imm_limb_bits,
+                    state: LegState::Active {
+                        weight: imm_kernel
+                            .iter()
+                            .map(|w| imm_scale * *w)
+                            .collect::<Vec<F>>()
+                            .into(),
+                        column: imm_column.into(),
+                    },
+                });
+                chunk_legs
+            })
+            .collect::<Vec<Vec<Leg<F>>>>()
+            .into_iter()
+            .flatten()
+            .collect();
 
         Self { legs, params }
     }
