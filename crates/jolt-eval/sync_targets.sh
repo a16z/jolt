@@ -4,7 +4,7 @@
 # and objective definitions in jolt-eval source code.
 #
 # Run from the repo root:
-#   ./jolt-eval/sync_targets.sh
+#   ./crates/jolt-eval/sync_targets.sh
 #
 # Idempotent: running twice produces no changes.
 

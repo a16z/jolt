@@ -242,7 +242,7 @@ fn main() -> eyre::Result<()> {
     }
 
     if cli.test {
-        const SORT_TARGETS_PATH: &str = "jolt-eval/src/sort_targets.rs";
+        const SORT_TARGETS_PATH: &str = "crates/jolt-eval/src/sort_targets.rs";
         let objective = ObjectiveFunction::by_name("minimize_naive_sort_time").unwrap();
         let repo_dir = std::env::current_dir()?;
         let mut env = RealEnv::new(repo_dir.clone())?;

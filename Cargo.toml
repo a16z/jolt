@@ -116,13 +116,13 @@ members = [
   "examples/advice-consumer/guest",
   "examples/sig-recovery/host",
   "examples/sig-recovery/guest",
-  "zklean-extractor",
-  "z3-verifier",
-  "jolt-eval",
-  "jolt-eval/macros",
-  "jolt-eval/guest-sandbox",
+  "crates/zklean-extractor",
+  "crates/z3-verifier",
+  "crates/jolt-eval",
+  "crates/jolt-eval/macros",
+  "crates/jolt-eval/guest-sandbox",
 ]
-exclude = ["jolt-eval/fuzz"]
+exclude = ["crates/jolt-eval/fuzz"]
 
 [features]
 host = ["jolt-sdk/host"]

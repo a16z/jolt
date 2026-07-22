@@ -26,7 +26,7 @@ build-fs-tree = "0.8.1"
 allocative.workspace = true
 num-bigint = "0.4"
 
-jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
+jolt-prover-legacy = { path = "../jolt-prover-legacy" }
 jolt-common = { workspace = true, features = ["std"] }
 jolt-tracer = { workspace = true, features = ["std"] }
 

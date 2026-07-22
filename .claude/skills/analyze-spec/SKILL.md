@@ -43,7 +43,7 @@ When in doubt, default to local mode (interactive).
    - If no match, fall back to finding any `specs/*.md` file that is NOT `TEMPLATE.md`.
    - If multiple specs match, prefer the one matching the PR number. If still ambiguous, ask the user.
 2. **Read the spec** thoroughly — understand all sections (Summary, Intent, Evaluation, Design, Execution).
-3. **Read `jolt-eval/README.md`** so you understand the invariant/objective framework for scoring Success Criteria and generating questions.
+3. **Read `crates/jolt-eval/README.md`** so you understand the invariant/objective framework for scoring Success Criteria and generating questions.
 4. **Explore the codebase**: Run `explore` agent to map codebase areas relevant to the spec's intent.
 5. **Read prior context (remote mode)**: Read all existing PR comments via `gh pr view --json comments` to identify questions already asked and answers already given. Account for these when scoring — don't re-ask answered questions.
 
@@ -208,7 +208,7 @@ Probing jolt-eval coverage:
 The Intent → Invariants section says "streaming must produce the same
 commitments as the non-streaming path." That looks like a binary property —
 have you considered capturing it as a new `jolt-eval` invariant? The existing
-`split_eq_bind_low_high` in `jolt-eval/src/invariant/` is a close model
+`split_eq_bind_low_high` in `crates/jolt-eval/src/invariant/` is a close model
 (reference vs. optimized implementation comparison). If this is out of scope,
 the Invariants section should say so explicitly.
 ```

@@ -385,7 +385,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Run extractor tests
-        working-directory: ./zklean-extractor
+        working-directory: ./crates/zklean-extractor
         run: cargo test
 
   compile-extracted-lean:
@@ -394,12 +394,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Extract Jolt ZkLean package
-        working-directory: ./zklean-extractor
+        working-directory: ./crates/zklean-extractor
         run: cargo run --release -- -o -p jolt-zklean
 
   #    - name: Run lake build on the extracted model
   #      uses: leanprover/lean-action@v1
   #      with:
-  #        lake-package-directory: ./zklean-extractor/jolt-zklean
+  #        lake-package-directory: ./crates/zklean-extractor/jolt-zklean
   #        build: true
   #        test: true

@@ -5,7 +5,7 @@ edition = "2021"
 [dependencies]
 paste.workspace = true
 
-jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
+jolt-prover-legacy = { path = "../jolt-prover-legacy" }
 jolt-common = { workspace = true, features = ["std"] }
 jolt-tracer = { workspace = true, features = ["std"] }
 z3 = "0.20.0"

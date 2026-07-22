@@ -32,18 +32,18 @@ This skill handles all the boilerplate: creating the objective struct, implement
 
 ## Phase 2: Explore Context
 
-1. Read `jolt-eval/src/objective/mod.rs` to understand the current enums and dispatch methods.
-2. Read `jolt-eval/src/objective/objective_fn/mod.rs` to understand objective function registration.
+1. Read `crates/jolt-eval/src/objective/mod.rs` to understand the current enums and dispatch methods.
+2. Read `crates/jolt-eval/src/objective/objective_fn/mod.rs` to understand objective function registration.
 3. Read an existing objective for reference:
-   - Static analysis: `jolt-eval/src/objective/code_quality/lloc.rs`
-   - Performance: `jolt-eval/src/objective/performance/binding.rs`
+   - Static analysis: `crates/jolt-eval/src/objective/code_quality/lloc.rs`
+   - Performance: `crates/jolt-eval/src/objective/performance/binding.rs`
 4. If the objective measures jolt-prover-legacy functionality, explore the relevant modules.
 
 ## Phase 3: Implement
 
 ### For Static Analysis Objectives
 
-Create `jolt-eval/src/objective/code_quality/<objective_name>.rs`:
+Create `crates/jolt-eval/src/objective/code_quality/<objective_name>.rs`:
 
 ```rust
 use std::path::Path;
@@ -91,7 +91,7 @@ impl Objective for <Name>Objective {
 
 ### For Performance Objectives
 
-Create `jolt-eval/src/objective/performance/<objective_name>.rs`:
+Create `crates/jolt-eval/src/objective/performance/<objective_name>.rs`:
 
 ```rust
 use crate::objective::Objective;
@@ -143,12 +143,12 @@ impl Objective for <Name>Objective {
 ### 4a. Add module declaration
 
 Edit the appropriate `mod.rs`:
-- Static analysis: `jolt-eval/src/objective/code_quality/mod.rs` — add `pub mod <objective_name>;`
-- Performance: `jolt-eval/src/objective/performance/mod.rs` — add `pub mod <objective_name>;`
+- Static analysis: `crates/jolt-eval/src/objective/code_quality/mod.rs` — add `pub mod <objective_name>;`
+- Performance: `crates/jolt-eval/src/objective/performance/mod.rs` — add `pub mod <objective_name>;`
 
 ### 4b. Add enum variant and dispatch
 
-Edit `jolt-eval/src/objective/mod.rs`:
+Edit `crates/jolt-eval/src/objective/mod.rs`:
 
 **For static analysis**, add to `StaticAnalysisObjective`:
 1. New variant in the enum
@@ -163,14 +163,14 @@ Edit `jolt-eval/src/objective/mod.rs`:
 
 ### 4c. Add const re-export
 
-Add a `pub use` line in `jolt-eval/src/objective/mod.rs`:
+Add a `pub use` line in `crates/jolt-eval/src/objective/mod.rs`:
 ```rust
 pub use <submodule>::<objective_name>::<UPPER_NAME>;
 ```
 
 ## Phase 5: Add Objective Function
 
-Edit `jolt-eval/src/objective/objective_fn/mod.rs`:
+Edit `crates/jolt-eval/src/objective/objective_fn/mod.rs`:
 
 1. Import the const key:
    ```rust
@@ -190,7 +190,7 @@ Edit `jolt-eval/src/objective/objective_fn/mod.rs`:
 
 ## Phase 6: Create Criterion Benchmark (performance objectives only)
 
-Create `jolt-eval/benches/<objective_name>.rs`:
+Create `crates/jolt-eval/benches/<objective_name>.rs`:
 
 ```rust
 use jolt_eval::objective::performance::<objective_name>::<Name>Objective;

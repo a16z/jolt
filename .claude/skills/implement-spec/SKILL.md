@@ -26,7 +26,7 @@ This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. 
 
 1. **Read the spec**: Find the `specs/*.md` file in this PR (exclude `TEMPLATE.md`). If a path is provided in `{{ARGUMENTS}}`, use that.
 2. **Read CLAUDE.md**: Understand architecture, conventions, testing requirements.
-3. **Read `jolt-eval/README.md`**: Understand the eval framework — the spec's Intent → Invariants and Evaluation → Performance sections may reference it.
+3. **Read `crates/jolt-eval/README.md`**: Understand the eval framework — the spec's Intent → Invariants and Evaluation → Performance sections may reference it.
 4. **Explore relevant code**: Use `explore` agents to understand the modules, types, and patterns the implementation will touch.
 5. **Extract evals**: Scan the spec's Intent → Invariants and Evaluation → Performance sections for `jolt-eval` references and list:
    - New invariants to add → each becomes a `/new-invariant <name>` subtask.

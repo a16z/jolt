@@ -30,15 +30,15 @@ This skill handles all the boilerplate: creating the invariant struct + input ty
 
 ## Phase 2: Explore Context
 
-1. Read `jolt-eval/src/invariant/mod.rs` to understand the current `JoltInvariants` enum and `dispatch!` macro.
+1. Read `crates/jolt-eval/src/invariant/mod.rs` to understand the current `JoltInvariants` enum and `dispatch!` macro.
 2. Read an existing invariant for reference:
-   - Simple: `jolt-eval/src/invariant/split_eq_bind.rs`
-   - Complex (with setup, enrich_input): `jolt-eval/src/invariant/soundness.rs`
+   - Simple: `crates/jolt-eval/src/invariant/split_eq_bind.rs`
+   - Complex (with setup, enrich_input): `crates/jolt-eval/src/invariant/soundness.rs`
 3. If the invariant tests jolt-prover-legacy functionality, explore the relevant jolt-prover-legacy modules to understand the types and APIs involved.
 
 ## Phase 3: Implement
 
-Create the invariant file at `jolt-eval/src/invariant/<invariant_name>.rs` with:
+Create the invariant file at `crates/jolt-eval/src/invariant/<invariant_name>.rs` with:
 
 ### Input Type
 
@@ -93,7 +93,7 @@ impl Invariant for <Name>Invariant {
 
 ## Phase 4: Register
 
-Edit `jolt-eval/src/invariant/mod.rs`:
+Edit `crates/jolt-eval/src/invariant/mod.rs`:
 
 1. Add `pub mod <invariant_name>;` to the module declarations at the top.
 2. Add a variant to `JoltInvariants`:
@@ -112,7 +112,7 @@ Edit `jolt-eval/src/invariant/mod.rs`:
 
 ## Phase 5: Create Fuzz Target (if targets include Fuzz)
 
-Create `jolt-eval/fuzz/fuzz_targets/<invariant_name>.rs`:
+Create `crates/jolt-eval/fuzz/fuzz_targets/<invariant_name>.rs`:
 
 ```rust
 #![no_main]
@@ -137,7 +137,7 @@ cargo clippy -p jolt-eval -q --all-targets -- -D warnings
 cargo nextest run -p jolt-eval --cargo-quiet invariant::<invariant_name>
 
 # If fuzz target was created, verify it compiles
-cd jolt-eval/fuzz && cargo check 2>&1 | head -20
+cd crates/jolt-eval/fuzz && cargo check 2>&1 | head -20
 ```
 
 If any step fails, fix the issue and re-run.

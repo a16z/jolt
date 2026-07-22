@@ -14,7 +14,7 @@ Create a new spec file in `specs/` by interviewing the user to fill each section
 2. Get the GitHub username: run `gh api user --jq .login`.
 3. Get today's date in `YYYY-MM-DD` format.
 4. Read `specs/TEMPLATE.md` to understand the required sections.
-5. Read `jolt-eval/README.md` to understand the eval framework — you'll reference it when prompting the user about mechanical verifiability.
+5. Read `crates/jolt-eval/README.md` to understand the eval framework — you'll reference it when prompting the user about mechanical verifiability.
 6. Explore the codebase to understand what areas the feature name suggests — run an `explore` agent to gather context. This informs your questions.
 
 ### 2. Interview — Section by Section
@@ -32,7 +32,7 @@ Ask: "What are we building? Can you state the primary objective in one sentence?
 #### Intent — Invariants
 
 Before asking the user anything, form a hypothesis from the Summary and Goal:
-1. Read `jolt-eval/src/invariant/` (listed in `jolt-eval/README.md`). For each existing invariant, judge whether this feature is likely to touch it. If yes, note whether the feature looks like it should *preserve* the invariant as-is or *modify* it (e.g., extend input type, change the reference implementation).
+1. Read `crates/jolt-eval/src/invariant/` (listed in `crates/jolt-eval/README.md`). For each existing invariant, judge whether this feature is likely to touch it. If yes, note whether the feature looks like it should *preserve* the invariant as-is or *modify* it (e.g., extend input type, change the reference implementation).
 2. Independently, imagine the binary properties that would have to hold for the Goal to be "correct." Which of those are not yet covered by an existing `jolt-eval` invariant? Each is a candidate for `/new-invariant`.
 
 Present the hypothesis to the user in one pass:
@@ -62,7 +62,7 @@ Ask: "Which existing tests must keep passing? What new tests are needed? Does th
 #### Evaluation — Performance
 
 Before asking the user anything, form a hypothesis from the information collected so far:
-1. Read `jolt-eval/src/objective/` (listed in `jolt-eval/README.md`). For each existing performance objective, judge whether this feature is likely to move it, and in which direction.
+1. Read `crates/jolt-eval/src/objective/` (listed in `crates/jolt-eval/README.md`). For each existing performance objective, judge whether this feature is likely to move it, and in which direction.
 2. Independently, imagine what "success" looks like as a measurable quantity. If it is not captured by an existing performance objective, this may be a candidate for `/new-objective`.
 
 Present the hypothesis to the user in one pass:
