@@ -28,9 +28,12 @@ use crate::VerifierError;
 /// A uni-skip round is always a single round reducing to a single challenge.
 const UNISKIP_ROUNDS: usize = 1;
 
-/// The per-stage uni-skip shape: degree/domain constants plus error
-/// attribution.
-pub(crate) struct UniskipParams {
+/// The per-stage uni-skip shape: the fixed first-round degree bound and
+/// centered-domain size the wire format prescribes, plus error attribution.
+/// Jolt has exactly two uni-skip rounds — [`spartan_outer`](Self::spartan_outer)
+/// (stage 1) and [`spartan_product`](Self::spartan_product) (stage 2) — so the
+/// two constructors are the only instances.
+pub struct UniskipParams {
     stage: JoltRelationId,
     /// The stage number reported by `StageClaimOutputMismatch`.
     stage_number: usize,
@@ -42,7 +45,7 @@ pub(crate) struct UniskipParams {
 
 impl UniskipParams {
     /// The stage-1 Spartan outer uni-skip shape.
-    pub(crate) fn spartan_outer() -> Self {
+    pub fn spartan_outer() -> Self {
         Self {
             stage: JoltRelationId::SpartanOuter,
             stage_number: 1,
@@ -53,7 +56,7 @@ impl UniskipParams {
     }
 
     /// The stage-2 Spartan product-virtualization uni-skip shape.
-    pub(crate) fn spartan_product() -> Self {
+    pub fn spartan_product() -> Self {
         Self {
             stage: JoltRelationId::SpartanProductVirtualization,
             stage_number: 2,
@@ -61,6 +64,18 @@ impl UniskipParams {
             domain_size: SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
             proof_field: "stage2_uni_skip_first_round_proof",
         }
+    }
+
+    /// The stage's uni-skip first-round degree bound (the transmitted
+    /// polynomial's maximum degree the wire format admits).
+    pub fn degree(&self) -> usize {
+        self.degree
+    }
+
+    /// The stage's centered integer domain size — the node count the
+    /// first-round claim sums over.
+    pub fn domain_size(&self) -> usize {
+        self.domain_size
     }
 
     fn sumcheck_failed(&self, reason: impl ToString) -> VerifierError {
@@ -81,8 +96,16 @@ pub(crate) struct UniskipZk<F: Field, C> {
 }
 
 /// Verify a clear-mode uni-skip round against its input and output claims and
-/// return the reduction challenge.
-pub(crate) fn verify_clear<F, C, T>(
+/// return the single reduction challenge.
+///
+/// Protocol contract (byte-exact; the prover's uni-skip round must mirror it):
+/// the wire proof is verified as a one-round sumcheck of `params`' degree over
+/// `params`' centered integer domain, the reduced value is hard-checked
+/// against `output_claim`, and `output_claim` is then absorbed under the
+/// `b"opening_claim"` label — BEFORE any post-uni-skip draw (the remainder
+/// batch's coefficient squeeze in particular). Errors are attributed to
+/// `params`' stage.
+pub fn verify_clear<F, C, T>(
     proof: &SumcheckProof<F, C>,
     params: &UniskipParams,
     input_claim: F,
@@ -157,64 +180,4 @@ where
         output_claims,
         challenge,
     })
-}
-
-/// Twin-transcript lock for the shared uni-skip verification core against
-/// `jolt_sumcheck::prove_uniskip_clear`, asserting byte-identical transcript
-/// states. Kept beside [`verify_clear`], whose contract it pins; the batched
-/// engine twins live in `jolt-prover`.
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod uniskip_twin_tests {
-    use jolt_crypto::Bn254G1;
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-    use jolt_r1cs::constraints::jolt::{
-        SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-    };
-    use jolt_sumcheck::{prove_uniskip_clear, CenteredIntegerDomain, ClearRound, SumcheckDomain};
-    use jolt_transcript::{Blake2bTranscript, Transcript};
-
-    use super::{verify_clear, UniskipParams};
-
-    #[test]
-    fn uniskip_prover_twin_matches_uniskip_verify_clear() {
-        let degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
-        let domain_size = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
-        let poly = UnivariatePoly::new(
-            (0..=degree as u64)
-                .map(|k| Fr::from_u64(3 * k + 2))
-                .collect(),
-        );
-        let coefficients = CenteredIntegerDomain::new(domain_size)
-            .round_sum_coefficients(UnivariatePolynomial::degree(&poly))
-            .unwrap();
-        let input_claim = <UnivariatePoly<Fr> as ClearRound<Fr>>::coefficient_linear_combination(
-            &poly,
-            &coefficients,
-        );
-
-        let mut prover_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
-        let proved = prove_uniskip_clear::<Fr, Bn254G1, _>(
-            poly,
-            input_claim,
-            degree,
-            domain_size,
-            &mut prover_transcript,
-        )
-        .unwrap();
-
-        let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
-        let challenge = verify_clear(
-            &proved.proof,
-            &UniskipParams::spartan_outer(),
-            input_claim,
-            proved.output_claim,
-            &mut verifier_transcript,
-        )
-        .unwrap();
-
-        assert_eq!(challenge, proved.challenge);
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
-    }
 }

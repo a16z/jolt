@@ -1,9 +1,8 @@
 //! Twin-transcript engine locks: toy members driven through
-//! `jolt_sumcheck::prove_batch` against the GENERATED `verify_clear` /
-//! `verify_zk` drivers, asserting byte-identical transcript states. This pins
-//! the prove-side engine to the generated verifier independently of any real
-//! stage. (The uni-skip prover twin lives with `jolt-verifier`'s `uniskip`
-//! module, whose clear verifier it locks.)
+//! `jolt_sumcheck::prove_batch` (and `prove_uniskip_clear`) against the
+//! GENERATED `verify_clear` / `verify_zk` drivers and the shared uni-skip
+//! `verify_clear` core, asserting byte-identical transcript states. This pins
+//! the prove-side engine to the verifier independently of any real stage.
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
@@ -13,14 +12,16 @@ use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInpu
 use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
-use jolt_poly::UnivariatePoly;
+use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
-    prove_batch, ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SumcheckError,
-    SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+    prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
+    CommittedSumcheckRecorder, ProveRounds, SumcheckDomain, SumcheckError, SumcheckRecorder,
+    OPENING_CLAIM_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
 use jolt_verifier::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
+use jolt_verifier::stages::uniskip::{self, UniskipParams};
 
 #[derive(SumcheckBatch)]
 struct TwinFixtureSumchecks<F: Field> {
@@ -263,5 +264,51 @@ fn committed_engine_twin_matches_generated_verify_zk() {
     );
     assert_eq!(consistency.max_num_vars, batch.max_num_vars);
     assert_eq!(consistency.max_degree, batch.max_degree);
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+}
+
+/// Twin-transcript lock for the shared uni-skip verification core: a clear
+/// uni-skip round proved through `jolt_sumcheck::prove_uniskip_clear` must be
+/// accepted by `jolt-verifier`'s `uniskip::verify_clear` with byte-identical
+/// transcript states (round proof, output-claim absorb, reduction challenge).
+#[test]
+fn uniskip_prover_twin_matches_uniskip_verify_clear() {
+    let params = UniskipParams::spartan_outer();
+    let degree = params.degree();
+    let domain_size = params.domain_size();
+    let poly = UnivariatePoly::new(
+        (0..=degree as u64)
+            .map(|k| Fr::from_u64(3 * k + 2))
+            .collect(),
+    );
+    let coefficients = CenteredIntegerDomain::new(domain_size)
+        .round_sum_coefficients(UnivariatePolynomial::degree(&poly))
+        .unwrap();
+    let input_claim = <UnivariatePoly<Fr> as ClearRound<Fr>>::coefficient_linear_combination(
+        &poly,
+        &coefficients,
+    );
+
+    let mut prover_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
+    let proved = prove_uniskip_clear::<Fr, Bn254G1, _>(
+        poly,
+        input_claim,
+        degree,
+        domain_size,
+        &mut prover_transcript,
+    )
+    .unwrap();
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
+    let challenge = uniskip::verify_clear(
+        &proved.proof,
+        &params,
+        input_claim,
+        proved.output_claim,
+        &mut verifier_transcript,
+    )
+    .unwrap();
+
+    assert_eq!(challenge, proved.challenge);
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
