@@ -31,6 +31,7 @@ pub fn ram_read_write_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamReadWriteChecking<F: Field> {
     symbolic: relations::ram::ReadWriteChecking,
     dimensions: ReadWriteDimensions,

@@ -22,6 +22,7 @@ use jolt_program::preprocess::PublicIoMemory;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
+#[derive(Clone)]
 pub struct RamOutputCheck<F: Field> {
     symbolic: relations::ram::OutputCheck,
     read_write_dimensions: ReadWriteDimensions,

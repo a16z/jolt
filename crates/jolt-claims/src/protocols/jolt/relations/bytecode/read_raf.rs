@@ -33,6 +33,7 @@ pub struct BytecodeReadRafChallenges<F> {
 
 /// The full bytecode read-RAF sumcheck: folds the five staged claims plus the
 /// Spartan outer/shift PC openings against the bytecode-table cycle output.
+#[derive(Clone)]
 pub struct ReadRaf {
     shape: BytecodeReadRafDimensions,
 }

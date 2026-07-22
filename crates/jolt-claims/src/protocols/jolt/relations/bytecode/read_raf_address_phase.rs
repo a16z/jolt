@@ -161,6 +161,7 @@ impl<F: jolt_field::Field> BytecodeReadRafAddressPhaseChallenges<F> {
 
 /// The address phase of the bytecode read-RAF sumcheck: the same folded input
 /// claim, reduced to the staged address-phase opening.
+#[derive(Clone)]
 pub struct ReadRafAddressPhase {
     shape: BytecodeReadRafDimensions,
 }

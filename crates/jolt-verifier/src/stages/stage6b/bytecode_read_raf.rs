@@ -66,6 +66,7 @@ pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
 /// once at construction (clear mode only) and the cycle-dependent factors are
 /// attached in [`ConcreteSumcheck::expected_output`], which it OVERRIDES to
 /// evaluate the publics once and reuse the [`expected_output_from_publics`] helper.
+#[derive(Clone)]
 pub struct BytecodeReadRaf<F: Field> {
     symbolic: relations::bytecode::ReadRafCyclePhase,
     dimensions: BytecodeReadRafDimensions,
@@ -280,6 +281,7 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 /// table. Like the full-mode relation it OVERRIDES
 /// [`ConcreteSumcheck::expected_output`]: the staged Val openings are inputs mixed
 /// into the output, and the committed public values are evaluated once.
+#[derive(Clone)]
 pub struct BytecodeReadRafCommitted<F: Field> {
     symbolic: relations::bytecode::ReadRafCyclePhaseCommitted,
     dimensions: BytecodeReadRafDimensions,
@@ -379,6 +381,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
     }
 }
 
+#[derive(Clone)]
 enum BytecodeReadRafCycleVariant<F: Field> {
     Full(BytecodeReadRaf<F>),
     Committed(BytecodeReadRafCommitted<F>),
@@ -388,6 +391,7 @@ enum BytecodeReadRafCycleVariant<F: Field> {
 /// full-program mode ([`BytecodeReadRaf`]) and committed-program mode
 /// ([`BytecodeReadRafCommitted`]). Lifetime-free so it can be a
 /// `Stage6bSumchecks` member directly.
+#[derive(Clone)]
 pub struct BytecodeReadRafCycle<F: Field> {
     /// The `ConcreteSumcheck` anchor symbolic (see the invariant on the impl).
     anchor: relations::bytecode::ReadRafCyclePhaseCommitted,

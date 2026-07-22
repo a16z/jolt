@@ -22,6 +22,7 @@ use jolt_poly::try_eq_mle;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
+#[derive(Clone)]
 pub struct Booleanity<F: Field> {
     symbolic: relations::booleanity::BooleanityCyclePhase,
     dimensions: BooleanityDimensions,

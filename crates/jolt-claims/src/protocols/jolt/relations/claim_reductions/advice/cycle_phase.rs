@@ -64,6 +64,7 @@ pub struct UntrustedAdviceCyclePhaseInputClaims<C> {
 /// Cycle phase of the trusted-advice reduction: binds the RAM-val-check advice
 /// opening to either the cycle-phase advice opening (when an address phase follows)
 /// or directly to the final advice opening scaled by `FinalScale`.
+#[derive(Clone)]
 pub struct TrustedCyclePhase {
     dimensions: PrecommittedReductionDimensions,
 }
@@ -112,6 +113,7 @@ impl SymbolicSumcheck for TrustedCyclePhase {
 /// Cycle phase of the untrusted-advice reduction: binds the RAM-val-check advice
 /// opening to either the cycle-phase advice opening (when an address phase follows)
 /// or directly to the final advice opening scaled by `FinalScale`.
+#[derive(Clone)]
 pub struct UntrustedCyclePhase {
     dimensions: PrecommittedReductionDimensions,
 }

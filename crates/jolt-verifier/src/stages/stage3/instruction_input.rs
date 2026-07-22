@@ -43,6 +43,7 @@ pub fn instruction_input_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionInput<F: Field> {
     symbolic: relations::instruction::InputVirtualization,
     product_remainder_opening_point: Vec<F>,

@@ -83,6 +83,7 @@ pub fn ram_val_check_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamValCheck<F: Field> {
     symbolic: RamValCheckSymbolic,
     trace_dimensions: TraceDimensions,

@@ -38,6 +38,7 @@ pub fn registers_val_evaluation_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RegistersValEvaluation<F: Field> {
     symbolic: relations::registers::ValEvaluation,
     trace_dimensions: TraceDimensions,

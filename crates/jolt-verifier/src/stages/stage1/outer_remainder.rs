@@ -48,6 +48,7 @@ pub fn outer_remainder_input_values_from_uniskip_output<F: Field>(
 /// from [`JoltSpartanOuterRemainder::public_coefficients`] in the constructor
 /// so `derive_output_term` (called ~`2n + 3` times per proof) never rebuilds
 /// the `JoltSpartanOuterRemainder` matrix work.
+#[derive(Clone)]
 struct OuterRemainderCoefficients<F> {
     tau_kernel: F,
     az_weights: Vec<F>,
@@ -105,6 +106,7 @@ impl<F: Field> OuterRemainder<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct OuterRemainder<F: Field> {
     symbolic: relations::spartan::OuterRemainder,
     variable_count: usize,

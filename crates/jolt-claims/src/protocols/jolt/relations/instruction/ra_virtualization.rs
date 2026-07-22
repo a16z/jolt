@@ -43,6 +43,7 @@ pub struct InstructionRaVirtualizationChallenges<F> {
 /// The instruction RA-virtualization sumcheck: relates the virtual
 /// instruction-RA openings (folded by `gamma`) to the per-virtual products of
 /// committed instruction-RA openings, weighted by the `EqCycle` public.
+#[derive(Clone)]
 pub struct RaVirtualization {
     shape: InstructionRaVirtualizationDimensions,
 }

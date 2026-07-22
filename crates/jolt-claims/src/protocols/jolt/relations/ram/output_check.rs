@@ -53,6 +53,7 @@ impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<F> {
 /// The RAM output-check sumcheck: pins `Val_final` against the committed
 /// public I/O value on the I/O region — `eq · mask · (val_final − val_io)` —
 /// with each derived leaf one multilinear; no input claim.
+#[derive(Clone)]
 pub struct OutputCheck {
     shape: ReadWriteDimensions,
 }

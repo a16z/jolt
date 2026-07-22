@@ -24,6 +24,7 @@ pub struct BytecodeReadRafCyclePhaseCommittedChallenges<F> {
 /// Committed-program cycle phase: the per-stage Val factors come from the
 /// `BytecodeValStage(s)` openings staged at the end of the address phase
 /// instead of public bytecode-table evaluations.
+#[derive(Clone)]
 pub struct ReadRafCyclePhaseCommitted {
     shape: BytecodeReadRafDimensions,
 }

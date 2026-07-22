@@ -46,6 +46,7 @@ pub fn instruction_ra_virtualization_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionRaVirtualization<F: Field> {
     symbolic: relations::instruction::RaVirtualization,
     dimensions: InstructionRaVirtualizationDimensions,

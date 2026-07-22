@@ -35,6 +35,7 @@ pub struct ProgramImageReductionAddressPhaseInputClaims<C> {
 /// Address phase of the program-image reduction: reduces the cycle-phase
 /// intermediate opening to the final committed `ProgramImageInit` opening
 /// scaled by `FinalScale`.
+#[derive(Clone)]
 pub struct AddressPhase {
     shape: PrecommittedReductionDimensions,
 }

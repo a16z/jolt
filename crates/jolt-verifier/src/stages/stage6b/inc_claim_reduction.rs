@@ -55,6 +55,7 @@ pub fn inc_claim_reduction_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct IncClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::increments::ClaimReduction,
     ram_read_write_cycle: Vec<F>,

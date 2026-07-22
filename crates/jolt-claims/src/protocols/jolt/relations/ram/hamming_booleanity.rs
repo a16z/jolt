@@ -50,6 +50,7 @@ impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<F> {
 /// The RAM Hamming-booleanity sumcheck: a degree-three output enforcing that the
 /// Hamming-weight opening is boolean (`h^2 - h == 0`) at each cycle, weighted by
 /// the cycle-`eq` public; no input claim.
+#[derive(Clone)]
 pub struct HammingBooleanity {
     shape: TraceDimensions,
 }

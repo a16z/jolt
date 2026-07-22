@@ -48,6 +48,7 @@ pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::instruction::ClaimReduction,
     tau_low: Vec<F>,

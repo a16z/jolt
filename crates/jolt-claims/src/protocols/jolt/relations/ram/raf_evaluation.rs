@@ -36,6 +36,7 @@ pub struct RamRafEvaluationInputClaims<C> {
 /// The RAM RAF-evaluation sumcheck: scales the Spartan RAM address opening by
 /// `2^phase3_cycle_rounds` on the input side, and matches it against `ra`
 /// weighted by the `UnmapAddress` public on the output side.
+#[derive(Clone)]
 pub struct RafEvaluation {
     shape: RamRafEvaluationDimensions,
 }

@@ -46,6 +46,7 @@ pub fn registers_read_write_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RegistersReadWriteChecking<F: Field> {
     symbolic: relations::registers::ReadWriteChecking,
     register_dimensions: ReadWriteDimensions,

@@ -49,6 +49,7 @@ impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
 
 /// The address-phase split of the booleanity sumcheck: binds the address
 /// variables and reduces to the intermediate `BooleanityAddrClaim` opening.
+#[derive(Clone)]
 pub struct BooleanityAddressPhase {
     shape: BooleanityDimensions,
 }

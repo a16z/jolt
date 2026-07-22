@@ -66,6 +66,7 @@ pub struct HammingWeightClaimReductionChallenges<F> {
 /// Batches each RA polynomial's hamming-weight, booleanity, and virtualization
 /// claims by powers of `gamma` and reduces them to the per-polynomial
 /// hamming-weight-claim-reduction openings weighted by the eq publics.
+#[derive(Clone)]
 pub struct ClaimReduction {
     shape: HammingWeightClaimReductionDimensions,
 }

@@ -215,6 +215,7 @@ mod twin_tests {
                 value: C,
             }
 
+            #[derive(Clone)]
             struct $symbolic {
                 rounds: usize,
             }
@@ -260,6 +261,7 @@ mod twin_tests {
                 }
             }
 
+            #[derive(Clone)]
             struct $relation<F: Field> {
                 symbolic: $symbolic,
                 _field: PhantomData<F>,

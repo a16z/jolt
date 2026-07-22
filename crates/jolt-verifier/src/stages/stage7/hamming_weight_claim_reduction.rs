@@ -82,6 +82,7 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
     Ok(points)
 }
 
+#[derive(Clone)]
 pub struct HammingWeightClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::hamming_weight::ClaimReduction,
     dimensions: HammingWeightClaimReductionDimensions,

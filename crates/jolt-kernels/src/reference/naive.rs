@@ -29,7 +29,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId};
+use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::{InputClaims, OutputClaims, Source, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
@@ -55,15 +55,13 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
-    /// The relation's geometry and summand, captured at construction — the
-    /// kernel borrows the stage's relation instance and owns no copy, so
-    /// batch/kernel geometry divergence is unrepresentable.
-    rounds: usize,
-    degree: usize,
-    expression: JoltExpr<F>,
+    /// The kernel's own clone of the stage's relation, taken from
+    /// [`ProverInputs`] at prepare time; geometry (`rounds`/`degree`) and the
+    /// output expression are read off it directly.
+    relation: R,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
     /// construction, so the round loop reads plain `Sync` data (the typed
-    /// `Challenges` struct carries no `Sync` bound and stays with the
+    /// `Challenges` struct is borrowed with a lifetime and stays with the
     /// caller that drew it).
     challenge_values: BTreeMap<JoltChallengeId, F>,
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
@@ -76,7 +74,6 @@ where
     carried_outputs: BTreeMap<JoltOpeningId, F>,
     binding_order: BindingOrder,
     rounds_bound: usize,
-    _relation: core::marker::PhantomData<fn() -> R>,
 }
 
 impl<F, R> NaiveSumcheckProver<F, R>
@@ -157,21 +154,18 @@ where
             .collect();
 
         Ok(Self {
-            rounds: relation.rounds(),
-            degree: relation.degree(),
-            expression,
+            relation: relation.clone(),
             challenge_values,
             opening_tables,
             derived_tables,
             carried_outputs,
             binding_order,
             rounds_bound: 0,
-            _relation: core::marker::PhantomData,
         })
     }
 
     fn remaining_rounds(&self) -> usize {
-        self.rounds - self.rounds_bound
+        self.relation.rounds() - self.rounds_bound
     }
 
     fn bind_tables(&mut self, challenge: F) {
@@ -201,7 +195,7 @@ where
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.relation.rounds()
     }
 
     fn prove_round(
@@ -214,8 +208,8 @@ where
             self.bind_tables(challenge);
         }
         let half = (1usize << self.remaining_rounds()) / 2;
-        let degree = self.degree;
-        let expression = &self.expression;
+        let degree = self.relation.degree();
+        let expression = self.relation.symbolic().output_expression::<F>();
         let opening_tables = &self.opening_tables;
         let derived_tables = &self.derived_tables;
         let challenge_values = &self.challenge_values;
@@ -405,6 +399,7 @@ mod tests {
         untrusted: Option<C>,
     }
 
+    #[derive(Clone)]
     struct ToySymbolic {
         rounds: usize,
     }
@@ -450,6 +445,7 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct ToyRelation<F: Field> {
         symbolic: ToySymbolic,
         reference_point: Vec<F>,

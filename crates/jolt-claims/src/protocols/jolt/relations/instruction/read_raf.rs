@@ -54,6 +54,7 @@ pub struct InstructionReadRafChallenges<F> {
 /// The instruction read-RAF sumcheck: relates the reduced lookup
 /// output/operands to the per-table flag products (weighted by `EqTableValue`
 /// publics) and the read-address-flag terms, all folded by `gamma`.
+#[derive(Clone)]
 pub struct ReadRaf {
     shape: InstructionReadRafDimensions,
 }

@@ -30,6 +30,7 @@ pub struct BooleanityReferenceDraws<F: Field> {
     pub gamma: F,
 }
 
+#[derive(Clone)]
 pub struct BooleanityAddressPhase<F: Field> {
     symbolic: relations::booleanity::BooleanityAddressPhase,
     dimensions: BooleanityDimensions,

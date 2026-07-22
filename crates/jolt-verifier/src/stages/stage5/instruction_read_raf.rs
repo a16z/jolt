@@ -56,6 +56,7 @@ pub fn instruction_read_raf_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionReadRaf<F: Field> {
     symbolic: relations::instruction::ReadRaf,
     dimensions: InstructionReadRafDimensions,

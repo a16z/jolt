@@ -66,6 +66,7 @@ pub struct InstructionClaimReductionChallenges<F> {
 /// Batches the Spartan-outer instruction-lookup openings (lookup output, left/
 /// right lookup operands, left/right instruction inputs) by `gamma` and reduces
 /// them to the instruction-claim-reduction openings weighted by `EqSpartan`.
+#[derive(Clone)]
 pub struct ClaimReduction {
     shape: TraceDimensions,
 }

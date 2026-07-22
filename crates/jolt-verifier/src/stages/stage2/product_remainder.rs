@@ -47,6 +47,7 @@ impl<F: Field> ProductRemainder<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct ProductRemainder<F: Field> {
     symbolic: relations::spartan::ProductRemainder,
     uniskip_challenge: F,

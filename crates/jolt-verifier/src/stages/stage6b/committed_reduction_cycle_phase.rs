@@ -79,6 +79,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+#[derive(Clone)]
 pub struct TrustedAdviceCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::advice::TrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
@@ -167,6 +168,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct UntrustedAdviceCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::advice::UntrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
@@ -269,6 +271,7 @@ pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
     })
 }
 
+#[derive(Clone)]
 pub struct ProgramImageReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::program_image::CyclePhase,
     layout: ProgramImageClaimReductionLayout,
@@ -354,6 +357,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct BytecodeReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::CyclePhase,
     layout: BytecodeClaimReductionLayout,

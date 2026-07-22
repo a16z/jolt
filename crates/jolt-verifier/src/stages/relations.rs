@@ -84,7 +84,7 @@ pub type SumcheckOutputPoints<F, S> =
 /// in both modes; methods that read values ([`input_claim`](Self::input_claim),
 /// [`expected_output`](Self::expected_output)) take the Values forms. This makes
 /// "a ZK opening carries no value" a compile-time fact.
-pub trait ConcreteSumcheck<F: Field>
+pub trait ConcreteSumcheck<F: Field>: Clone + Send + Sync
 where
     SumcheckInputClaims<F, Self>: InputClaims<F>,
     SumcheckOutputClaims<F, Self>: OutputClaims<F>,

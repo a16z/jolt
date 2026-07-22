@@ -37,6 +37,7 @@ pub fn spartan_shift_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct SpartanShift<F: Field> {
     symbolic: relations::spartan::Shift,
     product_uniskip_tau_low: Vec<F>,

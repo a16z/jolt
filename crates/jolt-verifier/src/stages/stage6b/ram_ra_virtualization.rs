@@ -43,6 +43,7 @@ pub fn ram_ra_virtualization_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamRaVirtualization<F: Field> {
     symbolic: relations::ram::RaVirtualization,
     dimensions: RamRaVirtualizationDimensions,

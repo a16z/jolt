@@ -88,6 +88,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     symbolic: relations::bytecode::ReadRafAddressPhase,
     dimensions: BytecodeReadRafDimensions,

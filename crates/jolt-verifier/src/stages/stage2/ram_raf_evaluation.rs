@@ -34,6 +34,7 @@ pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamRafEvaluation<F: Field> {
     symbolic: relations::ram::RafEvaluation,
     read_write_dimensions: ReadWriteDimensions,

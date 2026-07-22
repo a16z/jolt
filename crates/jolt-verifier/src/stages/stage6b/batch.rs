@@ -58,6 +58,7 @@ use crate::VerifierError;
 /// phase and the stage-6b batch build: the five per-stage cycle bindings (the
 /// stage-1 binding is the raw remainder tail, re-reversed), plus the register
 /// opening points whose 7-var address prefixes feed the stage-value folds.
+#[derive(Clone)]
 pub struct BytecodeStagePoints<F: Field> {
     pub stage_cycle_points: [Vec<F>; 5],
     pub register_read_write_point: Vec<F>,
