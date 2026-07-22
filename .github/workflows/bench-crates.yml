@@ -4,11 +4,19 @@ on:
   push:
     branches: [main]
     paths:
-      - "crates/**"
+      - "crates/jolt-crypto/**"
+      - "crates/jolt-field/**"
+      - "crates/jolt-poly/**"
+      - "crates/jolt-transcript/**"
+      - ".github/workflows/bench-crates.yml"
   pull_request:
     branches: [main]
     paths:
-      - "crates/**"
+      - "crates/jolt-crypto/**"
+      - "crates/jolt-field/**"
+      - "crates/jolt-poly/**"
+      - "crates/jolt-transcript/**"
+      - ".github/workflows/bench-crates.yml"
 
 env:
   CARGO_TERM_COLOR: always

@@ -4,14 +4,20 @@ on:
   push:
     branches: [main]
     paths:
-      - "crates/*/fuzz/**"
-      - "crates/*/src/**"
+      - "crates/jolt-crypto/**"
+      - "crates/jolt-field/**"
+      - "crates/jolt-poly/**"
+      - "crates/jolt-sumcheck/**"
+      - "crates/jolt-transcript/**"
       - ".github/workflows/fuzz-crates.yml"
   pull_request:
     branches: [main]
     paths:
-      - "crates/*/fuzz/**"
-      - "crates/*/src/**"
+      - "crates/jolt-crypto/**"
+      - "crates/jolt-field/**"
+      - "crates/jolt-poly/**"
+      - "crates/jolt-sumcheck/**"
+      - "crates/jolt-transcript/**"
       - ".github/workflows/fuzz-crates.yml"
 
 env:

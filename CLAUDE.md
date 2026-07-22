@@ -72,13 +72,13 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 - `msm/`: Multi-scalar multiplication
 - `transcripts/`: Fiat-Shamir transcripts (Blake2b, Keccak)
 
-**tracer** — RISC-V emulator producing execution traces (`Cycle` per instruction)
+**jolt-tracer** — RISC-V emulator producing execution traces (`Cycle` per instruction)
 
 **jolt-sdk** — `#[jolt::provable]` macro generating prove/verify/analyze/preprocess functions
 
 **jolt-inlines** — Optimized cryptographic primitives (sha2, blake3, bigint, secp256k1, etc.) replacing guest-side computation with efficient constraint-native implementations
 
-**common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
+**jolt-common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
 
 Feature flag hierarchy: `host` ⊃ `prover` ⊃ `minimal`. Most code is unconditional; `host/` is the main gated module.
 
