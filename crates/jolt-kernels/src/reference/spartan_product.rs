@@ -34,21 +34,64 @@ use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, eq_table};
-use crate::spartan_product::{SpartanProductInstance, SpartanProductProver};
+use crate::uniskip::UniskipKernel;
 use crate::ProverInputs;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ReferenceBackend, SumcheckKernel};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-impl<F: Field> SpartanProductProver<F> for ReferenceBackend {
+impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
+    /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
+    /// the slot as the single `late_tau` entry of
+    /// [`first_round_poly`](UniskipKernel::first_round_poly).
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn SpartanProductInstance<F>>, KernelError<F>> {
-        Ok(Box::new(SpartanProductKernel::prepare(
-            log_t, tau_low, witness,
-        )?))
+    ) -> Result<(), KernelError<F>> {
+        session.park(SpartanProductKernel::prepare(log_t, tau_low, witness)?);
+        Ok(())
+    }
+
+    fn first_round_poly(
+        &self,
+        session: &mut ProofSession,
+        late_tau: &[F],
+    ) -> Result<UnivariatePoly<F>, KernelError<F>> {
+        let &[tau_high] = late_tau else {
+            return Err(KernelError::InvariantViolation {
+                reason: "the product uni-skip first-round polynomial expects exactly one late challenge (τ_high)",
+            });
+        };
+        session
+            .state::<SpartanProductKernel<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "the product uni-skip slot parked no kernel for the first-round polynomial",
+            })?
+            .uniskip_first_round_poly(tau_high)
+    }
+}
+
+/// The stage-2 remainder slot server: reclaims the [`SpartanProductKernel`]
+/// the uni-skip slot parked and binds it into the batch member.
+pub struct ReferenceProductRemainder;
+
+impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemainder {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        _witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, ProductRemainder<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
+        session
+            .take::<SpartanProductKernel<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "the product uni-skip slot parked no kernel for the remainder member",
+            })?
+            .into_remainder(&inputs)
     }
 }
 
@@ -87,9 +130,7 @@ impl<F: Field> SpartanProductKernel<F> {
             virtual_instruction: dense_view(witness, virtual_instruction_product())?,
         })
     }
-}
 
-impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
     fn uniskip_first_round_poly(&self, tau_high: F) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let extended_size = 2 * PRODUCT_UNISKIP_DOMAIN_SIZE - 1;
         let domain_start = -((PRODUCT_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
@@ -131,13 +172,12 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
     /// Each `LagrangeWeight(i)` leaf is the SCALAR `L_i(r₀)` (a constant
     /// table); `TauKernel` is the `LK(τ_high, r₀)`-scaled eq-cycle table.
     fn into_remainder(
-        self: Box<Self>,
+        self,
         inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
-        let this = *self;
         let tau_high = inputs.relation.tau_high();
         let uniskip_challenge = inputs.relation.uniskip_challenge();
-        let cycles = 1usize << this.log_t;
+        let cycles = 1usize << self.log_t;
         let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)?;
         let scale = centered_lagrange_kernel::<F>(
             PRODUCT_UNISKIP_DOMAIN_SIZE,
@@ -149,7 +189,7 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
         let _ = derived_tables.insert(
             JoltDerivedId::from(SpartanProductVirtualizationPublic::TauKernel),
             Polynomial::new(
-                this.eq_cycle
+                self.eq_cycle
                     .iter()
                     .map(|&eq| eq * scale)
                     .collect::<Vec<F>>(),
@@ -165,23 +205,23 @@ impl<F: Field> SpartanProductInstance<F> for SpartanProductKernel<F> {
         let opening_tables = BTreeMap::from([
             (
                 left_instruction_input_product(),
-                Polynomial::new(this.left_instruction_input),
+                Polynomial::new(self.left_instruction_input),
             ),
-            (lookup_output_product(), Polynomial::new(this.lookup_output)),
-            (jump_flag_product(), Polynomial::new(this.jump_flag)),
+            (lookup_output_product(), Polynomial::new(self.lookup_output)),
+            (jump_flag_product(), Polynomial::new(self.jump_flag)),
             (
                 right_instruction_input_product(),
-                Polynomial::new(this.right_instruction_input),
+                Polynomial::new(self.right_instruction_input),
             ),
-            (branch_flag_product(), Polynomial::new(this.branch_flag)),
-            (next_is_noop_product(), Polynomial::new(this.next_is_noop)),
+            (branch_flag_product(), Polynomial::new(self.branch_flag)),
+            (next_is_noop_product(), Polynomial::new(self.next_is_noop)),
             (
                 write_lookup_output_to_rd_product(),
-                Polynomial::new(this.write_lookup_output_to_rd),
+                Polynomial::new(self.write_lookup_output_to_rd),
             ),
             (
                 virtual_instruction_product(),
-                Polynomial::new(this.virtual_instruction),
+                Polynomial::new(self.virtual_instruction),
             ),
         ]);
 

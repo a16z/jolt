@@ -17,7 +17,6 @@ use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_field::Field;
-use jolt_kernels::spartan_product::ParkedProductInstance;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
@@ -82,8 +81,8 @@ where
 
     let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 
-    let product = backend
-        .spartan_product
+    backend
+        .spartan_product_uniskip
         .prepare(session, log_t, &tau_low, witness)?;
 
     let tau_high: F = transcript.challenge();
@@ -91,7 +90,9 @@ where
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
         uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
-    let uniskip_poly = product.uniskip_first_round_poly(tau_high)?;
+    let uniskip_poly = backend
+        .spartan_product_uniskip
+        .first_round_poly(session, &[tau_high])?;
     let proved_uniskip = prove_uniskip_clear::<F, C, T>(
         uniskip_poly,
         uniskip_input_claim,
@@ -137,9 +138,6 @@ where
     let input_points = sumchecks.empty_input_points();
     let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);
 
-    // Park the uni-skip-bound instance: the remainder member's `prepare`
-    // reclaims it and binds it to the stage's relation.
-    session.park(ParkedProductInstance(product));
     let proved = sumchecks.prove(
         backend,
         session,

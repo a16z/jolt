@@ -15,9 +15,8 @@
 //! typed witness rows off the [`JoltVmWitnessPlane`](jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane)
 //! accessors, and [`ProofSession`] carries (prover-retained program data,
 //! parked at proof start; cross-stage kernel state). Only the bespoke slots
-//! keep hand-shaped trait modules at the crate root: the uni-skip handoffs
-//! ([`spartan_outer`], [`spartan_product`]), the two-batch precommitted
-//! reduction family
+//! keep hand-shaped trait modules at the crate root: the uni-skip fronts
+//! ([`uniskip`]), the two-batch precommitted reduction family
 //! ([`precommitted_reduction`]), commitment streaming, and the joint
 //! opening. Reference implementations live under [`reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
@@ -42,12 +41,9 @@ mod kernel;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod reference;
-pub mod spartan_outer;
-pub mod spartan_product;
+pub mod uniskip;
 
-pub use backend::{
-    HasKernel, JoltBackend, PrepareKernel, ProofSession, RetainedProgram, SessionCarriedKernels,
-};
+pub use backend::{HasKernel, JoltBackend, PrepareKernel, ProofSession, RetainedProgram};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;

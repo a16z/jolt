@@ -13,7 +13,14 @@
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
-use crate::{JoltBackend, SessionCarriedKernels};
+use crate::JoltBackend;
+
+use self::precommitted_reduction::{
+    ReferenceBytecodeReductionAddress, ReferenceProgramImageReductionAddress,
+    ReferenceTrustedAdviceAddress, ReferenceUntrustedAdviceAddress,
+};
+use self::spartan_outer::ReferenceOuterRemainder;
+use self::spartan_product::ReferenceProductRemainder;
 
 pub mod advice_claim_reduction;
 pub mod booleanity;
@@ -65,10 +72,10 @@ where
     {
         Self {
             commit: Box::new(ReferenceBackend),
-            spartan_outer: Box::new(ReferenceBackend),
-            outer_remainder: Box::new(SessionCarriedKernels),
-            spartan_product: Box::new(ReferenceBackend),
-            product_remainder: Box::new(SessionCarriedKernels),
+            spartan_outer_uniskip: Box::new(ReferenceBackend),
+            spartan_outer_remainder: Box::new(ReferenceOuterRemainder),
+            spartan_product_uniskip: Box::new(ReferenceBackend),
+            spartan_product_remainder: Box::new(ReferenceProductRemainder),
             ram_read_write: Box::new(ReferenceBackend),
             instruction_claim_reduction: Box::new(ReferenceBackend),
             ram_raf_evaluation: Box::new(ReferenceBackend),
@@ -95,10 +102,10 @@ where
             bytecode_reduction_cycle: Box::new(ReferenceBackend),
             program_image_reduction_cycle: Box::new(ReferenceBackend),
             hamming_weight_claim_reduction: Box::new(ReferenceBackend),
-            trusted_advice_address: Box::new(SessionCarriedKernels),
-            untrusted_advice_address: Box::new(SessionCarriedKernels),
-            bytecode_reduction_address: Box::new(SessionCarriedKernels),
-            program_image_reduction_address: Box::new(SessionCarriedKernels),
+            trusted_advice_address: Box::new(ReferenceTrustedAdviceAddress),
+            untrusted_advice_address: Box::new(ReferenceUntrustedAdviceAddress),
+            bytecode_reduction_address: Box::new(ReferenceBytecodeReductionAddress),
+            program_image_reduction_address: Box::new(ReferenceProgramImageReductionAddress),
             joint_opening: Box::new(ReferenceBackend),
         }
     }

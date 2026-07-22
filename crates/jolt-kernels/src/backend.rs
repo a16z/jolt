@@ -57,8 +57,7 @@ use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
-use crate::spartan_outer::SpartanOuterProver;
-use crate::spartan_product::SpartanProductProver;
+use crate::uniskip::UniskipKernel;
 use crate::KernelError;
 
 /// The universal backend trait behind [`JoltBackend`]'s naive-served slots:
@@ -72,7 +71,7 @@ use crate::KernelError;
 /// Named after std's `BuildHasher` shape: the stored verb-phrase trait mints
 /// the worker that does the compute — platform ([`JoltBackend`]) → operation
 /// (`PrepareKernel`) → execution ([`SumcheckKernel`]). Bespoke slots (uni-skip
-/// handoffs, typed-row witnesses, precommitted phase spans, commit, joint
+/// fronts, typed-row witnesses, precommitted phase spans, commit, joint
 /// opening) keep hand-shaped traits in their own modules.
 pub trait PrepareKernel<F, R>
 where
@@ -131,10 +130,10 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
-    pub spartan_outer: Box<dyn SpartanOuterProver<F>>,
-    pub outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
-    pub spartan_product: Box<dyn SpartanProductProver<F>>,
-    pub product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
+    pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
+    pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
+    pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
+    pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
     pub ram_raf_evaluation: Box<dyn PrepareKernel<F, RamRafEvaluation<F>>>,
@@ -182,14 +181,6 @@ where
     }
 }
 
-/// The slot server for batch members whose kernel state is a [`ProofSession`]
-/// carry rather than freshly minted compute: the uni-skip remainders reclaim
-/// the instance their stage front parked, and the stage-7 precommitted
-/// address phases reclaim the shared two-phase state their stage-6b cycle
-/// kernels parked. Backend-agnostic — the carries are crate-level trait
-/// objects — so every registry can use it verbatim.
-pub struct SessionCarriedKernels;
-
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///
 /// Slots stash and share private state keyed by a backend-private type, so
@@ -226,11 +217,11 @@ impl ProofSession {
     }
 
     /// Park `value` as a cross-stage carry, replacing any previous carry of
-    /// the same type. The producing side (a stage front or an earlier stage's
-    /// kernel) parks; the consuming kernel's `prepare` reclaims with
-    /// [`take`](Self::take) — a missing or stale carry is a proof-time
-    /// [`KernelError`](crate::KernelError), the accepted cost of keeping every
-    /// batch member uniform.
+    /// the same type. The producing side (a backend slot's `prepare` or an
+    /// earlier stage's kernel) parks; the consuming kernel's `prepare`
+    /// reclaims with [`take`](Self::take) — a missing or stale carry is a
+    /// proof-time [`KernelError`](crate::KernelError), the accepted cost of
+    /// keeping every batch member uniform.
     pub fn park<T: Any>(&mut self, value: T) {
         let _ = self.state.insert(TypeId::of::<T>(), Box::new(value));
     }

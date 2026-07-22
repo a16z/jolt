@@ -36,9 +36,8 @@ pub struct Stage1OutputClaims<F: Field> {
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage1BatchSumchecks<F: Field> {
-    /// On the prove side the remainder kernel is minted from the uni-skip
-    /// pre-phase instance the stage front parked in the proof session
-    /// (`SpartanOuterInstance::into_remainder`), through its regular
+    /// On the prove side the remainder kernel is minted from the state the
+    /// uni-skip slot parked in the proof session, through its regular
     /// universal backend slot.
     pub outer_remainder: OuterRemainder<F>,
 }

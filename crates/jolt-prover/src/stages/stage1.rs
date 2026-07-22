@@ -5,14 +5,13 @@
 //! final-claim fold, and absorb order are `jolt-verifier`'s generated
 //! drivers; all compute (input-table materialization, the brute-forced
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
-//! `spartan_outer` slot.
+//! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_field::Field;
-use jolt_kernels::spartan_outer::ParkedOuterInstance;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder, SumcheckProof};
@@ -51,11 +50,13 @@ where
     T: Transcript<Challenge = F>,
 {
     let tau = transcript.challenge_vector(log_t + 2);
-    let instance = backend
-        .spartan_outer
+    backend
+        .spartan_outer_uniskip
         .prepare(session, log_t, &tau, witness)?;
 
-    let uniskip_poly = instance.uniskip_first_round_poly()?;
+    let uniskip_poly = backend
+        .spartan_outer_uniskip
+        .first_round_poly(session, &[])?;
     let proved_uniskip = prove_uniskip_clear::<F, C, T>(
         uniskip_poly,
         F::zero(),
@@ -81,9 +82,6 @@ where
         ),
     };
 
-    // Park the uni-skip-bound instance: the remainder member's `prepare`
-    // reclaims it and binds it to the stage's relation.
-    session.park(ParkedOuterInstance(instance));
     let proved = sumchecks.prove(
         backend,
         session,

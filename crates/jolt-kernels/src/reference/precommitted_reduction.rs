@@ -1,6 +1,7 @@
 //! The shared two-phase precommitted claim-reduction kernel core, backing the
 //! advice, committed-bytecode, and program-image reductions (stage 6b cycle
-//! phase → stage 7 address phase).
+//! phase → stage 7 address phase), plus the per-kind stage-7 slot servers
+//! that reclaim the carries the stage-6b cycle builders parked.
 //!
 //! The summand in both phases is `Σ_j value(j) · eq(j)` over tables permuted
 //! into Dory opening-round order, bound low-to-high; `aux` tables (the
@@ -24,9 +25,21 @@ use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::stage7::advice_address_phase::{
+    TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
+};
+use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
+    BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
+};
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use crate::precommitted_reduction::PrecommittedReductionProver;
-use crate::{KernelError, SumcheckKernelError};
+use crate::precommitted_reduction::{
+    AddressReductionKernel, ParkedBytecodeReduction, ParkedProgramImageReduction,
+    ParkedTrustedAdviceReduction, ParkedUntrustedAdviceReduction, PrecommittedReductionProver,
+};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 
 pub(crate) struct PrecommittedReductionKernel<F> {
     reduction: PrecommittedClaimReduction,
@@ -202,6 +215,123 @@ impl<F: Field> PrecommittedReductionProver<F> for PrecommittedReductionKernel<F>
     fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.aux.iter().map(|table| table[0]).collect())
+    }
+}
+
+/// The trusted-advice stage-7 slot server: reclaims the two-phase reduction
+/// stage 6b parked, flips it to the address phase, and mounts the
+/// final-opening batch-member view.
+pub struct ReferenceTrustedAdviceAddress;
+
+impl<F: Field> PrepareKernel<F, TrustedAdviceAddressPhase<F>> for ReferenceTrustedAdviceAddress {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        _witness: &dyn JoltVmWitnessPlane<F>,
+        _inputs: ProverInputs<'_, F, TrustedAdviceAddressPhase<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = TrustedAdviceAddressPhase<F>>>, KernelError<F>>
+    {
+        let ParkedTrustedAdviceReduction(shared) = session
+            .take::<ParkedTrustedAdviceReduction<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason:
+                    "stage 6b parked no trusted-advice reduction for the scheduled address phase",
+            })?;
+        shared.borrow_mut().transition_to_address_phase();
+        Ok(Box::new(AddressReductionKernel::<
+            F,
+            TrustedAdviceAddressPhase<F>,
+        >::new(shared)))
+    }
+}
+
+/// The untrusted-advice stage-7 slot server: reclaims the two-phase reduction
+/// stage 6b parked, flips it to the address phase, and mounts the
+/// final-opening batch-member view.
+pub struct ReferenceUntrustedAdviceAddress;
+
+impl<F: Field> PrepareKernel<F, UntrustedAdviceAddressPhase<F>>
+    for ReferenceUntrustedAdviceAddress
+{
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        _witness: &dyn JoltVmWitnessPlane<F>,
+        _inputs: ProverInputs<'_, F, UntrustedAdviceAddressPhase<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = UntrustedAdviceAddressPhase<F>>>, KernelError<F>>
+    {
+        let ParkedUntrustedAdviceReduction(shared) = session
+            .take::<ParkedUntrustedAdviceReduction<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason:
+                    "stage 6b parked no untrusted-advice reduction for the scheduled address phase",
+            })?;
+        shared.borrow_mut().transition_to_address_phase();
+        Ok(Box::new(AddressReductionKernel::<
+            F,
+            UntrustedAdviceAddressPhase<F>,
+        >::new(shared)))
+    }
+}
+
+/// The committed-bytecode stage-7 slot server: reclaims the two-phase
+/// reduction stage 6b parked, flips it to the address phase, and mounts the
+/// final-opening batch-member view.
+pub struct ReferenceBytecodeReductionAddress;
+
+impl<F: Field> PrepareKernel<F, BytecodeReductionAddressPhase<F>>
+    for ReferenceBytecodeReductionAddress
+{
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        _witness: &dyn JoltVmWitnessPlane<F>,
+        _inputs: ProverInputs<'_, F, BytecodeReductionAddressPhase<F>>,
+    ) -> Result<
+        Box<dyn SumcheckKernel<F, Relation = BytecodeReductionAddressPhase<F>>>,
+        KernelError<F>,
+    > {
+        let ParkedBytecodeReduction(shared) = session.take::<ParkedBytecodeReduction<F>>().ok_or(
+            KernelError::InvariantViolation {
+                reason: "stage 6b parked no bytecode reduction for the scheduled address phase",
+            },
+        )?;
+        shared.borrow_mut().transition_to_address_phase();
+        Ok(Box::new(AddressReductionKernel::<
+            F,
+            BytecodeReductionAddressPhase<F>,
+        >::new(shared)))
+    }
+}
+
+/// The program-image stage-7 slot server: reclaims the two-phase reduction
+/// stage 6b parked, flips it to the address phase, and mounts the
+/// final-opening batch-member view.
+pub struct ReferenceProgramImageReductionAddress;
+
+impl<F: Field> PrepareKernel<F, ProgramImageReductionAddressPhase<F>>
+    for ReferenceProgramImageReductionAddress
+{
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        _witness: &dyn JoltVmWitnessPlane<F>,
+        _inputs: ProverInputs<'_, F, ProgramImageReductionAddressPhase<F>>,
+    ) -> Result<
+        Box<dyn SumcheckKernel<F, Relation = ProgramImageReductionAddressPhase<F>>>,
+        KernelError<F>,
+    > {
+        let ParkedProgramImageReduction(shared) = session
+            .take::<ParkedProgramImageReduction<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason:
+                    "stage 6b parked no program-image reduction for the scheduled address phase",
+            })?;
+        shared.borrow_mut().transition_to_address_phase();
+        Ok(Box::new(AddressReductionKernel::<
+            F,
+            ProgramImageReductionAddressPhase<F>,
+        >::new(shared)))
     }
 }
 

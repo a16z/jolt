@@ -10,9 +10,9 @@
 //! [`ProofSession`] under the kind's carry key, and mount a
 //! [`CycleReductionKernel`] whose extraction resolves the
 //! intermediate-vs-final wire claim from the schedule (`has_address_phase`,
-//! read off the relation's layout at prepare time). Stage 7's address-phase
-//! members reclaim the carry through [`SessionCarriedKernels`], flip the
-//! phase, and mount an [`AddressReductionKernel`] with the final-opening
+//! read off the relation's layout at prepare time). The backend's stage-7
+//! address-phase `PrepareKernel` slots reclaim the carry, flip the phase,
+//! and mount an [`AddressReductionKernel`] with the final-opening
 //! extraction — so the per-phase wire-claim assembly is single-sourced here
 //! for every backend family.
 //!
@@ -20,17 +20,20 @@
 //! committed bytecode, program image — each as a plain set of impls below:
 //! the two phase views are generic over the relation (one `ProveRounds`
 //! delegation each), and each kind contributes one `SumcheckKernel` impl per
-//! phase (the typed wire-claim assembly), one cycle builder, and one
-//! stage-7 `PrepareKernel` impl reclaiming its carry. The scalar kinds
-//! resolve intermediate-vs-final through [`CycleReductionKernel::scalar_claim`];
-//! the bytecode kind's chunked shape spells its resolution out in its own
-//! impl.
+//! phase (the typed wire-claim assembly) and one cycle builder; the stage-7
+//! `PrepareKernel` impls reclaiming the carries live with the backends (the
+//! reference ones in
+//! [`reference::precommitted_reduction`](crate::reference::precommitted_reduction)).
+//! The scalar kinds resolve intermediate-vs-final through
+//! [`CycleReductionKernel::scalar_claim`]; the bytecode kind's chunked shape
+//! spells its resolution out in its own impl.
 
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use crate::{ProverInputs, SumcheckKernelError};
+use crate::SumcheckKernelError;
+use crate::{ProofSession, SumcheckKernel};
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -48,9 +51,6 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, BytecodeReductionAddressPhaseOutputClaims,
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseOutputClaims,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
-
-use crate::{KernelError, PrepareKernel, ProofSession, SessionCarriedKernels, SumcheckKernel};
 
 /// One precommitted reduction member, spanning stages 6b and 7: the cycle
 /// phase binds first, stages the handoff claim, and — when the schedule has
@@ -154,13 +154,13 @@ impl<F: Field, R> ProveRounds<F> for CycleReductionKernel<F, R> {
 /// reduction: `ProveRounds` delegates to the shared object, and the per-kind
 /// `SumcheckKernel` impls extract the final openings from the fully bound
 /// tables.
-struct AddressReductionKernel<F: Field, R> {
+pub(crate) struct AddressReductionKernel<F: Field, R> {
     shared: SharedPrecommittedReduction<F>,
     _relation: PhantomData<fn() -> R>,
 }
 
 impl<F: Field, R> AddressReductionKernel<F, R> {
-    fn new(shared: SharedPrecommittedReduction<F>) -> Self {
+    pub(crate) fn new(shared: SharedPrecommittedReduction<F>) -> Self {
         Self {
             shared,
             _relation: PhantomData,
@@ -356,96 +356,5 @@ impl<F: Field> SumcheckKernel<F>
         Ok(ProgramImageReductionAddressPhaseOutputClaims {
             program_image: self.shared.borrow().final_claim()?,
         })
-    }
-}
-
-impl<F: Field> PrepareKernel<F, TrustedAdviceAddressPhase<F>> for SessionCarriedKernels {
-    fn prepare(
-        &self,
-        session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, TrustedAdviceAddressPhase<F>>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = TrustedAdviceAddressPhase<F>>>, KernelError<F>>
-    {
-        let ParkedTrustedAdviceReduction(shared) = session
-            .take::<ParkedTrustedAdviceReduction<F>>()
-            .ok_or(KernelError::InvariantViolation {
-                reason:
-                    "stage 6b parked no trusted-advice reduction for the scheduled address phase",
-            })?;
-        shared.borrow_mut().transition_to_address_phase();
-        Ok(Box::new(AddressReductionKernel::<
-            F,
-            TrustedAdviceAddressPhase<F>,
-        >::new(shared)))
-    }
-}
-
-impl<F: Field> PrepareKernel<F, UntrustedAdviceAddressPhase<F>> for SessionCarriedKernels {
-    fn prepare(
-        &self,
-        session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, UntrustedAdviceAddressPhase<F>>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = UntrustedAdviceAddressPhase<F>>>, KernelError<F>>
-    {
-        let ParkedUntrustedAdviceReduction(shared) = session
-            .take::<ParkedUntrustedAdviceReduction<F>>()
-            .ok_or(KernelError::InvariantViolation {
-                reason:
-                    "stage 6b parked no untrusted-advice reduction for the scheduled address phase",
-            })?;
-        shared.borrow_mut().transition_to_address_phase();
-        Ok(Box::new(AddressReductionKernel::<
-            F,
-            UntrustedAdviceAddressPhase<F>,
-        >::new(shared)))
-    }
-}
-
-impl<F: Field> PrepareKernel<F, BytecodeReductionAddressPhase<F>> for SessionCarriedKernels {
-    fn prepare(
-        &self,
-        session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, BytecodeReductionAddressPhase<F>>,
-    ) -> Result<
-        Box<dyn SumcheckKernel<F, Relation = BytecodeReductionAddressPhase<F>>>,
-        KernelError<F>,
-    > {
-        let ParkedBytecodeReduction(shared) = session.take::<ParkedBytecodeReduction<F>>().ok_or(
-            KernelError::InvariantViolation {
-                reason: "stage 6b parked no bytecode reduction for the scheduled address phase",
-            },
-        )?;
-        shared.borrow_mut().transition_to_address_phase();
-        Ok(Box::new(AddressReductionKernel::<
-            F,
-            BytecodeReductionAddressPhase<F>,
-        >::new(shared)))
-    }
-}
-
-impl<F: Field> PrepareKernel<F, ProgramImageReductionAddressPhase<F>> for SessionCarriedKernels {
-    fn prepare(
-        &self,
-        session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, ProgramImageReductionAddressPhase<F>>,
-    ) -> Result<
-        Box<dyn SumcheckKernel<F, Relation = ProgramImageReductionAddressPhase<F>>>,
-        KernelError<F>,
-    > {
-        let ParkedProgramImageReduction(shared) = session
-            .take::<ParkedProgramImageReduction<F>>()
-            .ok_or(KernelError::InvariantViolation {
-                reason:
-                    "stage 6b parked no program-image reduction for the scheduled address phase",
-            })?;
-        shared.borrow_mut().transition_to_address_phase();
-        Ok(Box::new(AddressReductionKernel::<
-            F,
-            ProgramImageReductionAddressPhase<F>,
-        >::new(shared)))
     }
 }
