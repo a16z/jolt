@@ -116,9 +116,6 @@ pub struct Proved<F: Field, S: StageProver<F>, C> {
     pub final_claim: F,
 }
 
-/// One batch member's boxed kernel, as minted through its [`HasKernel`] slot.
-pub type MemberKernel<F, R> = Box<dyn SumcheckKernel<F, Relation = R>>;
-
 /// Mint one required member's kernel through the source's [`HasKernel`] slot.
 pub fn prepare_required<F, R, B>(
     kernels: &B,
@@ -128,7 +125,7 @@ pub fn prepare_required<F, R, B>(
     claims: &SumcheckInputClaims<F, R>,
     points: &SumcheckInputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
-) -> Result<MemberKernel<F, R>, ProverError<F>>
+) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, ProverError<F>>
 where
     F: Field,
     R: ConcreteSumcheck<F>,
@@ -152,6 +149,7 @@ where
 /// Mint one `Option` member's kernel when present. A present instance with an
 /// absent input, point, or challenge cell is a wiring bug, attributed to the
 /// member's relation id — silently skipping it would desynchronize the batch.
+#[expect(clippy::type_complexity)]
 pub fn prepare_optional<F, R, B>(
     kernels: &B,
     relation: Option<&R>,
@@ -160,7 +158,7 @@ pub fn prepare_optional<F, R, B>(
     claims: Option<&SumcheckInputClaims<F, R>>,
     points: Option<&SumcheckInputPoints<F, R>>,
     challenges: Option<&ConcreteSumcheckChallenges<F, R>>,
-) -> Result<Option<MemberKernel<F, R>>, ProverError<F>>
+) -> Result<Option<Box<dyn SumcheckKernel<F, Relation = R>>>, ProverError<F>>
 where
     F: Field,
     R: ConcreteSumcheck<F>,
