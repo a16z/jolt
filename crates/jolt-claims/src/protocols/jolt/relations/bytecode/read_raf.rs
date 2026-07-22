@@ -3,15 +3,14 @@
 use jolt_field::RingCore;
 
 use crate::protocols::jolt::geometry::bytecode::{
-    pc_spartan_outer, read_raf_cycle_output, stage1_claim, stage2_claim, stage3_claim,
-    stage4_claim, stage5_claim, BytecodeReadRafDimensions,
+    read_raf_address_input_fold, read_raf_cycle_output, BytecodeReadRafDimensions,
 };
-use crate::protocols::jolt::geometry::spartan::pc_shift;
+use crate::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use crate::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
     JoltRelationId,
 };
-use crate::{challenge, opening, SumcheckChallenges, SymbolicSumcheck};
+use crate::{SumcheckChallenges, SymbolicSumcheck};
 
 /// Fiat-Shamir challenges drawn by the full bytecode read-RAF sumcheck: the
 /// batching `gamma` plus the five per-stage gammas folding the staged claims.
@@ -65,20 +64,11 @@ impl SymbolicSumcheck for ReadRaf {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(BytecodeReadRafChallenge::Gamma);
-
-        gamma.clone().pow(7)
-            + stage1_claim()
-            + gamma.clone() * stage2_claim()
-            + gamma.clone().pow(2) * stage3_claim()
-            + gamma.clone().pow(3) * stage4_claim()
-            + gamma.clone().pow(4) * stage5_claim::<F>()
-            + gamma.clone().pow(5) * opening(pc_spartan_outer())
-            + gamma.pow(6) * opening(pc_shift())
+        read_raf_address_input_fold(Vec::new())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        read_raf_cycle_output(self.shape)
+        read_raf_cycle_output(self.shape, NUM_BYTECODE_VAL_STAGES)
     }
 }
 
@@ -87,12 +77,14 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::bytecode::{
         bytecode_ra, imm_spartan_outer, instruction_flag_input, instruction_flag_product,
-        instruction_flag_shift, op_flag_product, op_flag_shift, unexpanded_pc_spartan_outer,
+        instruction_flag_shift, op_flag_product, op_flag_shift, pc_spartan_outer,
+        unexpanded_pc_spartan_outer,
     };
     use crate::protocols::jolt::geometry::instruction::{imm, instruction_raf_flag};
     use crate::protocols::jolt::geometry::registers::{
         rd_wa_read_write, rd_wa_val_evaluation, rs1_ra_read_write, rs2_ra_read_write,
     };
+    use crate::protocols::jolt::geometry::spartan::pc_shift;
     use crate::protocols::jolt::geometry::spartan::unexpanded_pc_shift;
     use crate::protocols::jolt::{BytecodeReadRafPublic, JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_field::{Fr, FromPrimitiveInt};

@@ -30,8 +30,13 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Number of staged `BytecodeValStage(i)` claims batched into the reduction.
+/// Number of staged `BytecodeValStage(i)` claims batched into the reduction:
+/// the five base flag stages, plus (akita) the `OpFlags(Store)` stage the
+/// `IncVirtualization` phase consumes as its destination selector.
+#[cfg(not(feature = "akita"))]
 pub const NUM_BYTECODE_VAL_STAGES: usize = 5;
+#[cfg(feature = "akita")]
+pub const NUM_BYTECODE_VAL_STAGES: usize = 6;
 
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
@@ -476,6 +481,16 @@ pub fn lane_weights<F: Field>(
         for i in 0..LookupTableKind::<XLEN>::COUNT {
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
+    }
+    // The lattice store stage: one raw circuit-flag lane at η^5, no gamma fold
+    // (mirrors the read-raf sixth staged val, which consumes the
+    // `IncVirtualization` store selector claim directly). Anchored on the fixed
+    // base count so it lands at η^5 while `eta_powers` is sized by the active
+    // (cfg'd) `NUM_BYTECODE_VAL_STAGES` (= 6 here).
+    #[cfg(feature = "akita")]
+    {
+        weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
+            eta_powers[BYTECODE_STAGE_GAMMA_COUNTS.len()];
     }
 
     Ok(weights)

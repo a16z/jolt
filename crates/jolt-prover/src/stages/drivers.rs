@@ -644,34 +644,24 @@ mod twin_tests {
             )
             .unwrap();
 
-        // Verifier twin: generated draw + verify_clear + output-claim absorbs.
+        // Verifier twin: generated draw + composed verify_clear (which runs the
+        // derive-opening-points and expected-final-claim checks internally) +
+        // output-claim absorbs.
         let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-        let verified = sumchecks
+        let _ = sumchecks
             .verify_clear(
                 &inputs,
+                &input_points,
                 &verifier_challenges,
+                &proved.output_claims,
                 &proved.recorded.proof,
                 &mut verifier_transcript,
+                0,
             )
             .unwrap();
         sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
 
-        assert_eq!(verified.reduction.value, proved.final_claim);
-        assert_eq!(
-            sumchecks
-                .expected_final_claim(
-                    &verified.coefficients,
-                    &input_points,
-                    &proved.output_claims,
-                    &sumchecks
-                        .derive_opening_points(&verified.reduction.point, &input_points)
-                        .unwrap(),
-                    &verifier_challenges,
-                )
-                .unwrap(),
-            proved.final_claim,
-        );
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
         let calls = session.take::<PrepareCallLog>().unwrap().0;

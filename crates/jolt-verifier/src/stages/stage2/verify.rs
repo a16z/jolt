@@ -202,28 +202,15 @@ where
     let input_values =
         stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
 
-    let batch = sumchecks.verify_clear(
+    let output_points = sumchecks.verify_clear(
         &input_values,
+        &input_points,
         &challenges,
+        &claims.batch_outputs,
         &proof.stages.stage2_sumcheck_proof,
         transcript,
+        2,
     )?;
-
-    let output_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-
-    // Runs the generated `validate_aliases` first: the reduction's aliased wire
-    // cells (read by its output `Expr`) must equal their product-remainder sources.
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        &claims.batch_outputs,
-        &output_points,
-        &challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 2 });
-    }
 
     sumchecks.append_output_claims(transcript, &claims.batch_outputs);
 
@@ -241,17 +228,16 @@ pub fn product_tau_low<F: Field>(
     stage1_remainder: &[F],
     log_t: usize,
 ) -> Result<Vec<F>, VerifierError> {
-    let stage = JoltRelationId::SpartanProductVirtualization;
     let mut tau_low = stage1_remainder
         .get(1..)
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-            stage,
+            stage: format!("{:?}", JoltRelationId::SpartanProductVirtualization),
             reason: "Stage 1 remainder challenge vector is empty".to_string(),
         })?
         .to_vec();
     if tau_low.len() != log_t {
         return Err(VerifierError::StageClaimSumcheckFailed {
-            stage,
+            stage: format!("{:?}", JoltRelationId::SpartanProductVirtualization),
             reason: format!(
                 "Stage 1 remainder challenge tail length mismatch: expected {log_t}, got {}",
                 tau_low.len()

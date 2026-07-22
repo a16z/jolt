@@ -19,7 +19,7 @@ use super::instruction::{imm, instruction_raf_flag, lookup_table_flag, unexpande
 use super::registers::{
     rd_wa_read_write, rd_wa_val_evaluation, rs1_ra_read_write, rs2_ra_read_write,
 };
-use super::spartan::unexpanded_pc_shift;
+use super::spartan::{pc_shift, unexpanded_pc_shift};
 
 /// Per-stage (1..=5) gamma-power vector lengths for the bytecode read-RAF stage
 /// folds — the arities of the prover's `challenge_scalar_powers` draws. The
@@ -77,46 +77,182 @@ impl BytecodeReadRafDimensions {
     }
 }
 
-pub(crate) fn read_raf_cycle_output<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
+/// The staged input fold shared by the bytecode read-RAF monolith and its
+/// address phase: the five base staged claims at `γ^0..4`, then one raw claim
+/// per `extra_stage_claims` entry at the following powers (the lattice
+/// fused-inc consumer stages), then the Spartan outer/shift PC openings and
+/// the constant entry term at the next three powers.
+pub(crate) fn read_raf_address_input_fold<F>(extra_stage_claims: Vec<JoltExpr<F>>) -> JoltExpr<F>
 where
     F: RingCore,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
-    let output_coeff = derived(BytecodeReadRafPublic::StageValue(0))
-        + gamma.clone() * derived(BytecodeReadRafPublic::StageValue(1))
-        + gamma.clone().pow(2) * derived(BytecodeReadRafPublic::StageValue(2))
-        + gamma.clone().pow(3) * derived(BytecodeReadRafPublic::StageValue(3))
-        + gamma.clone().pow(4) * derived(BytecodeReadRafPublic::StageValue(4))
-        + gamma.clone().pow(5) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(6) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(7) * derived(BytecodeReadRafPublic::Entry);
+    let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
+    let num_val_stages = base_stages + extra_stage_claims.len();
+
+    let mut fold = gamma.clone().pow(num_val_stages + 2)
+        + stage1_claim()
+        + gamma.clone() * stage2_claim()
+        + gamma.clone().pow(2) * stage3_claim()
+        + gamma.clone().pow(3) * stage4_claim()
+        + gamma.clone().pow(4) * stage5_claim::<F>();
+    for (index, claim) in extra_stage_claims.into_iter().enumerate() {
+        fold = fold + gamma.clone().pow(base_stages + index) * claim;
+    }
+    fold + gamma.clone().pow(num_val_stages) * opening(pc_spartan_outer())
+        + gamma.pow(num_val_stages + 1) * opening(pc_shift())
+}
+
+pub(crate) fn read_raf_cycle_output<F>(
+    dimensions: BytecodeReadRafDimensions,
+    num_val_stages: usize,
+) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
+    let mut output_coeff = JoltExpr::zero();
+    for stage in 0..num_val_stages {
+        output_coeff = output_coeff
+            + gamma.clone().pow(stage) * derived(BytecodeReadRafPublic::StageValue(stage));
+    }
+    output_coeff = output_coeff
+        + gamma.clone().pow(num_val_stages) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
 
     output_coeff * bytecode_ra_product(dimensions)
 }
 
 pub(crate) fn read_raf_cycle_output_committed<F>(
     dimensions: BytecodeReadRafDimensions,
+    num_val_stages: usize,
 ) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    const STAGES: usize = NUM_BYTECODE_VAL_STAGES;
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     // The staged Val factor multiplies after the RA product so the lowered
     // R1CS auxiliary chain matches core's `[ra..., val_stage]` factor order.
     let mut output = JoltExpr::zero();
-    for stage in 0..STAGES {
+    for stage in 0..num_val_stages {
         output = output
             + gamma.clone().pow(stage)
                 * derived(BytecodeReadRafPublic::StageCycleEq(stage))
                 * bytecode_ra_product(dimensions)
                 * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(stage));
     }
-    let raf_coeff = gamma.clone().pow(STAGES) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(STAGES + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(STAGES + 2) * derived(BytecodeReadRafPublic::Entry);
+    let raf_coeff = gamma.clone().pow(num_val_stages)
+        * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
 
     output + raf_coeff * bytecode_ra_product(dimensions)
+}
+
+/// Fused-inc consumer stages appended after the five base flag stages in
+/// lattice mode: `(store, r_ram_read_write)`, `(store, r_ram_val_check)`,
+/// `(¬store, r_registers_read_write)`, `(¬store, r_registers_val_evaluation)`
+/// — each cycle-weighted by the `FusedInc` stream, discharging the four base
+/// inc claims inside the read-raf fold (per-cycle store/rd disjointness makes
+/// `FusedInc·Store = RamInc` and `FusedInc·(1−Store) = RdInc`).
+pub const LATTICE_FUSED_INC_STAGES: usize = 4;
+
+/// The read-raf relation's val-stage count (one cycle point / cycle-eq public
+/// per stage): the five base flag stages, plus (akita) the four fused-inc
+/// consumer stages. Distinct from [`NUM_BYTECODE_VAL_STAGES`], the staged
+/// `BytecodeValStage` *wire* count — the fused stages resolve through the
+/// store wire and its complement, adding no wires.
+#[cfg(not(feature = "akita"))]
+pub const READ_RAF_CYCLE_STAGES: usize = BYTECODE_STAGE_GAMMA_COUNTS.len();
+#[cfg(feature = "akita")]
+pub const READ_RAF_CYCLE_STAGES: usize =
+    BYTECODE_STAGE_GAMMA_COUNTS.len() + LATTICE_FUSED_INC_STAGES;
+
+/// The `FusedInc` opening produced by the lattice read-raf cycle phase at its
+/// bound cycle point (shared with the rest of the stage-6b batch).
+pub fn fused_inc_read_raf_opening() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::FusedInc,
+        JoltRelationId::BytecodeReadRaf,
+    )
+}
+
+/// Lattice full-mode cycle output: the base five stage values ride the RA
+/// product as usual; the four fused-inc stages additionally carry the
+/// `FusedInc` opening as a cycle factor (degree +1 over the base relation).
+pub(crate) fn read_raf_cycle_output_lattice<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
+    let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
+    let num_val_stages = base_stages + LATTICE_FUSED_INC_STAGES;
+    let mut base_coeff = JoltExpr::zero();
+    for stage in 0..base_stages {
+        base_coeff = base_coeff
+            + gamma.clone().pow(stage) * derived(BytecodeReadRafPublic::StageValue(stage));
+    }
+    base_coeff = base_coeff
+        + gamma.clone().pow(num_val_stages) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.clone().pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
+
+    let mut fused_coeff = JoltExpr::zero();
+    for stage in base_stages..num_val_stages {
+        fused_coeff = fused_coeff
+            + gamma.clone().pow(stage) * derived(BytecodeReadRafPublic::StageValue(stage));
+    }
+
+    (base_coeff + fused_coeff * opening(fused_inc_read_raf_opening()))
+        * bytecode_ra_product(dimensions)
+}
+
+/// Lattice committed-mode cycle output: the base five stages fold their staged
+/// `BytecodeValStage` openings; the four fused stages reuse the staged *store*
+/// val (index [`BYTECODE_STAGE_GAMMA_COUNTS`]`.len()`) — directly for the two
+/// RAM legs, complemented (`1 − store`) for the two register legs — so the
+/// staged-val wire set is unchanged from the store-claim design.
+pub(crate) fn read_raf_cycle_output_committed_lattice<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
+    let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
+    let num_val_stages = base_stages + LATTICE_FUSED_INC_STAGES;
+    let ra_product = bytecode_ra_product(dimensions);
+    let fused = opening(fused_inc_read_raf_opening());
+    let store = opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(base_stages));
+
+    let mut output = JoltExpr::zero();
+    for stage in 0..base_stages {
+        output = output
+            + gamma.clone().pow(stage)
+                * derived(BytecodeReadRafPublic::StageCycleEq(stage))
+                * ra_product.clone()
+                * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(stage));
+    }
+    let store_pair = gamma.clone().pow(base_stages)
+        * derived(BytecodeReadRafPublic::StageCycleEq(base_stages))
+        + gamma.clone().pow(base_stages + 1)
+            * derived(BytecodeReadRafPublic::StageCycleEq(base_stages + 1));
+    let notstore_pair = gamma.clone().pow(base_stages + 2)
+        * derived(BytecodeReadRafPublic::StageCycleEq(base_stages + 2))
+        + gamma.clone().pow(base_stages + 3)
+            * derived(BytecodeReadRafPublic::StageCycleEq(base_stages + 3));
+    output = output
+        + store_pair * ra_product.clone() * fused.clone() * store.clone()
+        + notstore_pair.clone() * ra_product.clone() * fused.clone()
+        - notstore_pair * ra_product.clone() * fused * store;
+
+    let raf_coeff = gamma.clone().pow(num_val_stages)
+        * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
+
+    output + raf_coeff * ra_product
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,10 +292,12 @@ impl<F: Field> BytecodeReadRafPublicValues<F> {
 
 /// Committed-program read-RAF publics: the bytecode table is not available,
 /// so only the table-independent factors are computed. The per-stage Val
-/// factors are openings; their cycle-eq coefficients are public.
+/// factors are openings; their cycle-eq coefficients are public. One cycle eq
+/// per relation stage — five in base mode, nine in lattice mode (the four
+/// fused-inc consumer stages follow the base five).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafCommittedPublicValues<F: Field> {
-    pub stage_cycle_eqs: [F; NUM_BYTECODE_VAL_STAGES],
+    pub stage_cycle_eqs: [F; READ_RAF_CYCLE_STAGES],
     pub spartan_outer_raf: F,
     pub spartan_shift_raf: F,
     pub entry: F,
@@ -183,7 +321,9 @@ impl<F: Field> BytecodeReadRafCommittedPublicValues<F> {
 pub struct BytecodeReadRafCommittedEvaluationInputs<'a, F> {
     pub r_address: &'a [F],
     pub r_cycle: &'a [F],
-    pub stage_cycle_points: [&'a [F]; NUM_BYTECODE_VAL_STAGES],
+    /// One cycle point per relation stage (five base, nine lattice — the four
+    /// fused-inc consumer points follow the base five).
+    pub stage_cycle_points: [&'a [F]; READ_RAF_CYCLE_STAGES],
     pub entry_bytecode_index: usize,
 }
 
@@ -284,7 +424,12 @@ where
     }
 }
 
-pub fn read_raf_stage_values<F>(inputs: BytecodeReadRafStageValueInputs<'_, F>) -> Vec<[F; 5]>
+/// Every bytecode row's staged values: the five gamma-folded stages, plus
+/// (lattice) the store circuit flag as the sixth staged value, folded like
+/// the others by the read-raf consumers.
+pub fn read_raf_stage_values<F>(
+    inputs: BytecodeReadRafStageValueInputs<'_, F>,
+) -> Vec<[F; NUM_BYTECODE_VAL_STAGES]>
 where
     F: Field,
 {
@@ -330,20 +475,27 @@ where
         });
     }
 
+    let register_eq = read_raf_register_eq_evals(
+        inputs.register_read_write_point,
+        inputs.register_val_evaluation_point,
+    );
     let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
-    let row_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: inputs.bytecode,
-        register_read_write_point: inputs.register_read_write_point,
-        register_val_evaluation_point: inputs.register_val_evaluation_point,
-        stage1_gammas: inputs.stage1_gammas,
-        stage2_gammas: inputs.stage2_gammas,
-        stage3_gammas: inputs.stage3_gammas,
-        stage4_gammas: inputs.stage4_gammas,
-        stage5_gammas: inputs.stage5_gammas,
-    });
 
+    // The base monolith publics carry the five gamma'd stages only; the
+    // lattice sixth (store) row value never flows through this path, so the
+    // zip below is deliberately driven by the five-slot accumulator.
     let mut stage_values = [F::zero(); 5];
-    for (row_values, eq_address) in row_values.into_iter().zip(address_eq_evals) {
+    for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
+        let row_values = read_raf_row_values::<F>(
+            instruction,
+            &register_eq.read_write,
+            &register_eq.val_evaluation,
+            inputs.stage1_gammas,
+            inputs.stage2_gammas,
+            inputs.stage3_gammas,
+            inputs.stage4_gammas,
+            inputs.stage5_gammas,
+        );
         for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
             *stage_value += row_value * eq_address;
         }
@@ -351,7 +503,9 @@ where
 
     let stage_cycle_eqs = inputs
         .stage_cycle_points
-        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle));
+        .iter()
+        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle))
+        .collect::<Vec<_>>();
     for (stage_value, stage_cycle_eq) in stage_values.iter_mut().zip(&stage_cycle_eqs) {
         *stage_value *= *stage_cycle_eq;
     }
@@ -385,7 +539,7 @@ fn read_raf_row_values<F>(
     stage3_gammas: &[F],
     stage4_gammas: &[F],
     stage5_gammas: &[F],
-) -> [F; 5]
+) -> [F; NUM_BYTECODE_VAL_STAGES]
 where
     F: Field,
 {
@@ -452,7 +606,18 @@ where
         stage5 += stage5_gammas[2 + table.index()];
     }
 
-    [stage1, stage2, stage3, stage4, stage5]
+    #[cfg(not(feature = "akita"))]
+    {
+        [stage1, stage2, stage3, stage4, stage5]
+    }
+    // The lattice sixth stage: the store circuit flag as a raw staged value
+    // (the `IncVirtualization` destination selector), folded against
+    // `eq(r_address)` like the five gamma'd stages by the read-raf consumers.
+    #[cfg(feature = "akita")]
+    {
+        let store = F::from_u64(u64::from(circuit_flags[CircuitFlags::Store]));
+        [stage1, stage2, stage3, stage4, stage5, store]
+    }
 }
 
 fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {

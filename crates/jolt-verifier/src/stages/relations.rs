@@ -202,7 +202,7 @@ where
     fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
         batch_num_vars.checked_sub(self.rounds()).ok_or_else(|| {
             VerifierError::StageClaimSumcheckFailed {
-                stage: self.id(),
+                stage: format!("{:?}", self.id()),
                 reason: format!(
                     "batch challenge vector has {batch_num_vars} entries, fewer than the \
                      instance's {} rounds",
@@ -224,7 +224,7 @@ where
             .checked_add(rounds)
             .and_then(|end| batch_point.get(offset..end))
             .ok_or(VerifierError::StageClaimSumcheckFailed {
-                stage: self.id(),
+                stage: format!("{:?}", self.id()),
                 reason: format!(
                     "instance point [{offset}, {offset} + {rounds}) exceeds the batch \
                      challenge vector ({} entries)",
@@ -404,7 +404,7 @@ where
             resolve_source(&source).ok_or(VerifierError::MissingOpeningClaim { id: source })?;
         if target != source_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: member.id(),
+                stage: format!("{:?}", member.id()),
                 left: aliased,
                 right: source,
             });

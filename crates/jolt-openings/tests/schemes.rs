@@ -53,7 +53,7 @@ fn homomorphic_batch_opening_roundtrip_clear() {
     let mut verifier_transcript = Blake2bTranscript::new(b"batch-clear");
     <HomomorphicTestBatch as BatchOpeningScheme>::verify_batch(
         &(),
-        claims,
+        &claims,
         &proof,
         &mut verifier_transcript,
     )
@@ -83,7 +83,7 @@ fn homomorphic_batch_opening_rejects_tampered_clear_claim() {
     let mut verifier_transcript = Blake2bTranscript::new(b"batch-clear-tampered");
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::verify_batch(
         &(),
-        tampered,
+        &tampered,
         &proof,
         &mut verifier_transcript,
     );

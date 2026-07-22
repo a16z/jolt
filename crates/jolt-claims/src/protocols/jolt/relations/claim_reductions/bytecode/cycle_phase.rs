@@ -45,7 +45,7 @@ pub struct BytecodeReductionCyclePhaseChallenges<F> {
     pub eta: F,
 }
 
-/// Cycle phase of the committed-bytecode reduction: batches the five staged
+/// Cycle phase of the committed-bytecode reduction: batches the staged
 /// `BytecodeValStage(i)` openings by powers of `eta` and reduces them to either
 /// the cycle-phase intermediate opening (when an address phase follows) or the
 /// committed `BytecodeChunk(i)` openings weighted by `ChunkOutputWeight`.

@@ -250,7 +250,7 @@ pub fn verify_{func_name}(preprocessing_data: &[u8], proof_data: &[u8], io_data:
         jolt_sdk::VerifierPCS,
         jolt_sdk::VerifierVC,
         jolt_sdk::VerifierTranscript,
-    >(&preprocessing, &program_io, &proof, None, proof.claims.is_zk()).is_ok()
+    >(&preprocessing, &program_io, &proof, None).is_ok()
 }}
 "#
         ));

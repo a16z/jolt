@@ -170,14 +170,25 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         .finish(&output_values, &mut prover_transcript)
         .unwrap();
 
-    // Verifier: draw → generated verify_clear → output-claim absorbs.
+    // Verifier: draw → begin_batch → verify_compressed_boolean → output-claim
+    // absorbs (the low-level clear path the composed `verify_clear` wraps).
     let mut verifier_transcript = Blake2bTranscript::new(b"engine-twin");
     let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-    let verified = sumchecks
-        .verify_clear(
+    let mut verifier_recorder = ClearSumcheckRecorder::<Fr, Bn254G1>::new();
+    let (verifier_batch, verifier_coefficients) = sumchecks
+        .begin_batch(
             &inputs,
             &verifier_challenges,
-            &recorded.proof,
+            &mut verifier_recorder,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+    let reduction = recorded
+        .proof
+        .verify_compressed_boolean(
+            verifier_batch.max_num_vars,
+            verifier_batch.max_degree,
+            verifier_batch.claimed_sum,
             &mut verifier_transcript,
         )
         .unwrap();
@@ -185,12 +196,9 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
     }
 
-    assert_eq!(verified.reduction.value, proved.final_claim);
-    assert_eq!(
-        verified.reduction.point.as_slice(),
-        proved.challenges.as_slice()
-    );
-    assert_eq!(verified.coefficients, prover_coefficients);
+    assert_eq!(reduction.value, proved.final_claim);
+    assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
+    assert_eq!(verifier_coefficients, prover_coefficients);
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 

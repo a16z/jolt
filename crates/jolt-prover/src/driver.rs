@@ -177,7 +177,7 @@ where
         }
         (None, _, _, _) => Ok(None),
         (Some(relation), _, _, _) => Err(VerifierError::StageClaimSumcheckFailed {
-            stage: relation.id(),
+            stage: format!("{:?}", relation.id()),
             reason: "present instance is missing an input, point, or challenge cell for prepare"
                 .to_string(),
         }
@@ -432,7 +432,7 @@ macro_rules! impl_stage_prover {
                 if __expected != __proved.final_claim {
                     return ::core::result::Result::Err(
                         ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
-                            stage: self.stage_relation_id(),
+                            stage: ::std::format!("{:?}", self.stage_relation_id()),
                             reason: ::std::format!(
                                 "prover final claim {:?} disagrees with the expected output fold {:?}",
                                 __proved.final_claim,

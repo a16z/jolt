@@ -30,6 +30,7 @@ members = [
   "crates/jolt-blindfold",
   "crates/jolt-crypto",
   "crates/jolt-program",
+  "crates/jolt-lean-gen",
   "crates/jolt-poly",
   "crates/jolt-lookup-tables",
   "crates/jolt-r1cs",
@@ -277,12 +278,14 @@ dory = { package = "dory-pcs", version = "0.4.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c82909227371b94cc2877f7ad9acfa58007d5887", default-features = false }
+akita-config = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
+akita-field = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
+akita-pcs = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
+akita-prover = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
+akita-planner = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
+akita-challenges = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
+akita-transcript = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
+akita-types = { git = "https://github.com/markosg04/akita.git", rev = "cb13b79f1a2a1469eb31f8557161fe641fdd729e", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }

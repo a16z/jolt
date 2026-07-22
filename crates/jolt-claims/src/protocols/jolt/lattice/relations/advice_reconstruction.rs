@@ -76,13 +76,13 @@ pub struct UntrustedAdviceReconstructionOutputClaims<C> {
 }
 
 /// The consumed word claim: the base advice reduction's untrusted terminus.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct UntrustedAdviceReconstructionInputClaims<C> {
     #[opening(untrusted_advice, from = AdviceClaimReduction)]
     pub word: C,
 }
 
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct UntrustedAdviceReconstructionChallenges<F> {
     #[challenge(UntrustedAdviceReconstructionChallenge::Gamma)]
     pub gamma: F,
@@ -162,7 +162,7 @@ pub struct TrustedAdviceReconstructionOutputClaims<C> {
 }
 
 /// The consumed word claim: the base advice reduction's trusted terminus.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct TrustedAdviceReconstructionInputClaims<C> {
     #[opening(trusted_advice, from = AdviceClaimReduction)]
     pub word: C,

@@ -6,7 +6,11 @@
 //! [`bytecode_read_raf_address_phase_input_values_from_upstream`]. Its output is
 //! the staged `BytecodeReadRafAddrClaim` intermediate (consumed by the stage-6b
 //! cycle phase) followed, in committed mode, by the `BytecodeValStage` openings.
+//!
+//! Under the `akita` feature the symbolic swaps to the lattice address phase,
+//! whose input fold additionally consumes the four reduced `Inc` claims
 
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
@@ -20,13 +24,19 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 
-use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints};
 use crate::stages::stage6b::batch::BytecodeStagePoints;
 use crate::stages::{
     stage1::Stage1BatchOutputClaims, stage2::Stage2BatchOutputClaims, stage3::Stage3OutputClaims,
     stage4::Stage4OutputClaims, stage5::Stage5OutputClaims,
 };
 use crate::VerifierError;
+
+#[cfg(not(feature = "akita"))]
+type AddressPhaseSymbolic = relations::bytecode::ReadRafAddressPhase;
+#[cfg(feature = "akita")]
+type AddressPhaseSymbolic =
+    jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhase;
 
 /// Wire the prior-proof opening *values* the address-phase input claim binds
 /// (every stage-1..5 opening folded by the `read_raf_address_phase` input `Expr`,
@@ -90,7 +100,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
 
 #[derive(Clone)]
 pub struct BytecodeReadRafAddressPhase<F: Field> {
-    symbolic: relations::bytecode::ReadRafAddressPhase,
+    symbolic: AddressPhaseSymbolic,
     dimensions: BytecodeReadRafDimensions,
     /// Committed-program mode stages the `BytecodeValStage` wire claims.
     committed_program: bool,
@@ -111,7 +121,7 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
         entry_bytecode_index: usize,
     ) -> Self {
         Self {
-            symbolic: relations::bytecode::ReadRafAddressPhase::new(dimensions),
+            symbolic: AddressPhaseSymbolic::new(dimensions),
             dimensions,
             committed_program,
             stage_points,
@@ -160,7 +170,7 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
-    type Symbolic = relations::bytecode::ReadRafAddressPhase;
+    type Symbolic = AddressPhaseSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -179,7 +189,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _input_points: &BytecodeReadRafAddressPhaseInputClaims<Vec<F>>,
+        _input_points: &SumcheckInputPoints<F, Self>,
     ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         // `bytecode_r_address` is the reversed address sumcheck point; the
         // intermediate and every staged Val column open there.

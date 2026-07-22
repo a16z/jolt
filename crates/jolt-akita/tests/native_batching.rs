@@ -38,7 +38,7 @@ fn akita_native_batching_roundtrips_grouped_commitment() {
     let mut verifier_transcript = Blake2bTranscript::new(b"akita-bb-roundtrip");
     <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
-        statement,
+        &statement,
         &proof,
         &mut verifier_transcript,
     )
@@ -235,7 +235,7 @@ fn assert_native_verify_rejects(
     let mut transcript = Blake2bTranscript::new(b"akita-bb-tamper");
     assert!(<AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         setup,
-        statement,
+        &statement,
         proof,
         &mut transcript,
     )

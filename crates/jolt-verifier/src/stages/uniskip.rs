@@ -80,7 +80,7 @@ impl UniskipParams {
 
     fn sumcheck_failed(&self, reason: impl ToString) -> VerifierError {
         VerifierError::StageClaimSumcheckFailed {
-            stage: self.stage,
+            stage: format!("{:?}", self.stage),
             reason: reason.to_string(),
         }
     }
@@ -114,7 +114,6 @@ pub fn verify_clear<F, C, T>(
 ) -> Result<F, VerifierError>
 where
     F: Field,
-    C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let reduction = proof

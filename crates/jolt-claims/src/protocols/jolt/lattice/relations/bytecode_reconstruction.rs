@@ -49,13 +49,13 @@ pub struct BytecodeReconstructionDimensions {
 
 /// The consumed chunk claims: the base bytecode reduction's terminus, all
 /// chunks at one shared point.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeChunkReconstructionInputClaims<C> {
     #[opening(committed = BytecodeChunk, from = BytecodeClaimReduction)]
     pub chunks: Vec<C>,
 }
 
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BytecodeChunkReconstructionChallenges<F> {
     #[challenge(BytecodeChunkReconstructionChallenge::Gamma)]
     pub gamma: F,
@@ -119,7 +119,7 @@ impl<C> BytecodeChunkReconstructionOutputClaims<C> {
     /// pairs one-for-one with this by construction (one lookup selector per
     /// chunk fixes the chunk count; the assert keeps a malformed family from
     /// silently shifting every later id).
-    fn leaves(&self) -> impl Iterator<Item = (JoltOpeningId, &C)> {
+    pub fn leaves(&self) -> impl Iterator<Item = (JoltOpeningId, &C)> {
         let chunks = self.lookup_selectors.len();
         debug_assert_eq!(
             self.register_selectors.len(),

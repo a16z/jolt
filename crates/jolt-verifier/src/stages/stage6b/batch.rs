@@ -27,12 +27,13 @@ use jolt_riscv::JoltInstructionRow;
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::{
     BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycle, BytecodeReadRafCycleInputs,
-    BytecodeReadRafTableFoldInputs,
+    BytecodeReadRafTableFoldInputs, READ_RAF_CYCLE_STAGES,
 };
 use super::committed_reduction_cycle_phase::{
     bytecode_reduction_weights, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::outputs::Stage6bSumchecks;
@@ -281,7 +282,7 @@ impl<F: Field> Stage6bSumchecks<F> {
         // values through the relation objects.
         let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
         let BytecodeStagePoints {
-            stage_cycle_points,
+            stage_cycle_points: shared_cycle_points,
             register_read_write_point,
             register_val_evaluation_point,
         } = bytecode_stage_points(
@@ -294,8 +295,8 @@ impl<F: Field> Stage6bSumchecks<F> {
         let register_read_write_address = &register_read_write_point[..REGISTER_ADDRESS_BITS];
         let register_val_evaluation_address =
             &register_val_evaluation_point[..REGISTER_ADDRESS_BITS];
-        let register_read_write_cycle = stage_cycle_points[3].as_slice();
-        let register_val_evaluation_cycle = stage_cycle_points[4].as_slice();
+        let register_read_write_cycle = shared_cycle_points[3].as_slice();
+        let register_val_evaluation_cycle = shared_cycle_points[4].as_slice();
         let ram_reduced = stage5_points.ram_reduced_opening_point();
         if ram_reduced.len() != log_k + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
@@ -326,6 +327,25 @@ impl<F: Field> Stage6bSumchecks<F> {
             register_read_write_cycle.to_vec(),
             register_val_evaluation_cycle.to_vec(),
         ];
+        #[cfg(not(feature = "akita"))]
+        let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = shared_cycle_points;
+        // The packed fused-inc consumer points appended to the shared five: the
+        // four inc-producing relations' cycle bindings, in stage order (γ^5..8).
+        #[cfg(feature = "akita")]
+        let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = {
+            let [stage1, stage2, stage3, stage4, stage5] = shared_cycle_points;
+            [
+                stage1,
+                stage2,
+                stage3,
+                stage4,
+                stage5,
+                inc_cycle_points[0].clone(),
+                inc_cycle_points[1].clone(),
+                inc_cycle_points[2].clone(),
+                inc_cycle_points[3].clone(),
+            ]
+        };
         // The full-program table fold is expected_output-only (absent rows mean
         // ZK or committed mode, where it never runs).
         let bytecode_table_fold =
@@ -378,6 +398,15 @@ impl<F: Field> Stage6bSumchecks<F> {
             })?
         };
 
+        #[cfg(feature = "akita")]
+        let booleanity_dimensions =
+            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
+                booleanity_dimensions,
+            )
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?;
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,
@@ -398,16 +427,18 @@ impl<F: Field> Stage6bSumchecks<F> {
             stage5_instruction_cycle.to_vec(),
             committed_chunk_bits,
         );
-        let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
-            inc_cycle_points;
-        let inc_claim_reduction = IncClaimReduction::new(
-            trace_dimensions,
-            ram_read_write_cycle,
-            ram_val_check_cycle,
-            registers_read_write_cycle,
-            registers_val_evaluation_cycle,
-        );
-
+        #[cfg(not(feature = "akita"))]
+        let inc_claim_reduction = {
+            let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
+                inc_cycle_points;
+            IncClaimReduction::new(
+                trace_dimensions,
+                ram_read_write_cycle,
+                ram_val_check_cycle,
+                registers_read_write_cycle,
+                registers_val_evaluation_cycle,
+            )
+        };
         let trusted_advice = trusted_advice_layout
             .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
         let untrusted_advice = untrusted_advice_layout
@@ -429,6 +460,7 @@ impl<F: Field> Stage6bSumchecks<F> {
             ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
+            #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
             trusted_advice,
             untrusted_advice,
@@ -438,7 +470,7 @@ impl<F: Field> Stage6bSumchecks<F> {
     }
 }
 
-fn stage6_checked_split<'a, F: Field>(
+pub(super) fn stage6_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],
     split_at: usize,

@@ -7,40 +7,39 @@ use akita_transcript::Transcript as AkitaBackendTranscript;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
-    AkitaVerifierSetup as AkitaBackendVerifierSetup, RingCommitment as AkitaBackendRingCommitment,
+    AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
 };
 use jolt_field::CanonicalBytes;
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
-use jolt_poly::{MultilinearPoly, OneHotIndexOrder, Polynomial};
+use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
-pub(crate) type AkitaOneHotConfig = akita_config::proof_optimized::fp128::D64OneHot;
+pub(crate) type AkitaOneHotK16Config = crate::configs::JoltD64OneHotK16;
+pub(crate) type AkitaOneHotK256Config = crate::configs::JoltD64OneHotK256;
 pub(crate) const AKITA_D: usize = AkitaConfig::D;
-/// One-hot chunk size baked into the `D64OneHot` preset.
-pub const AKITA_ONE_HOT_K: usize = 256;
-pub(crate) const AKITA_ONE_HOT_LOG_K: usize = AKITA_ONE_HOT_K.ilog2() as usize;
-const _: () = assert!(AKITA_ONE_HOT_K.is_power_of_two());
+pub const AKITA_ONE_HOT_K16: usize = 16;
+pub const AKITA_ONE_HOT_K256: usize = 256;
 
 pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtField;
 
-pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AKITA_D, AkitaConfig>;
-pub(crate) type AkitaOneHotBackendScheme = AkitaCommitmentScheme<AKITA_D, AkitaOneHotConfig>;
-pub(crate) type AkitaBackendCommitment = AkitaBackendRingCommitment<AkitaField, AKITA_D>;
-pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField, AKITA_D>;
+pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
+pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK16Config>;
+pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
+pub(crate) type AkitaBackendCommitment = AkitaBackendRingCommitment<AkitaField>;
+pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
 pub(crate) type AkitaBackendProof = AkitaBackendBatchProof<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
-pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField, AKITA_D>;
-pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, AKITA_D, u8>;
-pub(crate) type AkitaBackendSparsePoly = SparseRingPoly<AkitaField, AKITA_D>;
-pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField, AKITA_D>;
-pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField, AKITA_D>;
-pub(crate) type BackendStack<'a> =
-    akita_prover::UniformProverStack<'a, AkitaField, CpuBackend, AKITA_D>;
+pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
+pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
+pub(crate) type AkitaBackendSparsePoly = SparseRingPoly<AkitaField>;
+pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
+pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField>;
+pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
 
@@ -50,6 +49,11 @@ pub struct AkitaSetupParams {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
+    pub(crate) one_hot_k: usize,
+    /// When set, only the one-hot flavor's backend setup is built — the
+    /// full-flavor setup for the same shape is large and slow, and a packed
+    /// one-hot commitment object never touches it.
+    pub(crate) one_hot_only: bool,
 }
 
 impl AkitaSetupParams {
@@ -62,16 +66,40 @@ impl AkitaSetupParams {
             max_num_vars,
             max_num_polys_per_commitment_group,
             default_layout_digest,
+            one_hot_k: AKITA_ONE_HOT_K256,
+            one_hot_only: false,
         }
+    }
+
+    /// Setup parameters for a commitment object that only ever commits and
+    /// opens through the one-hot flavor (the packed `OneHotTrace` group): skips
+    /// building the full-flavor backend setup of the same shape.
+    pub fn one_hot_only(
+        max_num_vars: usize,
+        max_num_polys_per_commitment_group: usize,
+        default_layout_digest: AkitaLayoutDigest,
+        one_hot_k: usize,
+    ) -> Self {
+        Self {
+            max_num_vars,
+            max_num_polys_per_commitment_group,
+            default_layout_digest,
+            one_hot_k,
+            one_hot_only: true,
+        }
+    }
+
+    pub fn one_hot_k(&self) -> usize {
+        self.one_hot_k
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct AkitaProverSetup {
-    pub(crate) backend_prover_setup: AkitaBackendProverSetup,
-    pub(crate) prepared_backend_setup: AkitaBackendPreparedSetup,
-    pub(crate) one_hot_backend_prover_setup: Option<AkitaBackendProverSetup>,
-    pub(crate) prepared_one_hot_backend_setup: Option<AkitaBackendPreparedSetup>,
+    pub(crate) backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
+    pub(crate) prepared_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
+    pub(crate) one_hot_backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
+    pub(crate) prepared_one_hot_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
     pub(crate) verifier: AkitaVerifierSetup,
 }
 
@@ -88,44 +116,90 @@ impl AkitaProverSetup {
         self.verifier.default_layout_digest
     }
 
+    pub fn one_hot_k(&self) -> usize {
+        self.verifier.one_hot_k
+    }
+
+    pub(crate) fn full_backend(
+        &self,
+    ) -> Result<(&AkitaBackendProverSetup, &AkitaBackendPreparedSetup), OpeningsError> {
+        self.backend_prover_setup
+            .as_deref()
+            .zip(self.prepared_backend_setup.as_deref())
+            .ok_or_else(|| {
+                OpeningsError::InvalidSetup(
+                    "this Akita setup was built without the full-flavor backend".to_string(),
+                )
+            })
+    }
+
     pub(crate) fn one_hot_backend(
         &self,
     ) -> Result<(&AkitaBackendProverSetup, &AkitaBackendPreparedSetup), OpeningsError> {
         let backend = self
             .one_hot_backend_prover_setup
-            .as_ref()
+            .as_deref()
             .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
         let prepared = self
             .prepared_one_hot_backend_setup
-            .as_ref()
+            .as_deref()
             .ok_or_else(|| invalid_batch("Akita setup has no prepared one-hot backend"))?;
         Ok((backend, prepared))
     }
 }
 
+/// The verifier setup is pure shape: the backend keys are a deterministic
+/// function of `(max_num_vars, max_num_polys_per_commitment_group, one_hot_k)`
+/// over a fixed internal seed, so they are never serialized or
+/// transcript-absorbed — [`append_verifier_setup`] binds these parameters and
+/// both sides derive the same keys from them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
-    pub(crate) serialized_backend_bytes: Vec<u8>,
-    pub(crate) serialized_one_hot_backend_bytes: Option<Vec<u8>>,
+    pub(crate) one_hot_k: usize,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
 
 impl AkitaVerifierSetup {
-    pub(crate) fn vk_bytes(&self, flavor: AkitaBackendFlavor) -> Option<&[u8]> {
-        match flavor {
-            AkitaBackendFlavor::Full => Some(&self.serialized_backend_bytes),
-            AkitaBackendFlavor::OneHot => self.serialized_one_hot_backend_bytes.as_deref(),
+    pub fn max_num_vars(&self) -> usize {
+        self.max_num_vars
+    }
+
+    pub fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group
+    }
+
+    pub fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest
+    }
+
+    pub fn one_hot_k(&self) -> usize {
+        self.one_hot_k
+    }
+
+    /// Primes the lazy key cache with freshly built backend keys, so
+    /// in-process setups never pay the shape→key re-derivation.
+    pub(crate) fn prime_backend_cache(
+        &self,
+        full: Option<AkitaBackendVerifier>,
+        one_hot: Option<AkitaBackendVerifier>,
+    ) {
+        if let Some(full) = full {
+            let _ = self.backend_cache.full.get_or_init(|| full);
+        }
+        if let Some(one_hot) = one_hot {
+            let _ = self.backend_cache.one_hot.get_or_init(|| one_hot);
         }
     }
 
-    /// Deserialized (and backend-validated) verifier key for `flavor`, cached
-    /// after the first use — deserialization re-derives the shared public
-    /// matrix from its seed, which is far too expensive to repeat per verify.
+    /// Backend verifier key for `flavor`, cached after the first use.
+    /// [`AkitaScheme::setup`](crate::AkitaScheme) primes the cache with the
+    /// freshly built keys; a serde-transported setup re-derives them from the
+    /// shape on first use (one-time, setup-class cost).
     pub(crate) fn backend_verifier(
         &self,
         flavor: AkitaBackendFlavor,
@@ -137,11 +211,39 @@ impl AkitaVerifierSetup {
         if let Some(verifier) = cache.get() {
             return Ok(verifier);
         }
-        let bytes = self
-            .vk_bytes(flavor)
-            .ok_or_else(|| invalid_batch("Akita verifier setup has no one-hot backend"))?;
-        let verifier = deserialize_akita::<AkitaBackendVerifier>(bytes, &())?;
+        let verifier = self.build_backend_verifier(flavor)?;
         Ok(cache.get_or_init(|| verifier))
+    }
+
+    fn build_backend_verifier(
+        &self,
+        flavor: AkitaBackendFlavor,
+    ) -> Result<AkitaBackendVerifier, OpeningsError> {
+        let invalid_setup =
+            |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
+        match flavor {
+            AkitaBackendFlavor::Full => {
+                let prover_setup = AkitaBackendScheme::setup_prover(
+                    self.max_num_vars,
+                    self.max_num_polys_per_commitment_group,
+                )
+                .map_err(|err| invalid_setup(&err))?;
+                Ok(AkitaBackendScheme::setup_verifier(&prover_setup))
+            }
+            AkitaBackendFlavor::OneHot => {
+                let log_k = validate_one_hot_k(self.one_hot_k)?;
+                if self.max_num_vars < log_k {
+                    return Err(invalid_batch("Akita verifier setup has no one-hot backend"));
+                }
+                let prover_setup = one_hot_setup_prover(
+                    self.one_hot_k,
+                    self.max_num_vars,
+                    self.max_num_polys_per_commitment_group,
+                )
+                .map_err(|err| invalid_setup(&err))?;
+                one_hot_setup_verifier(self.one_hot_k, &prover_setup)
+            }
+        }
     }
 }
 
@@ -167,7 +269,10 @@ impl PartialEq for BackendVerifierCache {
 
 impl Eq for BackendVerifierCache {}
 
-/// Binds the setup key for one backend flavor into the transcript.
+/// Binds the setup key for one backend flavor into the transcript, by shape
+/// only: the backend key is a deterministic function of the absorbed
+/// dimensions over a fixed internal seed, so hashing the (large) serialized
+/// key adds no binding.
 pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,
@@ -179,14 +284,8 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append(&U64Word(AKITA_D as u64));
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
+    transcript.append(&U64Word(setup.one_hot_k as u64));
     transcript.append_bytes(&setup.default_layout_digest);
-    let vk_label: &[u8] = match flavor {
-        AkitaBackendFlavor::Full => b"akita_full_vk",
-        AkitaBackendFlavor::OneHot => b"akita_one_hot_vk",
-    };
-    let vk_bytes = setup.vk_bytes(flavor).unwrap_or_default();
-    transcript.append(&LabelWithCount(vk_label, vk_bytes.len() as u64));
-    transcript.append_bytes(vk_bytes);
 }
 
 /// Binds the batch statement (commitment group, point, per-claim data) into
@@ -231,7 +330,51 @@ pub struct AkitaCommitment {
     pub(crate) layout_digest: AkitaLayoutDigest,
     pub(crate) num_vars: usize,
     pub(crate) poly_count: usize,
+    pub(crate) one_hot_k: usize,
+    /// Field-coefficient count of the serialized backend commitment — the
+    /// deserialization context [`akita_types::Commitment`] requires.
+    pub(crate) backend_coeff_len: usize,
     pub(crate) serialized_backend_bytes: Vec<u8>,
+}
+
+impl jolt_openings::GroupCommitmentMetadata for AkitaCommitment {
+    fn is_one_hot_backend(&self) -> bool {
+        self.backend_flavor() == AkitaBackendFlavor::OneHot
+    }
+
+    fn layout_digest(&self) -> [u8; 32] {
+        self.layout_digest()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars()
+    }
+
+    fn poly_count(&self) -> usize {
+        self.poly_count()
+    }
+
+    fn one_hot_k(&self) -> usize {
+        self.one_hot_k()
+    }
+}
+
+impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
+    fn max_num_vars(&self) -> usize {
+        self.max_num_vars()
+    }
+
+    fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group()
+    }
+
+    fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest()
+    }
+
+    fn one_hot_k(&self) -> usize {
+        self.one_hot_k()
+    }
 }
 
 impl AkitaCommitment {
@@ -250,6 +393,10 @@ impl AkitaCommitment {
     pub fn poly_count(&self) -> usize {
         self.poly_count
     }
+
+    pub fn one_hot_k(&self) -> usize {
+        self.one_hot_k
+    }
 }
 
 impl AppendToTranscript for AkitaCommitment {
@@ -259,6 +406,8 @@ impl AppendToTranscript for AkitaCommitment {
         transcript.append_bytes(&self.layout_digest);
         transcript.append(&U64Word(self.num_vars as u64));
         transcript.append(&U64Word(self.poly_count as u64));
+        transcript.append(&U64Word(self.one_hot_k as u64));
+        transcript.append(&U64Word(self.backend_coeff_len as u64));
         transcript.append(&LabelWithCount(
             b"akita_commitment_bytes",
             self.serialized_backend_bytes.len() as u64,
@@ -270,7 +419,6 @@ impl AppendToTranscript for AkitaCommitment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
-    pub(crate) commitment: AkitaCommitment,
     pub(crate) statement_bridge: Vec<u8>,
     pub(crate) serialized_akita_proof_shape: Vec<u8>,
     pub(crate) serialized_akita_proof: Vec<u8>,
@@ -346,6 +494,15 @@ impl AkitaHintPolynomials {
             Self::SparseUnit(polys) => polys.len(),
         }
     }
+
+    pub(crate) fn one_hot_k(&self) -> Option<usize> {
+        match self {
+            Self::OneHot(polys) => polys
+                .first()
+                .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
+            Self::Dense(_) | Self::SparseUnit(_) => None,
+        }
+    }
 }
 
 /// `2^num_vars`, or `None` when it does not fit in `usize`.
@@ -375,12 +532,13 @@ pub(crate) fn backend_stack<'a>(
 
 pub(crate) fn one_hot_polynomial<P>(
     polynomial: &P,
+    one_hot_k: usize,
 ) -> Result<Option<AkitaBackendOneHotPoly>, OpeningsError>
 where
     P: MultilinearPoly<AkitaField> + ?Sized,
 {
     if !polynomial.is_one_hot()
-        || polynomial.one_hot_k() != Some(AKITA_ONE_HOT_K)
+        || polynomial.one_hot_k() != Some(one_hot_k)
         || polynomial.one_hot_index_order() != Some(OneHotIndexOrder::RowMajor)
     {
         return Ok(None);
@@ -389,9 +547,60 @@ where
     let indices = polynomial
         .one_hot_indices()
         .ok_or_else(|| invalid_batch("Jolt one-hot polynomial did not expose its indices"))?;
-    AkitaBackendOneHotPoly::new(AKITA_ONE_HOT_K, indices.to_vec())
+    let _ = validate_one_hot_k(one_hot_k)?;
+    AkitaBackendOneHotPoly::new(one_hot_k, AKITA_D, indices.to_vec())
         .map(Some)
         .map_err(akita_error)
+}
+
+pub(crate) fn owned_one_hot_polynomial(
+    polynomial: OneHotPolynomial,
+    one_hot_k: usize,
+) -> Result<AkitaBackendOneHotPoly, OpeningsError> {
+    if polynomial.k() != one_hot_k || polynomial.index_order() != OneHotIndexOrder::RowMajor {
+        return Err(invalid_batch(format!(
+            "Akita owned one-hot polynomial requires row-major K={one_hot_k}"
+        )));
+    }
+    let _ = validate_one_hot_k(one_hot_k)?;
+    AkitaBackendOneHotPoly::new(one_hot_k, AKITA_D, polynomial.into_indices()).map_err(akita_error)
+}
+
+pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsError> {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => Ok(4),
+        AKITA_ONE_HOT_K256 => Ok(8),
+        _ => Err(invalid_batch(format!(
+            "Akita one-hot chunk size must be 16 or 256, got {one_hot_k}"
+        ))),
+    }
+}
+
+pub(crate) fn one_hot_setup_prover(
+    one_hot_k: usize,
+    max_num_vars: usize,
+    max_num_polys: usize,
+) -> Result<AkitaBackendProverSetup, akita_pcs::AkitaError> {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_prover(max_num_vars, max_num_polys),
+        AKITA_ONE_HOT_K256 => {
+            AkitaOneHotK256BackendScheme::setup_prover(max_num_vars, max_num_polys)
+        }
+        _ => unreachable!("one-hot K is validated before backend setup"),
+    }
+}
+
+pub(crate) fn one_hot_setup_verifier(
+    one_hot_k: usize,
+    prover_setup: &AkitaBackendProverSetup,
+) -> Result<AkitaBackendVerifier, OpeningsError> {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => Ok(AkitaOneHotK16BackendScheme::setup_verifier(prover_setup)),
+        AKITA_ONE_HOT_K256 => Ok(AkitaOneHotK256BackendScheme::setup_verifier(prover_setup)),
+        _ => Err(invalid_batch(format!(
+            "Akita one-hot chunk size must be 16 or 256, got {one_hot_k}"
+        ))),
+    }
 }
 
 pub(crate) fn sparse_unit_polynomial(
@@ -426,13 +635,12 @@ pub(crate) fn sparse_unit_polynomial(
         coeffs.push((akita_index / AKITA_D, akita_index % AKITA_D, 1i8));
     }
 
-    AkitaBackendSparsePoly::from_signed_coeffs(num_vars, domain_size / AKITA_D, coeffs).map_err(
-        |error| {
+    AkitaBackendSparsePoly::from_signed_coeffs(num_vars, AKITA_D, domain_size / AKITA_D, coeffs)
+        .map_err(|error| {
             invalid_batch(format!(
                 "Akita sparse polynomial construction failed: {error}"
             ))
-        },
-    )
+        })
 }
 
 #[doc(hidden)]
@@ -450,7 +658,8 @@ pub(crate) fn dense_polynomials(
         .iter()
         .map(|poly| {
             let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals())?;
-            AkitaBackendDensePoly::from_field_evals(poly.num_vars(), &evals).map_err(akita_error)
+            AkitaBackendDensePoly::from_field_evals(poly.num_vars(), AKITA_D, &evals)
+                .map_err(akita_error)
         })
         .collect()
 }
@@ -520,7 +729,14 @@ pub(crate) fn deserialize_akita<T>(bytes: &[u8], ctx: &T::Context) -> Result<T, 
 where
     T: AkitaDeserialize,
 {
-    T::deserialize_compressed(Cursor::new(bytes), ctx).map_err(akita_error)
+    let mut cursor = Cursor::new(bytes);
+    let value = T::deserialize_compressed(&mut cursor, ctx).map_err(akita_error)?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(invalid_batch(
+            "Akita payload has trailing bytes after deserialization",
+        ));
+    }
+    Ok(value)
 }
 
 pub(crate) fn invalid_batch(message: impl Into<String>) -> OpeningsError {
