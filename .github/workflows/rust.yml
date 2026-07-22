@@ -363,6 +363,13 @@ jobs:
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
       - name: Test jolt-verifier with akita feature
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
+      - name: Test crates with field-inline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo nextest run -p jolt-claims -p jolt-r1cs \
+            -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
+            --features field-inline --no-tests=pass --cargo-quiet
 
   test-akita-schedules:
     name: Akita schedule catalog drift
@@ -378,13 +385,6 @@ jobs:
       # its own lane.
       - name: Regenerate schedule catalogs through the planner
         run: cargo nextest run --release -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
-      - name: Test crates with field-inline
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo nextest run -p jolt-claims -p jolt-r1cs \
-            -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
-            --features field-inline --no-tests=pass --cargo-quiet
 
   test-inlines:
     name: Test inlines
