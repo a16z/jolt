@@ -2,7 +2,7 @@
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
+use jolt_verifier::stages::formula_dimensions_from_parts;
 use jolt_verifier::{CheckedInputs, VerifierError};
 
 use crate::ProverConfig;
@@ -19,8 +19,8 @@ pub mod stage6b;
 pub mod stage7;
 pub mod stage8;
 
-/// The one-hot formula dimensions, built exactly as the verifier's
-/// `build_formula_dimensions` builds them (which reads the one-hot config off
+/// The one-hot formula dimensions, built by the same core constructor as the
+/// verifier's `build_formula_dimensions` (which reads the one-hot config off
 /// the proof; the prover reads it off its own derived config — stage 0 wrote
 /// that same value to the wire). `stage` attributes a geometry failure to the
 /// consuming relation.
@@ -31,14 +31,11 @@ pub(crate) fn formula_dimensions(
     stage: JoltRelationId,
 ) -> Result<JoltFormulaDimensions, VerifierError> {
     let log_t = checked.trace_length.ilog2() as usize;
-    JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
+    formula_dimensions_from_parts(
+        config.one_hot_config,
         log_t,
-        2 * RISCV_XLEN,
         bytecode_len,
         checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage,
-        reason: error.to_string(),
-    })
+    )
 }

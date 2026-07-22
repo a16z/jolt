@@ -4,8 +4,9 @@ use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::{advice, bytecode, program_image},
     geometry::dimensions::JoltFormulaDimensions,
     geometry::error::JoltFormulaPointError,
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
-    PrecommittedClaimReduction, ProgramImageClaimReductionLayout, TracePolynomialOrder,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltOneHotConfig,
+    JoltRelationId, PrecommittedClaimReduction, ProgramImageClaimReductionLayout,
+    TracePolynomialOrder,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
@@ -46,11 +47,30 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+    formula_dimensions_from_parts(
+        proof.one_hot_config,
         log_t,
-        2 * RISCV_XLEN,
         preprocessing.program.bytecode_len(),
         checked.ram_K,
+        stage,
+    )
+}
+
+/// Core [`JoltFormulaDimensions`] constructor over primitive geometry inputs,
+/// shared by the verifier's [`build_formula_dimensions`] and the prover's
+/// `formula_dimensions` so the two sides cannot drift apart.
+pub fn formula_dimensions_from_parts(
+    one_hot_config: JoltOneHotConfig,
+    log_t: usize,
+    bytecode_len: usize,
+    ram_k: usize,
+    stage: JoltRelationId,
+) -> Result<JoltFormulaDimensions, VerifierError> {
+    JoltFormulaDimensions::try_from(one_hot_config.dimensions(
+        log_t,
+        2 * RISCV_XLEN,
+        bytecode_len,
+        ram_k,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage,
