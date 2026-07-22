@@ -77,7 +77,7 @@ jobs:
           --message-format=short
           -p jolt-claims
           -p jolt-r1cs
-          -p tracer
+          -p jolt-tracer
           -p jolt-program
           -p jolt-riscv
           -p jolt-lookup-tables
@@ -375,9 +375,9 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run tracer tests
-        run: cargo nextest run --release -p tracer --features test-utils --cargo-quiet
+        run: cargo nextest run --release -p jolt-tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
-        run: cargo nextest run --release -p tracer --features test-utils,field-inline --cargo-quiet
+        run: cargo nextest run --release -p jolt-tracer --features test-utils,field-inline --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests

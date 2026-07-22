@@ -10,7 +10,7 @@ use crate::zkvm::proof::{ProofCommitmentScheme, ProofCurve, ProofField};
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 use jolt_common::jolt_device::MemoryLayout;
-use tracer::JoltDevice;
+use jolt_tracer::JoltDevice;
 
 #[cfg(feature = "prover")]
 pub fn preprocess(

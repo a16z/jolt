@@ -34,7 +34,7 @@ mod tests {
     fn materialize_entry_virtualadviceload() {
         materialize_entry_test!(
             VirtualAdviceLoad,
-            tracer::instruction::virtual_advice_load::VirtualAdviceLoad
+            jolt_tracer::instruction::virtual_advice_load::VirtualAdviceLoad
         );
     }
 
@@ -42,7 +42,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualadviceload() {
         instruction_inputs_match_constraint_test!(
             VirtualAdviceLoad,
-            tracer::instruction::virtual_advice_load::VirtualAdviceLoad
+            jolt_tracer::instruction::virtual_advice_load::VirtualAdviceLoad
         );
     }
 }

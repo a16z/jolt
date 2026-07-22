@@ -33,16 +33,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_ori() {
-        materialize_entry_test!(OrI, tracer::instruction::ori::ORI);
+        materialize_entry_test!(OrI, jolt_tracer::instruction::ori::ORI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_ori() {
-        instruction_inputs_match_constraint_test!(OrI, tracer::instruction::ori::ORI);
+        instruction_inputs_match_constraint_test!(OrI, jolt_tracer::instruction::ori::ORI);
     }
 
     #[test]
     fn lookup_output_matches_trace_ori() {
-        lookup_output_matches_trace_test!(OrI, tracer::instruction::ori::ORI);
+        lookup_output_matches_trace_test!(OrI, jolt_tracer::instruction::ori::ORI);
     }
 }

@@ -1,7 +1,7 @@
 use jolt_common::jolt_device::MemoryLayout;
 use num_traits::Zero;
 use std::{array, iter::zip, sync::Arc};
-use tracer::{instruction::Cycle, JoltDevice};
+use jolt_tracer::{instruction::Cycle, JoltDevice};
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

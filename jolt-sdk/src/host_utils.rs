@@ -22,7 +22,7 @@ pub use jolt_program::execution::{
     ExecutionBackend, OwnedTrace, TraceError, TraceInputs, TraceOutput, TraceSource,
 };
 #[cfg(feature = "host")]
-pub use tracer::TracerBackend;
+pub use jolt_tracer::TracerBackend;
 
 pub use jolt_common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 pub use jolt_prover_legacy::ark_bn254::Fr as F;

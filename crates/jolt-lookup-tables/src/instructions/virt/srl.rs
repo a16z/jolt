@@ -31,19 +31,19 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsrl() {
-        materialize_entry_test!(VirtualSrl, tracer::instruction::virtual_srl::VirtualSRL);
+        materialize_entry_test!(VirtualSrl, jolt_tracer::instruction::virtual_srl::VirtualSRL);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsrl() {
         instruction_inputs_match_constraint_test!(
             VirtualSrl,
-            tracer::instruction::virtual_srl::VirtualSRL
+            jolt_tracer::instruction::virtual_srl::VirtualSRL
         );
     }
 
     #[test]
     fn lookup_output_matches_trace_virtualsrl() {
-        lookup_output_matches_trace_test!(VirtualSrl, tracer::instruction::virtual_srl::VirtualSRL);
+        lookup_output_matches_trace_test!(VirtualSrl, jolt_tracer::instruction::virtual_srl::VirtualSRL);
     }
 }

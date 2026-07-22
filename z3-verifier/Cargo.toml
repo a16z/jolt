@@ -7,5 +7,5 @@ paste.workspace = true
 
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
 jolt-common = { workspace = true, features = ["std"] }
-tracer = { path = "../tracer" }
+jolt-tracer = { workspace = true, features = ["std"] }
 z3 = "0.20.0"

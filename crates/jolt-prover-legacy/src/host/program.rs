@@ -18,9 +18,9 @@ use std::io;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
-use tracer::emulator::memory::Memory;
-use tracer::instruction::Cycle;
-use tracer::LazyTraceIterator;
+use jolt_tracer::emulator::memory::Memory;
+use jolt_tracer::instruction::Cycle;
+use jolt_tracer::LazyTraceIterator;
 use tracing::info;
 
 impl Program {
@@ -303,7 +303,7 @@ impl Program {
         let elf_contents = self
             .get_elf_contents()
             .expect("ELF contents should be available after building the guest");
-        let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
+        let mut inline_provider = jolt_tracer::TracerInlineExpansionProvider::new();
         jolt_program::build_jolt_program_with_inline_provider(
             &elf_contents,
             &mut inline_provider,
@@ -392,7 +392,7 @@ impl Program {
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
-        tracer::trace_to_file(
+        jolt_tracer::trace_to_file(
             &elf_contents,
             self.elf.as_ref(),
             inputs,
@@ -410,7 +410,7 @@ impl Program {
         trusted_advice: &[u8],
     ) -> ProgramSummary {
         let (bytecode, init_memory_state, _, _) = self.decode();
-        let mut backend = tracer::TracerBackend::new();
+        let mut backend = jolt_tracer::TracerBackend::new();
         let trace_output = self
             .trace_with_backend(&mut backend, inputs, untrusted_advice, trusted_advice)
             .expect("failed to trace program with default tracer backend");

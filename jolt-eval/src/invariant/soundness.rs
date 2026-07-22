@@ -7,7 +7,7 @@ use jolt_common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUS
 use jolt_common::jolt_device::MemoryConfig;
 use jolt_prover_legacy::host::Program;
 
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 use super::{CheckError, Invariant, InvariantViolation};
 use crate::guests;

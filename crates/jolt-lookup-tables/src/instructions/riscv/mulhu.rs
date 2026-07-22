@@ -39,16 +39,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_mulhu() {
-        materialize_entry_test!(MulHU, tracer::instruction::mulhu::MULHU);
+        materialize_entry_test!(MulHU, jolt_tracer::instruction::mulhu::MULHU);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_mulhu() {
-        instruction_inputs_match_constraint_test!(MulHU, tracer::instruction::mulhu::MULHU);
+        instruction_inputs_match_constraint_test!(MulHU, jolt_tracer::instruction::mulhu::MULHU);
     }
 
     #[test]
     fn lookup_output_matches_trace_mulhu() {
-        lookup_output_matches_trace_test!(MulHU, tracer::instruction::mulhu::MULHU);
+        lookup_output_matches_trace_test!(MulHU, jolt_tracer::instruction::mulhu::MULHU);
     }
 }

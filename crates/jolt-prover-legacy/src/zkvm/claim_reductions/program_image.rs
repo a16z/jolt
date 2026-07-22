@@ -29,7 +29,7 @@ use crate::zkvm::claim_reductions::{
 };
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use tracer::JoltDevice;
+use jolt_tracer::JoltDevice;
 
 use super::precommitted::{PrecommittedParams, PrecommittedProver};
 

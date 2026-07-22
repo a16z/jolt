@@ -24,4 +24,4 @@ pub mod zkvm;
 pub use ark_bn254;
 
 // Re-export AdviceTape type for use in generated code
-pub use tracer::emulator::cpu::AdviceTape;
+pub use jolt_tracer::emulator::cpu::AdviceTape;

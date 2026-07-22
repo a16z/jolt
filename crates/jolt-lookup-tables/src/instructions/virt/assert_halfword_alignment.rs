@@ -41,7 +41,7 @@ mod tests {
     fn materialize_entry_virtualasserthalfwordalignment() {
         materialize_entry_test!(
             AssertHalfwordAlignment,
-            tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment
+            jolt_tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment
         );
     }
 
@@ -49,7 +49,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualasserthalfwordalignment() {
         instruction_inputs_match_constraint_test!(
             AssertHalfwordAlignment,
-            tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment
+            jolt_tracer::instruction::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment
         );
     }
 }

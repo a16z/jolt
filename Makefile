@@ -29,7 +29,7 @@ bootstrap: ## Install arch-test prerequisites (riscv64 toolchain, sail_riscv_sim
 build-emulator: ## Build the jolt-emu binary in debug mode
 	# Debug build is intentional — arch tests are correctness-sensitive and
 	# don't benefit from release optimizations.
-	cargo build -p tracer --bin jolt-emu
+	cargo build -p jolt-tracer --bin jolt-emu
 
 arch-tests-64imac: build-emulator arch-tests-generate arch-tests-run ## Run the ACT4 RV64IMAC suite end-to-end against jolt-emu
 

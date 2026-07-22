@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{
+use jolt_tracer::instruction::{
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, RISCVCycle,
 };
 

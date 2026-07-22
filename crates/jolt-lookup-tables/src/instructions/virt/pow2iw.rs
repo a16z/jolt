@@ -40,14 +40,14 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualpow2iw() {
-        materialize_entry_test!(Pow2IW, tracer::instruction::virtual_pow2i_w::VirtualPow2IW);
+        materialize_entry_test!(Pow2IW, jolt_tracer::instruction::virtual_pow2i_w::VirtualPow2IW);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualpow2iw() {
         instruction_inputs_match_constraint_test!(
             Pow2IW,
-            tracer::instruction::virtual_pow2i_w::VirtualPow2IW
+            jolt_tracer::instruction::virtual_pow2i_w::VirtualPow2IW
         );
     }
 
@@ -55,7 +55,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualpow2iw() {
         lookup_output_matches_trace_test!(
             Pow2IW,
-            tracer::instruction::virtual_pow2i_w::VirtualPow2IW
+            jolt_tracer::instruction::virtual_pow2i_w::VirtualPow2IW
         );
     }
 }

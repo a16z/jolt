@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 pub use num_bigint::BigUint as NBigUint;
-use tracer::{
+use jolt_tracer::{
     instruction::inline::INLINE,
     utils::{
         inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
@@ -14,11 +14,11 @@ pub use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
     InlineRegister, Value,
 };
-pub use tracer::emulator::cpu::Cpu;
-pub use tracer::instruction::format::format_inline::FormatInline;
-pub use tracer::instruction::inline::InlineRegistration;
-pub use tracer::utils::inline_sequence_writer::AppendMode;
-pub use tracer::InlineExtension;
+pub use jolt_tracer::emulator::cpu::Cpu;
+pub use jolt_tracer::instruction::format::format_inline::FormatInline;
+pub use jolt_tracer::instruction::inline::InlineRegistration;
+pub use jolt_tracer::utils::inline_sequence_writer::AppendMode;
+pub use jolt_tracer::InlineExtension;
 
 pub type FieldElementLimbs = [u64; 4];
 

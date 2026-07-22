@@ -34,16 +34,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_andi() {
-        materialize_entry_test!(AndI, tracer::instruction::andi::ANDI);
+        materialize_entry_test!(AndI, jolt_tracer::instruction::andi::ANDI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_andi() {
-        instruction_inputs_match_constraint_test!(AndI, tracer::instruction::andi::ANDI);
+        instruction_inputs_match_constraint_test!(AndI, jolt_tracer::instruction::andi::ANDI);
     }
 
     #[test]
     fn lookup_output_matches_trace_andi() {
-        lookup_output_matches_trace_test!(AndI, tracer::instruction::andi::ANDI);
+        lookup_output_matches_trace_test!(AndI, jolt_tracer::instruction::andi::ANDI);
     }
 }

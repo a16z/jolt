@@ -21,7 +21,7 @@ zk = ["jolt-prover-legacy?/zk", "jolt-verifier?/zk"]
 field-inline = [
   "jolt-prover-legacy?/field-inline",
   "jolt-program?/field-inline",
-  "tracer?/field-inline",
+  "jolt-tracer?/field-inline",
 ]
 
 host = [
@@ -35,7 +35,7 @@ host = [
   "dep:jolt-program",
   "dep:jolt-transcript",
   "dep:jolt-verifier",
-  "dep:tracer",
+  "dep:jolt-tracer",
   "postcard/use-std",
   "serde/std",
 ]
@@ -110,7 +110,7 @@ jolt-field = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }
 jolt-transcript = { workspace = true, optional = true }
 jolt-verifier = { workspace = true, optional = true }
-tracer = { workspace = true, default-features = false, features = [
+jolt-tracer = { workspace = true, default-features = false, features = [
   "std",
 ], optional = true }
 zeroos = { workspace = true, optional = true }

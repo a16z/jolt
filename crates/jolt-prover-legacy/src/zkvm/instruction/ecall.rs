@@ -1,4 +1,4 @@
-use tracer::instruction::{ecall::ECALL, RISCVCycle};
+use jolt_tracer::instruction::{ecall::ECALL, RISCVCycle};
 
 use super::LookupQuery;
 

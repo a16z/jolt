@@ -42,19 +42,19 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualpow2i() {
-        materialize_entry_test!(Pow2I, tracer::instruction::virtual_pow2i::VirtualPow2I);
+        materialize_entry_test!(Pow2I, jolt_tracer::instruction::virtual_pow2i::VirtualPow2I);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualpow2i() {
         instruction_inputs_match_constraint_test!(
             Pow2I,
-            tracer::instruction::virtual_pow2i::VirtualPow2I
+            jolt_tracer::instruction::virtual_pow2i::VirtualPow2I
         );
     }
 
     #[test]
     fn lookup_output_matches_trace_virtualpow2i() {
-        lookup_output_matches_trace_test!(Pow2I, tracer::instruction::virtual_pow2i::VirtualPow2I);
+        lookup_output_matches_trace_test!(Pow2I, jolt_tracer::instruction::virtual_pow2i::VirtualPow2I);
     }
 }

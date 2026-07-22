@@ -42,16 +42,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_sub() {
-        materialize_entry_test!(Sub, tracer::instruction::sub::SUB);
+        materialize_entry_test!(Sub, jolt_tracer::instruction::sub::SUB);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_sub() {
-        instruction_inputs_match_constraint_test!(Sub, tracer::instruction::sub::SUB);
+        instruction_inputs_match_constraint_test!(Sub, jolt_tracer::instruction::sub::SUB);
     }
 
     #[test]
     fn lookup_output_matches_trace_sub() {
-        lookup_output_matches_trace_test!(Sub, tracer::instruction::sub::SUB);
+        lookup_output_matches_trace_test!(Sub, jolt_tracer::instruction::sub::SUB);
     }
 }

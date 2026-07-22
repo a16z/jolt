@@ -36,4 +36,4 @@ thiserror.workspace = true
 jolt-dory.workspace = true
 jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 postcard = { workspace = true, features = ["use-std"] }
-tracer.workspace = true
+jolt-tracer.workspace = true

@@ -30,7 +30,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use jolt_common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 use rayon::prelude::*;
-use tracer::JoltDevice;
+use jolt_tracer::JoltDevice;
 
 // RAM output sumchecks
 //

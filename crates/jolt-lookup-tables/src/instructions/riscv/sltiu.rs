@@ -33,16 +33,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_sltiu() {
-        materialize_entry_test!(SltIU, tracer::instruction::sltiu::SLTIU);
+        materialize_entry_test!(SltIU, jolt_tracer::instruction::sltiu::SLTIU);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_sltiu() {
-        instruction_inputs_match_constraint_test!(SltIU, tracer::instruction::sltiu::SLTIU);
+        instruction_inputs_match_constraint_test!(SltIU, jolt_tracer::instruction::sltiu::SLTIU);
     }
 
     #[test]
     fn lookup_output_matches_trace_sltiu() {
-        lookup_output_matches_trace_test!(SltIU, tracer::instruction::sltiu::SLTIU);
+        lookup_output_matches_trace_test!(SltIU, jolt_tracer::instruction::sltiu::SLTIU);
     }
 }

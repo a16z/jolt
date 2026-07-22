@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_srl::VirtualSRL, RISCVCycle};
+use jolt_tracer::instruction::{virtual_srl::VirtualSRL, RISCVCycle};
 
 use crate::zkvm::lookup_table::{virtual_srl::VirtualSRLTable, LookupTables};
 

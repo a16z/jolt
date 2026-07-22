@@ -2,9 +2,9 @@ use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
 use std::path::PathBuf;
-use tracer::emulator::memory::Memory;
-use tracer::instruction::Cycle;
-use tracer::LazyTraceIterator;
+use jolt_tracer::emulator::memory::Memory;
+use jolt_tracer::instruction::Cycle;
+use jolt_tracer::LazyTraceIterator;
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]
@@ -105,7 +105,7 @@ pub fn decode(elf: &[u8]) -> (Vec<JoltInstructionRow>, Vec<(u64, u8)>, u64, u64)
     let image =
         jolt_program::image::decode_elf(elf, RV64IMAC_JOLT).expect("program ELF decoding failed");
     let program_size = image.program_end - RAM_START_ADDRESS;
-    let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
+    let mut inline_provider = jolt_tracer::TracerInlineExpansionProvider::new();
     let instructions = jolt_program::expand::expand_program_with_provider(
         &image.instructions,
         &mut inline_provider,
@@ -134,15 +134,15 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-    advice_tape: Option<tracer::AdviceTape>,
+    advice_tape: Option<jolt_tracer::AdviceTape>,
 ) -> (
     LazyTraceIterator,
     Vec<Cycle>,
     Memory,
     JoltDevice,
-    tracer::AdviceTape,
+    jolt_tracer::AdviceTape,
 ) {
-    tracer::trace(
+    jolt_tracer::trace(
         elf_contents,
         elf_path,
         inputs,
@@ -162,7 +162,7 @@ pub fn trace_to_file(
     memory_config: &MemoryConfig,
     trace_file: &PathBuf,
 ) -> (Memory, JoltDevice) {
-    let (memory, io_device) = tracer::trace_to_file(
+    let (memory, io_device) = jolt_tracer::trace_to_file(
         elf_contents,
         elf_path,
         inputs,

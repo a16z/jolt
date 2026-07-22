@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{mulhu::MULHU, RISCVCycle};
+use jolt_tracer::instruction::{mulhu::MULHU, RISCVCycle};
 
 use crate::zkvm::lookup_table::{upper_word::UpperWordTable, LookupTables};
 

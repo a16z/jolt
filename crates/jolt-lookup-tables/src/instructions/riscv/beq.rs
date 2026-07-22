@@ -27,11 +27,11 @@ mod tests {
 
     #[test]
     fn materialize_entry_beq() {
-        materialize_entry_test!(Beq, tracer::instruction::beq::BEQ);
+        materialize_entry_test!(Beq, jolt_tracer::instruction::beq::BEQ);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_beq() {
-        instruction_inputs_match_constraint_test!(Beq, tracer::instruction::beq::BEQ);
+        instruction_inputs_match_constraint_test!(Beq, jolt_tracer::instruction::beq::BEQ);
     }
 }

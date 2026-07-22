@@ -1,4 +1,4 @@
-use tracer::instruction::{add::ADD, RISCVCycle};
+use jolt_tracer::instruction::{add::ADD, RISCVCycle};
 
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};

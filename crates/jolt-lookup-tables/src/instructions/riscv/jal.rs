@@ -44,16 +44,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_jal() {
-        materialize_entry_test!(Jal, tracer::instruction::jal::JAL);
+        materialize_entry_test!(Jal, jolt_tracer::instruction::jal::JAL);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_jal() {
-        instruction_inputs_match_constraint_test!(Jal, tracer::instruction::jal::JAL);
+        instruction_inputs_match_constraint_test!(Jal, jolt_tracer::instruction::jal::JAL);
     }
 
     #[test]
     fn lookup_output_matches_trace_jal() {
-        lookup_output_matches_trace_test!(Jal, tracer::instruction::jal::JAL);
+        lookup_output_matches_trace_test!(Jal, jolt_tracer::instruction::jal::JAL);
     }
 }

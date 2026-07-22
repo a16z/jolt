@@ -1,4 +1,4 @@
-use tracer::instruction::{ebreak::EBREAK, RISCVCycle};
+use jolt_tracer::instruction::{ebreak::EBREAK, RISCVCycle};
 
 use super::LookupQuery;
 

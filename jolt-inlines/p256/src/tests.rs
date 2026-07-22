@@ -6,7 +6,7 @@ mod p256_tests {
     };
     use crate::{P256_CURVE_B, P256_GENERATOR_X, P256_GENERATOR_Y, P256_MODULUS, P256_ORDER};
     use num_bigint::BigUint;
-    use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+    use jolt_tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     // Helper: convert [u64; 4] little-endian limbs to BigUint
     fn limbs_to_biguint(limbs: &[u64; 4]) -> BigUint {

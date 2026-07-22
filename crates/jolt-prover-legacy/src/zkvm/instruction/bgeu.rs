@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{bgeu::BGEU, RISCVCycle};
+use jolt_tracer::instruction::{bgeu::BGEU, RISCVCycle};
 
 use crate::zkvm::lookup_table::{
     unsigned_greater_than_equal::UnsignedGreaterThanEqualTable, LookupTables,

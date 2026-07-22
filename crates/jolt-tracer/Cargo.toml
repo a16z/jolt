@@ -1,5 +1,5 @@
 [package]
-name = "tracer"
+name = "jolt-tracer"
 version = "0.2.0"
 authors = [
   # author of the original riscv-rust codebase

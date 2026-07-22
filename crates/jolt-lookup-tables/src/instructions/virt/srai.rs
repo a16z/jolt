@@ -34,14 +34,14 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsrai() {
-        materialize_entry_test!(VirtualSrai, tracer::instruction::virtual_srai::VirtualSRAI);
+        materialize_entry_test!(VirtualSrai, jolt_tracer::instruction::virtual_srai::VirtualSRAI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsrai() {
         instruction_inputs_match_constraint_test!(
             VirtualSrai,
-            tracer::instruction::virtual_srai::VirtualSRAI
+            jolt_tracer::instruction::virtual_srai::VirtualSRAI
         );
     }
 
@@ -49,7 +49,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualsrai() {
         lookup_output_matches_trace_test!(
             VirtualSrai,
-            tracer::instruction::virtual_srai::VirtualSRAI
+            jolt_tracer::instruction::virtual_srai::VirtualSRAI
         );
     }
 }

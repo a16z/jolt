@@ -8,7 +8,7 @@ use jolt_common::constants::XLEN;
 use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 use super::LOG_K;
 
@@ -1438,7 +1438,7 @@ mod tests {
     use ark_std::Zero;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use jolt_tracer::instruction::Cycle;
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;

@@ -41,7 +41,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 // RAM read-write checking sumcheck
 //

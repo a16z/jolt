@@ -22,7 +22,7 @@ mod tests {
     };
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
-    use tracer::{InlineRegistration, TracerInlineExpansionProvider};
+    use jolt_tracer::{InlineRegistration, TracerInlineExpansionProvider};
 
     const FIXTURE_PATH: &str = "fixtures/registered_inline_expand_parity_hashes.jsonl";
 

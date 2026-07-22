@@ -32,16 +32,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_slt() {
-        materialize_entry_test!(Slt, tracer::instruction::slt::SLT);
+        materialize_entry_test!(Slt, jolt_tracer::instruction::slt::SLT);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_slt() {
-        instruction_inputs_match_constraint_test!(Slt, tracer::instruction::slt::SLT);
+        instruction_inputs_match_constraint_test!(Slt, jolt_tracer::instruction::slt::SLT);
     }
 
     #[test]
     fn lookup_output_matches_trace_slt() {
-        lookup_output_matches_trace_test!(Slt, tracer::instruction::slt::SLT);
+        lookup_output_matches_trace_test!(Slt, jolt_tracer::instruction::slt::SLT);
     }
 }

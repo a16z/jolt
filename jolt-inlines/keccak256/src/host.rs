@@ -13,17 +13,17 @@ mod tests {
     use std::path::Path;
 
     use jolt_inlines_sdk::host::InlineOp;
-    use tracer::instruction::inline::INLINE;
-    use tracer::utils::inline_sequence_writer::{
+    use jolt_tracer::instruction::inline::INLINE;
+    use jolt_tracer::utils::inline_sequence_writer::{
         DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3,
     };
-    use tracer::utils::virtual_registers::VirtualRegisterAllocator;
+    use jolt_tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
     use crate::sequence_builder::Keccak256Permutation;
 
     #[test]
     fn test_keccak256_trace_file_matches_generated() {
-        use tracer::utils::inline_sequence_writer::{
+        use jolt_tracer::utils::inline_sequence_writer::{
             write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
         };
 

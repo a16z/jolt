@@ -51,7 +51,7 @@ use allocative::Allocative;
 use ark_ff::biginteger::S64;
 use ark_std::Zero;
 use rayon::prelude::*;
-use tracer::instruction::{Cycle, RAMAccess};
+use jolt_tracer::instruction::{Cycle, RAMAccess};
 
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;

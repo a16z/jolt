@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{andn::ANDN, RISCVCycle};
+use jolt_tracer::instruction::{andn::ANDN, RISCVCycle};
 
 use crate::zkvm::lookup_table::{andn::AndnTable, LookupTables};
 

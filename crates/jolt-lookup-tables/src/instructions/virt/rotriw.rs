@@ -44,7 +44,7 @@ mod tests {
     fn materialize_entry_virtualrotriw() {
         materialize_entry_test!(
             VirtualRotriw,
-            tracer::instruction::virtual_rotriw::VirtualROTRIW
+            jolt_tracer::instruction::virtual_rotriw::VirtualROTRIW
         );
     }
 
@@ -52,7 +52,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualrotriw() {
         instruction_inputs_match_constraint_test!(
             VirtualRotriw,
-            tracer::instruction::virtual_rotriw::VirtualROTRIW
+            jolt_tracer::instruction::virtual_rotriw::VirtualROTRIW
         );
     }
 
@@ -60,7 +60,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualrotriw() {
         lookup_output_matches_trace_test!(
             VirtualRotriw,
-            tracer::instruction::virtual_rotriw::VirtualROTRIW
+            jolt_tracer::instruction::virtual_rotriw::VirtualROTRIW
         );
     }
 }

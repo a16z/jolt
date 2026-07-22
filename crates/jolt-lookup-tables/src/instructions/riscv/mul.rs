@@ -40,16 +40,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_mul() {
-        materialize_entry_test!(Mul, tracer::instruction::mul::MUL);
+        materialize_entry_test!(Mul, jolt_tracer::instruction::mul::MUL);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_mul() {
-        instruction_inputs_match_constraint_test!(Mul, tracer::instruction::mul::MUL);
+        instruction_inputs_match_constraint_test!(Mul, jolt_tracer::instruction::mul::MUL);
     }
 
     #[test]
     fn lookup_output_matches_trace_mul() {
-        lookup_output_matches_trace_test!(Mul, tracer::instruction::mul::MUL);
+        lookup_output_matches_trace_test!(Mul, jolt_tracer::instruction::mul::MUL);
     }
 }

@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_movsign::VirtualMovsign, RISCVCycle};
+use jolt_tracer::instruction::{virtual_movsign::VirtualMovsign, RISCVCycle};
 
 use crate::zkvm::lookup_table::{movsign::MovsignTable, LookupTables};
 

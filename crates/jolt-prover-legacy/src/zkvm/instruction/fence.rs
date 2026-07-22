@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::NUM_INSTRUCTION_FLAGS;
-use tracer::instruction::{fence::FENCE, RISCVCycle};
+use jolt_tracer::instruction::{fence::FENCE, RISCVCycle};
 
 use crate::zkvm::lookup_table::LookupTables;
 

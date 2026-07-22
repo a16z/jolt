@@ -2,7 +2,7 @@ use crate::{field::JoltField, zkvm::instruction::LookupQuery};
 use jolt_common::constants::XLEN;
 use jolt_riscv::JoltInstructionRowData;
 use rand::prelude::*;
-use tracer::{
+use jolt_tracer::{
     emulator::{cpu::Cpu, terminal::DummyTerminal},
     instruction::{
         self, format::InstructionRegisterState, Cycle, RISCVCycle, RISCVInstruction, RISCVTrace,
@@ -38,7 +38,7 @@ mod flags {
     use super::CircuitFlags;
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
     use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use jolt_tracer::instruction::Cycle;
 
     #[test]
     fn left_operand_exclusive() {
@@ -214,7 +214,7 @@ mod r1cs_consistency {
     use jolt_common::constants::XLEN;
     use rand::{rngs::StdRng, SeedableRng};
     use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use jolt_tracer::instruction::Cycle;
 
     use crate::zkvm::instruction::{
         Flags, InstructionFlags, JoltTraceCycle, LookupQuery, SupportedInstruction,

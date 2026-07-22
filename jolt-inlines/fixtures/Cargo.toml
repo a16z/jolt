@@ -40,4 +40,4 @@ jolt-riscv = { workspace = true, features = ["serialization"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 sha2.workspace = true
-tracer = { workspace = true, features = ["std"] }
+jolt-tracer = { workspace = true, features = ["std"] }

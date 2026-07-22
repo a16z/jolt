@@ -57,7 +57,7 @@ field-inline = [
   "jolt-lookup-tables/field-inline",
   "jolt-program/field-inline",
   "jolt-riscv/field-inline",
-  "tracer/field-inline",
+  "jolt-tracer/field-inline",
 ]
 transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
 transcript-keccak = []
@@ -94,7 +94,7 @@ tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
 eyre.workspace = true
 jolt-common.workspace = true
-tracer = { workspace = true, default-features = false, features = ["std"] }
+jolt-tracer = { workspace = true, default-features = false, features = ["std"] }
 bincode.workspace = true
 derive_more.workspace = true
 dory.workspace = true
@@ -132,7 +132,7 @@ ignored = ["prost"]
 criterion.workspace = true
 iai-callgrind.workspace = true
 serial_test.workspace = true
-tracer = { workspace = true, default-features = false, features = [
+jolt-tracer = { workspace = true, default-features = false, features = [
   "std",
   "test-utils",
 ] }

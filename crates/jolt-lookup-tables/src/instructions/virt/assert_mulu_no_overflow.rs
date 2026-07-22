@@ -40,7 +40,7 @@ mod tests {
     fn materialize_entry_virtualassertmulunooverflow() {
         materialize_entry_test!(
             AssertMulUNoOverflow,
-            tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow
+            jolt_tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow
         );
     }
 
@@ -48,7 +48,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualassertmulunooverflow() {
         instruction_inputs_match_constraint_test!(
             AssertMulUNoOverflow,
-            tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow
+            jolt_tracer::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow
         );
     }
 }

@@ -59,7 +59,7 @@ use eyre::Result;
 use prover::JoltCpuProver;
 use std::io::Cursor;
 use std::path::PathBuf;
-use tracer::JoltDevice;
+use jolt_tracer::JoltDevice;
 
 pub mod bytecode;
 pub mod claim_reductions;

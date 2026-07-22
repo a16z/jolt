@@ -40,16 +40,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_lui() {
-        materialize_entry_test!(Lui, tracer::instruction::lui::LUI);
+        materialize_entry_test!(Lui, jolt_tracer::instruction::lui::LUI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_lui() {
-        instruction_inputs_match_constraint_test!(Lui, tracer::instruction::lui::LUI);
+        instruction_inputs_match_constraint_test!(Lui, jolt_tracer::instruction::lui::LUI);
     }
 
     #[test]
     fn lookup_output_matches_trace_lui() {
-        lookup_output_matches_trace_test!(Lui, tracer::instruction::lui::LUI);
+        lookup_output_matches_trace_test!(Lui, jolt_tracer::instruction::lui::LUI);
     }
 }

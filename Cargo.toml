@@ -48,7 +48,7 @@ members = [
   "crates/jolt-kernels",
   "crates/jolt-prover",
   "crates/jolt-prover-legacy",
-  "tracer",
+  "crates/jolt-tracer",
   "crates/jolt-common",
   "jolt-platform",
   "jolt-sdk",
@@ -398,7 +398,7 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 
 # Internal dependencies
 jolt-common = { path = "./crates/jolt-common", default-features = false }
-tracer = { path = "./tracer", default-features = false }
+jolt-tracer = { path = "./crates/jolt-tracer", default-features = false }
 jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
 jolt-akita = { path = "./crates/jolt-akita" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }

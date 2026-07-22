@@ -19,4 +19,4 @@ hex-literal.workspace = true
 jolt-inlines-sdk = { workspace = true, features = ["test-utils"] }
 rand = { workspace = true, features = ["std", "std_rng"] }
 sha3.workspace = true
-tracer = { workspace = true, features = ["std", "test-utils"] }
+jolt-tracer = { workspace = true, features = ["std", "test-utils"] }

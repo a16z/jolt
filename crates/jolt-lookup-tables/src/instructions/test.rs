@@ -4,9 +4,9 @@ use std::any::TypeId;
 
 use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltInstructionRowData};
 use rand::prelude::*;
-use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
-use tracer::instruction::format::{InstructionFormat, InstructionRegisterState};
-use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
+use jolt_tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
+use jolt_tracer::instruction::format::{InstructionFormat, InstructionRegisterState};
+use jolt_tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
 
@@ -16,11 +16,11 @@ pub trait RandomLookupCycle: JoltCycle {
 
 impl<T> RandomLookupCycle for RISCVCycle<T>
 where
-    T: tracer::instruction::RISCVInstruction + JoltInstructionRowData,
+    T: jolt_tracer::instruction::RISCVInstruction + JoltInstructionRowData,
 {
     fn random(rng: &mut StdRng) -> Self {
         let instruction = T::random(rng);
-        let concrete: tracer::instruction::Instruction = instruction.into();
+        let concrete: jolt_tracer::instruction::Instruction = instruction.into();
         let source_instruction = concrete.source_instruction();
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
@@ -205,14 +205,14 @@ where
 /// `RISCVCycle<TracerType>` type pair.
 ///
 /// ```ignore
-/// materialize_entry_test!(Add, tracer::instruction::add::ADD);
+/// materialize_entry_test!(Add, jolt_tracer::instruction::add::ADD);
 /// ```
 #[macro_export]
 macro_rules! materialize_entry_test {
     ($jolt:ident, $tracer:path $(,)?) => {
         $crate::instructions::test::materialize_entry_test_fn::<
-            $jolt<tracer::instruction::RISCVCycle<$tracer>>,
-            tracer::instruction::RISCVCycle<$tracer>,
+            $jolt<jolt_tracer::instruction::RISCVCycle<$tracer>>,
+            jolt_tracer::instruction::RISCVCycle<$tracer>,
             $jolt<$tracer>,
         >($jolt, $jolt)
     };
@@ -223,14 +223,14 @@ macro_rules! materialize_entry_test {
 /// [`instruction_inputs_match_constraint_fn`] for the formula).
 ///
 /// ```ignore
-/// instruction_inputs_match_constraint_test!(Add, tracer::instruction::add::ADD);
+/// instruction_inputs_match_constraint_test!(Add, jolt_tracer::instruction::add::ADD);
 /// ```
 #[macro_export]
 macro_rules! instruction_inputs_match_constraint_test {
     ($jolt:ident, $tracer:path $(,)?) => {
         $crate::instructions::test::instruction_inputs_match_constraint_fn::<
-            tracer::instruction::RISCVCycle<$tracer>,
-            $jolt<tracer::instruction::RISCVCycle<$tracer>>,
+            jolt_tracer::instruction::RISCVCycle<$tracer>,
+            $jolt<jolt_tracer::instruction::RISCVCycle<$tracer>>,
             $jolt<$tracer>,
         >($jolt, $jolt)
     };
@@ -243,14 +243,14 @@ macro_rules! instruction_inputs_match_constraint_test {
 /// `Foo<RISCVCycle<TracerType>>` / `RISCVCycle<TracerType>` type pair.
 ///
 /// ```ignore
-/// lookup_output_matches_trace_test!(Add, tracer::instruction::add::ADD);
+/// lookup_output_matches_trace_test!(Add, jolt_tracer::instruction::add::ADD);
 /// ```
 #[macro_export]
 macro_rules! lookup_output_matches_trace_test {
     ($jolt:ident, $tracer:path $(,)?) => {
         $crate::instructions::test::lookup_output_matches_trace_test_fn::<
-            tracer::instruction::RISCVCycle<$tracer>,
-            $jolt<tracer::instruction::RISCVCycle<$tracer>>,
+            jolt_tracer::instruction::RISCVCycle<$tracer>,
+            $jolt<jolt_tracer::instruction::RISCVCycle<$tracer>>,
         >($jolt)
     };
 }

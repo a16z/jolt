@@ -3,7 +3,7 @@ use crate::template_format;
 use jolt_common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 use std::env;
 use std::fmt::Write;
-use tracer::{
+use jolt_tracer::{
     instruction::{
         add::ADD,
         addi::ADDI,

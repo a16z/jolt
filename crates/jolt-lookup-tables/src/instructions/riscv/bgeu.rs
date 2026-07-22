@@ -27,11 +27,11 @@ mod tests {
 
     #[test]
     fn materialize_entry_bgeu() {
-        materialize_entry_test!(BgeU, tracer::instruction::bgeu::BGEU);
+        materialize_entry_test!(BgeU, jolt_tracer::instruction::bgeu::BGEU);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_bgeu() {
-        instruction_inputs_match_constraint_test!(BgeU, tracer::instruction::bgeu::BGEU);
+        instruction_inputs_match_constraint_test!(BgeU, jolt_tracer::instruction::bgeu::BGEU);
     }
 }

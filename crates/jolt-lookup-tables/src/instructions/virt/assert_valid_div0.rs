@@ -34,7 +34,7 @@ mod tests {
     fn materialize_entry_virtualassertvaliddiv0() {
         materialize_entry_test!(
             AssertValidDiv0,
-            tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0
+            jolt_tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0
         );
     }
 
@@ -42,7 +42,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualassertvaliddiv0() {
         instruction_inputs_match_constraint_test!(
             AssertValidDiv0,
-            tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0
+            jolt_tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0
         );
     }
 }

@@ -43,16 +43,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_addi() {
-        materialize_entry_test!(Addi, tracer::instruction::addi::ADDI);
+        materialize_entry_test!(Addi, jolt_tracer::instruction::addi::ADDI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_addi() {
-        instruction_inputs_match_constraint_test!(Addi, tracer::instruction::addi::ADDI);
+        instruction_inputs_match_constraint_test!(Addi, jolt_tracer::instruction::addi::ADDI);
     }
 
     #[test]
     fn lookup_output_matches_trace_addi() {
-        lookup_output_matches_trace_test!(Addi, tracer::instruction::addi::ADDI);
+        lookup_output_matches_trace_test!(Addi, jolt_tracer::instruction::addi::ADDI);
     }
 }

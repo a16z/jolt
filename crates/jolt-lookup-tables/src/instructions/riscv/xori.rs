@@ -33,16 +33,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_xori() {
-        materialize_entry_test!(XorI, tracer::instruction::xori::XORI);
+        materialize_entry_test!(XorI, jolt_tracer::instruction::xori::XORI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_xori() {
-        instruction_inputs_match_constraint_test!(XorI, tracer::instruction::xori::XORI);
+        instruction_inputs_match_constraint_test!(XorI, jolt_tracer::instruction::xori::XORI);
     }
 
     #[test]
     fn lookup_output_matches_trace_xori() {
-        lookup_output_matches_trace_test!(XorI, tracer::instruction::xori::XORI);
+        lookup_output_matches_trace_test!(XorI, jolt_tracer::instruction::xori::XORI);
     }
 }

@@ -46,19 +46,19 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualmuli() {
-        materialize_entry_test!(MulI, tracer::instruction::virtual_muli::VirtualMULI);
+        materialize_entry_test!(MulI, jolt_tracer::instruction::virtual_muli::VirtualMULI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualmuli() {
         instruction_inputs_match_constraint_test!(
             MulI,
-            tracer::instruction::virtual_muli::VirtualMULI
+            jolt_tracer::instruction::virtual_muli::VirtualMULI
         );
     }
 
     #[test]
     fn lookup_output_matches_trace_virtualmuli() {
-        lookup_output_matches_trace_test!(MulI, tracer::instruction::virtual_muli::VirtualMULI);
+        lookup_output_matches_trace_test!(MulI, jolt_tracer::instruction::virtual_muli::VirtualMULI);
     }
 }

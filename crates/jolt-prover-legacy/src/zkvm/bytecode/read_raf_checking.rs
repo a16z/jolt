@@ -57,7 +57,7 @@ use itertools::{zip_eq, Itertools};
 use jolt_riscv::JoltInstructionRow;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;

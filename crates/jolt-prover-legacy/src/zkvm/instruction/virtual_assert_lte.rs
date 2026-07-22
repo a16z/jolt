@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_assert_lte::VirtualAssertLTE, RISCVCycle};
+use jolt_tracer::instruction::{virtual_assert_lte::VirtualAssertLTE, RISCVCycle};
 
 use crate::zkvm::lookup_table::{
     unsigned_less_than_equal::UnsignedLessThanEqualTable, LookupTables,

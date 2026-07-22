@@ -46,7 +46,7 @@ use jolt_common::jolt_device::MemoryLayout;
 use num::Integer;
 use num_traits::Zero;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
 //

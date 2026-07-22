@@ -24,7 +24,7 @@ use rayon::prelude::*;
 use std::iter::zip;
 
 use jolt_common::jolt_device::MemoryLayout;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

@@ -1,7 +1,7 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::{instruction::LookupQuery, lookup_table::range_check::RangeCheckTable};
-use tracer::instruction::{addi::ADDI, RISCVCycle};
+use jolt_tracer::instruction::{addi::ADDI, RISCVCycle};
 
 use super::{CircuitFlags, Flags, InstructionLookup, NUM_CIRCUIT_FLAGS};
 

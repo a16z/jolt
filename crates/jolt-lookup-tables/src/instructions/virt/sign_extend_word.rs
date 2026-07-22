@@ -44,7 +44,7 @@ mod tests {
     fn materialize_entry_virtualsignextendword() {
         materialize_entry_test!(
             VirtualSignExtendWord,
-            tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
+            jolt_tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
         );
     }
 
@@ -52,7 +52,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualsignextendword() {
         instruction_inputs_match_constraint_test!(
             VirtualSignExtendWord,
-            tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
+            jolt_tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
         );
     }
 
@@ -60,7 +60,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualsignextendword() {
         lookup_output_matches_trace_test!(
             VirtualSignExtendWord,
-            tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
+            jolt_tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord
         );
     }
 }

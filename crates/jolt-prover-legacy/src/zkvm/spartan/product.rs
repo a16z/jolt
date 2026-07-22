@@ -43,7 +43,7 @@ use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
 use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 // Product virtualization with univariate skip
 //

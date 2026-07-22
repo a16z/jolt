@@ -30,11 +30,11 @@ mod tests {
 
     #[test]
     fn materialize_entry_bge() {
-        materialize_entry_test!(Bge, tracer::instruction::bge::BGE);
+        materialize_entry_test!(Bge, jolt_tracer::instruction::bge::BGE);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_bge() {
-        instruction_inputs_match_constraint_test!(Bge, tracer::instruction::bge::BGE);
+        instruction_inputs_match_constraint_test!(Bge, jolt_tracer::instruction::bge::BGE);
     }
 }

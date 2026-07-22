@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_muli::VirtualMULI, RISCVCycle};
+use jolt_tracer::instruction::{virtual_muli::VirtualMULI, RISCVCycle};
 
 use crate::zkvm::lookup_table::range_check::RangeCheckTable;
 use crate::zkvm::lookup_table::LookupTables;

@@ -36,19 +36,19 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualpow2() {
-        materialize_entry_test!(Pow2, tracer::instruction::virtual_pow2::VirtualPow2);
+        materialize_entry_test!(Pow2, jolt_tracer::instruction::virtual_pow2::VirtualPow2);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualpow2() {
         instruction_inputs_match_constraint_test!(
             Pow2,
-            tracer::instruction::virtual_pow2::VirtualPow2
+            jolt_tracer::instruction::virtual_pow2::VirtualPow2
         );
     }
 
     #[test]
     fn lookup_output_matches_trace_virtualpow2() {
-        lookup_output_matches_trace_test!(Pow2, tracer::instruction::virtual_pow2::VirtualPow2);
+        lookup_output_matches_trace_test!(Pow2, jolt_tracer::instruction::virtual_pow2::VirtualPow2);
     }
 }

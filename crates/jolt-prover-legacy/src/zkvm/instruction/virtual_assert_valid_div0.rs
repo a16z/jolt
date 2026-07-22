@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_assert_valid_div0::VirtualAssertValidDiv0, RISCVCycle};
+use jolt_tracer::instruction::{virtual_assert_valid_div0::VirtualAssertValidDiv0, RISCVCycle};
 
 use crate::zkvm::lookup_table::{valid_div0::ValidDiv0Table, LookupTables};
 

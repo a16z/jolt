@@ -1,6 +1,6 @@
 use crate::zkvm::instruction_lookups::LOG_K;
 use jolt_common::constants::XLEN;
-use tracer::instruction::virtual_rev8w::rev8w;
+use jolt_tracer::instruction::virtual_rev8w::rev8w;
 
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},

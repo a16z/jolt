@@ -47,7 +47,7 @@
 
 use jolt_common::jolt_device::MemoryLayout;
 use std::sync::Arc;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

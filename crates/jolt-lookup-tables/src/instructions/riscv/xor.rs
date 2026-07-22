@@ -30,16 +30,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_xor() {
-        materialize_entry_test!(Xor, tracer::instruction::xor::XOR);
+        materialize_entry_test!(Xor, jolt_tracer::instruction::xor::XOR);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_xor() {
-        instruction_inputs_match_constraint_test!(Xor, tracer::instruction::xor::XOR);
+        instruction_inputs_match_constraint_test!(Xor, jolt_tracer::instruction::xor::XOR);
     }
 
     #[test]
     fn lookup_output_matches_trace_xor() {
-        lookup_output_matches_trace_test!(Xor, tracer::instruction::xor::XOR);
+        lookup_output_matches_trace_test!(Xor, jolt_tracer::instruction::xor::XOR);
     }
 }

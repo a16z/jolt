@@ -41,7 +41,7 @@ use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::Zero;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
@@ -1038,7 +1038,7 @@ impl ProductVirtualEval {
     /// 7: OpFlags(VirtualInstruction) (bool) — not a product factor, opened for downstream stages
     #[tracing::instrument(skip_all, name = "ProductVirtualEval::compute_claimed_factors")]
     pub fn compute_claimed_factors<F: JoltField>(
-        trace: &[tracer::instruction::Cycle],
+        trace: &[jolt_tracer::instruction::Cycle],
         r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> [F; 8] {
         let m = r_cycle.len() / 2;

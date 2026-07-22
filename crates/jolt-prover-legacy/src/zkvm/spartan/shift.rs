@@ -4,7 +4,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use ark_std::Zero;
 use itertools::chain;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 use crate::field::JoltField;
 use crate::poly::eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffixPoly};

@@ -40,7 +40,7 @@ mod tests {
     fn materialize_entry_virtualmovsign() {
         materialize_entry_test!(
             MovSign,
-            tracer::instruction::virtual_movsign::VirtualMovsign
+            jolt_tracer::instruction::virtual_movsign::VirtualMovsign
         );
     }
 
@@ -48,7 +48,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualmovsign() {
         instruction_inputs_match_constraint_test!(
             MovSign,
-            tracer::instruction::virtual_movsign::VirtualMovsign
+            jolt_tracer::instruction::virtual_movsign::VirtualMovsign
         );
     }
 
@@ -56,7 +56,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualmovsign() {
         lookup_output_matches_trace_test!(
             MovSign,
-            tracer::instruction::virtual_movsign::VirtualMovsign
+            jolt_tracer::instruction::virtual_movsign::VirtualMovsign
         );
     }
 }

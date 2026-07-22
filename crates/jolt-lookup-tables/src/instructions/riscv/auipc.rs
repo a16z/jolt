@@ -43,16 +43,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_auipc() {
-        materialize_entry_test!(Auipc, tracer::instruction::auipc::AUIPC);
+        materialize_entry_test!(Auipc, jolt_tracer::instruction::auipc::AUIPC);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_auipc() {
-        instruction_inputs_match_constraint_test!(Auipc, tracer::instruction::auipc::AUIPC);
+        instruction_inputs_match_constraint_test!(Auipc, jolt_tracer::instruction::auipc::AUIPC);
     }
 
     #[test]
     fn lookup_output_matches_trace_auipc() {
-        lookup_output_matches_trace_test!(Auipc, tracer::instruction::auipc::AUIPC);
+        lookup_output_matches_trace_test!(Auipc, jolt_tracer::instruction::auipc::AUIPC);
     }
 }

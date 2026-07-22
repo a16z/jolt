@@ -9,7 +9,7 @@ on:
       - main
     paths:
       - ".github/workflows/arch-tests.yml"
-      - "tracer/**"
+      - "crates/jolt-tracer/**"
       - "Makefile"
       - "tests/arch-tests/**"
       - "third-party/riscv-arch-test/**"

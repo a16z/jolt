@@ -7,7 +7,7 @@ mod sequence_tests {
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
-    use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+    use jolt_tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value

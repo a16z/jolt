@@ -41,7 +41,7 @@ mod tests {
     fn materialize_entry_virtualassertwordalignment() {
         materialize_entry_test!(
             AssertWordAlignment,
-            tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment
+            jolt_tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment
         );
     }
 
@@ -49,7 +49,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualassertwordalignment() {
         instruction_inputs_match_constraint_test!(
             AssertWordAlignment,
-            tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment
+            jolt_tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment
         );
     }
 }

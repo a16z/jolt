@@ -24,7 +24,7 @@ fn accessors_match_reference_on_real_trace() {
     let bytecode_preprocessing =
         BytecodePreprocessing::preprocess(bytecode, entry, RV64IMAC_JOLT).unwrap();
 
-    let rows = tracer::build_trace_rows(&trace, &bytecode_preprocessing).unwrap();
+    let rows = jolt_tracer::build_trace_rows(&trace, &bytecode_preprocessing).unwrap();
     assert_eq!(rows.len(), trace.len());
 
     let mut saw_load = false;

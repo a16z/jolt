@@ -29,7 +29,7 @@ mod tests {
     fn materialize_entry_virtualasserteq() {
         materialize_entry_test!(
             AssertEq,
-            tracer::instruction::virtual_assert_eq::VirtualAssertEQ
+            jolt_tracer::instruction::virtual_assert_eq::VirtualAssertEQ
         );
     }
 
@@ -37,7 +37,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualasserteq() {
         instruction_inputs_match_constraint_test!(
             AssertEq,
-            tracer::instruction::virtual_assert_eq::VirtualAssertEQ
+            jolt_tracer::instruction::virtual_assert_eq::VirtualAssertEQ
         );
     }
 }

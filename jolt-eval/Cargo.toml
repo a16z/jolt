@@ -18,7 +18,7 @@ jolt-transcript = { workspace = true, features = [
 ] }
 spongefish = { workspace = true }
 jolt-common = { workspace = true, features = ["std"] }
-tracer = { workspace = true }
+jolt-tracer = { workspace = true }
 
 ark-bn254 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

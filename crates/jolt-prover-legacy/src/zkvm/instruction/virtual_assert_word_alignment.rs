@@ -1,6 +1,6 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use tracer::instruction::RISCVCycle;
+use jolt_tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
+use jolt_tracer::instruction::RISCVCycle;
 
 use crate::zkvm::lookup_table::word_alignment::WordAlignmentTable;
 use crate::zkvm::lookup_table::LookupTables;

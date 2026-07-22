@@ -27,11 +27,11 @@ mod tests {
 
     #[test]
     fn materialize_entry_bltu() {
-        materialize_entry_test!(BltU, tracer::instruction::bltu::BLTU);
+        materialize_entry_test!(BltU, jolt_tracer::instruction::bltu::BLTU);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_bltu() {
-        instruction_inputs_match_constraint_test!(BltU, tracer::instruction::bltu::BLTU);
+        instruction_inputs_match_constraint_test!(BltU, jolt_tracer::instruction::bltu::BLTU);
     }
 }

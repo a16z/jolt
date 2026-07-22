@@ -33,14 +33,14 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsrli() {
-        materialize_entry_test!(VirtualSrli, tracer::instruction::virtual_srli::VirtualSRLI);
+        materialize_entry_test!(VirtualSrli, jolt_tracer::instruction::virtual_srli::VirtualSRLI);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualsrli() {
         instruction_inputs_match_constraint_test!(
             VirtualSrli,
-            tracer::instruction::virtual_srli::VirtualSRLI
+            jolt_tracer::instruction::virtual_srli::VirtualSRLI
         );
     }
 
@@ -48,7 +48,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualsrli() {
         lookup_output_matches_trace_test!(
             VirtualSrli,
-            tracer::instruction::virtual_srli::VirtualSRLI
+            jolt_tracer::instruction::virtual_srli::VirtualSRLI
         );
     }
 }

@@ -146,7 +146,7 @@ use allocative::FlameGraphBuilder;
 use jolt_common::jolt_device::MemoryConfig;
 use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
-use tracer::{
+use jolt_tracer::{
     emulator::memory::Memory, instruction::Cycle, ChunksIterator, JoltDevice, LazyTraceIterator,
 };
 
@@ -235,7 +235,7 @@ impl<
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
-        advice_tape: Option<tracer::AdviceTape>,
+        advice_tape: Option<jolt_tracer::AdviceTape>,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,

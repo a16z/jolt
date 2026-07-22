@@ -18,7 +18,7 @@ use crate::zkvm::bytecode::{
 use crate::zkvm::ram::RAMPreprocessing;
 use jolt_common::jolt_device::MemoryLayout;
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct FullProgramPreprocessing {

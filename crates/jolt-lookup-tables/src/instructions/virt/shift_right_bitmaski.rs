@@ -45,7 +45,7 @@ mod tests {
     fn materialize_entry_virtualshiftrightbitmaski() {
         materialize_entry_test!(
             VirtualShiftRightBitmaski,
-            tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
+            jolt_tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
         );
     }
 
@@ -53,7 +53,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualshiftrightbitmaski() {
         instruction_inputs_match_constraint_test!(
             VirtualShiftRightBitmaski,
-            tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
+            jolt_tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
         );
     }
 
@@ -61,7 +61,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualshiftrightbitmaski() {
         lookup_output_matches_trace_test!(
             VirtualShiftRightBitmaski,
-            tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
+            jolt_tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI
         );
     }
 }

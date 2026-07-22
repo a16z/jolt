@@ -37,7 +37,7 @@ mod tests {
     fn materialize_entry_virtualchangedivisorw() {
         materialize_entry_test!(
             VirtualChangeDivisorW,
-            tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
+            jolt_tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
         );
     }
 
@@ -45,7 +45,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualchangedivisorw() {
         instruction_inputs_match_constraint_test!(
             VirtualChangeDivisorW,
-            tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
+            jolt_tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
         );
     }
 
@@ -53,7 +53,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualchangedivisorw() {
         lookup_output_matches_trace_test!(
             VirtualChangeDivisorW,
-            tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
+            jolt_tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW
         );
     }
 }

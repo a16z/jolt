@@ -27,11 +27,11 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualassertvalidunsignedremainder() {
-        materialize_entry_test!(AssertValidUnsignedRemainder, tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder);
+        materialize_entry_test!(AssertValidUnsignedRemainder, jolt_tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualassertvalidunsignedremainder() {
-        instruction_inputs_match_constraint_test!(AssertValidUnsignedRemainder, tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder);
+        instruction_inputs_match_constraint_test!(AssertValidUnsignedRemainder, jolt_tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder);
     }
 }

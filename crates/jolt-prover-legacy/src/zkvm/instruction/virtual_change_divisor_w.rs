@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_change_divisor_w::VirtualChangeDivisorW, RISCVCycle};
+use jolt_tracer::instruction::{virtual_change_divisor_w::VirtualChangeDivisorW, RISCVCycle};
 
 use crate::zkvm::lookup_table::virtual_change_divisor_w::VirtualChangeDivisorWTable;
 use crate::zkvm::lookup_table::LookupTables;

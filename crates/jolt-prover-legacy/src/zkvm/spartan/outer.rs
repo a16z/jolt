@@ -4,7 +4,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use ark_std::Zero;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 use crate::field::BarrettReduce;
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};

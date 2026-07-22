@@ -3239,6 +3239,7 @@ dependencies = [
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-riscv",
+ "jolt-tracer",
  "jolt-transcript",
  "jolt-verifier",
  "postcard",
@@ -3250,7 +3251,6 @@ dependencies = [
  "sha2 0.11.0",
  "spongefish",
  "tempfile",
- "tracer",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3308,8 +3308,8 @@ name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "rand 0.8.5",
- "tracer",
 ]
 
 [[package]]
@@ -3319,8 +3319,8 @@ dependencies = [
  "blake2 0.11.0-rc.6",
  "hex-literal",
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "rand 0.8.5",
- "tracer",
 ]
 
 [[package]]
@@ -3329,8 +3329,8 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "rand 0.8.5",
- "tracer",
 ]
 
 [[package]]
@@ -3349,10 +3349,10 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-program",
  "jolt-riscv",
+ "jolt-tracer",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "tracer",
 ]
 
 [[package]]
@@ -3363,10 +3363,10 @@ dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-grumpkin",
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "num-bigint",
  "num-integer",
  "serde",
- "tracer",
 ]
 
 [[package]]
@@ -3375,9 +3375,9 @@ version = "0.1.0"
 dependencies = [
  "hex-literal",
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "rand 0.8.5",
  "sha3 0.11.0",
- "tracer",
 ]
 
 [[package]]
@@ -3388,12 +3388,12 @@ dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-secp256r1",
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "num-bigint",
  "p256",
  "rand 0.8.5",
  "serde",
  "sha2 0.11.0",
- "tracer",
 ]
 
 [[package]]
@@ -3404,9 +3404,9 @@ dependencies = [
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",
+ "jolt-tracer",
  "num-bigint",
  "rand 0.8.5",
- "tracer",
 ]
 
 [[package]]
@@ -3416,10 +3416,10 @@ dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-secp256k1",
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "num-bigint",
  "num-integer",
  "serde",
- "tracer",
 ]
 
 [[package]]
@@ -3427,9 +3427,9 @@ name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",
+ "jolt-tracer",
  "rand 0.8.5",
  "sha2 0.11.0",
- "tracer",
 ]
 
 [[package]]
@@ -3468,10 +3468,10 @@ dependencies = [
  "jolt-field",
  "jolt-prover-legacy",
  "jolt-riscv",
+ "jolt-tracer",
  "rand 0.8.5",
  "serde",
  "strum 0.28.0",
- "tracer",
 ]
 
 [[package]]
@@ -3583,12 +3583,12 @@ dependencies = [
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-sumcheck",
+ "jolt-tracer",
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
  "postcard",
  "thiserror 2.0.18",
- "tracer",
 ]
 
 [[package]]
@@ -3628,6 +3628,7 @@ dependencies = [
  "jolt-program",
  "jolt-riscv",
  "jolt-sumcheck",
+ "jolt-tracer",
  "jolt-transcript",
  "jolt-verifier",
  "light-poseidon",
@@ -3649,7 +3650,6 @@ dependencies = [
  "strum_macros 0.28.0",
  "sysinfo",
  "thiserror 2.0.18",
- "tracer",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
@@ -3697,12 +3697,12 @@ dependencies = [
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-sdk-macros",
+ "jolt-tracer",
  "jolt-transcript",
  "jolt-verifier",
  "postcard",
  "riscv 0.16.1",
  "serde",
- "tracer",
  "zeroos",
 ]
 
@@ -3731,6 +3731,35 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "jolt-tracer"
+version = "0.2.0"
+dependencies = [
+ "addr2line 0.26.1",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "clap",
+ "derive_more",
+ "fnv",
+ "inventory",
+ "itertools 0.15.0",
+ "jolt-common",
+ "jolt-field",
+ "jolt-platform",
+ "jolt-program",
+ "jolt-riscv",
+ "object 0.39.1",
+ "paste",
+ "postcard",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
+ "thiserror 2.0.18",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -6749,35 +6778,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
-name = "tracer"
-version = "0.2.0"
-dependencies = [
- "addr2line 0.26.1",
- "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "clap",
- "derive_more",
- "fnv",
- "inventory",
- "itertools 0.15.0",
- "jolt-common",
- "jolt-field",
- "jolt-platform",
- "jolt-program",
- "jolt-riscv",
- "object 0.39.1",
- "paste",
- "postcard",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "strum 0.28.0",
- "strum_macros 0.28.0",
- "thiserror 2.0.18",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7513,8 +7513,8 @@ version = "0.0.0"
 dependencies = [
  "jolt-common",
  "jolt-prover-legacy",
+ "jolt-tracer",
  "paste",
- "tracer",
  "z3",
 ]
 
@@ -7731,6 +7731,7 @@ dependencies = [
  "clap",
  "jolt-common",
  "jolt-prover-legacy",
+ "jolt-tracer",
  "num-bigint",
  "proptest",
  "rand_core 0.6.4",
@@ -7738,7 +7739,6 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.28.0",
- "tracer",
 ]
 
 [[package]]

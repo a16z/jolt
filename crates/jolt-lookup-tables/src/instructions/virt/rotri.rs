@@ -40,7 +40,7 @@ mod tests {
     fn materialize_entry_virtualrotri() {
         materialize_entry_test!(
             VirtualRotri,
-            tracer::instruction::virtual_rotri::VirtualROTRI
+            jolt_tracer::instruction::virtual_rotri::VirtualROTRI
         );
     }
 
@@ -48,7 +48,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualrotri() {
         instruction_inputs_match_constraint_test!(
             VirtualRotri,
-            tracer::instruction::virtual_rotri::VirtualROTRI
+            jolt_tracer::instruction::virtual_rotri::VirtualROTRI
         );
     }
 
@@ -56,7 +56,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualrotri() {
         lookup_output_matches_trace_test!(
             VirtualRotri,
-            tracer::instruction::virtual_rotri::VirtualROTRI
+            jolt_tracer::instruction::virtual_rotri::VirtualROTRI
         );
     }
 }

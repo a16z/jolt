@@ -2,7 +2,7 @@ use ark_ff::Zero;
 
 use allocative::Allocative;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

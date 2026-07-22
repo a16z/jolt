@@ -2,7 +2,7 @@ use allocative::Allocative;
 use jolt_common::constants::XLEN;
 use jolt_common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 #[cfg(feature = "prover")]
 use crate::curve::JoltCurve;
@@ -69,7 +69,7 @@ impl CommittedPolynomial {
     pub fn stream_witness_and_commit_rows<F, C, PCS>(
         &self,
         preprocessing: &JoltProverPreprocessing<F, C, PCS>,
-        row_cycles: &[tracer::instruction::Cycle],
+        row_cycles: &[jolt_tracer::instruction::Cycle],
         one_hot_params: &OneHotParams,
     ) -> <PCS as StreamingCommitmentScheme>::ChunkState
     where
@@ -92,7 +92,7 @@ impl CommittedPolynomial {
                 let row: Vec<i128> = row_cycles
                     .iter()
                     .map(|cycle| match cycle.ram_access() {
-                        tracer::instruction::RAMAccess::Write(write) => {
+                        jolt_tracer::instruction::RAMAccess::Write(write) => {
                             write.post_value as i128 - write.pre_value as i128
                         }
                         _ => 0,
@@ -199,7 +199,7 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         let ram_op = cycle.ram_access();
                         match ram_op {
-                            tracer::instruction::RAMAccess::Write(write) => {
+                            jolt_tracer::instruction::RAMAccess::Write(write) => {
                                 write.post_value as i128 - write.pre_value as i128
                             }
                             _ => 0,

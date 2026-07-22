@@ -22,7 +22,7 @@ echo "Building jolt CLI ..." >&2
 cargo build -p jolt --release
 
 echo "Building jolt-emu ..." >&2
-cargo build -p tracer --release --bin jolt-emu
+cargo build -p jolt-tracer --release --bin jolt-emu
 
 # Make `jolt run` deterministic.
 export JOLT_EMU_PATH="${JOLT_ROOT}/target/release/jolt-emu"

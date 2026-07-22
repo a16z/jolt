@@ -68,8 +68,8 @@ use std::vec;
 use jolt_common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 pub use jolt_program::preprocess::RAMPreprocessing;
 use rayon::prelude::*;
-use tracer::emulator::memory::Memory;
-use tracer::JoltDevice;
+use jolt_tracer::emulator::memory::Memory;
+use jolt_tracer::JoltDevice;
 
 pub mod hamming_booleanity;
 pub mod output_check;

@@ -1,6 +1,6 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use crate::zkvm::lookup_table::{unsigned_less_than::UnsignedLessThanTable, LookupTables};
-use tracer::instruction::{bltu::BLTU, RISCVCycle};
+use jolt_tracer::instruction::{bltu::BLTU, RISCVCycle};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 

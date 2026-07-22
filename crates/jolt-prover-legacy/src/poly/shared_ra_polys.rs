@@ -39,7 +39,7 @@ use crate::zkvm::ram::remap_address;
 use jolt_common::constants::XLEN;
 use jolt_common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
+use jolt_tracer::instruction::Cycle;
 
 /// Maximum number of instruction RA chunks (lookup index splits into at most 32 chunks)
 pub const MAX_INSTRUCTION_D: usize = 32;

@@ -30,16 +30,16 @@ mod tests {
 
     #[test]
     fn materialize_entry_or() {
-        materialize_entry_test!(Or, tracer::instruction::or::OR);
+        materialize_entry_test!(Or, jolt_tracer::instruction::or::OR);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_or() {
-        instruction_inputs_match_constraint_test!(Or, tracer::instruction::or::OR);
+        instruction_inputs_match_constraint_test!(Or, jolt_tracer::instruction::or::OR);
     }
 
     #[test]
     fn lookup_output_matches_trace_or() {
-        lookup_output_matches_trace_test!(Or, tracer::instruction::or::OR);
+        lookup_output_matches_trace_test!(Or, jolt_tracer::instruction::or::OR);
     }
 }

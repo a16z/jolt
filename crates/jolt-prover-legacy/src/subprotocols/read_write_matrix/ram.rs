@@ -17,7 +17,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::ram::remap_address;
 use jolt_common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
-use tracer::instruction::{Cycle, RAMAccess};
+use jolt_tracer::instruction::{Cycle, RAMAccess};
 
 /// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
 /// Conceptually, both ra and Val can be seen as K x T matrices.

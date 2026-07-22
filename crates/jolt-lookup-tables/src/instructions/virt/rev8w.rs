@@ -36,7 +36,7 @@ mod tests {
     fn materialize_entry_virtualrev8w() {
         materialize_entry_test!(
             VirtualRev8W,
-            tracer::instruction::virtual_rev8w::VirtualRev8W
+            jolt_tracer::instruction::virtual_rev8w::VirtualRev8W
         );
     }
 
@@ -44,7 +44,7 @@ mod tests {
     fn instruction_inputs_match_constraint_virtualrev8w() {
         instruction_inputs_match_constraint_test!(
             VirtualRev8W,
-            tracer::instruction::virtual_rev8w::VirtualRev8W
+            jolt_tracer::instruction::virtual_rev8w::VirtualRev8W
         );
     }
 
@@ -52,7 +52,7 @@ mod tests {
     fn lookup_output_matches_trace_virtualrev8w() {
         lookup_output_matches_trace_test!(
             VirtualRev8W,
-            tracer::instruction::virtual_rev8w::VirtualRev8W
+            jolt_tracer::instruction::virtual_rev8w::VirtualRev8W
         );
     }
 }

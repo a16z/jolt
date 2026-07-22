@@ -1,6 +1,6 @@
 use jolt_inlines_sdk::{InlineReference, InlineSpec};
 use rand::RngCore;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+use jolt_tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 use crate::exec::execute_keccak_f;
 use crate::sequence_builder::Keccak256Permutation;

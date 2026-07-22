@@ -9,15 +9,15 @@ pub trait InlineReference {
 pub trait InlineSpec: InlineReference + crate::host::InlineOp {
     fn edge_cases() -> impl IntoIterator<Item = Self::Input>;
     fn random(rng: &mut impl rand::RngCore) -> Self::Input;
-    fn harness() -> tracer::utils::inline_test_harness::InlineTestHarness;
+    fn harness() -> jolt_tracer::utils::inline_test_harness::InlineTestHarness;
     fn load(
-        harness: &mut tracer::utils::inline_test_harness::InlineTestHarness,
+        harness: &mut jolt_tracer::utils::inline_test_harness::InlineTestHarness,
         input: &Self::Input,
     );
-    fn read(harness: &mut tracer::utils::inline_test_harness::InlineTestHarness) -> Self::Output;
+    fn read(harness: &mut jolt_tracer::utils::inline_test_harness::InlineTestHarness) -> Self::Output;
 
-    fn instruction() -> tracer::instruction::inline::INLINE {
-        tracer::utils::inline_test_harness::InlineTestHarness::create_default_instruction(
+    fn instruction() -> jolt_tracer::instruction::inline::INLINE {
+        jolt_tracer::utils::inline_test_harness::InlineTestHarness::create_default_instruction(
             Self::OPCODE,
             Self::FUNCT3,
             Self::FUNCT7,

@@ -1,5 +1,5 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_sign_extend_word::VirtualSignExtendWord, RISCVCycle};
+use jolt_tracer::instruction::{virtual_sign_extend_word::VirtualSignExtendWord, RISCVCycle};
 
 use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables};
 

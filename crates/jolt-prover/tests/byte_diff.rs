@@ -59,7 +59,7 @@ mod support {
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::JoltVerifierPreprocessing;
     use jolt_witness::protocols::jolt_vm::{JoltVmWitnessConfig, TraceBackedJoltVmWitness};
-    use tracer::execution_backend::TracerBackend;
+    use jolt_tracer::execution_backend::TracerBackend;
 
     pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
 

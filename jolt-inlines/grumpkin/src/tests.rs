@@ -11,7 +11,7 @@ mod sequence_tests {
     use ark_ff::{BigInt, Field, One, PrimeField, Zero};
     use ark_grumpkin::{Fq, Fr};
     use std::ops::Mul;
-    use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+    use jolt_tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value

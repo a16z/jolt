@@ -8,7 +8,7 @@ use jolt_riscv::{
 };
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
-use tracer::instruction::{Cycle, Instruction};
+use jolt_tracer::instruction::{Cycle, Instruction};
 
 use crate::utils::interleave_bits;
 

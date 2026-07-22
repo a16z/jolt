@@ -5,7 +5,7 @@ use jolt_prover_legacy::zkvm::{
     r1cs::inputs::JoltR1CSInputs,
 };
 use strum::IntoEnumIterator as _;
-use tracer::instruction::{Instruction, JoltInstructionRow};
+use jolt_tracer::instruction::{Instruction, JoltInstructionRow};
 
 use crate::{
     constants::JoltParameterSet,
@@ -51,7 +51,7 @@ impl std::fmt::Display for OperandInterleaving {
 // TODO: Make this generic over the instruction set
 #[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
-    instruction: tracer::instruction::Instruction,
+    instruction: jolt_tracer::instruction::Instruction,
     row: JoltInstructionRow,
     interleaving: OperandInterleaving,
     phantom: std::marker::PhantomData<J>,

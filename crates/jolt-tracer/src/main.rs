@@ -5,7 +5,7 @@ use std::process::exit;
 use clap::Parser;
 use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 
-use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
+use jolt_tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
 /// RISC-V emulator for Jolt
 #[derive(Parser, Debug)]

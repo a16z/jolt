@@ -2,7 +2,7 @@ use std::array;
 use std::iter;
 
 use serde::{Deserialize, Serialize};
-use tracer::instruction::virtual_rev8w::rev8w;
+use jolt_tracer::instruction::virtual_rev8w::rev8w;
 
 use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};

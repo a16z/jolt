@@ -13,7 +13,7 @@ use jolt_prover_legacy::zkvm::{
     witness::VirtualPolynomial,
 };
 use std::{array, fmt::Write, str::FromStr};
-use tracer::instruction::{
+use jolt_tracer::instruction::{
     add::ADD,
     addi::ADDI,
     and::AND,

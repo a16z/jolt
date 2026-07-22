@@ -22,8 +22,8 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracer::ChunksIterator;
-use tracer::{instruction::Cycle, LazyTraceIterator};
+use jolt_tracer::ChunksIterator;
+use jolt_tracer::{instruction::Cycle, LazyTraceIterator};
 
 #[derive(Clone, Debug)]
 pub struct RLCStreamingData {
@@ -916,7 +916,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         let diff = s64_from_diff_u64s(post_value, pre_value);
         dense_acc.fmadd(&scaled_rd_inc, &diff);
 
-        if let tracer::instruction::RAMAccess::Write(write) = cycle.ram_access() {
+        if let jolt_tracer::instruction::RAMAccess::Write(write) = cycle.ram_access() {
             let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
             dense_acc.fmadd(&scaled_ram_inc, &diff);
         }
