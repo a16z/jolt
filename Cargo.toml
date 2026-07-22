@@ -53,16 +53,16 @@ members = [
   "crates/jolt-platform",
   "crates/jolt-sdk",
   "crates/jolt-sdk/macros",
-  "jolt-inlines/sdk",
-  "jolt-inlines/fixtures",
-  "jolt-inlines/sha2",
-  "jolt-inlines/keccak256",
-  "jolt-inlines/blake2",
-  "jolt-inlines/blake3",
-  "jolt-inlines/bigint",
-  "jolt-inlines/secp256k1",
-  "jolt-inlines/grumpkin",
-  "jolt-inlines/p256",
+  "crates/jolt-inlines/sdk",
+  "crates/jolt-inlines/fixtures",
+  "crates/jolt-inlines/sha2",
+  "crates/jolt-inlines/keccak256",
+  "crates/jolt-inlines/blake2",
+  "crates/jolt-inlines/blake3",
+  "crates/jolt-inlines/bigint",
+  "crates/jolt-inlines/secp256k1",
+  "crates/jolt-inlines/grumpkin",
+  "crates/jolt-inlines/p256",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
@@ -424,12 +424,12 @@ jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./crates/jolt-platform", default-features = false }
 jolt-sdk = { path = "./crates/jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./crates/jolt-sdk/macros" }
-jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
-jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
-jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }
-jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
-jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }
-jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
-jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
-jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
-jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+jolt-inlines-sdk = { path = "./crates/jolt-inlines/sdk", default-features = false }
+jolt-inlines-sha2 = { path = "./crates/jolt-inlines/sha2", default-features = false }
+jolt-inlines-keccak256 = { path = "./crates/jolt-inlines/keccak256", default-features = false }
+jolt-inlines-blake2 = { path = "./crates/jolt-inlines/blake2", default-features = false }
+jolt-inlines-blake3 = { path = "./crates/jolt-inlines/blake3", default-features = false }
+jolt-inlines-bigint = { path = "./crates/jolt-inlines/bigint", default-features = false }
+jolt-inlines-secp256k1 = { path = "./crates/jolt-inlines/secp256k1", default-features = false }
+jolt-inlines-grumpkin = { path = "./crates/jolt-inlines/grumpkin", default-features = false }
+jolt-inlines-p256 = { path = "./crates/jolt-inlines/p256", default-features = false }

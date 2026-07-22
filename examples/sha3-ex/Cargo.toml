@@ -7,7 +7,7 @@ edition = "2021"
 jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
-jolt-inlines-keccak256 = { path = "../../jolt-inlines/keccak256", features = [
+jolt-inlines-keccak256 = { path = "../../crates/jolt-inlines/keccak256", features = [
   "host",
 ] }
 guest = { package = "sha3-guest", path = "./guest" }
