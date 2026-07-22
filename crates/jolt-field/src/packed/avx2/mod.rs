@@ -9,7 +9,7 @@
 
 use super::{PackedField, PackedValue};
 use crate::ext::FpExt2Config;
-use crate::Invertible;
+use crate::FieldCore;
 use crate::{Fp128, Fp32, Fp64};
 use core::arch::x86_64::*;
 use core::fmt;

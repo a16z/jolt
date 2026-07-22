@@ -3,7 +3,7 @@
     reason = "Tracer concrete instruction names mirror generated Jolt instruction constants"
 )]
 
-use jolt_field::{CanonicalBytes, CanonicalU64, Fr, Invertible, ReducingBytes};
+use jolt_field::{CanonicalRepr, FieldCore, Fr};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
     FieldRegisterWrite,
@@ -329,7 +329,7 @@ fn execute_load_imm(
 }
 
 fn decode_field(value: FieldEncodedValue) -> Fr {
-    <Fr as ReducingBytes>::from_le_bytes_mod_order(&value.bytes_le)
+    <Fr as CanonicalRepr>::from_le_bytes_mod_order(&value.bytes_le)
 }
 
 fn encode_field(value: Fr) -> FieldEncodedValue {

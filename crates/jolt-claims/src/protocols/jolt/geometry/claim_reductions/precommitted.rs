@@ -494,7 +494,7 @@ mod tests {
 
     use super::*;
     use crate::protocols::jolt::geometry::dimensions::TracePolynomialOrder;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
 
     #[test]
     fn cycle_skip_scale_counts_inactive_cycle_rounds() {

@@ -69,8 +69,7 @@ pub trait VectorCommitment:
         row_len: usize,
         row_point: &[Self::Field],
         entry_point: &[Self::Field],
-    ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError>
-    {
+    ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError> {
         let row_count = point_len_to_basis_len(row_point.len())?;
         validate_row_len(row_len, entry_point.len())?;
         let max_len = row_count
@@ -276,8 +275,7 @@ fn combine_rows<F: Field>(
     row_len: usize,
     row_weights: &[F],
     max_len: usize,
-) -> Vec<F>
-{
+) -> Vec<F> {
     let mut combined_vector = vec![F::zero(); row_len];
 
     if max_len >= PAR_THRESHOLD {
@@ -316,8 +314,7 @@ fn combine_rows<F: Field>(
     row_len: usize,
     row_weights: &[F],
     _max_len: usize,
-) -> Vec<F>
-{
+) -> Vec<F> {
     let mut combined_vector = vec![F::zero(); row_len];
 
     for (entry_index, combined_entry) in combined_vector.iter_mut().enumerate() {
@@ -333,8 +330,7 @@ fn combine_rows<F: Field>(
     combined_vector
 }
 
-fn inner_product<F: Field>(lhs: &[F], rhs: &[F]) -> F
-{
+fn inner_product<F: Field>(lhs: &[F], rhs: &[F]) -> F {
     #[cfg(feature = "parallel")]
     {
         if lhs.len() >= PAR_THRESHOLD {

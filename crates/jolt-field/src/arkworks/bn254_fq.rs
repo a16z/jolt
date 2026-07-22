@@ -4,10 +4,8 @@
 //! scalar field of Grumpkin.
 
 use crate::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
-    FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
-    NaiveAccumulator, RandomSampling, ReducingBytes, RingCore, TranscriptChallenge,
-    WithAccumulator,
+    AdditiveGroup, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, Limbs, NaiveAccumulator,
+    RingCore, WithAccumulator,
 };
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
@@ -304,39 +302,36 @@ impl RingCore for Fq {
     }
 }
 
-impl Invertible for Fq {
+impl FieldCore for Fq {
     #[inline]
     fn inverse(&self) -> Option<Self> {
         <InnerFq as ark_ff::Field>::inverse(&self.0).map(Fq)
     }
+
+    #[inline]
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Fq(<InnerFq as UniformRand>::rand(rng))
+    }
 }
 
-impl FieldCore for Fq {}
-
-impl FixedByteSize for Fq {
+impl CanonicalRepr for Fq {
     const NUM_BYTES: usize = 32;
-}
 
-impl CanonicalBytes for Fq {
     #[expect(clippy::expect_used)]
     #[inline]
     fn to_bytes_le(&self, out: &mut [u8]) {
-        assert_eq!(out.len(), <Self as FixedByteSize>::NUM_BYTES);
+        assert_eq!(out.len(), <Self as CanonicalRepr>::NUM_BYTES);
         use ark_serialize::CanonicalSerialize;
         self.0
             .serialize_compressed(out)
             .expect("BN254 Fq always serializes to 32 bytes");
     }
-}
 
-impl ReducingBytes for Fq {
     #[inline]
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         Fq::from_le_bytes_mod_order(bytes)
     }
-}
 
-impl TranscriptChallenge for Fq {
     #[inline]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
@@ -357,11 +352,7 @@ impl TranscriptChallenge for Fq {
         buf.reverse();
         Fq::from_le_bytes_mod_order(&buf)
     }
-}
 
-impl FixedBytes<32> for Fq {}
-
-impl CanonicalU64 for Fq {
     #[inline]
     fn to_canonical_u64_checked(&self) -> Option<u64> {
         let bigint = <InnerFq as PrimeField>::into_bigint(self.0);
@@ -374,19 +365,10 @@ impl CanonicalU64 for Fq {
             Some(result)
         }
     }
-}
 
-impl CanonicalBitLength for Fq {
     #[inline]
     fn num_bits(&self) -> u32 {
         <InnerFq as PrimeField>::into_bigint(self.0).num_bits()
-    }
-}
-
-impl RandomSampling for Fq {
-    #[inline]
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Fq(<InnerFq as UniformRand>::rand(rng))
     }
 }
 
@@ -424,17 +406,13 @@ impl WithAccumulator for Fq {
     type Accumulator = NaiveAccumulator<Fq>;
 }
 
-impl crate::MulPow2 for Fq {}
-
-impl MulPrimitiveInt for Fq {}
-
 impl Field for Fq {}
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::{CanonicalU64, FixedBytes};
+    use crate::CanonicalRepr;
 
     #[test]
     fn field_arithmetic_basic() {
@@ -448,8 +426,8 @@ mod tests {
     #[test]
     fn serialization_roundtrip() {
         let val = Fq::from_u64(123_456_789);
-        let bytes = val.to_bytes_array();
-        let recovered = Fq::from_bytes_array(&bytes);
+        let bytes = val.to_bytes_le_vec();
+        let recovered = <Fq as CanonicalRepr>::from_le_bytes_mod_order(&bytes);
         assert_eq!(val, recovered);
     }
 

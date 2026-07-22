@@ -5,7 +5,7 @@
 //! (Polynomial, EqPolynomial, UnivariatePoly, IdentityPolynomial, RlcSource)
 //! that are used throughout the proving system.
 
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
 use jolt_poly::{
     EqPolynomial, IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, Polynomial,
     RlcSource, UnivariatePoly,

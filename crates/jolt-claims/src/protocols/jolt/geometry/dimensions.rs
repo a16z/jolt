@@ -490,7 +490,7 @@ mod tests {
         PrecommittedClaimReduction, PrecommittedReductionLayout,
     };
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
     use jolt_poly::EqPolynomial;
 
     fn dimensions() -> JoltOneHotDimensions {

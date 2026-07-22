@@ -6,7 +6,7 @@
 use super::{HasPacking, PackedField, PackedValue};
 use crate::{
     CanonicalField, FieldCore, Fp32, Prime128Offset275, Prime24Offset3, Prime31Offset19,
-    Prime32Offset99, Prime40Offset195, Prime64Offset59, RandomSampling,
+    Prime32Offset99, Prime40Offset195, Prime64Offset59,
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -18,13 +18,13 @@ fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {
 
 fn check_packed_add_sub_mul<F, PF>(seed: u64)
 where
-    F: FieldCore + RandomSampling + PartialEq + std::fmt::Debug,
+    F: FieldCore + PartialEq + std::fmt::Debug,
     PF: PackedField<Scalar = F> + PackedValue<Value = F>,
 {
     let mut rng = StdRng::seed_from_u64(seed);
     let len = PF::WIDTH * 17 + 3;
-    let lhs: Vec<F> = (0..len).map(|_| RandomSampling::random(&mut rng)).collect();
-    let rhs: Vec<F> = (0..len).map(|_| RandomSampling::random(&mut rng)).collect();
+    let lhs: Vec<F> = (0..len).map(|_| FieldCore::random(&mut rng)).collect();
+    let rhs: Vec<F> = (0..len).map(|_| FieldCore::random(&mut rng)).collect();
 
     let (lhs_p, lhs_s) = PF::pack_slice_with_suffix(&lhs);
     let (rhs_p, rhs_s) = PF::pack_slice_with_suffix(&rhs);

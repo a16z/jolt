@@ -2,9 +2,7 @@
 
 use ark_std::rand::Rng;
 use ark_std::{test_rng, One, Zero};
-use jolt_field::{
-    CanonicalU64, Fr, FromPrimitiveInt, MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes,
-};
+use jolt_field::{CanonicalRepr, FieldCore, Fr, FromPrimitiveInt};
 use rand_chacha::rand_core::RngCore;
 
 #[test]
@@ -21,7 +19,7 @@ fn implicit_montgomery_conversion() {
 
     for _ in 0..256 {
         let x = rng.next_u64();
-        let y: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let y: Fr = <Fr as FieldCore>::random(&mut rng);
         assert_eq!(
             y * <Fr as FromPrimitiveInt>::from_u64(x),
             y * <Fr as FromPrimitiveInt>::from_u64(x)
@@ -90,7 +88,7 @@ fn bytes_conversion() {
     for &len in &[1, 8, 16, 32, 48, 64] {
         let mut bytes = vec![0u8; len];
         rng.fill_bytes(&mut bytes);
-        let _field_elem = <Fr as ReducingBytes>::from_le_bytes_mod_order(&bytes);
+        let _field_elem = <Fr as CanonicalRepr>::from_le_bytes_mod_order(&bytes);
     }
 }
 
@@ -132,11 +130,11 @@ fn mul_u64_method() {
     let mut rng = test_rng();
 
     for _ in 0..100 {
-        let field_elem: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let field_elem: Fr = <Fr as FieldCore>::random(&mut rng);
         let n = rng.next_u64();
 
         // Use UFCS to call trait method (arkworks has inherent mul_u64 with different signature)
-        let result = <Fr as MulPrimitiveInt>::mul_u64(&field_elem, n);
+        let result = <Fr as FromPrimitiveInt>::mul_u64(&field_elem, n);
         let expected = field_elem * <Fr as FromPrimitiveInt>::from_u64(n);
         assert_eq!(result, expected);
     }
@@ -147,10 +145,10 @@ fn mul_i64_method() {
     let mut rng = test_rng();
 
     for _ in 0..100 {
-        let field_elem: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let field_elem: Fr = <Fr as FieldCore>::random(&mut rng);
         let n = rng.gen::<i64>();
 
-        let result = <Fr as MulPrimitiveInt>::mul_i64(&field_elem, n);
+        let result = <Fr as FromPrimitiveInt>::mul_i64(&field_elem, n);
         let expected = field_elem * <Fr as FromPrimitiveInt>::from_i64(n);
         assert_eq!(result, expected);
     }
@@ -161,10 +159,10 @@ fn mul_u128_method() {
     let mut rng = test_rng();
 
     for _ in 0..100 {
-        let field_elem: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let field_elem: Fr = <Fr as FieldCore>::random(&mut rng);
         let n = rng.gen::<u128>();
 
-        let result = <Fr as MulPrimitiveInt>::mul_u128(&field_elem, n);
+        let result = <Fr as FromPrimitiveInt>::mul_u128(&field_elem, n);
         let expected = field_elem * <Fr as FromPrimitiveInt>::from_u128(n);
         assert_eq!(result, expected);
     }
@@ -175,10 +173,10 @@ fn mul_i128_method() {
     let mut rng = test_rng();
 
     for _ in 0..100 {
-        let field_elem: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let field_elem: Fr = <Fr as FieldCore>::random(&mut rng);
         let n = rng.gen::<i128>();
 
-        let result = <Fr as MulPrimitiveInt>::mul_i128(&field_elem, n);
+        let result = <Fr as FromPrimitiveInt>::mul_i128(&field_elem, n);
         let expected = field_elem * <Fr as FromPrimitiveInt>::from_i128(n);
         assert_eq!(result, expected);
     }
@@ -189,10 +187,10 @@ fn mul_pow_2_method() {
     let mut rng = test_rng();
 
     for _ in 0..10 {
-        let field_elem: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let field_elem: Fr = <Fr as FieldCore>::random(&mut rng);
 
         for pow in [0, 1, 2, 7, 16, 32, 63, 64, 127, 128, 255] {
-            let result = <Fr as MulPow2>::mul_pow_2(&field_elem, pow);
+            let result = <Fr as FromPrimitiveInt>::mul_pow_2(&field_elem, pow);
             let mut expected = field_elem;
             for _ in 0..pow {
                 expected = expected + expected;
@@ -207,7 +205,7 @@ fn mul_by_small_values() {
     let mut rng = test_rng();
 
     for _ in 0..100 {
-        let field_elem: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let field_elem: Fr = <Fr as FieldCore>::random(&mut rng);
         let small_val = rng.gen_range(0u64..1000);
 
         let result1 = field_elem * <Fr as FromPrimitiveInt>::from_u64(small_val);
@@ -224,7 +222,7 @@ fn mul_by_small_values() {
 #[test]
 fn special_values() {
     let mut rng = test_rng();
-    let field_elem: Fr = <Fr as RandomSampling>::random(&mut rng);
+    let field_elem: Fr = <Fr as FieldCore>::random(&mut rng);
 
     assert_eq!(
         field_elem * <Fr as FromPrimitiveInt>::from_u64(0),
@@ -236,10 +234,16 @@ fn special_values() {
     );
     assert!((Fr::zero() * <Fr as FromPrimitiveInt>::from_u64(rng.next_u64())).is_zero());
 
-    assert_eq!(<Fr as MulPrimitiveInt>::mul_u64(&field_elem, 0), Fr::zero());
-    assert_eq!(<Fr as MulPrimitiveInt>::mul_u64(&field_elem, 1), field_elem);
     assert_eq!(
-        <Fr as MulPrimitiveInt>::mul_u64(&Fr::zero(), 42),
+        <Fr as FromPrimitiveInt>::mul_u64(&field_elem, 0),
+        Fr::zero()
+    );
+    assert_eq!(
+        <Fr as FromPrimitiveInt>::mul_u64(&field_elem, 1),
+        field_elem
+    );
+    assert_eq!(
+        <Fr as FromPrimitiveInt>::mul_u64(&Fr::zero(), 42),
         Fr::zero()
     );
 }
@@ -252,6 +256,6 @@ fn to_u64_conversion() {
     }
 
     let mut rng = test_rng();
-    let large_field: Fr = <Fr as RandomSampling>::random(&mut rng);
+    let large_field: Fr = <Fr as FieldCore>::random(&mut rng);
     let _ = large_field.to_canonical_u64_checked();
 }

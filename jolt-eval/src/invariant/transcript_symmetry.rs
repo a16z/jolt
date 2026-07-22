@@ -4,7 +4,7 @@
 //! verifier challenges.
 
 use arbitrary::{Arbitrary, Unstructured};
-use jolt_field::{FixedBytes, Fr as JFr};
+use jolt_field::{CanonicalRepr, Fr as JFr};
 use spongefish::instantiations::{Blake2b512, Keccak};
 
 use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};
@@ -125,7 +125,9 @@ where
 }
 
 fn scalar_bytes(value: JFr) -> [u8; 32] {
-    value.to_bytes_array()
+    let mut out = [0u8; 32];
+    value.to_bytes_le(&mut out);
+    out
 }
 
 fn violation(what: &str, op_idx: usize, err: spongefish::VerificationError) -> CheckError {

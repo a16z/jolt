@@ -275,7 +275,7 @@ impl<F: FieldCore, C: FpExt2Config<F>> RingCore for FpExt2<F, C> {
     }
 }
 
-impl<F: FieldCore, C: FpExt2Config<F>> Invertible for FpExt2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> FieldCore for FpExt2<F, C> {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
@@ -283,18 +283,16 @@ impl<F: FieldCore, C: FpExt2Config<F>> Invertible for FpExt2<F, C> {
         let inv_n = self.norm().inverse()?;
         Some(Self::new(self.coeffs[0] * inv_n, (-self.coeffs[1]) * inv_n))
     }
+
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(F::random(rng), F::random(rng))
+    }
 }
 
 impl<F: HalvingField, C: FpExt2Config<F>> HalvingField for FpExt2<F, C> {
     #[inline]
     fn half(self) -> Self {
         Self::new(self.coeffs[0].half(), self.coeffs[1].half())
-    }
-}
-
-impl<F: FieldCore + RandomSampling, C: FpExt2Config<F>> RandomSampling for FpExt2<F, C> {
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self::new(F::random(rng), F::random(rng))
     }
 }
 
@@ -517,3 +515,20 @@ impl<const P: u64, C: FpExt2Config<Fp64<P>>> MulBaseUnreduced<Fp64<P>> for FpExt
 
 /// Default quadratic extension used by the Solinas backend tests and helpers.
 pub type Ext2<F> = FpExt2<F, TwoNr>;
+
+impl<F: FieldCore + serde::Serialize, C: FpExt2Config<F>> serde::Serialize for FpExt2<F, C> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.coeffs.serialize(serializer)
+    }
+}
+
+impl<'de, F, C> serde::Deserialize<'de> for FpExt2<F, C>
+where
+    F: FieldCore + serde::Deserialize<'de>,
+    C: FpExt2Config<F>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let [c0, c1] = <[F; 2]>::deserialize(deserializer)?;
+        Ok(Self::new(c0, c1))
+    }
+}

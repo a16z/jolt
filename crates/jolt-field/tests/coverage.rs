@@ -8,8 +8,8 @@
 use ark_std::test_rng;
 use jolt_field::signed::*;
 use jolt_field::{
-    Accumulator, FixedBytes, Fr, FromPrimitiveInt, Limbs, MulPow2, NaiveAccumulator,
-    OptimizedMul, RandomSampling,
+    Accumulator, CanonicalRepr, FieldCore, Fr, FromPrimitiveInt, Limbs, NaiveAccumulator,
+    OptimizedMul,
 };
 use num_traits::{One, Zero};
 
@@ -101,8 +101,8 @@ fn wide_accumulator_many_fmadds() {
     let mut expected = Fr::zero();
     let mut rng = test_rng();
     for _ in 0..500 {
-        let a: Fr = <Fr as RandomSampling>::random(&mut rng);
-        let b: Fr = <Fr as RandomSampling>::random(&mut rng);
+        let a: Fr = <Fr as FieldCore>::random(&mut rng);
+        let b: Fr = <Fr as FieldCore>::random(&mut rng);
         acc.fmadd(a, b);
         expected += a * b;
     }
@@ -112,8 +112,8 @@ fn wide_accumulator_many_fmadds() {
 #[test]
 fn optimized_mul_blanket_impl() {
     let mut rng = test_rng();
-    let a: Fr = <Fr as RandomSampling>::random(&mut rng);
-    let b: Fr = <Fr as RandomSampling>::random(&mut rng);
+    let a: Fr = <Fr as FieldCore>::random(&mut rng);
+    let b: Fr = <Fr as FieldCore>::random(&mut rng);
 
     // mul_0_optimized: both nonzero
     assert_eq!(a.mul_0_optimized(b), a * b);
@@ -174,14 +174,14 @@ fn field_from_small_types_boundary() {
 fn field_mul_pow_2_boundary() {
     let f = <Fr as FromPrimitiveInt>::from_u64(1);
     // pow=0 -> f * 1 = f
-    assert_eq!(<Fr as MulPow2>::mul_pow_2(&f, 0), f);
+    assert_eq!(<Fr as FromPrimitiveInt>::mul_pow_2(&f, 0), f);
     // pow=1 -> f * 2
     assert_eq!(
-        <Fr as MulPow2>::mul_pow_2(&f, 1),
+        <Fr as FromPrimitiveInt>::mul_pow_2(&f, 1),
         <Fr as FromPrimitiveInt>::from_u64(2)
     );
     // pow=64 -> goes through while loop at least once
-    let result = <Fr as MulPow2>::mul_pow_2(&f, 64);
+    let result = <Fr as FromPrimitiveInt>::mul_pow_2(&f, 64);
     let mut expected = f;
     for _ in 0..64 {
         expected = expected + expected;
@@ -193,7 +193,7 @@ fn field_mul_pow_2_boundary() {
 #[should_panic(expected = "pow > 255")]
 fn field_mul_pow_2_overflow() {
     let f = <Fr as FromPrimitiveInt>::from_u64(1);
-    let _ = <Fr as MulPow2>::mul_pow_2(&f, 256);
+    let _ = <Fr as FromPrimitiveInt>::mul_pow_2(&f, 256);
 }
 
 #[test]
@@ -957,8 +957,8 @@ fn fr_neg() {
 fn fr_inner_roundtrip() {
     // Test Fr(ark_bn254::Fr) -> ark_bn254::Fr conversion (inner type)
     let a = Fr::from_u64(12345);
-    let bytes = a.to_bytes_array();
-    let b = Fr::from_bytes_array(&bytes);
+    let bytes = a.to_bytes_le_vec();
+    let b = <Fr as CanonicalRepr>::from_le_bytes_mod_order(&bytes);
     assert_eq!(a, b);
 }
 

@@ -1,6 +1,6 @@
 #![no_main]
 use jolt_crypto::{Bn254, Bn254G1, VectorCommitment, JoltGroup, Pedersen, PedersenSetup};
-use jolt_field::{Fr, FromPrimitiveInt, ReducingBytes};
+use jolt_field::{Fr, FromPrimitiveInt, CanonicalRepr};
 use libfuzzer_sys::fuzz_target;
 
 /// Fixed small setup (4 generators) — deterministic so we don't waste fuzzer
@@ -23,9 +23,9 @@ fuzz_target!(|data: &[u8]| {
     let setup = fixed_setup();
 
     let values: Vec<Fr> = (0..4)
-        .map(|i| <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[i * 32..(i + 1) * 32]))
+        .map(|i| <Fr as CanonicalRepr>::from_le_bytes_mod_order(&data[i * 32..(i + 1) * 32]))
         .collect();
-    let blinding = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[128..160]);
+    let blinding = <Fr as CanonicalRepr>::from_le_bytes_mod_order(&data[128..160]);
 
     // Commit-verify round-trip
     let c = Pedersen::<Bn254G1>::commit(&setup, &values, &blinding);

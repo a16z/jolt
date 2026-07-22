@@ -445,7 +445,11 @@ impl<F: FieldCore + FpExt4MulBackend> RingCore for FpExt4<F> {
     }
 }
 
-impl<F: FieldCore + FpExt4MulBackend> Invertible for FpExt4<F> {
+impl<F: FieldCore + FpExt4MulBackend> FieldCore for FpExt4<F> {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(std::array::from_fn(|_| F::random(rng)))
+    }
+
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
@@ -481,18 +485,7 @@ impl<F: HalvingField + FpExt4MulBackend> HalvingField for FpExt4<F> {
     }
 }
 
-impl<F: FieldCore + RandomSampling> RandomSampling for FpExt4<F> {
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self::new([
-            F::random(rng),
-            F::random(rng),
-            F::random(rng),
-            F::random(rng),
-        ])
-    }
-}
-
-impl<F: FieldCore + FromPrimitiveInt> FromPrimitiveInt for FpExt4<F> {
+impl<F: FieldCore + FromPrimitiveInt + FpExt4MulBackend> FromPrimitiveInt for FpExt4<F> {
     fn from_u64(val: u64) -> Self {
         Self::from_u64(val)
     }
@@ -670,3 +663,15 @@ macro_rules! impl_fp_ext4_default_optimized_fold {
 
 impl_fp_ext4_default_optimized_fold!(Fp64<P: u64>);
 impl_fp_ext4_default_optimized_fold!(Fp128<P: u128>);
+
+impl<F: FieldCore + serde::Serialize> serde::Serialize for FpExt4<F> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.coeffs.serialize(serializer)
+    }
+}
+
+impl<'de, F: FieldCore + serde::Deserialize<'de>> serde::Deserialize<'de> for FpExt4<F> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::new(<[F; 4]>::deserialize(deserializer)?))
+    }
+}

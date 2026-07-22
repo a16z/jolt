@@ -541,7 +541,7 @@ mod tests {
     use super::super::super::bytecode::{read_raf_public_values, BytecodeReadRafEvaluationInputs};
     use super::*;
     use crate::protocols::jolt::JoltPolynomialId;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
     use jolt_lookup_tables::InstructionLookupTable;
     use jolt_riscv::{
         instructions::Noop, Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionKind,

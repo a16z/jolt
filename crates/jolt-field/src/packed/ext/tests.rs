@@ -6,12 +6,12 @@
 
 use super::*;
 use crate::ext::{Ext2, FpExt2, FpExt4, TwoNr};
+use crate::FieldCore;
 use crate::Fp32;
 use crate::Fp64;
 use crate::Prime31Offset19;
 use crate::Prime32Offset99;
 use crate::Prime64Offset59;
-use crate::RandomSampling;
 use crate::RingCore;
 use rand::rngs::StdRng;
 use rand::SeedableRng;

@@ -5,12 +5,13 @@
 //!
 //! ```text
 //! AdditiveGroup -> RingCore -> FieldCore
-//!                         \-> Invertible
 //! ```
 //!
-//! Serialization, sampling, transcript challenges, primitive-integer embedding,
-//! and accumulator support are separate capabilities so non-BN254 fields can
-//! opt into only the surface they actually provide.
+//! [`CanonicalRepr`] (the Fiat-Shamir transcript surface), primitive-integer
+//! embedding, and accumulator support are separate capabilities so non-BN254
+//! fields and rings opt into only the surface they actually provide. Proof
+//! and wire serialization use serde + bincode, never the canonical transcript
+//! encoding.
 //!
 //! # Core traits
 //!
@@ -41,51 +42,25 @@
 //! - [`signed`] module — `S64`, `S128`, `S192`, `S256` and half-limb variants
 
 mod accumulator;
-mod additive_group;
 #[cfg(feature = "akita")]
 mod akita;
-mod canonical_bit_length;
-mod canonical_bytes;
-mod canonical_u64;
+mod algebra;
+mod canonical;
 mod field;
-mod field_core;
 mod field_error;
-mod fixed_byte_size;
-mod fixed_bytes;
-mod from_primitive_int;
-mod invertible;
 mod montgomery_constants;
-mod mul_pow_2;
-mod mul_primitive_int;
-mod random_sampling;
-mod reducing_bytes;
-mod ring_core;
 #[cfg(feature = "solinas")]
 mod solinas_traits;
-mod transcript_challenge;
 
 pub use accumulator::{Accumulator, NaiveAccumulator, WithAccumulator};
-pub use additive_group::AdditiveGroup;
-pub use canonical_bit_length::CanonicalBitLength;
-pub use canonical_bytes::CanonicalBytes;
-pub use canonical_u64::CanonicalU64;
-pub use field::{Field, OptimizedMul};
-pub use field_core::FieldCore;
+pub use algebra::{AdditiveGroup, FieldCore, FromPrimitiveInt, OptimizedMul, RingCore};
+pub use canonical::CanonicalRepr;
+pub use field::Field;
 pub use field_error::FieldError;
-pub use fixed_byte_size::FixedByteSize;
-pub use fixed_bytes::FixedBytes;
-pub use from_primitive_int::FromPrimitiveInt;
-pub use invertible::Invertible;
 pub use montgomery_constants::MontgomeryConstants;
-pub use mul_pow_2::MulPow2;
-pub use mul_primitive_int::MulPrimitiveInt;
 pub use num_traits::{One, Zero};
-pub use random_sampling::RandomSampling;
-pub use reducing_bytes::ReducingBytes;
-pub use ring_core::RingCore;
 #[cfg(feature = "solinas")]
 pub use solinas_traits::{balanced_digit_lut, CanonicalField, HalvingField, PseudoMersenneField};
-pub use transcript_challenge::TranscriptChallenge;
 
 pub mod limbs;
 pub use limbs::Limbs;

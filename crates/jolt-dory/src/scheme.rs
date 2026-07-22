@@ -528,7 +528,7 @@ mod tests {
 
     use super::*;
     use jolt_crypto::{Pedersen, VectorCommitment};
-    use jolt_field::{FromPrimitiveInt, RandomSampling};
+    use jolt_field::{FieldCore, FromPrimitiveInt};
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -543,7 +543,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as FieldCore>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -617,7 +617,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as FieldCore>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 

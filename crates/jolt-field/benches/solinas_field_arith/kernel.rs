@@ -1,6 +1,6 @@
 use criterion::{black_box, Criterion, Throughput};
 use jolt_field::packed::PackedField;
-use jolt_field::{CanonicalField, FieldCore, Prime128Offset275, RandomSampling};
+use jolt_field::{CanonicalField, FieldCore, Prime128Offset275};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::cases::*;
@@ -36,7 +36,7 @@ fn sumcheck_bench<F, PF>(
     rng: &mut StdRng,
     n: u64,
 ) where
-    F: FieldCore + RandomSampling + 'static,
+    F: FieldCore + FieldCore + 'static,
     PF: PackedField<Scalar = F> + Copy + 'static,
 {
     let eq: Vec<F> = (0..n).map(|_| F::random(rng)).collect();

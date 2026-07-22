@@ -1,6 +1,6 @@
 use akita_pcs::{CommitmentProver, ComputeBackendSetup, CpuBackend, RootPolyShape};
 use jolt_crypto::Commitment;
-use jolt_field::CanonicalBytes;
+use jolt_field::CanonicalRepr;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, VerifierOpeningClaim,
     ZkBatchOpeningScheme, ZkOpeningScheme,

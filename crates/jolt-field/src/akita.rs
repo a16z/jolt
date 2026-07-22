@@ -2,9 +2,7 @@ use akita_config::proof_optimized::fp128::Field as AkitaField;
 use rand_core::RngCore;
 
 use crate::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
-    FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt,
-    NaiveAccumulator, RandomSampling, ReducingBytes, RingCore, TranscriptChallenge,
+    AdditiveGroup, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, NaiveAccumulator, RingCore,
     WithAccumulator,
 };
 
@@ -12,14 +10,17 @@ impl AdditiveGroup for AkitaField {}
 
 impl RingCore for AkitaField {}
 
-impl Invertible for AkitaField {
+impl FieldCore for AkitaField {
     #[inline]
     fn inverse(&self) -> Option<Self> {
         <Self as akita_field::Invertible>::inverse(self)
     }
-}
 
-impl FieldCore for AkitaField {}
+    #[inline]
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        <Self as akita_field::RandomSampling>::random(rng)
+    }
+}
 
 impl FromPrimitiveInt for AkitaField {
     #[inline]
@@ -43,55 +44,27 @@ impl FromPrimitiveInt for AkitaField {
     }
 }
 
-impl RandomSampling for AkitaField {
-    #[inline]
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        <Self as akita_field::RandomSampling>::random(rng)
-    }
-}
-
-impl MulPow2 for AkitaField {}
-
-impl MulPrimitiveInt for AkitaField {}
-
-impl FixedByteSize for AkitaField {
+impl CanonicalRepr for AkitaField {
     const NUM_BYTES: usize = <Self as akita_field::FixedByteSize>::NUM_BYTES;
-}
 
-impl CanonicalBytes for AkitaField {
     #[inline(always)]
     fn to_bytes_le(&self, out: &mut [u8]) {
         <Self as akita_field::CanonicalBytes>::to_bytes_le(self, out);
     }
-}
 
-impl ReducingBytes for AkitaField {
     #[inline(always)]
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         <Self as akita_field::ReducingBytes>::from_le_bytes_mod_order(bytes)
     }
-}
 
-impl TranscriptChallenge for AkitaField {
-    #[inline(always)]
-    fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        <Self as ReducingBytes>::from_le_bytes_mod_order(bytes)
-    }
-}
-
-impl FixedBytes<16> for AkitaField {}
-
-impl CanonicalBitLength for AkitaField {
-    #[inline]
-    fn num_bits(&self) -> u32 {
-        <Self as akita_field::CanonicalBitLength>::num_bits(self)
-    }
-}
-
-impl CanonicalU64 for AkitaField {
     #[inline]
     fn to_canonical_u64_checked(&self) -> Option<u64> {
         <Self as akita_field::CanonicalU64>::to_canonical_u64_checked(self)
+    }
+
+    #[inline]
+    fn num_bits(&self) -> u32 {
+        <Self as akita_field::CanonicalBitLength>::num_bits(self)
     }
 }
 

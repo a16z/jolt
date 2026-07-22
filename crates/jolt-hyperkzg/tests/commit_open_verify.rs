@@ -7,7 +7,7 @@
 )]
 
 use jolt_crypto::Bn254;
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_poly::Polynomial;

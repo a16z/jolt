@@ -39,6 +39,7 @@ parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
 
 [dev-dependencies]
+bincode = { workspace = true }
 ark-std = { workspace = true }
 rand_chacha = { workspace = true }
 criterion = { workspace = true }

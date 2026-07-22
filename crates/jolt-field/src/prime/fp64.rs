@@ -6,7 +6,7 @@
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use crate::{FromPrimitiveInt, Invertible, RandomSampling};
+use crate::{FieldCore, FromPrimitiveInt};
 use rand_core::RngCore;
 
 use crate::{CanonicalField, HalvingField, PseudoMersenneField};
@@ -147,7 +147,7 @@ impl<const P: u64> Fp64<P> {
     /// Multiplicative inverse, or `None` for zero.
     #[inline]
     pub fn inverse(&self) -> Option<Self> {
-        <Self as Invertible>::inverse(self)
+        <Self as FieldCore>::inverse(self)
     }
 
     /// Construct from a `u64` reduced modulo the field modulus.
@@ -446,7 +446,7 @@ impl<'a, const P: u64> Mul<&'a Self> for Fp64<P> {
     }
 }
 
-impl<const P: u64> Invertible for Fp64<P> {
+impl<const P: u64> FieldCore for Fp64<P> {
     #[inline(always)]
     fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
@@ -464,6 +464,13 @@ impl<const P: u64> Invertible for Fp64<P> {
         let mask = 0u64.wrapping_sub(nz);
         Self(candidate.0 & mask)
     }
+
+    #[inline(always)]
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        let lo = rng.next_u64() as u128;
+        let hi = rng.next_u64() as u128;
+        Self(Self::reduce_u128(lo | (hi << 64)))
+    }
 }
 
 impl<const P: u64> HalvingField for Fp64<P> {
@@ -471,15 +478,6 @@ impl<const P: u64> HalvingField for Fp64<P> {
     fn half(self) -> Self {
         let x = self.0 as u128;
         Self(((x + (x & 1) * P as u128) >> 1) as u64)
-    }
-}
-
-impl<const P: u64> RandomSampling for Fp64<P> {
-    #[inline(always)]
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        let lo = rng.next_u64() as u128;
-        let hi = rng.next_u64() as u128;
-        Self(Self::reduce_u128(lo | (hi << 64)))
     }
 }
 
@@ -536,6 +534,21 @@ impl<const P: u64> PseudoMersenneField for Fp64<P> {
     const MODULUS_OFFSET: u128 = Self::C as u128;
 }
 
+impl<const P: u64> serde::Serialize for Fp64<P> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let buf = (self.to_canonical_u128() as u64).to_le_bytes();
+        <[u8; 8]>::serialize(&buf, serializer)
+    }
+}
+
+impl<'de, const P: u64> serde::Deserialize<'de> for Fp64<P> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let buf = <[u8; 8]>::deserialize(deserializer)?;
+        Self::from_canonical_u128_checked(u64::from_le_bytes(buf) as u128)
+            .ok_or_else(|| serde::de::Error::custom("non-canonical Fp64 encoding"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,8 +594,8 @@ mod tests {
     fn mul_wide_matches_full_mul() {
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         for _ in 0..1000 {
-            let a: F40 = RandomSampling::random(&mut rng);
-            let b: F40 = RandomSampling::random(&mut rng);
+            let a: F40 = FieldCore::random(&mut rng);
+            let b: F40 = FieldCore::random(&mut rng);
             let expected = a * b;
             let reduced = F40::solinas_reduce(a.mul_wide(b));
             assert_eq!(reduced, expected);
@@ -593,7 +606,7 @@ mod tests {
     fn mul_wide_u64_matches() {
         let mut rng = StdRng::seed_from_u64(0xcafe_d00d);
         for _ in 0..1000 {
-            let a: F40 = RandomSampling::random(&mut rng);
+            let a: F40 = FieldCore::random(&mut rng);
             let b = rng.next_u64() % ((1u64 << 40) - 195);
             let expected = a * F40::from_canonical_u64(b);
             let reduced = F40::solinas_reduce(a.mul_wide_u64(b));

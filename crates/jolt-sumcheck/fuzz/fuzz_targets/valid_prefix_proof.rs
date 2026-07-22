@@ -22,7 +22,7 @@
 
 #![no_main]
 
-use jolt_field::{Fr, ReducingBytes};
+use jolt_field::{Fr, CanonicalRepr};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
@@ -138,5 +138,5 @@ fuzz_target!(|data: &[u8]| {
 #[inline]
 fn read_scalar(bytes: &[u8]) -> Fr {
     debug_assert_eq!(bytes.len(), SCALAR_BYTES);
-    <Fr as ReducingBytes>::from_le_bytes_mod_order(bytes)
+    <Fr as CanonicalRepr>::from_le_bytes_mod_order(bytes)
 }

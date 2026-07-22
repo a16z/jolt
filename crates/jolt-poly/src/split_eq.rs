@@ -495,7 +495,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 

@@ -19,7 +19,7 @@ pub(crate) mod neon;
 pub use ext::{PackedFpExt2, PackedFpExt4, PackedFpExt8};
 
 use crate::ext::{fp_ext8_mul_schedule, fp_ext8_square_schedule, FpExt2Config};
-use crate::{FieldCore, Fp128, Fp32, Fp64, Invertible};
+use crate::{FieldCore, Fp128, Fp32, Fp64};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::Zero;
 
@@ -98,7 +98,7 @@ pub trait PackedField:
     #[inline]
     fn inverse(self) -> Option<Self>
     where
-        Self::Scalar: Invertible,
+        Self::Scalar: FieldCore,
     {
         let mut inverses = Vec::with_capacity(Self::WIDTH);
         for lane in 0..Self::WIDTH {
@@ -170,7 +170,7 @@ pub trait PackedField:
     #[inline(always)]
     fn fp_ext4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
     where
-        Self::Scalar: Invertible,
+        Self::Scalar: FieldCore,
     {
         let zero = Self::broadcast(Self::Scalar::zero());
         let [a0, a1, a2, a3] = a;

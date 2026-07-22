@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_field::{Accumulator, Fr, ReducingBytes, WideAccumulator};
+use jolt_field::{Accumulator, Fr, CanonicalRepr, WideAccumulator};
 use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;
 
@@ -16,9 +16,9 @@ fuzz_target!(|data: &[u8]| {
     let pairs = data.len() / 64;
     for i in 0..pairs {
         let offset = i * 64;
-        let a = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[offset..offset + 32]);
+        let a = <Fr as CanonicalRepr>::from_le_bytes_mod_order(&data[offset..offset + 32]);
         let b =
-            <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[offset + 32..offset + 64]);
+            <Fr as CanonicalRepr>::from_le_bytes_mod_order(&data[offset + 32..offset + 64]);
 
         acc.fmadd(a, b);
         naive_sum += a * b;

@@ -3,18 +3,16 @@ use std::{
     hash::Hash,
 };
 
-use jolt_field::{
-    CanonicalBytes, FieldCore, FixedByteSize, FromPrimitiveInt, MulPow2, TranscriptChallenge,
-};
+use jolt_field::{CanonicalRepr, FieldCore, FromPrimitiveInt};
 
 /// Scalar capabilities used by the verifier-side sumcheck crate.
 pub trait SumcheckScalar:
     FieldCore
     + FromPrimitiveInt
-    + MulPow2
-    + CanonicalBytes
-    + FixedByteSize
-    + TranscriptChallenge
+    + FromPrimitiveInt
+    + CanonicalRepr
+    + CanonicalRepr
+    + CanonicalRepr
     + Copy
     + Default
     + Eq
@@ -30,10 +28,10 @@ pub trait SumcheckScalar:
 impl<F> SumcheckScalar for F where
     F: FieldCore
         + FromPrimitiveInt
-        + MulPow2
-        + CanonicalBytes
-        + FixedByteSize
-        + TranscriptChallenge
+        + FromPrimitiveInt
+        + CanonicalRepr
+        + CanonicalRepr
+        + CanonicalRepr
         + Copy
         + Default
         + Eq

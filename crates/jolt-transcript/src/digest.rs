@@ -33,7 +33,7 @@ pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
 impl<D, F> Clone for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalRepr,
 {
     fn clone(&self) -> Self {
         Self {
@@ -54,7 +54,7 @@ where
 impl<D, F> Default for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalRepr,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -64,7 +64,7 @@ where
 impl<D, F> std::fmt::Debug for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalRepr,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DigestTranscript")
@@ -77,7 +77,7 @@ where
 impl<D, F> DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalRepr,
 {
     #[inline]
     fn hasher(&self) -> D {
@@ -131,7 +131,7 @@ where
 impl<D, F> Transcript for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalRepr,
 {
     type Challenge = F;
 

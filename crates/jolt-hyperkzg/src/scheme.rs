@@ -11,7 +11,7 @@
 use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
-use jolt_field::{FromPrimitiveInt, RandomSampling};
+use jolt_field::{FieldCore, FromPrimitiveInt};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};

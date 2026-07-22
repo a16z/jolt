@@ -1,5 +1,5 @@
 use jolt_crypto::Bn254;
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};

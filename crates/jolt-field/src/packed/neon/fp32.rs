@@ -750,7 +750,7 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
     #[inline(always)]
     fn fp_ext4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
     where
-        Self::Scalar: Invertible,
+        Self::Scalar: FieldCore,
     {
         let [a0, a1, a2, a3] = a.map(Self::to_vec);
         let zero = unsafe { vdupq_n_u32(0) };

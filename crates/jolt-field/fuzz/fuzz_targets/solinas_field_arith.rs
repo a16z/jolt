@@ -1,7 +1,7 @@
 #![no_main]
 
 use jolt_field::{
-    FpExt4, FromPrimitiveInt, Invertible, Prime128Offset275, Prime31Offset19, ReducingBytes,
+    FpExt4, FromPrimitiveInt, FieldCore, Prime128Offset275, Prime31Offset19, CanonicalRepr,
 };
 use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;

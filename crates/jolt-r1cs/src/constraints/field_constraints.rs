@@ -176,7 +176,7 @@ pub fn field_inline_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F
 #[expect(clippy::expect_used, reason = "tests may unwind via panic")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
     use num_traits::Zero;
 
     fn witness(field_rs1: Fr, field_rs2: Fr, field_rd: Fr, flags: &[(usize, Fr)]) -> Vec<Fr> {

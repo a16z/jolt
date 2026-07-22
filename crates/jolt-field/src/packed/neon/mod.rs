@@ -7,7 +7,7 @@
 
 use super::{PackedField, PackedValue};
 use crate::ext::FpExt2Config;
-use crate::Invertible;
+use crate::FieldCore;
 use crate::{Fp128, Fp32, Fp64};
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u32, vandq_u64, vbslq_u64,

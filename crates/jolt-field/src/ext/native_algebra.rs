@@ -3,7 +3,7 @@
 //!
 //! These are the Jolt-free supertrait obligations of the native
 //! [`AdditiveGroup`]/[`FieldCore`] hierarchy. The non-trivial `RingCore::square`
-//! / `Invertible::inverse` impls stay co-located with each extension type.
+//! / `FieldCore::inverse` impls stay co-located with each extension type.
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -73,7 +73,6 @@ impl<'a, F: FieldCore, C: FpExt2Config<F>> Product<&'a Self> for FpExt2<F, C> {
 }
 
 impl<F: FieldCore, C: FpExt2Config<F>> AdditiveGroup for FpExt2<F, C> {}
-impl<F: FieldCore, C: FpExt2Config<F>> FieldCore for FpExt2<F, C> {}
 
 // --- FpExt4 -----------------------------------------------------
 
@@ -137,7 +136,6 @@ impl<'a, F: FieldCore + FpExt4MulBackend> Product<&'a Self> for FpExt4<F> {
 }
 
 impl<F: FieldCore + FpExt4MulBackend> AdditiveGroup for FpExt4<F> {}
-impl<F: FieldCore + FpExt4MulBackend> FieldCore for FpExt4<F> {}
 
 // --- FpExt8 -----------------------------------------------------
 
@@ -226,4 +224,3 @@ impl<'a, F: FieldCore + FpExt8MulBackend> Product<&'a Self> for FpExt8<F> {
 }
 
 impl<F: FieldCore + FpExt8MulBackend> AdditiveGroup for FpExt8<F> {}
-impl<F: FieldCore + FpExt8MulBackend> FieldCore for FpExt8<F> {}

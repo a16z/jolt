@@ -6,7 +6,7 @@ use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
     VectorOpeningError,
 };
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
 use jolt_poly::EqPolynomial;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

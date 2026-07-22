@@ -1,8 +1,8 @@
-//! Native capability-trait impls for the prime fields: primitive-int
-//! multiplication markers, the canonical byte/transcript surface, bit-length
-//! introspection, and the `WithAccumulator` association (native `NaiveAccumulator`).
+//! Native capability-trait impls for the prime fields: the canonical
+//! byte/transcript surface and the `WithAccumulator` association (native
+//! `NaiveAccumulator`).
 //!
-//! `FromPrimitiveInt`/`RandomSampling` carry per-type logic and stay in the prime
+//! `FromPrimitiveInt`/`FieldCore` carry per-type logic and stay in the prime
 //! modules; this module owns the shared derived-capability implementations used
 //! directly by both Jolt and Akita.
 
@@ -10,31 +10,23 @@ use std::mem::size_of;
 
 use super::{Fp128, Fp32, Fp64};
 use crate::{
-    CanonicalBitLength, CanonicalBytes, CanonicalField, CanonicalU64, Field, FieldCore,
-    FixedByteSize, FixedBytes, FromPrimitiveInt, MulPow2, MulPrimitiveInt, NaiveAccumulator,
-    ReducingBytes, TranscriptChallenge, WithAccumulator,
+    CanonicalField, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, NaiveAccumulator,
+    WithAccumulator,
 };
 
 macro_rules! impl_prime_native_capability {
-    ($ty:ident<$p:ident: $p_ty:ty>, $bytes:expr, $fixed_bytes:literal) => {
-        impl<const $p: $p_ty> MulPow2 for $ty<$p> {}
-        impl<const $p: $p_ty> MulPrimitiveInt for $ty<$p> {}
-
-        impl<const $p: $p_ty> FixedByteSize for $ty<$p> {
+    ($ty:ident<$p:ident: $p_ty:ty>, $bytes:expr) => {
+        impl<const $p: $p_ty> CanonicalRepr for $ty<$p> {
             const NUM_BYTES: usize = $bytes;
-        }
 
-        impl<const $p: $p_ty> CanonicalBytes for $ty<$p> {
             #[inline(always)]
             fn to_bytes_le(&self, out: &mut [u8]) {
-                assert_eq!(out.len(), <Self as FixedByteSize>::NUM_BYTES);
+                assert_eq!(out.len(), <Self as CanonicalRepr>::NUM_BYTES);
                 out.copy_from_slice(
-                    &self.to_canonical_u128().to_le_bytes()[..<Self as FixedByteSize>::NUM_BYTES],
+                    &self.to_canonical_u128().to_le_bytes()[..<Self as CanonicalRepr>::NUM_BYTES],
                 );
             }
-        }
 
-        impl<const $p: $p_ty> ReducingBytes for $ty<$p> {
             #[inline(always)]
             fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
                 if bytes.len() <= size_of::<u128>() {
@@ -45,29 +37,16 @@ macro_rules! impl_prime_native_capability {
 
                 reduce_le_bytes_mod_order(bytes)
             }
-        }
 
-        impl<const $p: $p_ty> TranscriptChallenge for $ty<$p> {
-            #[inline(always)]
-            fn from_challenge_bytes(bytes: &[u8]) -> Self {
-                <Self as ReducingBytes>::from_le_bytes_mod_order(bytes)
+            #[inline]
+            fn to_canonical_u64_checked(&self) -> Option<u64> {
+                self.to_canonical_u128().try_into().ok()
             }
-        }
 
-        impl<const $p: $p_ty> FixedBytes<$fixed_bytes> for $ty<$p> {}
-
-        impl<const $p: $p_ty> CanonicalBitLength for $ty<$p> {
             #[inline]
             fn num_bits(&self) -> u32 {
                 let value = self.to_canonical_u128();
                 u128::BITS - value.leading_zeros()
-            }
-        }
-
-        impl<const $p: $p_ty> CanonicalU64 for $ty<$p> {
-            #[inline]
-            fn to_canonical_u64_checked(&self) -> Option<u64> {
-                self.to_canonical_u128().try_into().ok()
             }
         }
 
@@ -80,7 +59,7 @@ macro_rules! impl_prime_native_capability {
 }
 
 /// Horner reduction of arbitrary-length little-endian bytes modulo the field
-/// order (the >16-byte path of `ReducingBytes::from_le_bytes_mod_order`).
+/// order (the >16-byte path of `CanonicalRepr::from_le_bytes_mod_order`).
 #[inline(always)]
 fn reduce_le_bytes_mod_order<F: FieldCore + FromPrimitiveInt>(bytes: &[u8]) -> F {
     let base = F::from_u64(256);
@@ -89,9 +68,9 @@ fn reduce_le_bytes_mod_order<F: FieldCore + FromPrimitiveInt>(bytes: &[u8]) -> F
     })
 }
 
-impl_prime_native_capability!(Fp32<P: u32>, 4, 4);
-impl_prime_native_capability!(Fp64<P: u64>, 8, 8);
-impl_prime_native_capability!(Fp128<P: u128>, 16, 16);
+impl_prime_native_capability!(Fp32<P: u32>, 4);
+impl_prime_native_capability!(Fp64<P: u64>, 8);
+impl_prime_native_capability!(Fp128<P: u128>, 16);
 
 #[cfg(test)]
 mod tests {
@@ -100,35 +79,24 @@ mod tests {
     //! These exercise the Solinas backend directly, so they run under
     //! `--no-default-features --features solinas` as well as combined builds.
     use super::*;
-    use crate::Prime128Offset275;
     use crate::Accumulator;
+    use crate::Prime128Offset275;
 
     /// Asserts the full canonical byte round-trip on the native traits.
     fn assert_native_byte_roundtrip<F, const N: usize>(value: F, expected: [u8; N])
     where
-        F: CanonicalField
-            + CanonicalBytes
-            + ReducingBytes
-            + TranscriptChallenge
-            + FixedByteSize
-            + FixedBytes<N>
-            + CanonicalBitLength
-            + CanonicalU64
-            + std::fmt::Debug
-            + Eq,
+        F: CanonicalField + CanonicalRepr + std::fmt::Debug + Eq,
     {
-        assert_eq!(<F as FixedByteSize>::NUM_BYTES, N);
+        assert_eq!(<F as CanonicalRepr>::NUM_BYTES, N);
 
-        // to_bytes_le (the audited method) into a correctly sized buffer, plus the
-        // array/vec convenience wrappers — all three must agree.
+        // to_bytes_le (the audited method) into a correctly sized buffer, plus
+        // the vec convenience wrapper — both must agree.
         let mut buf = [0u8; N];
         value.to_bytes_le(&mut buf);
         assert_eq!(buf, expected);
-        assert_eq!(value.to_bytes_array(), expected);
         assert_eq!(value.to_bytes_le_vec(), expected.to_vec());
 
-        // Reducing / fixed / challenge constructors all invert the encoding.
-        assert_eq!(F::from_bytes_array(&buf), value);
+        // Reducing / challenge constructors all invert the encoding.
         assert_eq!(F::from_le_bytes_mod_order(&buf), value);
         assert_eq!(F::from_challenge_bytes(&buf), value);
 

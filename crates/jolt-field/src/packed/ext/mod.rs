@@ -12,7 +12,7 @@
 
 use crate::ext::{FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend};
 use crate::packed::{HasPacking, PackedField, PackedValue};
-use crate::{FieldCore, Invertible};
+use crate::FieldCore;
 use core::ops::{Add, Mul, Sub};
 
 /// Packed `FpExt2` elements stored in transpose layout: `[PF; 2]`.
@@ -146,7 +146,7 @@ where
     #[inline(always)]
     fn inverse(self) -> Option<Self>
     where
-        Self::Scalar: Invertible,
+        Self::Scalar: FieldCore,
     {
         let norm = self.c0 * self.c0 - C::mul_non_residue(self.c1 * self.c1, PF::broadcast);
         let inv_norm = norm.inverse()?;
@@ -305,7 +305,7 @@ where
     #[inline(always)]
     fn inverse(self) -> Option<Self>
     where
-        Self::Scalar: Invertible,
+        Self::Scalar: FieldCore,
     {
         Some(Self::new(PF::fp_ext4_inverse(self.coeffs)?))
     }
@@ -452,7 +452,7 @@ where
     #[inline(always)]
     fn inverse(self) -> Option<Self>
     where
-        Self::Scalar: Invertible,
+        Self::Scalar: FieldCore,
     {
         // FpExt8 inversion uses Gaussian elimination — delegate lane by lane.
         let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));

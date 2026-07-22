@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use criterion::{black_box, Criterion, Throughput};
 use jolt_field::packed::PackedField;
-use jolt_field::{FieldCore, Invertible, RandomSampling, RingCore};
+use jolt_field::{FieldCore, RingCore};
 use rand::{rngs::StdRng, SeedableRng};
 
 use super::data::duration_per_logical_op;
@@ -16,14 +16,7 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
     seed: u64,
     params: ArithmeticBenchParams,
 ) where
-    F: FieldCore
-        + RandomSampling
-        + RingCore
-        + Invertible
-        + AddAssign
-        + SubAssign
-        + MulAssign
-        + 'static,
+    F: FieldCore + FieldCore + RingCore + FieldCore + AddAssign + SubAssign + MulAssign + 'static,
     PF: PackedField<Scalar = F> + Copy + 'static,
 {
     let mut rng = StdRng::seed_from_u64(seed);

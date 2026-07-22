@@ -126,8 +126,7 @@ where
         row_point: &[F],
         entry_point: &[F],
         name: &'static str,
-    ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>>
-    {
+    ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>> {
         open_committed_rows::<F, VC>(setup, rows, blindings, row_point, entry_point, name)
     }
 }

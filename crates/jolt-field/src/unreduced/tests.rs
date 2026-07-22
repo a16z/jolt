@@ -4,7 +4,7 @@
 )]
 
 use super::*;
-use crate::RandomSampling;
+use crate::FieldCore;
 use crate::{Prime128Offset275, Prime24Offset3, Prime40Offset195};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -22,7 +22,7 @@ const P64: u64 = (1 << 40) - 195;
 fn fp128_roundtrip() {
     let mut rng = StdRng::seed_from_u64(0xdead_1234);
     for _ in 0..1000 {
-        let a: F128 = RandomSampling::random(&mut rng);
+        let a: F128 = FieldCore::random(&mut rng);
         let wide = Fp128x8i32::from(a);
         let back = wide.reduce::<P128>();
         assert_eq!(a, back, "roundtrip failed for {a:?}");
@@ -33,7 +33,7 @@ fn fp128_roundtrip() {
 fn fp128_accumulate_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe_4321);
     let n = 1000;
-    let vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let vals: Vec<F128> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let scalar_sum = vals.iter().fold(F128::zero(), |acc, &x| acc + x);
 
@@ -49,8 +49,8 @@ fn fp128_accumulate_matches_scalar() {
 fn fp128_add_sub_neg_match_scalar() {
     let mut rng = StdRng::seed_from_u64(0x1122_3344_5566);
     for _ in 0..500 {
-        let a: F128 = RandomSampling::random(&mut rng);
-        let b: F128 = RandomSampling::random(&mut rng);
+        let a: F128 = FieldCore::random(&mut rng);
+        let b: F128 = FieldCore::random(&mut rng);
 
         let wa = Fp128x8i32::from(a);
         let wb = Fp128x8i32::from(b);
@@ -65,7 +65,7 @@ fn fp128_add_sub_neg_match_scalar() {
 fn fp128_mixed_add_sub_stress() {
     let mut rng = StdRng::seed_from_u64(0xaaaa_bbbb_cccc);
     let n = 500;
-    let vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let vals: Vec<F128> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let mut scalar = F128::zero();
     let mut wide = Fp128x8i32::zero();
@@ -86,7 +86,7 @@ fn fp128_mixed_add_sub_stress() {
 fn fp32_roundtrip() {
     let mut rng = StdRng::seed_from_u64(0x3232_3232);
     for _ in 0..1000 {
-        let a: F32 = RandomSampling::random(&mut rng);
+        let a: F32 = FieldCore::random(&mut rng);
         let wide = Fp32x2i32::from(a);
         let back = wide.reduce::<P32>();
         assert_eq!(a, back);
@@ -97,7 +97,7 @@ fn fp32_roundtrip() {
 fn fp32_accumulate_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0x3232_abcd);
     let n = 1000;
-    let vals: Vec<F32> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let vals: Vec<F32> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let scalar_sum = vals.iter().fold(F32::zero(), |acc, &x| acc + x);
     let wide_sum = vals
@@ -110,7 +110,7 @@ fn fp32_accumulate_matches_scalar() {
 fn fp64_roundtrip() {
     let mut rng = StdRng::seed_from_u64(0x6464_6464);
     for _ in 0..1000 {
-        let a: F64 = RandomSampling::random(&mut rng);
+        let a: F64 = FieldCore::random(&mut rng);
         let wide = Fp64x4i32::from(a);
         let back = wide.reduce::<P64>();
         assert_eq!(a, back);
@@ -121,7 +121,7 @@ fn fp64_roundtrip() {
 fn fp64_accumulate_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0x6464_beef);
     let n = 1000;
-    let vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let vals: Vec<F64> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let scalar_sum = vals.iter().fold(F64::zero(), |acc, &x| acc + x);
     let wide_sum = vals
@@ -134,8 +134,8 @@ fn fp64_accumulate_matches_scalar() {
 fn fp64_product_accum_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0x6464_4444);
     let n = 500;
-    let a_vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let b_vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a_vals: Vec<F64> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
+    let b_vals: Vec<F64> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let scalar_sum: F64 = a_vals
         .iter()
@@ -159,8 +159,8 @@ fn fp64_ext2_product_accum_matches_scalar() {
 
     let mut rng = StdRng::seed_from_u64(0x6464_4445);
     let n = 500;
-    let a_vals: Vec<E> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let b_vals: Vec<E> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a_vals: Vec<E> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
+    let b_vals: Vec<E> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let scalar_sum: E = a_vals
         .iter()
@@ -178,7 +178,7 @@ fn fp64_ext2_product_accum_matches_scalar() {
 fn fp64_mul_u64_accum_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0x6464_5555);
     let n = 500;
-    let a_vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a_vals: Vec<F64> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
     let b_vals: Vec<u64> = (0..n).map(|_| rng.next_u64() >> 32).collect();
 
     let scalar_sum: F64 = a_vals
@@ -199,8 +199,8 @@ fn fp64_mul_u64_accum_matches_scalar() {
 fn fp128_product_accum_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0x0128_6666);
     let n = 500;
-    let a_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let b_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a_vals: Vec<F128> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
+    let b_vals: Vec<F128> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let scalar_sum: F128 = a_vals
         .iter()
@@ -220,7 +220,7 @@ fn fp128_product_accum_matches_scalar() {
 fn fp128_mul_u64_accum_matches_scalar() {
     let mut rng = StdRng::seed_from_u64(0x0128_7777);
     let n = 500;
-    let a_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a_vals: Vec<F128> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
     let b_vals: Vec<u64> = (0..n).map(|_| rng.next_u64()).collect();
 
     let scalar_sum: F128 = a_vals
@@ -241,8 +241,8 @@ fn fp128_mul_u64_accum_matches_scalar() {
 fn fp128_product_accum_sub_neg() {
     let mut rng = StdRng::seed_from_u64(0x0128_8888);
     let n = 500;
-    let a_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let b_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a_vals: Vec<F128> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
+    let b_vals: Vec<F128> = (0..n).map(|_| FieldCore::random(&mut rng)).collect();
 
     let mut scalar_sum = F128::zero();
     let mut accum_pos = Fp128ProductAccum::ZERO;

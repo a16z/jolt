@@ -1,4 +1,4 @@
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
 use jolt_openings::{EvaluationClaim, OpeningsError, PrefixPacking};
 use jolt_poly::Polynomial;
 use rand_chacha::ChaCha20Rng;

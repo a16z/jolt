@@ -4,7 +4,7 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlineOpFlag, FieldInlineOpeningId,
     FieldInlineVirtualPolynomial, FIELD_REGISTERS_LOG_K,
 };
-use jolt_field::{Field, ReducingBytes};
+use jolt_field::{CanonicalRepr, Field};
 use jolt_program::{
     execution::{JoltProgram, TraceOutput, TraceRow, TraceSource},
     field_inline::{
@@ -736,7 +736,7 @@ fn decode_value<F: Field>(value: FieldEncodedValue) -> F {
         bytes.copy_from_slice(&value.bytes_le[..8]);
         return F::from_u64(u64::from_le_bytes(bytes));
     }
-    <F as ReducingBytes>::from_le_bytes_mod_order(&value.bytes_le)
+    <F as CanonicalRepr>::from_le_bytes_mod_order(&value.bytes_le)
 }
 
 fn is_register_domain_virtual(id: FieldInlineVirtualPolynomial) -> bool {

@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{Fr, FieldCore};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
 use jolt_transcript::Blake2bTranscript;

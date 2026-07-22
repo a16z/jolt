@@ -4,7 +4,7 @@
 //! These are the Jolt-free supertrait obligations of the native
 //! [`AdditiveGroup`]/[`RingCore`]/[`FieldCore`] hierarchy:
 //! `Zero`/`One`/`Display`/`Hash`/`Sum`/`Product` plus the empty algebra markers.
-//! The non-trivial `RingCore::square` / `Invertible::inverse` impls stay
+//! The non-trivial `FieldCore::inverse`/`FieldCore::random` impls stay
 //! co-located with each prime type.
 
 use std::fmt;
@@ -14,7 +14,7 @@ use std::iter::{Product, Sum};
 use num_traits::{One, Zero};
 
 use super::{Fp128, Fp32, Fp64};
-use crate::{AdditiveGroup, CanonicalField, FieldCore, RingCore};
+use crate::{AdditiveGroup, CanonicalField, RingCore};
 
 macro_rules! impl_prime_native_algebra {
     ($ty:ident<$p:ident: $p_ty:ty>, $canon:ident) => {
@@ -79,7 +79,6 @@ macro_rules! impl_prime_native_algebra {
 
         impl<const $p: $p_ty> AdditiveGroup for $ty<$p> {}
         impl<const $p: $p_ty> RingCore for $ty<$p> {}
-        impl<const $p: $p_ty> FieldCore for $ty<$p> {}
     };
 }
 

@@ -280,7 +280,7 @@ impl<F: Field> R1csKey<F> {
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
     use num_traits::{One, Zero};
 
     /// x * x = y, y * x = z — 2 constraints, 4 vars [1, x, y, z]

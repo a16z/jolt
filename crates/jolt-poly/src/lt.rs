@@ -169,7 +169,7 @@ fn bind_in_place<F: Field>(v: &mut Vec<F>, challenge: F) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

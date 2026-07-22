@@ -12,7 +12,7 @@ use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
-use jolt_field::{FixedBytes, Fr, FromPrimitiveInt, Invertible};
+use jolt_field::{CanonicalRepr, FieldCore, Fr, FromPrimitiveInt};
 use jolt_poly::{CompressedPoly, EqPolynomial};
 use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
@@ -108,7 +108,7 @@ pub fn f(value: u64) -> F {
 pub fn rng_field(rng: &mut impl RngCore) -> F {
     let mut bytes = [0u8; 32];
     rng.fill_bytes(&mut bytes);
-    F::from_bytes_array(&bytes)
+    <F as jolt_field::CanonicalRepr>::from_le_bytes_mod_order(&bytes)
 }
 
 pub fn inverse(value: F) -> F {
@@ -145,7 +145,7 @@ impl StatisticalProjection {
 }
 
 pub fn field_low_u64(value: F) -> u64 {
-    let bytes = value.to_bytes_array();
+    let bytes = value.to_bytes_le_vec();
     u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ])

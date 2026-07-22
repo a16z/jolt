@@ -431,7 +431,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 __T: ::jolt_transcript::Transcript<Challenge = #f>,
             {
                 use #relations::ConcreteSumcheck as _;
-                use ::jolt_field::MulPow2 as _;
+                use ::jolt_field::FromPrimitiveInt as _;
 
                 #(#sum_bindings)*
 

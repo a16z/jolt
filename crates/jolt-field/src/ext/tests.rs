@@ -11,7 +11,7 @@ use crate::ext::lift::{
     ExtField, FrobeniusExtField,
 };
 use crate::Fp64;
-use crate::{FromPrimitiveInt, Invertible};
+use crate::{FieldCore, FromPrimitiveInt};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -407,8 +407,8 @@ fn mul_base_to_product_accum_matches_mul_base_sum() {
 
     fn check<Base, Ext>(seed: u64)
     where
-        Base: FieldCore + RandomSampling,
-        Ext: MulBaseUnreduced<Base> + Zero + RandomSampling,
+        Base: FieldCore,
+        Ext: MulBaseUnreduced<Base> + Zero,
     {
         let mut rng = StdRng::seed_from_u64(seed);
         let n = 1024;

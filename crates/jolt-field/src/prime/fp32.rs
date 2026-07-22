@@ -6,7 +6,7 @@
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use crate::{FromPrimitiveInt, Invertible, RandomSampling};
+use crate::{FieldCore, FromPrimitiveInt};
 use rand_core::RngCore;
 
 use crate::{CanonicalField, HalvingField, PseudoMersenneField};
@@ -122,7 +122,7 @@ impl<const P: u32> Fp32<P> {
     /// Multiplicative inverse, or `None` for zero.
     #[inline]
     pub fn inverse(&self) -> Option<Self> {
-        <Self as Invertible>::inverse(self)
+        <Self as FieldCore>::inverse(self)
     }
 
     /// Construct from a `u64` reduced modulo the field modulus.
@@ -355,7 +355,7 @@ impl<'a, const P: u32> Mul<&'a Self> for Fp32<P> {
     }
 }
 
-impl<const P: u32> Invertible for Fp32<P> {
+impl<const P: u32> FieldCore for Fp32<P> {
     #[inline(always)]
     fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
@@ -373,6 +373,11 @@ impl<const P: u32> Invertible for Fp32<P> {
         let mask = 0u32.wrapping_sub(nz);
         Self(candidate.0 & mask)
     }
+
+    #[inline(always)]
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self(Self::reduce_u64(rng.next_u64()))
+    }
 }
 
 impl<const P: u32> HalvingField for Fp32<P> {
@@ -385,13 +390,6 @@ impl<const P: u32> HalvingField for Fp32<P> {
             let correction = 0u32.wrapping_sub(self.0 & 1) & half_p_plus_one;
             Self((self.0 >> 1) + correction)
         }
-    }
-}
-
-impl<const P: u32> RandomSampling for Fp32<P> {
-    #[inline(always)]
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self(Self::reduce_u64(rng.next_u64()))
     }
 }
 
@@ -446,6 +444,21 @@ impl<const P: u32> CanonicalField for Fp32<P> {
 impl<const P: u32> PseudoMersenneField for Fp32<P> {
     const MODULUS_BITS: u32 = Self::BITS;
     const MODULUS_OFFSET: u128 = Self::C as u128;
+}
+
+impl<const P: u32> serde::Serialize for Fp32<P> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let buf = (self.to_canonical_u128() as u32).to_le_bytes();
+        <[u8; 4]>::serialize(&buf, serializer)
+    }
+}
+
+impl<'de, const P: u32> serde::Deserialize<'de> for Fp32<P> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let buf = <[u8; 4]>::deserialize(deserializer)?;
+        Self::from_canonical_u128_checked(u32::from_le_bytes(buf) as u128)
+            .ok_or_else(|| serde::de::Error::custom("non-canonical Fp32 encoding"))
+    }
 }
 
 #[cfg(test)]
@@ -578,8 +591,8 @@ mod tests {
     fn mul_wide_matches_full_mul() {
         let mut rng = StdRng::seed_from_u64(0x1234_5678);
         for _ in 0..1000 {
-            let a: F = RandomSampling::random(&mut rng);
-            let b: F = RandomSampling::random(&mut rng);
+            let a: F = FieldCore::random(&mut rng);
+            let b: F = FieldCore::random(&mut rng);
             let expected = a * b;
             let reduced = F::solinas_reduce(a.mul_wide(b));
             assert_eq!(reduced, expected);
@@ -590,7 +603,7 @@ mod tests {
     fn mul_wide_u32_matches() {
         let mut rng = StdRng::seed_from_u64(0xabcd_ef01);
         for _ in 0..1000 {
-            let a: F = RandomSampling::random(&mut rng);
+            let a: F = FieldCore::random(&mut rng);
             let b = rng.next_u32() % 251;
             let expected = a * F::from_canonical_u32(b);
             let reduced = F::solinas_reduce(a.mul_wide_u32(b));

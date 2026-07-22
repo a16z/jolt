@@ -1,7 +1,7 @@
 #![expect(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{FieldCore, Fr};
 use jolt_poly::{EqPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

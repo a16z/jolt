@@ -3,9 +3,8 @@
 //! [`Fr`] is `#[repr(transparent)]` over the inner arkworks scalar field element,
 //! so it has identical layout and can be transmuted where needed.
 use crate::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
-    FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
-    RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
+    AdditiveGroup, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, Limbs, RingCore,
+    WithAccumulator,
 };
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
@@ -323,39 +322,54 @@ impl RingCore for Fr {
     }
 }
 
-impl Invertible for Fr {
+impl FieldCore for Fr {
     #[inline]
     fn inverse(&self) -> Option<Self> {
         <InnerFr as ark_ff::Field>::inverse(&self.0).map(Fr)
     }
+
+    #[inline]
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Fr(<InnerFr as UniformRand>::rand(rng))
+    }
 }
 
-impl FieldCore for Fr {}
-
-impl FixedByteSize for Fr {
+impl CanonicalRepr for Fr {
     const NUM_BYTES: usize = 32;
-}
 
-impl CanonicalBytes for Fr {
     #[expect(clippy::expect_used)]
     #[inline]
     fn to_bytes_le(&self, out: &mut [u8]) {
-        assert_eq!(out.len(), <Self as FixedByteSize>::NUM_BYTES);
+        assert_eq!(out.len(), <Self as CanonicalRepr>::NUM_BYTES);
         use ark_serialize::CanonicalSerialize;
         self.0
             .serialize_compressed(out)
             .expect("BN254 Fr always serializes to 32 bytes");
     }
-}
 
-impl ReducingBytes for Fr {
     #[inline]
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         Fr::from_le_bytes_mod_order(bytes)
     }
-}
 
-impl TranscriptChallenge for Fr {
+    #[inline]
+    fn to_canonical_u64_checked(&self) -> Option<u64> {
+        let bigint = <InnerFr as PrimeField>::into_bigint(self.0);
+        let limbs: &[u64] = bigint.as_ref();
+        let result = limbs[0];
+
+        if <Self as FromPrimitiveInt>::from_u64(result) != *self {
+            None
+        } else {
+            Some(result)
+        }
+    }
+
+    #[inline]
+    fn num_bits(&self) -> u32 {
+        <InnerFr as PrimeField>::into_bigint(self.0).num_bits()
+    }
+
     #[inline]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
@@ -379,37 +393,6 @@ impl TranscriptChallenge for Fr {
         // are interpreted as a big-endian integer before reduction.
         buf.reverse();
         Fr::from_le_bytes_mod_order(&buf)
-    }
-}
-
-impl FixedBytes<32> for Fr {}
-
-impl CanonicalU64 for Fr {
-    #[inline]
-    fn to_canonical_u64_checked(&self) -> Option<u64> {
-        let bigint = <InnerFr as PrimeField>::into_bigint(self.0);
-        let limbs: &[u64] = bigint.as_ref();
-        let result = limbs[0];
-
-        if <Self as FromPrimitiveInt>::from_u64(result) != *self {
-            None
-        } else {
-            Some(result)
-        }
-    }
-}
-
-impl CanonicalBitLength for Fr {
-    #[inline]
-    fn num_bits(&self) -> u32 {
-        <InnerFr as PrimeField>::into_bigint(self.0).num_bits()
-    }
-}
-
-impl RandomSampling for Fr {
-    #[inline]
-    fn random<R: RngCore>(rng: &mut R) -> Self {
-        Fr(<InnerFr as UniformRand>::rand(rng))
     }
 }
 
@@ -441,15 +424,7 @@ impl FromPrimitiveInt for Fr {
     fn from_u128(val: u128) -> Self {
         Fr(bn254_ops::from_u128(val))
     }
-}
 
-impl WithAccumulator for Fr {
-    type Accumulator = super::wide_accumulator::WideAccumulator;
-}
-
-impl crate::MulPow2 for Fr {}
-
-impl MulPrimitiveInt for Fr {
     #[inline]
     fn mul_u64(&self, n: u64) -> Self {
         Fr(bn254_ops::mul_u64(self.0, n))
@@ -471,13 +446,17 @@ impl MulPrimitiveInt for Fr {
     }
 }
 
+impl WithAccumulator for Fr {
+    type Accumulator = super::wide_accumulator::WideAccumulator;
+}
+
 impl Field for Fr {}
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::{CanonicalU64, FixedBytes};
+    use crate::CanonicalRepr;
 
     #[test]
     fn field_arithmetic_basic() {
@@ -502,8 +481,8 @@ mod tests {
     #[test]
     fn serialization_roundtrip() {
         let val = Fr::from_u64(123_456_789);
-        let bytes = val.to_bytes_array();
-        let recovered = Fr::from_bytes_array(&bytes);
+        let bytes = val.to_bytes_le_vec();
+        let recovered = <Fr as CanonicalRepr>::from_le_bytes_mod_order(&bytes);
         assert_eq!(val, recovered);
     }
 

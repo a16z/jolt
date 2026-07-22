@@ -77,7 +77,7 @@ impl<'a, const P: u128> Mul<&'a Self> for Fp128<P> {
     }
 }
 
-impl<const P: u128> Invertible for Fp128<P> {
+impl<const P: u128> FieldCore for Fp128<P> {
     #[inline(always)]
     fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
@@ -97,18 +97,7 @@ impl<const P: u128> Invertible for Fp128<P> {
         let masked = to_u128(candidate.0) & mask;
         Self(from_u128(masked))
     }
-}
 
-impl<const P: u128> HalvingField for Fp128<P> {
-    #[inline]
-    fn half(self) -> Self {
-        let x = to_u128(self.0);
-        let half = (x >> 1) + (x & 1) * ((P >> 1) + 1);
-        Self(from_u128(half))
-    }
-}
-
-impl<const P: u128> RandomSampling for Fp128<P> {
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
         loop {
@@ -119,6 +108,15 @@ impl<const P: u128> RandomSampling for Fp128<P> {
                 return Self(pack(lo, hi));
             }
         }
+    }
+}
+
+impl<const P: u128> HalvingField for Fp128<P> {
+    #[inline]
+    fn half(self) -> Self {
+        let x = to_u128(self.0);
+        let half = (x >> 1) + (x & 1) * ((P >> 1) + 1);
+        Self(from_u128(half))
     }
 }
 
@@ -177,4 +175,19 @@ impl<const P: u128> CanonicalField for Fp128<P> {
 impl<const P: u128> PseudoMersenneField for Fp128<P> {
     const MODULUS_BITS: u32 = 128;
     const MODULUS_OFFSET: u128 = Self::C;
+}
+
+impl<const P: u128> serde::Serialize for Fp128<P> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let buf = self.to_canonical_u128().to_le_bytes();
+        <[u8; 16]>::serialize(&buf, serializer)
+    }
+}
+
+impl<'de, const P: u128> serde::Deserialize<'de> for Fp128<P> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let buf = <[u8; 16]>::deserialize(deserializer)?;
+        Self::from_canonical_u128_checked(u128::from_le_bytes(buf))
+            .ok_or_else(|| serde::de::Error::custom("non-canonical Fp128 encoding"))
+    }
 }

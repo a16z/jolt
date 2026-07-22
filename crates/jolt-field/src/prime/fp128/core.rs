@@ -66,7 +66,7 @@ impl<const P: u128> Fp128<P> {
     /// Multiplicative inverse, or `None` for zero.
     #[inline]
     pub fn inverse(&self) -> Option<Self> {
-        <Self as Invertible>::inverse(self)
+        <Self as FieldCore>::inverse(self)
     }
 
     /// Construct from a `u64` reduced modulo the field modulus.

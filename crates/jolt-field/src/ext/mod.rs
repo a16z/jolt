@@ -19,8 +19,7 @@ use super::unreduced::{
     HasOptimizedFold, HasUnreducedOps,
 };
 use crate::{
-    CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, Invertible,
-    MulBaseUnreduced, RandomSampling, RingCore,
+    CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, MulBaseUnreduced, RingCore,
 };
 use rand_core::RngCore;
 use std::marker::PhantomData;
@@ -30,4 +29,3 @@ pub use fp_ext2::{Ext2, FpExt2, FpExt2Config, NegOneNr, TwoNr};
 pub use fp_ext4::{FpExt4, FpExt4MulBackend};
 pub(crate) use fp_ext8::{fp_ext8_mul_schedule, fp_ext8_square_schedule};
 pub use fp_ext8::{FpExt8, FpExt8MulBackend};
-

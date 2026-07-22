@@ -1,5 +1,5 @@
 use super::*;
-use crate::{PseudoMersenneField, RandomSampling};
+use crate::{FieldCore, PseudoMersenneField};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand_core::RngCore;
@@ -10,7 +10,7 @@ type F = Prime128Offset275;
 fn to_limbs_roundtrip() {
     let mut rng = StdRng::seed_from_u64(0xdead_beef_cafe_1234);
     for _ in 0..1000 {
-        let a: F = RandomSampling::random(&mut rng);
+        let a: F = FieldCore::random(&mut rng);
         assert_eq!(Fp128(a.to_limbs()), a);
     }
 }
@@ -19,7 +19,7 @@ fn to_limbs_roundtrip() {
 fn mul_wide_u64_matches_full_mul() {
     let mut rng = StdRng::seed_from_u64(0x1122_3344_5566_7788);
     for _ in 0..1000 {
-        let a: F = RandomSampling::random(&mut rng);
+        let a: F = FieldCore::random(&mut rng);
         let b = rng.next_u64();
         let expected = a * F::from_u64(b);
         let reduced = F::solinas_reduce(&a.mul_wide_u64(b));
@@ -31,8 +31,8 @@ fn mul_wide_u64_matches_full_mul() {
 fn mul_wide_matches_full_mul() {
     let mut rng = StdRng::seed_from_u64(0xaabb_ccdd_eeff_0011);
     for _ in 0..1000 {
-        let a: F = RandomSampling::random(&mut rng);
-        let b: F = RandomSampling::random(&mut rng);
+        let a: F = FieldCore::random(&mut rng);
+        let b: F = FieldCore::random(&mut rng);
         let expected = a * b;
         let reduced = F::solinas_reduce(&a.mul_wide(b));
         assert_eq!(reduced, expected);
@@ -43,9 +43,9 @@ fn mul_wide_matches_full_mul() {
 fn mul_add_matches_mul_then_add() {
     let mut rng = StdRng::seed_from_u64(0x3141_5926_5358_9793);
     for _ in 0..1000 {
-        let a: F = RandomSampling::random(&mut rng);
-        let b: F = RandomSampling::random(&mut rng);
-        let c: F = RandomSampling::random(&mut rng);
+        let a: F = FieldCore::random(&mut rng);
+        let b: F = FieldCore::random(&mut rng);
+        let c: F = FieldCore::random(&mut rng);
         assert_eq!(a.mul_add(b, c), a * b + c);
     }
 
@@ -57,7 +57,7 @@ fn mul_add_matches_mul_then_add() {
 fn mul_wide_u128_matches_full_mul() {
     let mut rng = StdRng::seed_from_u64(0x9988_7766_5544_3322);
     for _ in 0..1000 {
-        let a: F = RandomSampling::random(&mut rng);
+        let a: F = FieldCore::random(&mut rng);
         let b = rng.next_u64() as u128 | ((rng.next_u64() as u128) << 64);
         let expected = a * F::from_canonical_u128_reduced(b);
         let reduced = F::solinas_reduce(&a.mul_wide_u128(b));
@@ -69,7 +69,7 @@ fn mul_wide_u128_matches_full_mul() {
 fn mul_wide_limbs_roundtrips_through_reduction() {
     let mut rng = StdRng::seed_from_u64(0x1bad_f00d_0ddc_afe1);
     for _ in 0..1000 {
-        let a: F = RandomSampling::random(&mut rng);
+        let a: F = FieldCore::random(&mut rng);
         let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
         let b4 = [
             rng.next_u64(),
@@ -129,7 +129,7 @@ fn solinas_reduce_accumulated_products() {
     let mut expected = F::zero();
 
     for _ in 0..200 {
-        let a: F = RandomSampling::random(&mut rng);
+        let a: F = FieldCore::random(&mut rng);
         let b = rng.next_u64();
         let wide = a.mul_wide_u64(b);
 
@@ -185,8 +185,8 @@ fn prime128_offset_a7f7_mul_wide_matches_full_mul() {
     type G = Prime128OffsetA7F7;
     let mut rng = StdRng::seed_from_u64(0xa7f7_a7f7_a7f7_a7f7);
     for _ in 0..1000 {
-        let a: G = RandomSampling::random(&mut rng);
-        let b: G = RandomSampling::random(&mut rng);
+        let a: G = FieldCore::random(&mut rng);
+        let b: G = FieldCore::random(&mut rng);
         let expected = a * b;
         let reduced = G::solinas_reduce(&a.mul_wide(b));
         assert_eq!(reduced, expected);

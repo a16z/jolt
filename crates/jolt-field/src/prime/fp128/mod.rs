@@ -33,12 +33,10 @@ mod wide;
 use ::core::arch::asm;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use crate::{FromPrimitiveInt, Invertible, RandomSampling};
+use crate::{FieldCore, FromPrimitiveInt};
 use rand_core::RngCore;
 
-use crate::{
-    CanonicalField, HalvingField, PseudoMersenneField,
-};
+use crate::{CanonicalField, HalvingField, PseudoMersenneField};
 
 use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 

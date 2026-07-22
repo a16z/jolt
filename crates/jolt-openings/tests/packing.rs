@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{FieldCore, Fr};
 use jolt_openings::{OpeningsError, PrefixPacking};
 use jolt_poly::{boolean_point_msb, eq_index_msb, Polynomial};
 use rand_chacha::ChaCha20Rng;

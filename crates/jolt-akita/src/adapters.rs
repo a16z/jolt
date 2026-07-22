@@ -9,7 +9,7 @@ use akita_types::{
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, RingCommitment as AkitaBackendRingCommitment,
 };
-use jolt_field::CanonicalBytes;
+use jolt_field::CanonicalRepr;
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};

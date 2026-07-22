@@ -12,9 +12,7 @@ use std::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use jolt_field::{
-    AdditiveGroup, CanonicalBytes, FieldCore, FixedByteSize, Invertible, ReducingBytes, RingCore,
-};
+use jolt_field::{AdditiveGroup, CanonicalRepr, FieldCore, RingCore};
 use num_traits::{One, Zero};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -156,7 +154,7 @@ impl<'a> Product<&'a Gf2> for Gf2 {
 impl AdditiveGroup for Gf2 {}
 impl RingCore for Gf2 {}
 
-impl Invertible for Gf2 {
+impl FieldCore for Gf2 {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             None
@@ -164,28 +162,34 @@ impl Invertible for Gf2 {
             Some(Self::one())
         }
     }
+
+    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
+        Self(rng.next_u32() & 1 == 1)
+    }
 }
 
-impl FieldCore for Gf2 {}
+impl CanonicalRepr for Gf2 {
+    const NUM_BYTES: usize = 1;
 
-impl CanonicalBytes for Gf2 {
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), 1);
         out[0] = self.0 as u8;
     }
-}
 
-impl ReducingBytes for Gf2 {
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         Self(bytes.iter().fold(0u8, |acc, b| acc ^ (b & 1)) == 1)
     }
+
+    fn to_canonical_u64_checked(&self) -> Option<u64> {
+        Some(self.0 as u64)
+    }
+
+    fn num_bits(&self) -> u32 {
+        self.0 as u32
+    }
 }
 
-impl FixedByteSize for Gf2 {
-    const NUM_BYTES: usize = 1;
-}
-
-fn accepts_field_core<F: FieldCore + CanonicalBytes + ReducingBytes + FixedByteSize>(x: F) -> F {
+fn accepts_field_core<F: FieldCore + CanonicalRepr>(x: F) -> F {
     x.square()
 }
 
