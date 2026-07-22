@@ -17,13 +17,17 @@
 //! (`advice_consumer`, `committed_muldiv`, `address_major`,
 //! `advice_committed`) are whole-proof ratchets over the mode ×
 //! trace-order matrix, sharing the `support` scaffolding.
+//!
+//! Clear-mode only: under the `zk` feature both provers emit randomized
+//! committed proofs (fresh Pedersen blinds), so byte equality is undefined —
+//! the ZK correctness gate is `zk_e2e.rs` instead.
 
 /// Shared scaffolding for the byte-diff modules: every test runs the same
 /// legacy-side guest pipeline (decode + trace + preprocess + prove + replay)
 /// and the same modular-side pipeline (trace + config + witness + prove +
 /// verify); the per-mode differences — advice, committed program, trace
 /// order — stay in the test bodies.
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -417,7 +421,7 @@ mod support {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -943,7 +947,7 @@ mod muldiv {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1112,7 +1116,7 @@ mod advice_consumer {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1283,7 +1287,7 @@ mod committed_muldiv {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod address_major {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1407,7 +1411,7 @@ mod address_major {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod advice_committed {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1588,7 +1592,7 @@ mod advice_committed {
     }
 }
 
-#[cfg(not(feature = "prover-fixtures"))]
+#[cfg(not(all(feature = "prover-fixtures", not(feature = "zk"))))]
 #[test]
-#[ignore = "enable --features prover-fixtures to run the legacy byte-diff harness"]
+#[ignore = "enable --features prover-fixtures (without zk — the harness byte-compares clear proofs) to run the legacy byte-diff harness"]
 fn prover_matches_legacy_on_muldiv() {}

@@ -23,6 +23,10 @@ zk = [
     "jolt-kernels/zk",
     "dep:jolt-blindfold",
     "dep:rand_core",
+    # Dev-dependency forward (the jolt-verifier `zk` feature does the same):
+    # the ZK e2e builds its preprocessing through legacy host code, which
+    # carries the BlindFold vector-commitment setup only in its own zk mode.
+    "jolt-prover-legacy/zk",
 ]
 
 [dependencies]
