@@ -1,6 +1,3 @@
-[submodule "jolt-evm-verifier/lib/forge-std"]
-	path = jolt-evm-verifier/lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
 [submodule "third-party/riscv-arch-test"]
 	path = third-party/riscv-arch-test
 	url = https://github.com/riscv/riscv-arch-test.git
