@@ -51,7 +51,10 @@ impl Objective for HalsteadBugsObjective {
     fn setup(&self) {}
 
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap();
         self.collect_measurement_in(repo_root)
     }
 }
