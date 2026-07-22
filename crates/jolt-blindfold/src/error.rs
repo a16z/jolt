@@ -135,6 +135,19 @@ pub enum ProverError<F: FieldCore> {
     MultilinearLengthMismatch { expected: usize, actual: usize },
     #[error("{name} must have at least one sumcheck round")]
     DegenerateSumcheck { name: &'static str },
+    #[error(transparent)]
+    Statement(#[from] Error),
+    #[error("witness assignment: {0}")]
+    Assignment(#[from] jolt_r1cs::R1csBuilderError),
+    #[error("witness assignment: {0}")]
+    Domain(#[from] SumcheckError<F>),
+    #[error("stage {stage_index} witness {name} mismatch: expected {expected}, got {actual}")]
+    StageWitnessShape {
+        stage_index: usize,
+        name: &'static str,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 #[derive(Debug, ThisError)]
