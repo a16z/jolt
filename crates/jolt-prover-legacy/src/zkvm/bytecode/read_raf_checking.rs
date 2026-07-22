@@ -67,10 +67,12 @@ pub const BASE_N_STAGES: usize = 5;
 /// — each cycle-weighted by the committed `FusedInc` stream, discharging the
 /// four reduced inc claims inside the read-raf fold (`FusedInc·Store = RamInc`
 /// and `FusedInc·(1−Store) = RdInc` per-cycle).
+#[cfg(feature = "akita")]
 pub const LATTICE_N_STAGES: usize = 9;
 /// Staged `BytecodeValStage` wires in lattice committed mode: the five base
 /// columns plus the store column (the four fused stages resolve through the
 /// store wire and its complement, so no extra wires exist).
+#[cfg(feature = "akita")]
 pub const LATTICE_N_STAGED_VALS: usize = 6;
 
 /// Bytecode instruction: multi-stage Read + RAF sumcheck over a runtime val-stage
@@ -165,11 +167,18 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
             params.num_val_stages, BASE_N_STAGES,
             "lattice mode must initialize with the fused-inc deltas"
         );
-        Self::initialize_with_fused(params, trace, bytecode_preprocessing, None)
+        Self::initialize_with_fused(
+            params,
+            trace,
+            bytecode_preprocessing,
+            #[cfg(feature = "akita")]
+            None,
+        )
     }
 
     /// Lattice-mode initializer: the four fused-inc stages' pushforwards weight
     /// each cycle's eq contribution by its fused delta.
+    #[cfg(feature = "akita")]
     pub fn initialize_lattice(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
@@ -184,7 +193,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: Arc<BytecodePreprocessing>,
-        fused_deltas: Option<&[i128]>,
+        #[cfg(feature = "akita")] fused_deltas: Option<&[i128]>,
     ) -> Self {
         let num_val_stages = params.num_val_stages;
         let claim_per_stage: Vec<F> = (0..num_val_stages)
@@ -268,9 +277,9 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
                     }
                     touched.clear();
 
-                    // INNER SUM: accumulate E_lo by PC — additions only for
-                    // the base stages; the fused stages weight each cycle's
-                    // contribution by its fused delta.
+                    // INNER SUM: accumulate E_lo by PC (additions only). Under
+                    // the lattice feature the fused stages additionally weight
+                    // each cycle's contribution by its fused delta.
                     for c_lo in 0..in_len {
                         let c = c_hi_base + c_lo;
                         if c >= T {
@@ -284,18 +293,25 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
                             touched.push(pc);
                         }
 
-                        let base_stages = if fused_deltas.is_some() {
-                            BASE_N_STAGES
-                        } else {
-                            num_val_stages
-                        };
-                        for stage in 0..base_stages {
+                        #[cfg(not(feature = "akita"))]
+                        for stage in 0..num_val_stages {
                             inner[stage][pc] += E_lo[stage][c_lo];
                         }
-                        if let Some(deltas) = fused_deltas {
-                            let weight = F::from_i128(deltas[c]);
-                            for stage in BASE_N_STAGES..num_val_stages {
-                                inner[stage][pc] += E_lo[stage][c_lo] * weight;
+                        #[cfg(feature = "akita")]
+                        {
+                            let base_stages = if fused_deltas.is_some() {
+                                BASE_N_STAGES
+                            } else {
+                                num_val_stages
+                            };
+                            for stage in 0..base_stages {
+                                inner[stage][pc] += E_lo[stage][c_lo];
+                            }
+                            if let Some(deltas) = fused_deltas {
+                                let weight = F::from_i128(deltas[c]);
+                                for stage in BASE_N_STAGES..num_val_stages {
+                                    inner[stage][pc] += E_lo[stage][c_lo] * weight;
+                                }
                             }
                         }
                     }
@@ -615,6 +631,7 @@ pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
     prev_entry_poly: Option<UniPoly<F>>,
     /// Lattice mode: the fused-inc stream, the shared cycle factor of the four
     /// fused stages (raises their degree by one over the base stages).
+    #[cfg(feature = "akita")]
     fused_inc: Option<MultilinearPolynomial<F>>,
     params: BytecodeReadRafCyclePhaseParams<F>,
 }
@@ -630,12 +647,20 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
             params.num_val_stages, BASE_N_STAGES,
             "lattice mode must initialize with the fused-inc deltas"
         );
-        Self::initialize_with_fused(params, trace, bytecode_preprocessing, accumulator, None)
+        Self::initialize_with_fused(
+            params,
+            trace,
+            bytecode_preprocessing,
+            accumulator,
+            #[cfg(feature = "akita")]
+            None,
+        )
     }
 
     /// Lattice-mode initializer: carries the fused-inc stream as the shared
     /// cycle factor of the four fused stages and opens it at the bound cycle
     /// point.
+    #[cfg(feature = "akita")]
     pub fn initialize_lattice(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
@@ -659,7 +684,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: Arc<BytecodePreprocessing>,
         accumulator: &ProverOpeningAccumulator<F>,
-        fused_deltas: Option<Vec<i128>>,
+        #[cfg(feature = "akita")] fused_deltas: Option<Vec<i128>>,
     ) -> Self {
         let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::BytecodeReadRafAddrClaim,
@@ -738,6 +763,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
             bound_f_entry,
             prev_entry_claim,
             prev_entry_poly: None,
+            #[cfg(feature = "akita")]
             fused_inc: fused_deltas.map(MultilinearPolynomial::from),
             params: BytecodeReadRafCyclePhaseParams::new(params, r_address_low_to_high),
         }
@@ -774,11 +800,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let in_n_vars = in_len.log_2();
         let num_val_stages = self.params.num_val_stages;
         let num_ra = self.ra.len();
+        #[cfg(feature = "akita")]
         let has_fused = self.fused_inc.is_some();
-        // Base stages evaluate `RaProd` (degree `d`) at `d` points; the fused
-        // stages carry the extra `FusedInc` factor, one point more.
+        // Base stages evaluate `RaProd` (degree `d`) at `d` points; under the
+        // lattice feature the fused stages carry the extra `FusedInc` factor,
+        // one point more.
+        #[cfg(feature = "akita")]
         let stage_eval_len =
             |stage: usize| num_ra + usize::from(has_fused && stage >= BASE_N_STAGES);
+        #[cfg(not(feature = "akita"))]
+        let stage_eval_len = |_stage: usize| num_ra;
         let per_stage_zeros = || -> Vec<Vec<F>> {
             (0..num_val_stages)
                 .map(|stage| vec![F::zero(); stage_eval_len(stage)])
@@ -789,8 +820,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let (mut evals_per_stage, mut entry_evals_raw): (Vec<Vec<F>>, Vec<F>) = (0..out_len)
             .into_par_iter()
             .map(|j_hi| {
-                let mut eval_pairs = vec![(F::zero(), F::zero()); num_ra + usize::from(has_fused)];
+                #[cfg(feature = "akita")]
+                let eval_pairs_len = num_ra + usize::from(has_fused);
+                #[cfg(not(feature = "akita"))]
+                let eval_pairs_len = num_ra;
+                let mut eval_pairs = vec![(F::zero(), F::zero()); eval_pairs_len];
                 let mut ra_prod_evals = vec![F::zero(); num_ra];
+                #[cfg(feature = "akita")]
                 let mut fused_prod_evals = vec![F::zero(); num_ra + 1];
                 let mut evals_per_stage: Vec<Vec<F::UnreducedProductAccum>> = (0..num_val_stages)
                     .map(|stage| vec![F::UnreducedProductAccum::zero(); stage_eval_len(stage)])
@@ -806,6 +842,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                         eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
                     }
                     eval_linear_prod_assign(&eval_pairs[..num_ra], &mut ra_prod_evals);
+                    #[cfg(feature = "akita")]
                     if let Some(fused) = &self.fused_inc {
                         eval_pairs[num_ra] = (
                             fused.get_bound_coeff(j * 2),
@@ -816,11 +853,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
                     for stage in 0..num_val_stages {
                         let eq_in_eval = self.gruen_eq_polys[stage].E_in_current()[j_lo];
+                        #[cfg(feature = "akita")]
                         let prod_evals: &[F] = if has_fused && stage >= BASE_N_STAGES {
                             &fused_prod_evals
                         } else {
                             &ra_prod_evals
                         };
+                        #[cfg(not(feature = "akita"))]
+                        let prod_evals: &[F] = &ra_prod_evals;
                         for (accum, eval) in evals_per_stage[stage].iter_mut().zip(prod_evals) {
                             *accum += eq_in_eval.mul_to_product_accum(*eval);
                         }
@@ -909,6 +949,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         self.ra
             .iter_mut()
             .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
+        #[cfg(feature = "akita")]
         if let Some(fused) = &mut self.fused_inc {
             fused.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
@@ -941,6 +982,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 vec![self.ra[i].final_sumcheck_claim()],
             );
         }
+        #[cfg(feature = "akita")]
         if let Some(fused) = &self.fused_inc {
             accumulator.append_virtual(
                 VirtualPolynomial::FusedInc,
@@ -1202,8 +1244,15 @@ impl<F: JoltField> DerefMut for BytecodeReadRafCyclePhaseParams<F> {
 
 impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafCyclePhaseParams<F> {
     fn degree(&self) -> usize {
-        // The lattice fused stages carry the extra `FusedInc` cycle factor.
-        self.d + 1 + usize::from(self.num_val_stages == LATTICE_N_STAGES)
+        #[cfg(feature = "akita")]
+        {
+            // The lattice fused stages carry the extra `FusedInc` cycle factor.
+            self.d + 1 + usize::from(self.num_val_stages == LATTICE_N_STAGES)
+        }
+        #[cfg(not(feature = "akita"))]
+        {
+            self.d + 1
+        }
     }
 
     fn num_rounds(&self) -> usize {
@@ -1765,6 +1814,13 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     /// fused-inc stages (indices 5..9) each carry one raw claim, so their
     /// entries are empty.
     pub fn stage_gammas(&self) -> Vec<&[F]> {
+        #[cfg_attr(
+            not(feature = "akita"),
+            expect(
+                unused_mut,
+                reason = "mutated only when extending the lattice fused stages"
+            )
+        )]
         let mut gammas: Vec<&[F]> = vec![
             &self.stage1_gammas,
             &self.stage2_gammas,
@@ -1772,6 +1828,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             &self.stage4_gammas,
             &self.stage5_gammas,
         ];
+        #[cfg(feature = "akita")]
         if self.num_val_stages == LATTICE_N_STAGES {
             gammas.extend([[].as_slice(); LATTICE_N_STAGES - BASE_N_STAGES]);
         }
@@ -1780,9 +1837,16 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
     /// Staged `BytecodeValStage` wire count in committed mode: one per val
     /// stage in base mode; the lattice fused stages dedup through the store
-    /// wire, so only the first [`LATTICE_N_STAGED_VALS`] stage.
+    /// wire, so only the first `LATTICE_N_STAGED_VALS` stage.
     pub fn num_staged_vals(&self) -> usize {
-        self.num_val_stages.min(LATTICE_N_STAGED_VALS)
+        #[cfg(feature = "akita")]
+        {
+            self.num_val_stages.min(LATTICE_N_STAGED_VALS)
+        }
+        #[cfg(not(feature = "akita"))]
+        {
+            self.num_val_stages
+        }
     }
 
     /// The RAF injection riding stage `stage`, as `(weight, claim)`: the
@@ -1853,9 +1917,15 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         transcript: &mut impl Transcript,
         num_val_stages: usize,
     ) -> Self {
+        #[cfg(feature = "akita")]
         debug_assert!(
             num_val_stages == BASE_N_STAGES || num_val_stages == LATTICE_N_STAGES,
             "bytecode read-raf runs five (base) or six (lattice) staged vals"
+        );
+        #[cfg(not(feature = "akita"))]
+        debug_assert_eq!(
+            num_val_stages, BASE_N_STAGES,
+            "bytecode read-raf runs five (base) staged vals"
         );
         let program_mode = if program.is_committed() {
             ProgramMode::Committed
@@ -1877,7 +1947,15 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let rv_claim_3 = Self::compute_rv_claim_3(opening_accumulator, &stage3_gammas);
         let rv_claim_4 = Self::compute_rv_claim_4(opening_accumulator, &stage4_gammas);
         let rv_claim_5 = Self::compute_rv_claim_5(opening_accumulator, &stage5_gammas);
+        #[cfg_attr(
+            not(feature = "akita"),
+            expect(
+                unused_mut,
+                reason = "extended only by the lattice fused-inc consumer stages"
+            )
+        )]
         let mut rv_claims = vec![rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
+        #[cfg(feature = "akita")]
         if num_val_stages == LATTICE_N_STAGES {
             // The four fused-inc consumer stages discharge the reduced inc
             // claims directly: raw claims, no gamma fold.
@@ -1916,6 +1994,13 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             },
             ProgramMode::Committed => materialized_program,
         };
+        #[cfg_attr(
+            not(feature = "akita"),
+            expect(
+                unused_mut,
+                reason = "extended only by the lattice fused stages' val columns"
+            )
+        )]
         let mut val_polys: Vec<MultilinearPolynomial<F>> = if let Some(program) = program_source {
             let r_register_4 = opening_accumulator
                 .get_virtual_polynomial_opening(
@@ -1953,6 +2038,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                 .map(|_| MultilinearPolynomial::from(vec![F::zero()]))
                 .collect()
         };
+        #[cfg(feature = "akita")]
         if num_val_stages == LATTICE_N_STAGES {
             // The four fused stages' val columns: store twice (the RAM legs)
             // then its complement twice (the register legs). Duplicated per
@@ -2015,6 +2101,13 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             SumcheckId::RegistersValEvaluation,
         );
         let (_, r_cycle_5) = r.split_at((REGISTER_COUNT as usize).log_2());
+        #[cfg_attr(
+            not(feature = "akita"),
+            expect(
+                unused_mut,
+                reason = "extended only by the lattice fused stages' cycle points"
+            )
+        )]
         let mut r_cycles = vec![
             r_cycle_1.r,
             r_cycle_2.r,
@@ -2022,6 +2115,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             r_cycle_4.r,
             r_cycle_5.r,
         ];
+        #[cfg(feature = "akita")]
         if num_val_stages == LATTICE_N_STAGES {
             let (ram_read_write_point, _) = opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamInc,
