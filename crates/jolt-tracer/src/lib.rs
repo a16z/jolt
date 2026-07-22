@@ -11,9 +11,9 @@ use tracing::{error, info};
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use jolt_common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
+use jolt_common::{self, jolt_device::MemoryConfig};
 use jolt_riscv::RV64IMAC_JOLT;
 
 pub mod emulator;
@@ -23,12 +23,12 @@ mod jolt_cycle_adapter;
 pub mod trace_row;
 pub mod utils;
 
-pub use jolt_common::jolt_device::JoltDevice;
 pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
 pub use execution_backend::TracerBackend;
 pub use instruction::inline::{
     list_registered_inlines, InlineRegistration, TracerInlineExpansionProvider,
 };
+pub use jolt_common::jolt_device::JoltDevice;
 pub use jolt_riscv::InlineExtension;
 pub use trace_row::{build_trace_rows, cycle_to_trace_row, CycleConversionError};
 

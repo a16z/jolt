@@ -79,9 +79,9 @@
 
 use allocative::Allocative;
 #[cfg(feature = "prover")]
-use rayon::prelude::*;
-#[cfg(feature = "prover")]
 use jolt_tracer::instruction::Cycle;
+#[cfg(feature = "prover")]
+use rayon::prelude::*;
 
 #[cfg(feature = "prover")]
 use crate::curve::JoltCurve;

@@ -33,7 +33,10 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsrli() {
-        materialize_entry_test!(VirtualSrli, jolt_tracer::instruction::virtual_srli::VirtualSRLI);
+        materialize_entry_test!(
+            VirtualSrli,
+            jolt_tracer::instruction::virtual_srli::VirtualSRLI
+        );
     }
 
     #[test]

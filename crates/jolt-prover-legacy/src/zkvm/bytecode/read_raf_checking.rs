@@ -52,12 +52,12 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use jolt_common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{zip_eq, Itertools};
+use jolt_common::constants::{REGISTER_COUNT, XLEN};
 use jolt_riscv::JoltInstructionRow;
+use jolt_tracer::instruction::Cycle;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use jolt_tracer::instruction::Cycle;
 
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;

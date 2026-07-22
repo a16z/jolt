@@ -1,13 +1,13 @@
 use crate::{field::JoltField, zkvm::instruction::LookupQuery};
 use jolt_common::constants::XLEN;
 use jolt_riscv::JoltInstructionRowData;
-use rand::prelude::*;
 use jolt_tracer::{
     emulator::{cpu::Cpu, terminal::DummyTerminal},
     instruction::{
         self, format::InstructionRegisterState, Cycle, RISCVCycle, RISCVInstruction, RISCVTrace,
     },
 };
+use rand::prelude::*;
 
 use super::{CircuitFlags, Flags, InstructionLookup};
 
@@ -37,8 +37,8 @@ mod flags {
 
     use super::CircuitFlags;
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
-    use strum::IntoEnumIterator;
     use jolt_tracer::instruction::Cycle;
+    use strum::IntoEnumIterator;
 
     #[test]
     fn left_operand_exclusive() {
@@ -212,9 +212,9 @@ mod flags {
 /// verification failure whenever any high-order bits of a register value are set.
 mod r1cs_consistency {
     use jolt_common::constants::XLEN;
+    use jolt_tracer::instruction::Cycle;
     use rand::{rngs::StdRng, SeedableRng};
     use strum::IntoEnumIterator;
-    use jolt_tracer::instruction::Cycle;
 
     use crate::zkvm::instruction::{
         Flags, InstructionFlags, JoltTraceCycle, LookupQuery, SupportedInstruction,

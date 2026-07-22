@@ -35,7 +35,10 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualpow2w() {
-        materialize_entry_test!(Pow2W, jolt_tracer::instruction::virtual_pow2_w::VirtualPow2W);
+        materialize_entry_test!(
+            Pow2W,
+            jolt_tracer::instruction::virtual_pow2_w::VirtualPow2W
+        );
     }
 
     #[test]
@@ -48,6 +51,9 @@ mod tests {
 
     #[test]
     fn lookup_output_matches_trace_virtualpow2w() {
-        lookup_output_matches_trace_test!(Pow2W, jolt_tracer::instruction::virtual_pow2_w::VirtualPow2W);
+        lookup_output_matches_trace_test!(
+            Pow2W,
+            jolt_tracer::instruction::virtual_pow2_w::VirtualPow2W
+        );
     }
 }

@@ -1,10 +1,10 @@
 use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
-use std::path::PathBuf;
 use jolt_tracer::emulator::memory::Memory;
 use jolt_tracer::instruction::Cycle;
 use jolt_tracer::LazyTraceIterator;
+use std::path::PathBuf;
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]

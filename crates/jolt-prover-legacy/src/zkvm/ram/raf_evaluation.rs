@@ -4,8 +4,8 @@ use num_traits::Zero;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use rayon::prelude::*;
 use jolt_tracer::instruction::Cycle;
+use rayon::prelude::*;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

@@ -55,6 +55,9 @@ mod tests {
 
     #[test]
     fn lookup_output_matches_trace_virtualpow2i() {
-        lookup_output_matches_trace_test!(Pow2I, jolt_tracer::instruction::virtual_pow2i::VirtualPow2I);
+        lookup_output_matches_trace_test!(
+            Pow2I,
+            jolt_tracer::instruction::virtual_pow2i::VirtualPow2I
+        );
     }
 }

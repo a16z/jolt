@@ -23,8 +23,8 @@ use crate::zkvm::witness::VirtualPolynomial;
 use crate::field::JoltField;
 use ark_ff::biginteger::{S128, S64};
 use jolt_common::constants::XLEN;
-use std::fmt::Debug;
 use jolt_tracer::instruction::Cycle;
+use std::fmt::Debug;
 
 use strum::IntoEnumIterator;
 

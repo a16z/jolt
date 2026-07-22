@@ -1,6 +1,6 @@
+use jolt_tracer::instruction::Cycle;
 use num_traits::Zero;
 use std::{array, sync::Arc};
-use jolt_tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

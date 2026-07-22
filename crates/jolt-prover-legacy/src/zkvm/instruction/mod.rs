@@ -6,9 +6,9 @@ use jolt_riscv::{
     InstructionFlagSet as RiscvInstructionFlagSet, JoltInstruction, JoltInstructionKind,
     JoltInstructionRow, SourceInstructionKind,
 };
+use jolt_tracer::instruction::{Cycle, Instruction};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
-use jolt_tracer::instruction::{Cycle, Instruction};
 
 use crate::utils::interleave_bits;
 

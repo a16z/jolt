@@ -8,7 +8,6 @@
 //! `τ_high` draw, the uni-skip, the post-gamma output-address draws); all
 //! compute is behind the backend's stage-2 slots.
 
-use jolt_common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -16,6 +15,7 @@ use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;

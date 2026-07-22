@@ -1,8 +1,8 @@
 use allocative::Allocative;
 use jolt_common::constants::XLEN;
 use jolt_common::jolt_device::MemoryLayout;
-use rayon::prelude::*;
 use jolt_tracer::instruction::Cycle;
+use rayon::prelude::*;
 
 #[cfg(feature = "prover")]
 use crate::curve::JoltCurve;

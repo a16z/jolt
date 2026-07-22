@@ -14,7 +14,9 @@ pub trait InlineSpec: InlineReference + crate::host::InlineOp {
         harness: &mut jolt_tracer::utils::inline_test_harness::InlineTestHarness,
         input: &Self::Input,
     );
-    fn read(harness: &mut jolt_tracer::utils::inline_test_harness::InlineTestHarness) -> Self::Output;
+    fn read(
+        harness: &mut jolt_tracer::utils::inline_test_harness::InlineTestHarness,
+    ) -> Self::Output;
 
     fn instruction() -> jolt_tracer::instruction::inline::INLINE {
         jolt_tracer::utils::inline_test_harness::InlineTestHarness::create_default_instruction(

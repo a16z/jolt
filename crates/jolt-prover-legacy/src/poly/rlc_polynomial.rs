@@ -16,14 +16,14 @@ use crate::zkvm::{
     witness::CommittedPolynomial,
 };
 use allocative::Allocative;
+use itertools::Itertools;
 use jolt_common::constants::XLEN;
 use jolt_common::jolt_device::MemoryLayout;
-use itertools::Itertools;
+use jolt_tracer::ChunksIterator;
+use jolt_tracer::{instruction::Cycle, LazyTraceIterator};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use jolt_tracer::ChunksIterator;
-use jolt_tracer::{instruction::Cycle, LazyTraceIterator};
 
 #[derive(Clone, Debug)]
 pub struct RLCStreamingData {

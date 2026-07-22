@@ -1,8 +1,6 @@
 #![cfg(test)]
 use crate::template_format;
 use jolt_common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
-use std::env;
-use std::fmt::Write;
 use jolt_tracer::{
     instruction::{
         add::ADD,
@@ -69,6 +67,8 @@ use jolt_tracer::{
     },
     utils::virtual_registers::VirtualRegisterAllocator,
 };
+use std::env;
+use std::fmt::Write;
 use z3::{
     ast::{Bool, BV},
     Params, SatResult, Solver,

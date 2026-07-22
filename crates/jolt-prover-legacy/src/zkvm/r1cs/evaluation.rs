@@ -39,9 +39,9 @@
 
 use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::Zero;
+use jolt_tracer::instruction::Cycle;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
-use jolt_tracer::instruction::Cycle;
 
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;

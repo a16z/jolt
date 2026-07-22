@@ -1,8 +1,8 @@
 use std::array;
 use std::iter;
 
-use serde::{Deserialize, Serialize};
 use jolt_tracer::instruction::virtual_rev8w::rev8w;
+use serde::{Deserialize, Serialize};
 
 use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};

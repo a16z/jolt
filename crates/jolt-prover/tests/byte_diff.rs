@@ -26,10 +26,10 @@
 #[cfg(feature = "prover-fixtures")]
 #[expect(clippy::expect_used)]
 mod support {
-    use jolt_common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::{bytecode, program_image};
     use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -55,11 +55,11 @@ mod support {
     use jolt_prover_legacy::zkvm::proof::ProofCommitmentScheme;
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_prover_legacy::zkvm::ram::populate_memory_states;
+    use jolt_tracer::execution_backend::TracerBackend;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::JoltVerifierPreprocessing;
     use jolt_witness::protocols::jolt_vm::{JoltVmWitnessConfig, TraceBackedJoltVmWitness};
-    use jolt_tracer::execution_backend::TracerBackend;
 
     pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
 

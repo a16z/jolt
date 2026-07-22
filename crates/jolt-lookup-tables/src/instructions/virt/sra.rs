@@ -32,7 +32,10 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsra() {
-        materialize_entry_test!(VirtualSra, jolt_tracer::instruction::virtual_sra::VirtualSRA);
+        materialize_entry_test!(
+            VirtualSra,
+            jolt_tracer::instruction::virtual_sra::VirtualSRA
+        );
     }
 
     #[test]
@@ -45,6 +48,9 @@ mod tests {
 
     #[test]
     fn lookup_output_matches_trace_virtualsra() {
-        lookup_output_matches_trace_test!(VirtualSra, jolt_tracer::instruction::virtual_sra::VirtualSRA);
+        lookup_output_matches_trace_test!(
+            VirtualSra,
+            jolt_tracer::instruction::virtual_sra::VirtualSRA
+        );
     }
 }

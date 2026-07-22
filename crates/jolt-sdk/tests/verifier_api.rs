@@ -23,7 +23,9 @@ mod tests {
                 "verifier fixtures missing under CI; crates/jolt-sdk/tests/gen-fixtures.sh must produce \
                  {preprocessing_path}, {proof_path}, and {io_path} before this test runs",
             );
-            eprintln!("skipping verifier fixture test; run crates/jolt-sdk/tests/gen-fixtures.sh first");
+            eprintln!(
+                "skipping verifier fixture test; run crates/jolt-sdk/tests/gen-fixtures.sh first"
+            );
             return;
         }
 

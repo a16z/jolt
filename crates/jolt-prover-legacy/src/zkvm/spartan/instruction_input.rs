@@ -1,8 +1,8 @@
 use ark_ff::Zero;
 
 use allocative::Allocative;
-use rayon::prelude::*;
 use jolt_tracer::instruction::Cycle;
+use rayon::prelude::*;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

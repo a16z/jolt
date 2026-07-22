@@ -1,6 +1,6 @@
 use jolt_inlines_sdk::{InlineReference, InlineSpec};
-use rand::RngCore;
 use jolt_tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+use rand::RngCore;
 
 use crate::exec::execute_blake2b_compression;
 use crate::sequence_builder::Blake2bCompression;

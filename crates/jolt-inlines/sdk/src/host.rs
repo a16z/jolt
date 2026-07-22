@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 
-pub use num_bigint::BigUint as NBigUint;
 use jolt_tracer::{
     instruction::inline::INLINE,
     utils::{
@@ -8,6 +7,7 @@ use jolt_tracer::{
         virtual_registers::VirtualRegisterAllocator,
     },
 };
+pub use num_bigint::BigUint as NBigUint;
 
 pub use inventory;
 pub use jolt_program::expand::{

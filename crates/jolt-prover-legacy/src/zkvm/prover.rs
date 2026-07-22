@@ -143,12 +143,12 @@ use crate::{
 
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use jolt_common::jolt_device::MemoryConfig;
 use itertools::{zip_eq, Itertools};
-use rayon::prelude::*;
+use jolt_common::jolt_device::MemoryConfig;
 use jolt_tracer::{
     emulator::memory::Memory, instruction::Cycle, ChunksIterator, JoltDevice, LazyTraceIterator,
 };
+use rayon::prelude::*;
 
 use crate::curve::JoltCurve;
 #[cfg(feature = "zk")]

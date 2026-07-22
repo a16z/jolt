@@ -3,10 +3,10 @@
 use std::any::TypeId;
 
 use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltInstructionRowData};
-use rand::prelude::*;
 use jolt_tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
 use jolt_tracer::instruction::format::{InstructionFormat, InstructionRegisterState};
 use jolt_tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
+use rand::prelude::*;
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
 

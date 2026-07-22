@@ -5,10 +5,10 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use jolt_common::constants::XLEN;
+use jolt_tracer::instruction::Cycle;
 use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use jolt_tracer::instruction::Cycle;
 
 use super::LOG_K;
 
@@ -1436,9 +1436,9 @@ mod tests {
     use crate::transcripts::Blake2bTranscript;
     use ark_bn254::Fr;
     use ark_std::Zero;
+    use jolt_tracer::instruction::Cycle;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
-    use jolt_tracer::instruction::Cycle;
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;

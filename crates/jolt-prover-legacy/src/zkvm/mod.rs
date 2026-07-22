@@ -55,11 +55,11 @@ use crate::transcripts::PoseidonTranscript;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
+use jolt_tracer::JoltDevice;
 #[cfg(feature = "prover")]
 use prover::JoltCpuProver;
 use std::io::Cursor;
 use std::path::PathBuf;
-use jolt_tracer::JoltDevice;
 
 pub mod bytecode;
 pub mod claim_reductions;

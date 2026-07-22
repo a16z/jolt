@@ -1,5 +1,7 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use jolt_tracer::instruction::{virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI, RISCVCycle};
+use jolt_tracer::instruction::{
+    virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI, RISCVCycle,
+};
 
 use crate::zkvm::lookup_table::{shift_right_bitmask::ShiftRightBitmaskTable, LookupTables};
 

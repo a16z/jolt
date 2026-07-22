@@ -20,8 +20,8 @@ use crate::subprotocols::read_write_matrix::ReadWriteMatrixAddressMajor;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use rayon::prelude::*;
 use jolt_tracer::instruction::Cycle;
+use rayon::prelude::*;
 
 /// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
 /// Conceptually, both ra and Val can be seen as K x T matrices.

@@ -50,8 +50,8 @@ use std::sync::Arc;
 use allocative::Allocative;
 use ark_ff::biginteger::S64;
 use ark_std::Zero;
-use rayon::prelude::*;
 use jolt_tracer::instruction::{Cycle, RAMAccess};
+use rayon::prelude::*;
 
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;

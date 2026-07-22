@@ -40,7 +40,10 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualpow2iw() {
-        materialize_entry_test!(Pow2IW, jolt_tracer::instruction::virtual_pow2i_w::VirtualPow2IW);
+        materialize_entry_test!(
+            Pow2IW,
+            jolt_tracer::instruction::virtual_pow2i_w::VirtualPow2IW
+        );
     }
 
     #[test]

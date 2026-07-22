@@ -1,8 +1,8 @@
 //! Top-level verifier entry point.
 
-use jolt_common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+use jolt_common::jolt_device::JoltDevice;
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
@@ -1033,8 +1033,8 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
-    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
     #[cfg(feature = "zk")]
     use jolt_crypto::PedersenSetup;
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, VectorCommitmentOpening};

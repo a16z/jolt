@@ -13,14 +13,14 @@ use jolt_program::{JoltProgram, ProgramError};
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
+use jolt_tracer::emulator::memory::Memory;
+use jolt_tracer::instruction::Cycle;
+use jolt_tracer::LazyTraceIterator;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
-use jolt_tracer::emulator::memory::Memory;
-use jolt_tracer::instruction::Cycle;
-use jolt_tracer::LazyTraceIterator;
 use tracing::info;
 
 impl Program {

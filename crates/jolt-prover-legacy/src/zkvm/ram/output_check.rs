@@ -29,8 +29,8 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use jolt_common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
-use rayon::prelude::*;
 use jolt_tracer::JoltDevice;
+use rayon::prelude::*;
 
 // RAM output sumchecks
 //

@@ -1,6 +1,6 @@
 use jolt_inlines_sdk::{InlineReference, InlineSpec};
-use rand::RngCore;
 use jolt_tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+use rand::RngCore;
 
 use super::{exec, INPUT_LIMBS, OUTPUT_LIMBS};
 use crate::multiplication::sequence_builder::BigintMul256;

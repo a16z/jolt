@@ -4,7 +4,7 @@
 # Iterates over ACT4-generated self-checking ELFs, skips any whose basename
 # appears in a skip file, runs each remaining ELF through `jolt-emu`, and
 # reports pass/fail based on the emulator's process exit status (propagated
-# from the HTIF endcode; see tracer/src/main.rs and tracer/src/emulator/mod.rs
+# from the HTIF endcode; see crates/jolt-tracer/src/main.rs and crates/jolt-tracer/src/emulator/mod.rs
 # ::run_test).
 #
 # Usage:

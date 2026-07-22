@@ -31,7 +31,10 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsrl() {
-        materialize_entry_test!(VirtualSrl, jolt_tracer::instruction::virtual_srl::VirtualSRL);
+        materialize_entry_test!(
+            VirtualSrl,
+            jolt_tracer::instruction::virtual_srl::VirtualSRL
+        );
     }
 
     #[test]
@@ -44,6 +47,9 @@ mod tests {
 
     #[test]
     fn lookup_output_matches_trace_virtualsrl() {
-        lookup_output_matches_trace_test!(VirtualSrl, jolt_tracer::instruction::virtual_srl::VirtualSRL);
+        lookup_output_matches_trace_test!(
+            VirtualSrl,
+            jolt_tracer::instruction::virtual_srl::VirtualSRL
+        );
     }
 }

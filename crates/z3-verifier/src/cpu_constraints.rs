@@ -12,7 +12,6 @@ use jolt_prover_legacy::zkvm::{
     },
     witness::VirtualPolynomial,
 };
-use std::{array, fmt::Write, str::FromStr};
 use jolt_tracer::instruction::{
     add::ADD,
     addi::ADDI,
@@ -74,6 +73,7 @@ use jolt_tracer::instruction::{
     virtual_srli::VirtualSRLI,
     Instruction,
 };
+use std::{array, fmt::Write, str::FromStr};
 use z3::{ast::Int, SatResult, Solver};
 
 #[derive(Clone, Debug)]

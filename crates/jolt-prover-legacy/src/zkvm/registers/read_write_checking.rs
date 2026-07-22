@@ -43,10 +43,10 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_common::jolt_device::MemoryLayout;
+use jolt_tracer::instruction::Cycle;
 use num::Integer;
 use num_traits::Zero;
 use rayon::prelude::*;
-use jolt_tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
 //

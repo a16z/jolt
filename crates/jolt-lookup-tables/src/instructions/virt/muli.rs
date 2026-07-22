@@ -59,6 +59,9 @@ mod tests {
 
     #[test]
     fn lookup_output_matches_trace_virtualmuli() {
-        lookup_output_matches_trace_test!(MulI, jolt_tracer::instruction::virtual_muli::VirtualMULI);
+        lookup_output_matches_trace_test!(
+            MulI,
+            jolt_tracer::instruction::virtual_muli::VirtualMULI
+        );
     }
 }

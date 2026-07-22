@@ -46,8 +46,8 @@
 //! Variables are bound low-to-high, matching the polynomial layout.
 
 use jolt_common::jolt_device::MemoryLayout;
-use std::sync::Arc;
 use jolt_tracer::instruction::Cycle;
+use std::sync::Arc;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;

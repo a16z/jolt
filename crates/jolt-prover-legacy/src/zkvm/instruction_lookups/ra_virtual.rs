@@ -38,8 +38,8 @@ use crate::{
 };
 use allocative::Allocative;
 use jolt_common::constants::XLEN;
-use rayon::prelude::*;
 use jolt_tracer::instruction::Cycle;
+use rayon::prelude::*;
 
 #[derive(Allocative, Clone)]
 pub struct InstructionRaSumcheckParams<F: JoltField> {

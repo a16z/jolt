@@ -4,8 +4,8 @@ use jolt_prover_legacy::zkvm::{
     },
     r1cs::inputs::JoltR1CSInputs,
 };
-use strum::IntoEnumIterator as _;
 use jolt_tracer::instruction::{Instruction, JoltInstructionRow};
+use strum::IntoEnumIterator as _;
 
 use crate::{
     constants::JoltParameterSet,

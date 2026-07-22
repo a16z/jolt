@@ -34,7 +34,10 @@ mod tests {
 
     #[test]
     fn materialize_entry_virtualsrai() {
-        materialize_entry_test!(VirtualSrai, jolt_tracer::instruction::virtual_srai::VirtualSRAI);
+        materialize_entry_test!(
+            VirtualSrai,
+            jolt_tracer::instruction::virtual_srai::VirtualSRAI
+        );
     }
 
     #[test]

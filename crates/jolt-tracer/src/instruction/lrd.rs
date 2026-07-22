@@ -66,7 +66,8 @@ mod tests {
             program_size: Some(1024),
             ..Default::default()
         };
-        cpu.get_mut_mmu().jolt_device = Some(jolt_common::jolt_device::JoltDevice::new(&memory_config));
+        cpu.get_mut_mmu().jolt_device =
+            Some(jolt_common::jolt_device::JoltDevice::new(&memory_config));
         cpu.get_mut_mmu().init_memory(TEST_MEM_SIZE);
         cpu
     }

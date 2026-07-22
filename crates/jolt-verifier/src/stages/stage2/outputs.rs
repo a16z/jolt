@@ -168,12 +168,12 @@ mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use crate::stages::relations::ConcreteSumcheck;
-    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::geometry::{
         dimensions::{ReadWriteDimensions, TraceDimensions},
         ram::RamRafEvaluationDimensions,
         spartan::SpartanProductDimensions,
     };
+    use jolt_common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::Transcript;

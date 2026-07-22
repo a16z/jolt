@@ -14,9 +14,9 @@ use jolt_common::jolt_device::MemoryConfig;
 
 pub use fibonacci::Fibonacci;
 pub use jolt_prover_legacy::guest::program::Program as GuestProgram;
+pub use jolt_tracer::JoltDevice;
 pub use secp256k1_ecdsa::Secp256k1EcdsaVerify;
 pub use sha2_chain::Sha2Chain;
-pub use jolt_tracer::JoltDevice;
 
 pub type F = Fr;
 pub type C = Bn254Curve;

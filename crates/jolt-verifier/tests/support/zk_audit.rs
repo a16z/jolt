@@ -1,8 +1,8 @@
 //! Shape audits for verifier-native ZK proofs.
 
-use jolt_common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};

@@ -25,8 +25,8 @@ use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::witness::VirtualPolynomial;
-use rayon::prelude::*;
 use jolt_tracer::instruction::Cycle;
+use rayon::prelude::*;
 
 /// Degree bound of the sumcheck round polynomials in [`InstructionLookupsClaimReductionSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;

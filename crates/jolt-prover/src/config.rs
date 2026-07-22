@@ -7,9 +7,9 @@
 //! byte-for-byte while it remains the parity oracle; the byte-diff harness
 //! pins them.
 
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use jolt_common::jolt_device::MemoryLayout;
-use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::FieldCore;
 use jolt_program::execution::{RamAccess, TraceRow};
 
