@@ -81,6 +81,16 @@ Key abstractions introduced or modified:
     byte-diff harness and the toy-stage twins gate it.
   Only the non-sumcheck slots (`commit`, `joint_opening`) keep hand-shaped traits — they
   have no relation `R` to be universal over.
+- **Input-carried outputs** (jolt-verifier, on `ConcreteSumcheck`): a relation whose wire
+  output claims include *dual-role openings* — cells whose value equals one of the member's
+  own consumed input claims and which are not `Expr` leaves (RamValCheck's
+  trusted/untrusted-advice and program-image openings) — declares them once, as an
+  associated fn `input_carried_outputs() -> Vec<(JoltOpeningId /*output*/, JoltOpeningId
+  /*input*/)>` (default empty), the same shape as `aliased_output_openings`. The generic
+  kernel layer resolves them mechanically: the naive prover snapshots the declared values
+  off `ProverInputs.claims` at construction and attaches them during typed extraction. NO
+  hand-written kernel wrapper may re-attach wire claims — a per-kernel attach is a
+  restatement of relation structure, the drift class this PR kills.
 - **`SumcheckKernel<F>`** (jolt-kernels; né `ProveSumcheck`): the execution object — pairs
   the fused `ProveRounds` round interface with typed extraction (`output_claims()`,
   `validate_derived_tables()`). Returns to jolt-kernels (its v0 home) together with
@@ -187,9 +197,12 @@ PR strengthens #1 and adds three:
    duplicates relation-constructor data. Member order, presence, and typed I/O derive from
    the batch struct declaration alone, on both sides — the prove side through the emitted
    member-list macro, never through a hand-maintained copy.
-3. **jolt-verifier is prover-free.** No prover-only trait, type, method, or generated code in
-   `crates/jolt-verifier/src`: no `SumcheckKernel`, `ProverInputs`, `PrepareKernel`,
-   `PrepareSumcheck`, no `prove_*` driver emission. The derive's only prover-facing output is
+3. **jolt-verifier is prover-free — including its tests.** No prover-only trait, type,
+   method, generated code, or prover-exercising test in `crates/jolt-verifier/src`: no
+   `SumcheckKernel`, `ProverInputs`, `PrepareKernel`, `PrepareSumcheck`, no `prove_*` driver
+   emission, and no twin tests driving jolt-sumcheck's prove side (`prove_batch`,
+   `prove_uniskip_*`) — those live in jolt-prover, against jolt-verifier's public verify
+   surface (made `pub` where the twins need it). The derive's only prover-facing output is
    the inert member-list token macro. Grep-enforced (see Acceptance Criteria).
 4. **Wire freeze.** Proof bytes, Fiat-Shamir conventions, fixtures, and the serialized
    `JoltProof` are byte-identical to pre-PR state. This is a pure restructuring; the
@@ -232,10 +245,17 @@ is welcome but not required.
       prover-fixtures`): all ten tests pass against unmodified `jolt-prover-legacy`, with no
       fixture regeneration anywhere in the workspace.
 - [ ] jolt-verifier is prover-free:
-      `grep -rE "SumcheckKernel|ProverInputs|PrepareKernel|PrepareSumcheck|SumcheckPreparer|ProveRounds" crates/jolt-verifier/src` → no hits
+      `grep -rE "SumcheckKernel|ProverInputs|PrepareKernel|PrepareSumcheck|SumcheckPreparer|ProveRounds|prove_batch|prove_uniskip" crates/jolt-verifier/src` → no hits
       (test modules exercising the emitted member-list macros excepted, and only if they
       need none of these names). The derive emits no `prove_clear`, `Proved*`, or
       `*ExternalMembers`.
+- [ ] No `extern crate self` in jolt-verifier or jolt-kernels: the derives take a
+      serde-style crate-path override (defining crate passes `crate`; external users get
+      the absolute default). jolt-claims' pre-existing self-alias is out of scope.
+- [ ] No hand-written kernel wrapper re-attaches wire claims: dual-role openings flow
+      through `input_carried_outputs()` and the generic attachment in the naive prover.
+- [ ] No `macro_rules!`-stamped trait-impl families in jolt-kernels: the precommitted
+      reduction kinds are plain impls (or a kind trait), readable without expansion.
 - [ ] Every stage batch (1, 2, 3, 4, 5, 6a, 6b, 7) has a `StageProver` impl expanded by the
       consumer macro from its emitted member-list macro, and every `prove_stageX` calls
       `prove`; no stage recipe contains a `Vec<&mut dyn ProveRounds>` literal, a
@@ -412,6 +432,22 @@ hard check → `curate_opening_values` (default: generated canonical order) →
 - **Do the protocol idiosyncrasy purge first.** Rejected: the purge is wire-breaking, which
   retires the legacy byte-diff pin — leaving this refactor (the riskier restructuring)
   without its strongest gate. Refactor under the pin; break the wire after (PR D ordering).
+- **`extern crate self as jolt_verifier` for derive path hygiene** (implemented mid-v2,
+  rejected): jolt-claims' pre-existing convention, but it aliases a crate to itself to
+  satisfy generated paths — a workaround where an explicit knob exists. Replaced by a
+  serde-style crate-path attribute on the derives (`#[sumcheck_batch(crate = ...)]` /
+  equivalent on `KernelSlots`): absolute default for external users, `crate` passed by the
+  defining crate. Realigning jolt-claims is a possible follow-up, not this PR.
+- **Per-kernel wire-claim re-attachment** (the RamValCheck kernel wrapper; implemented
+  mid-v2, rejected): captures dual-role opening values at `prepare` and re-attaches them in
+  `output_claims()` — a hand restatement of relation structure inside one backend's kernel,
+  invisible to other backends. Replaced by the relation-level `input_carried_outputs()`
+  declaration + generic attachment.
+- **`macro_rules!`-stamped kernel families** (the `precommitted_member!` macro; implemented
+  mid-v2, rejected): four invocations stamping impls + builders + closures made the file
+  unreadable without mental macro expansion. Replaced by plain per-kind impls; readable
+  repetition beats generated opacity in kernel code (the derive-generated *protocol* code is
+  different: there, the single-sourcing is load-bearing).
 
 ## Documentation
 
@@ -455,6 +491,14 @@ below is gated by the stage-granular byte-diff run.
    consumer macro (session-carry fixture member replacing the `external` one).
 5. **Sweep**: acceptance-criteria greps (prover-free verifier, no externals, slot-file
    count), line-count check, clippy matrices, full suite.
+6. **Post-review corrections** (v2.1, from the 2026-07-21 owner review of the completed
+   steps 1–5): (a) `input_carried_outputs()` + generic attachment; delete the RamValCheck
+   kernel wrapper; (b) crate-path derive attributes; drop `extern crate self` from
+   jolt-verifier and jolt-kernels; (c) move the uni-skip twin test to jolt-prover, making
+   the uniskip verify surface `pub` as needed; (d) rewrite `precommitted_reduction.rs`
+   without `macro_rules!` — per-kind plain impls, direct extraction methods instead of the
+   boxed-closure `ReductionExtract` indirection, keeping the single-sourced
+   intermediate-vs-final resolution.
 
 ## References
 
