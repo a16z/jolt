@@ -105,7 +105,10 @@ where
         });
     }
     // The verifier's own input validation doubles as the prover's self-check
-    // and produces the normalized `CheckedInputs` the preamble absorbs.
+    // and produces the normalized `CheckedInputs` the preamble absorbs. The
+    // zk axis is the compiled feature — the co-compiled verifier's
+    // `SELECTED_ZK_CONFIG` flips with the same feature, so both sides always
+    // agree.
     let checked = validate_inputs_from_parts(
         &preprocessing.verifier,
         public_io,
@@ -115,7 +118,7 @@ where
         config.one_hot_config,
         trusted_advice.is_some(),
         untrusted_advice_present,
-        false,
+        cfg!(feature = "zk"),
     )?;
 
     // The dominant-advice regime (an advice grid wider than every other

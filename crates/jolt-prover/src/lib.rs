@@ -8,11 +8,14 @@
 //! preprocessing, transcript sequencing, kernel invocation, typed claim
 //! assembly, and proof assembly. See `specs/clean-slate-prover.md`.
 
+#[cfg(feature = "zk")]
+mod blindfold;
 mod config;
 pub mod driver;
 mod error;
 mod preprocessing;
 mod prover;
+mod recorder;
 pub mod stages;
 
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
@@ -21,3 +24,4 @@ pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession, RetainedProgram};
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
 pub use prover::prove;
+pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};

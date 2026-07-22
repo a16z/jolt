@@ -30,9 +30,13 @@ use jolt_kernels::committed_program::{
 };
 use jolt_kernels::{CommitmentGrid, JoltBackend, KernelError, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
+#[cfg(not(feature = "zk"))]
+use jolt_openings::BatchOpeningScheme;
+#[cfg(feature = "zk")]
+use jolt_openings::ZkBatchOpeningScheme;
 use jolt_openings::{
-    AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
-    VerifierOpeningClaim,
+    AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
+    VerifierOpeningClaim, ZkOpeningScheme,
 };
 use jolt_poly::Point;
 use jolt_transcript::Transcript;
@@ -46,9 +50,15 @@ use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 8's output: the joint PCS opening proof (the last wire component of
-/// a clear proof).
+/// a clear proof), plus — in ZK builds — the joint evaluation and its blind,
+/// the secrets inside the hiding evaluation commitment that the BlindFold
+/// final-opening binding opens.
 pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
     pub joint_opening_proof: PCS::Proof,
+    #[cfg(feature = "zk")]
+    pub joint_evaluation: PCS::Field,
+    #[cfg(feature = "zk")]
+    pub evaluation_blind: PCS::Field,
 }
 
 /// Prove stage 8 on `transcript` (positioned at the stage-7 boundary).
@@ -70,7 +80,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
 ) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
+    PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic + ZkOpeningScheme<Blind = F>,
     PCS::Output: HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -217,16 +227,51 @@ where
         })
         .collect::<Result<_, _>>()?;
 
-    let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
-        &preprocessing.pcs_setup,
-        statement,
-        polynomials.iter().map(|poly| &**poly).collect(),
-        ordered_hints,
-        transcript,
-    )
-    .map_err(KernelError::<F>::from)?;
+    // The transcript tails are twins of the verifier's two stage-8 arms:
+    // clear absorbs the scaled claims and opens transparently
+    // (`prove_batch`); ZK squeezes the gamma powers without any claim
+    // absorption and opens in hiding mode (`prove_batch_zk`), retaining the
+    // joint evaluation and blind for BlindFold.
+    #[cfg(not(feature = "zk"))]
+    {
+        let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
+            &preprocessing.pcs_setup,
+            statement,
+            polynomials.iter().map(|poly| &**poly).collect(),
+            ordered_hints,
+            transcript,
+        )
+        .map_err(KernelError::<F>::from)?;
 
-    Ok(Stage8ProverOutput {
-        joint_opening_proof,
-    })
+        Ok(Stage8ProverOutput {
+            joint_opening_proof,
+        })
+    }
+    #[cfg(feature = "zk")]
+    {
+        let commitments = statement
+            .iter()
+            .map(|claim| claim.commitment.clone())
+            .collect();
+        let evaluations = statement
+            .iter()
+            .map(|claim| claim.evaluation.value)
+            .collect();
+        let opening = HomomorphicBatch::<PCS>::prove_batch_zk(
+            &preprocessing.pcs_setup,
+            pcs_opening_point,
+            commitments,
+            polynomials.iter().map(|poly| &**poly).collect(),
+            ordered_hints,
+            evaluations,
+            transcript,
+        )
+        .map_err(KernelError::<F>::from)?;
+
+        Ok(Stage8ProverOutput {
+            joint_opening_proof: opening.proof,
+            joint_evaluation: opening.joint_evaluation,
+            evaluation_blind: opening.blind,
+        })
+    }
 }

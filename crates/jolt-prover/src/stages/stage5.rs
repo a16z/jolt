@@ -16,8 +16,10 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
-use jolt_transcript::{AppendToTranscript, Transcript};
+#[cfg(feature = "zk")]
+use jolt_sumcheck::CommittedSumcheckWitness;
+use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
@@ -32,6 +34,7 @@ use jolt_verifier::stages::stage5::{
 use jolt_verifier::CheckedInputs;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
+use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 5's outputs: the wire proof, the wire claims, and the verifier-typed
@@ -40,13 +43,16 @@ pub struct Stage5ProverOutput<F: Field, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage5OutputClaims<F>,
     pub clear_output: Stage5ClearOutput<F>,
+    #[cfg(feature = "zk")]
+    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 5 on `transcript` (positioned at the stage-4 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
-pub fn prove_stage5<F, PCS, VC, C, T>(
+pub fn prove_stage5<F, PCS, VC, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
+    mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -54,12 +60,11 @@ pub fn prove_stage5<F, PCS, VC, C, T>(
     stage4: &Stage4ClearOutput<F>,
     witness: &dyn JoltVmWitnessPlane<F>,
     transcript: &mut T,
-) -> Result<Stage5ProverOutput<F, C>, ProverError<F>>
+) -> Result<Stage5ProverOutput<F, VC::Output>, ProverError<F>>
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let log_k = checked.ram_K.ilog2() as usize;
@@ -91,13 +96,17 @@ where
         &inputs,
         &input_points,
         &challenges,
-        ClearSumcheckRecorder::<F, C>::new(),
+        mode.recorder()?,
         transcript,
     )?;
+    #[cfg(feature = "zk")]
+    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
+    #[cfg(not(feature = "zk"))]
+    let sumcheck_proof = proved.recorded.proof;
 
     let instruction_r_address = proved.output_points.instruction_r_address();
     Ok(Stage5ProverOutput {
-        sumcheck_proof: proved.recorded.proof,
+        sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage5ClearOutput {
             challenges,
@@ -105,5 +114,7 @@ where
             output_points: proved.output_points,
             instruction_r_address,
         },
+        #[cfg(feature = "zk")]
+        committed_witness,
     })
 }

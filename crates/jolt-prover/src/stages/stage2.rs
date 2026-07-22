@@ -16,12 +16,15 @@ use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder, SumcheckProof};
-use jolt_transcript::{AppendToTranscript, Transcript};
+#[cfg(feature = "zk")]
+use jolt_sumcheck::CommittedSumcheckWitness;
+use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
@@ -39,6 +42,7 @@ use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_f
 use jolt_verifier::VerifierError;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
+use crate::recorder::ProofMode;
 use crate::{ProverConfig, ProverError, StageProver as _};
 
 /// Stage 2's outputs: the two wire proofs, the wire claims, and the
@@ -48,22 +52,28 @@ pub struct Stage2ProverOutput<F: Field, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage2OutputClaims<F>,
     pub clear_output: Stage2ClearOutput<F>,
+    #[cfg(feature = "zk")]
+    pub uniskip_witness: CommittedSumcheckWitness<F>,
+    #[cfg(feature = "zk")]
+    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 2 on `transcript` (positioned at the stage-1 boundary).
-pub fn prove_stage2<F, PCS, C, T>(
+#[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
+pub fn prove_stage2<F, PCS, VC, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
+    mode: &ProofMode<'_, VC>,
     config: &ProverConfig,
     public_io: &JoltDevice,
     stage1: &Stage1ClearOutput<F>,
     witness: &dyn JoltVmWitnessPlane<F>,
     transcript: &mut T,
-) -> Result<Stage2ProverOutput<F, C>, ProverError<F>>
+) -> Result<Stage2ProverOutput<F, VC::Output>, ProverError<F>>
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
-    C: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
     let log_t = config.trace_length.ilog2() as usize;
@@ -93,7 +103,7 @@ where
     let uniskip_poly = backend
         .spartan_product_uniskip
         .first_round_poly(session, &[tau_high])?;
-    let proved_uniskip = prove_uniskip_clear::<F, C, T>(
+    let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         uniskip_input_claim,
         PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
@@ -145,13 +155,17 @@ where
         &inputs,
         &input_points,
         &challenges,
-        ClearSumcheckRecorder::<F, C>::new(),
+        mode.recorder()?,
         transcript,
     )?;
+    #[cfg(feature = "zk")]
+    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
+    #[cfg(not(feature = "zk"))]
+    let sumcheck_proof = proved.recorded.proof;
 
     Ok(Stage2ProverOutput {
         uniskip_proof: proved_uniskip.proof,
-        sumcheck_proof: proved.recorded.proof,
+        sumcheck_proof,
         claims: Stage2OutputClaims {
             product_uniskip_output_claim: proved_uniskip.output_claim,
             batch_outputs: proved.output_claims.clone(),
@@ -161,5 +175,9 @@ where
             output_points: proved.output_points,
             product_tau_low: tau_low,
         },
+        #[cfg(feature = "zk")]
+        uniskip_witness: proved_uniskip.witness,
+        #[cfg(feature = "zk")]
+        committed_witness,
     })
 }
