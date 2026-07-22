@@ -339,6 +339,3 @@ dead code — they are the correctness harness. The production path calls the de
 - The MSM inputs are many independent row-MSMs (commit) plus a few folding-round MSMs
   (open). That's naturally parallel; residency of the fixed generator bases across all row
   MSMs is the obvious analogue of the resident-buffer pattern here.
-- Reminder from prior scoping: the value of an MSM port depends on whether the Dory PCS
-  stays; it was deprioritized once before because the PCS might be replaced. Confirm the
-  target is committed before investing.
