@@ -1,10 +1,13 @@
 //! Verifier preprocessing inputs.
 
 use common::jolt_device::MemoryLayout;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use serde::{Deserialize, Serialize};
+
+use crate::VerifierError;
 
 /// Committed-program verifier inputs: trusted bytecode-chunk and program-image
 /// commitments plus the program metadata they bind to. Mirrors `jolt-prover-legacy`'s
@@ -100,6 +103,19 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             Self::Full(full) => full.bytecode.entry_bytecode_index(),
             Self::Committed(committed) => Some(committed.meta.entry_bytecode_index),
         }
+    }
+
+    /// [`entry_bytecode_index`](Self::entry_bytecode_index), attributing an
+    /// entry address absent from the bytecode to the consuming `stage`.
+    pub fn entry_bytecode_index_checked(
+        &self,
+        stage: JoltRelationId,
+    ) -> Result<usize, VerifierError> {
+        self.entry_bytecode_index()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage,
+                reason: "entry address was not found in bytecode preprocessing".to_string(),
+            })
     }
 
     pub fn bytecode_len(&self) -> usize {

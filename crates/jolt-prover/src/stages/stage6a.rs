@@ -38,7 +38,7 @@ use jolt_verifier::stages::stage6a::outputs::{
     Stage6aSumchecks,
 };
 use jolt_verifier::stages::stage6b::batch::bytecode_stage_points;
-use jolt_verifier::{CheckedInputs, VerifierError};
+use jolt_verifier::CheckedInputs;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
@@ -87,13 +87,7 @@ where
 
     // The relation carries the upstream cycle/register points and the entry
     // index (full geometry at construction) — the kernel's read path.
-    let stage1_cycle_binding =
-        stage1
-            .cycle_binding()
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "Stage 1 remainder point is empty".to_string(),
-            })?;
+    let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
     let stage_points = bytecode_stage_points(
         &stage1_cycle_binding,
         &stage2.output_points,
@@ -104,10 +98,7 @@ where
     let entry_bytecode_index = preprocessing
         .verifier
         .program
-        .entry_bytecode_index()
-        .ok_or(ProverError::InvariantViolation {
-            reason: "entry address was not found in bytecode preprocessing",
-        })?;
+        .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
 
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,

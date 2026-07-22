@@ -55,13 +55,7 @@ where
     // The upstream cycle/register points and entry index ride on the relation
     // (full geometry at construction) for the prover's address-phase kernel;
     // the verifier itself never evaluates them here.
-    let stage1_cycle_binding =
-        stage1
-            .cycle_binding()
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "Stage 1 remainder point is empty".to_string(),
-            })?;
+    let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
     let stage_points = bytecode_stage_points(
         &stage1_cycle_binding,
         stage2.batch_output_points(),
@@ -71,11 +65,7 @@ where
     )?;
     let entry_bytecode_index = preprocessing
         .program
-        .entry_bytecode_index()
-        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: "entry address was not found in bytecode preprocessing".to_string(),
-        })?;
+        .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
 
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,

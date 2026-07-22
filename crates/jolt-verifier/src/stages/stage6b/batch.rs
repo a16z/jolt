@@ -162,21 +162,10 @@ impl<F: Field> Stage6bSumchecks<F> {
         // rows) feeds only `input_claim` / `expected_output`, which never run
         // in ZK.
         let committed_program = checked.precommitted.bytecode.is_some();
-        let stage1_cycle_binding =
-            stage1
-                .cycle_binding()
-                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::BytecodeReadRaf,
-                    reason: "Stage 1 remainder point is empty".to_string(),
-                })?;
-        let entry_bytecode_index =
-            preprocessing
-                .program
-                .entry_bytecode_index()
-                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::BytecodeReadRaf,
-                    reason: "entry address was not found in bytecode preprocessing".to_string(),
-                })?;
+        let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
+        let entry_bytecode_index = preprocessing
+            .program
+            .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
         let bytecode_table_rows = if checked.zk || committed_program {
             None
         } else {

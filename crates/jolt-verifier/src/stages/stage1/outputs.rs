@@ -1,5 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 1 verification.
 
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::Field;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
@@ -95,6 +96,19 @@ impl<F: Field> Stage1ClearOutput<F> {
         let (_, cycle) = raw_point.split_first()?;
         Some(cycle.to_vec())
     }
+
+    /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
+    /// point to the consuming `stage`.
+    pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
+        self.cycle_binding().ok_or(empty_remainder_point(stage))
+    }
+}
+
+fn empty_remainder_point(stage: JoltRelationId) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage,
+        reason: "Stage 1 remainder point is empty".to_string(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,6 +156,12 @@ impl<F: Field, C> Stage1Output<F, C> {
         let raw_point = self.remainder_point();
         let (_, cycle) = raw_point.split_first()?;
         Some(cycle.to_vec())
+    }
+
+    /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
+    /// point to the consuming `stage`.
+    pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
+        self.cycle_binding().ok_or(empty_remainder_point(stage))
     }
 
     pub fn clear(&self) -> Result<&Stage1ClearOutput<F>, VerifierError> {
