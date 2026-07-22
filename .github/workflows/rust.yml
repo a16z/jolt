@@ -274,10 +274,13 @@ jobs:
       - name: Discover modular crates
         id: discover
         shell: bash
+        # jolt-prover-legacy and jolt-tracer have dedicated jobs (tracer tests
+        # need an installed jolt CLI for guest builds); z3-verifier's test
+        # binary links against a system libz3 the runner does not have.
         run: |
           set -euo pipefail
           pkgs=$(cargo metadata --format-version=1 --no-deps \
-                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and .name != "jolt-prover-legacy") | .name' \
+                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and (.name | IN("jolt-prover-legacy", "jolt-tracer", "z3-verifier") | not)) | .name' \
                    | tr '\n' ' ')
           echo "Found crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
