@@ -10,10 +10,13 @@
 //! scalars, and `Derived` leaves to the polynomial forms of what the
 //! verifier's `derive_output_term` evaluates at a point (eq/LT/selector
 //! tables, materialized over the domain by the caller). A relation's
-//! dual-role openings (`ConcreteSumcheck::input_carried_outputs` — wire
-//! output cells equal to the member's own consumed input claims, never `Expr`
-//! leaves) are snapshotted off the consumed claims at construction and
-//! re-attached at typed extraction. Each round message is
+//! dual-role openings — ids appearing on both its typed `InputClaims` and
+//! `OutputClaims` structs — are inferred, not declared: an opening id names
+//! exactly one claim cell system-wide, so a shared id *is* the same cell and
+//! the wire output value is forced to equal the consumed input claim. The
+//! consumed claims are snapshotted at construction and re-attached at typed
+//! extraction (they are never `Expr` leaves, so no table produces them). Each
+//! round message is
 //! `Expr::try_evaluate` run pointwise over the remaining hypercube — cost
 //! `O((degree+1) · 2^rounds · |Expr|)` per round, a **test oracle at harness
 //! scale, never a performance path**. It is the reference implementation
@@ -66,12 +69,12 @@ where
     challenge_values: BTreeMap<JoltChallengeId, F>,
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
-    /// The relation's dual-role opening values
-    /// ([`ConcreteSumcheck::input_carried_outputs`]), snapshotted off the
-    /// consumed claims at construction and re-attached at typed extraction:
-    /// keyed by the wire OUTPUT id, holding the consumed INPUT value. These
-    /// cells are not `Expr` leaves, so no table exists to resolve them.
-    carried_outputs: BTreeMap<JoltOpeningId, F>,
+    /// The member's consumed input claims, snapshotted by id at construction.
+    /// Typed extraction consults this map only for output-struct ids no
+    /// opening table serves — realizing the dual-role inference (see the
+    /// module docs): the effective carried set is the intersection of the
+    /// output struct's ids and the input struct's ids.
+    carried_input_claims: BTreeMap<JoltOpeningId, F>,
     binding_order: BindingOrder,
     rounds_bound: usize,
 }
@@ -87,9 +90,9 @@ where
     /// Validate that every leaf of the relation's output expression is
     /// resolvable — each `Opening`/`Derived` factor has a table of exactly
     /// `2^rounds` evaluations, each `Challenge` factor a drawn scalar — and
-    /// assemble the prover. The relation's dual-role opening values
-    /// ([`ConcreteSumcheck::input_carried_outputs`]) are snapshotted off
-    /// `inputs.claims` here, so extraction can re-attach them without any
+    /// assemble the prover. The member's consumed input claims are
+    /// snapshotted off `inputs.claims` here, so extraction can re-attach the
+    /// dual-role openings (input/output id intersection) without any
     /// relation-specific kernel code.
     ///
     /// `binding_order` is part of each relation's fixed convention — the
@@ -143,14 +146,15 @@ where
             }
         }
 
-        let carried_outputs = R::input_carried_outputs()
+        // Every present consumed claim, by id (`filter_map`, so absent
+        // `Option` cells drop out). The output-side half of the dual-role
+        // intersection is enforced at extraction: `from_opening_values`
+        // queries exactly the output struct's ids.
+        let carried_input_claims = inputs
+            .claims
+            .canonical_order()
             .into_iter()
-            .filter_map(|(output, input)| {
-                inputs
-                    .claims
-                    .resolve_input(&input)
-                    .map(|value| (output, value))
-            })
+            .filter_map(|id| inputs.claims.resolve_input(&id).map(|value| (id, value)))
             .collect();
 
         Ok(Self {
@@ -158,7 +162,7 @@ where
             challenge_values,
             opening_tables,
             derived_tables,
-            carried_outputs,
+            carried_input_claims,
             binding_order,
             rounds_bound: 0,
         })
@@ -288,12 +292,12 @@ where
     fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         let opening_tables = &self.opening_tables;
-        let carried_outputs = &self.carried_outputs;
+        let carried_input_claims = &self.carried_input_claims;
         SumcheckOutputClaims::<F, R>::from_opening_values(|id| {
             opening_tables
                 .get(id)
                 .map(|table| table.evals()[0])
-                .or_else(|| carried_outputs.get(id).copied())
+                .or_else(|| carried_input_claims.get(id).copied())
         })
         .map_err(SumcheckKernelError::from)
     }
@@ -379,7 +383,7 @@ mod tests {
         #[opening(UnexpandedPC, from = RegistersValEvaluation)]
         total: C,
         // The dual-role cell: consumed here and re-staged on
-        // `ToyOutputs::untrusted` via `input_carried_outputs`.
+        // `ToyOutputs::untrusted` via the shared-id inference.
         #[opening(untrusted_advice, from = RegistersValEvaluation)]
         untrusted: Option<C>,
     }
@@ -456,11 +460,6 @@ mod tests {
 
         fn symbolic(&self) -> &ToySymbolic {
             &self.symbolic
-        }
-
-        fn input_carried_outputs() -> Vec<(JoltOpeningId, JoltOpeningId)> {
-            let id = JoltOpeningId::untrusted_advice(TOY_RELATION);
-            vec![(id, id)]
         }
 
         fn derive_opening_points(
@@ -561,7 +560,7 @@ mod tests {
 
         // The one-member batch head (what the generated begin_batch performs).
         // `untrusted` is the dual-role cell: consumed here, expected back on
-        // the typed output claims through the carried-output attach.
+        // the typed output claims through the shared-id inference.
         let untrusted_value = Fr::from_u64(4242);
         let inputs = ToyInputs {
             total: claimed_sum,

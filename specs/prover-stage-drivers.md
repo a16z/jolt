@@ -81,16 +81,17 @@ Key abstractions introduced or modified:
     byte-diff harness and the toy-stage twins gate it.
   Only the non-sumcheck slots (`commit`, `joint_opening`) keep hand-shaped traits — they
   have no relation `R` to be universal over.
-- **Input-carried outputs** (jolt-verifier, on `ConcreteSumcheck`): a relation whose wire
+- **Dual-role opening inference** (jolt-kernels, in the naive prover): a relation whose wire
   output claims include *dual-role openings* — cells whose value equals one of the member's
   own consumed input claims and which are not `Expr` leaves (RamValCheck's
-  trusted/untrusted-advice and program-image openings) — declares them once, as an
-  associated fn `input_carried_outputs() -> Vec<(JoltOpeningId /*output*/, JoltOpeningId
-  /*input*/)>` (default empty), the same shape as `aliased_output_openings`. The generic
-  kernel layer resolves them mechanically: the naive prover snapshots the declared values
-  off `ProverInputs.claims` at construction and attaches them during typed extraction. NO
-  hand-written kernel wrapper may re-attach wire claims — a per-kernel attach is a
-  restatement of relation structure, the drift class this PR kills.
+  trusted/untrusted-advice and program-image openings) — declares nothing. An opening id
+  names exactly one claim cell system-wide, so an id appearing on both a relation's typed
+  `InputClaims` and `OutputClaims` structs is definitionally the same cell, and the naive
+  prover infers the carried set as that id intersection: it snapshots the consumed claims
+  off `ProverInputs.claims` at construction and attaches them during typed extraction to
+  the output ids no opening table serves. NO hand-written kernel wrapper may re-attach wire
+  claims — a per-kernel attach is a restatement of relation structure, the drift class this
+  PR kills.
 - **`SumcheckKernel<F>`** (jolt-kernels; né `ProveSumcheck`): the execution object — pairs
   the fused `ProveRounds` round interface with typed extraction (`output_claims()`,
   `validate_derived_tables()`). Returns to jolt-kernels (its v0 home) together with
@@ -253,7 +254,7 @@ is welcome but not required.
       serde-style crate-path override (defining crate passes `crate`; external users get
       the absolute default). jolt-claims' pre-existing self-alias is out of scope.
 - [ ] No hand-written kernel wrapper re-attaches wire claims: dual-role openings flow
-      through `input_carried_outputs()` and the generic attachment in the naive prover.
+      through the input/output id-intersection inference in the naive prover.
 - [ ] No `macro_rules!`-stamped trait-impl families in jolt-kernels: the precommitted
       reduction kinds are plain impls (or a kind trait), readable without expansion.
 - [ ] Every stage batch (1, 2, 3, 4, 5, 6a, 6b, 7) has a `StageProver` impl expanded by the
@@ -441,8 +442,9 @@ hard check → `curate_opening_values` (default: generated canonical order) →
 - **Per-kernel wire-claim re-attachment** (the RamValCheck kernel wrapper; implemented
   mid-v2, rejected): captures dual-role opening values at `prepare` and re-attaches them in
   `output_claims()` — a hand restatement of relation structure inside one backend's kernel,
-  invisible to other backends. Replaced by the relation-level `input_carried_outputs()`
-  declaration + generic attachment.
+  invisible to other backends. Replaced by the naive prover's generic input/output
+  id-intersection inference (an interim relation-level `input_carried_outputs()`
+  declaration was itself deleted once the inference landed).
 - **`macro_rules!`-stamped kernel families** (the `precommitted_member!` macro; implemented
   mid-v2, rejected): four invocations stamping impls + builders + closures made the file
   unreadable without mental macro expansion. Replaced by plain per-kind impls; readable
@@ -492,7 +494,8 @@ below is gated by the stage-granular byte-diff run.
 5. **Sweep**: acceptance-criteria greps (prover-free verifier, no externals, slot-file
    count), line-count check, clippy matrices, full suite.
 6. **Post-review corrections** (v2.1, from the 2026-07-21 owner review of the completed
-   steps 1–5): (a) `input_carried_outputs()` + generic attachment; delete the RamValCheck
+   steps 1–5): (a) generic dual-role attachment (now the id-intersection inference in the
+   naive prover); delete the RamValCheck
    kernel wrapper; (b) crate-path derive attributes; drop `extern crate self` from
    jolt-verifier and jolt-kernels; (c) move the uni-skip twin test to jolt-prover, making
    the uniskip verify surface `pub` as needed; (d) rewrite `precommitted_reduction.rs`

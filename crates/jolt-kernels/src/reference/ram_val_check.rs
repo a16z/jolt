@@ -10,9 +10,8 @@
 //! `ra(j) = Σ_k eq(r_address, k) · RamRa(k, j)` — an opening-side fold the
 //! kernel performs, including READ accesses (their `inc` is zero but their
 //! `ra` weight is not). The staged advice / program-image wire claims (the
-//! relation's dual-role openings) ride the generic
-//! `input_carried_outputs` attach inside the naive prover — nothing here
-//! re-states them.
+//! relation's dual-role openings) ride the naive prover's generic
+//! input/output shared-id inference — nothing here re-states them.
 
 use std::collections::BTreeMap;
 
