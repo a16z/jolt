@@ -1,7 +1,7 @@
 #![cfg(feature = "bn254")]
 //! Targeted tests to improve code coverage across the jolt-field crate.
 //!
-//! Covers: NaiveAccumulator, WideAccumulator, OptimizedMul blanket impl,
+//! Covers: NaiveAccumulator, WideAccumulator,
 //! Field default methods, SignedBigInt uncovered paths,
 //! SignedBigIntHi32 uncovered paths, and macro-generated operator variants.
 
@@ -9,7 +9,6 @@ use ark_std::test_rng;
 use jolt_field::signed::*;
 use jolt_field::{
     Accumulator, CanonicalRepr, FieldCore, Fr, FromPrimitiveInt, Limbs, NaiveAccumulator,
-    OptimizedMul,
 };
 use num_traits::{One, Zero};
 
@@ -107,42 +106,6 @@ fn wide_accumulator_many_fmadds() {
         expected += a * b;
     }
     assert_eq!(acc.reduce(), expected);
-}
-
-#[test]
-fn optimized_mul_blanket_impl() {
-    let mut rng = test_rng();
-    let a: Fr = <Fr as FieldCore>::random(&mut rng);
-    let b: Fr = <Fr as FieldCore>::random(&mut rng);
-
-    // mul_0_optimized: both nonzero
-    assert_eq!(a.mul_0_optimized(b), a * b);
-
-    // mul_0_optimized: first is zero
-    assert!(Fr::zero().mul_0_optimized(b).is_zero());
-
-    // mul_0_optimized: second is zero
-    assert!(a.mul_0_optimized(Fr::zero()).is_zero());
-
-    // mul_1_optimized: first is one
-    assert_eq!(Fr::one().mul_1_optimized(b), b);
-
-    // mul_1_optimized: second is one
-    assert_eq!(a.mul_1_optimized(Fr::one()), a);
-
-    // mul_1_optimized: neither is one
-    assert_eq!(a.mul_1_optimized(b), a * b);
-
-    // mul_01_optimized: zero path
-    assert!(Fr::zero().mul_01_optimized(b).is_zero());
-    assert!(a.mul_01_optimized(Fr::zero()).is_zero());
-
-    // mul_01_optimized: one path
-    assert_eq!(Fr::one().mul_01_optimized(b), b);
-    assert_eq!(a.mul_01_optimized(Fr::one()), a);
-
-    // mul_01_optimized: general path
-    assert_eq!(a.mul_01_optimized(b), a * b);
 }
 
 #[test]

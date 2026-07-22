@@ -617,27 +617,6 @@ impl<const P: u32> Mul for PackedFp32Neon<P> {
     }
 }
 
-impl<const P: u32> PackedValue for PackedFp32Neon<P> {
-    type Value = Fp32<P>;
-    const WIDTH: usize = FP32_WIDTH;
-
-    #[inline]
-    fn from_fn<F>(mut f: F) -> Self
-    where
-        F: FnMut(usize) -> Self::Value,
-    {
-        Self {
-            vals: [f(0).0, f(1).0, f(2).0, f(3).0],
-        }
-    }
-
-    #[inline]
-    fn extract(&self, lane: usize) -> Self::Value {
-        debug_assert!(lane < FP32_WIDTH);
-        Fp32(self.vals[lane])
-    }
-}
-
 impl<const P: u32> AddAssign for PackedFp32Neon<P> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
@@ -660,6 +639,24 @@ impl<const P: u32> MulAssign for PackedFp32Neon<P> {
 }
 
 impl<const P: u32> PackedField for PackedFp32Neon<P> {
+    const WIDTH: usize = FP32_WIDTH;
+
+    #[inline]
+    fn from_fn<F>(mut f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Scalar,
+    {
+        Self {
+            vals: [f(0).0, f(1).0, f(2).0, f(3).0],
+        }
+    }
+
+    #[inline]
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        debug_assert!(lane < FP32_WIDTH);
+        Fp32(self.vals[lane])
+    }
+
     type Scalar = Fp32<P>;
 
     #[inline]

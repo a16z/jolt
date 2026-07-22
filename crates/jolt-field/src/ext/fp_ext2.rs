@@ -532,3 +532,18 @@ where
         Ok(Self::new(c0, c1))
     }
 }
+
+use crate::native_algebra::impl_native_ring_algebra;
+
+impl_native_ring_algebra!(
+    impl[F: FieldCore, C: FpExt2Config<F>] FpExt2<F, C> {
+        zero: Self::new(F::zero(), F::zero()),
+        is_zero(x): ::num_traits::Zero::is_zero(&x.coeffs[0]) && ::num_traits::Zero::is_zero(&x.coeffs[1]),
+        one: Self::new(F::one(), F::zero()),
+        display(x, f): write!(f, "({}, {})", x.coeffs[0], x.coeffs[1]),
+        hash(x, state): {
+            ::std::hash::Hash::hash(&x.coeffs[0], state);
+            ::std::hash::Hash::hash(&x.coeffs[1], state);
+        },
+    }
+);

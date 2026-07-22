@@ -49,7 +49,7 @@ fn fp32_ext_edge_values<const P: u32>() -> [Fp32<P>; 4] {
 
 fn check_packed_fp_ext4_edge<const P: u32, PR4>()
 where
-    PR4: PackedField<Scalar = FpExt4<Fp32<P>>> + PackedValue<Value = FpExt4<Fp32<P>>>,
+    PR4: PackedField<Scalar = FpExt4<Fp32<P>>>,
 {
     let values = fp32_ext_edge_values::<P>();
     let elem = |offset: usize| {
@@ -79,7 +79,7 @@ where
 #[test]
 fn packed_fp_ext2_add() {
     let mut rng = StdRng::seed_from_u64(100);
-    let width = <PE2 as PackedValue>::WIDTH;
+    let width = <PE2 as PackedField>::WIDTH;
     let a_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
     let b_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
 
@@ -95,7 +95,7 @@ fn packed_fp_ext2_add() {
 #[test]
 fn packed_fp_ext2_mul() {
     let mut rng = StdRng::seed_from_u64(200);
-    let width = <PE2 as PackedValue>::WIDTH;
+    let width = <PE2 as PackedField>::WIDTH;
     let a_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
     let b_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
 
@@ -115,7 +115,7 @@ fn packed_fp_ext2_mul() {
 #[test]
 fn packed_fp_ext2_mul_full_word_fp64() {
     let mut rng = StdRng::seed_from_u64(201);
-    let width = <PE2Full as PackedValue>::WIDTH;
+    let width = <PE2Full as PackedField>::WIDTH;
     let a_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
     let b_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
 
@@ -136,7 +136,7 @@ fn packed_fp_ext2_mul_full_word_fp64() {
 fn packed_fp_ext2_broadcast() {
     let val = E2::new(F::from_u64(7), F::from_u64(11));
     let packed = PE2::broadcast(val);
-    let width = <PE2 as PackedValue>::WIDTH;
+    let width = <PE2 as PackedField>::WIDTH;
     for i in 0..width {
         assert_eq!(packed.extract(i), val);
     }
@@ -145,7 +145,7 @@ fn packed_fp_ext2_broadcast() {
 #[test]
 fn packed_fp_ext4_add() {
     let mut rng = StdRng::seed_from_u64(360);
-    let width = <PR4 as PackedValue>::WIDTH;
+    let width = <PR4 as PackedField>::WIDTH;
     let a_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
     let b_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
 
@@ -165,7 +165,7 @@ fn packed_fp_ext4_add() {
 #[test]
 fn packed_fp_ext4_sub() {
     let mut rng = StdRng::seed_from_u64(361);
-    let width = <PR4 as PackedValue>::WIDTH;
+    let width = <PR4 as PackedField>::WIDTH;
     let a_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
     let b_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
 
@@ -185,7 +185,7 @@ fn packed_fp_ext4_sub() {
 #[test]
 fn packed_fp_ext4_mul() {
     let mut rng = StdRng::seed_from_u64(362);
-    let width = <PR4 as PackedValue>::WIDTH;
+    let width = <PR4 as PackedField>::WIDTH;
     let a_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
     let b_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
 
@@ -205,7 +205,7 @@ fn packed_fp_ext4_mul() {
 #[test]
 fn packed_fp_ext4_mul_prime32() {
     let mut rng = StdRng::seed_from_u64(365);
-    let width = <PR4Prime32 as PackedValue>::WIDTH;
+    let width = <PR4Prime32 as PackedField>::WIDTH;
     let a_elems: Vec<R4Prime32> = (0..width).map(|_| R4Prime32::random(&mut rng)).collect();
     let b_elems: Vec<R4Prime32> = (0..width).map(|_| R4Prime32::random(&mut rng)).collect();
 
@@ -261,7 +261,7 @@ fn packed_fp_ext4_large_generic31_edge_lanes() {
 #[test]
 fn packed_fp_ext4_square() {
     let mut rng = StdRng::seed_from_u64(363);
-    let width = <PR4 as PackedValue>::WIDTH;
+    let width = <PR4 as PackedField>::WIDTH;
     let elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
 
     let packed = PR4::from_fn(|i| elems[i]);
@@ -279,7 +279,7 @@ fn packed_fp_ext4_square() {
 #[test]
 fn packed_fp_ext4_square_prime32() {
     let mut rng = StdRng::seed_from_u64(366);
-    let width = <PR4Prime32 as PackedValue>::WIDTH;
+    let width = <PR4Prime32 as PackedField>::WIDTH;
     let elems: Vec<R4Prime32> = (0..width).map(|_| R4Prime32::random(&mut rng)).collect();
 
     let packed = PR4Prime32::from_fn(|i| elems[i]);
@@ -298,7 +298,7 @@ fn packed_fp_ext4_square_prime32() {
 fn packed_fp_ext4_square_mersenne31() {
     let mut rng = StdRng::seed_from_u64(367);
     type R4M31 = FpExt4<Mersenne31>;
-    let width = <PR4Mersenne31 as PackedValue>::WIDTH;
+    let width = <PR4Mersenne31 as PackedField>::WIDTH;
     let elems: Vec<R4M31> = (0..width).map(|_| R4M31::random(&mut rng)).collect();
 
     let packed = PR4Mersenne31::from_fn(|i| elems[i]);
@@ -316,7 +316,7 @@ fn packed_fp_ext4_square_mersenne31() {
 #[test]
 fn packed_fp_ext4_inverse() {
     let mut rng = StdRng::seed_from_u64(367);
-    let width = <PR4 as PackedValue>::WIDTH;
+    let width = <PR4 as PackedField>::WIDTH;
     let elems: Vec<R4> = (0..width)
         .map(|_| {
             let x = R4::random(&mut rng);
@@ -349,7 +349,7 @@ fn packed_fp_ext4_broadcast() {
         F::from_u64(17),
     ]);
     let packed = PR4::broadcast(val);
-    let width = <PR4 as PackedValue>::WIDTH;
+    let width = <PR4 as PackedField>::WIDTH;
     for i in 0..width {
         assert_eq!(packed.extract(i), val);
     }
@@ -358,7 +358,7 @@ fn packed_fp_ext4_broadcast() {
 #[test]
 fn packed_fp_ext4_pack_unpack() {
     let mut rng = StdRng::seed_from_u64(364);
-    let width = <PR4 as PackedValue>::WIDTH;
+    let width = <PR4 as PackedField>::WIDTH;
     let elems: Vec<R4> = (0..width * 3).map(|_| R4::random(&mut rng)).collect();
 
     let packed = PR4::pack_slice(&elems);
@@ -370,7 +370,7 @@ fn packed_fp_ext4_pack_unpack() {
 #[test]
 fn pack_unpack_roundtrip_fp_ext2() {
     let mut rng = StdRng::seed_from_u64(400);
-    let width = <PE2 as PackedValue>::WIDTH;
+    let width = <PE2 as PackedField>::WIDTH;
     let elems: Vec<E2> = (0..width * 3).map(|_| E2::random(&mut rng)).collect();
 
     let packed = PE2::pack_slice(&elems);
@@ -389,7 +389,7 @@ type PR8Prime32 = PackedFpExt8<Prime32Offset99, <Prime32Offset99 as HasPacking>:
 #[test]
 fn packed_fp_ext8_mul_fp64() {
     let mut rng = StdRng::seed_from_u64(500);
-    let width = <PR8Fp64 as PackedValue>::WIDTH;
+    let width = <PR8Fp64 as PackedField>::WIDTH;
     let a_elems: Vec<R8Fp64> = (0..width).map(|_| R8Fp64::random(&mut rng)).collect();
     let b_elems: Vec<R8Fp64> = (0..width).map(|_| R8Fp64::random(&mut rng)).collect();
 
@@ -409,7 +409,7 @@ fn packed_fp_ext8_mul_fp64() {
 #[test]
 fn packed_fp_ext8_mul_prime31() {
     let mut rng = StdRng::seed_from_u64(501);
-    let width = <PR8Prime31 as PackedValue>::WIDTH;
+    let width = <PR8Prime31 as PackedField>::WIDTH;
     let a_elems: Vec<R8Prime31> = (0..width).map(|_| R8Prime31::random(&mut rng)).collect();
     let b_elems: Vec<R8Prime31> = (0..width).map(|_| R8Prime31::random(&mut rng)).collect();
 
@@ -429,7 +429,7 @@ fn packed_fp_ext8_mul_prime31() {
 #[test]
 fn packed_fp_ext8_mul_prime32() {
     let mut rng = StdRng::seed_from_u64(502);
-    let width = <PR8Prime32 as PackedValue>::WIDTH;
+    let width = <PR8Prime32 as PackedField>::WIDTH;
     let a_elems: Vec<R8Prime32> = (0..width).map(|_| R8Prime32::random(&mut rng)).collect();
     let b_elems: Vec<R8Prime32> = (0..width).map(|_| R8Prime32::random(&mut rng)).collect();
 
@@ -449,7 +449,7 @@ fn packed_fp_ext8_mul_prime32() {
 #[test]
 fn packed_fp_ext8_square() {
     let mut rng = StdRng::seed_from_u64(504);
-    let width = <PR8Prime31 as PackedValue>::WIDTH;
+    let width = <PR8Prime31 as PackedField>::WIDTH;
     let a_elems: Vec<R8Prime31> = (0..width).map(|_| R8Prime31::random(&mut rng)).collect();
 
     let pa = PR8Prime31::from_fn(|i| a_elems[i]);
@@ -477,7 +477,7 @@ fn packed_fp_ext8_broadcast() {
         F::from_u64(8),
     ]);
     let packed = PR8Fp64::broadcast(val);
-    let width = <PR8Fp64 as PackedValue>::WIDTH;
+    let width = <PR8Fp64 as PackedField>::WIDTH;
     for i in 0..width {
         assert_eq!(packed.extract(i), val);
     }

@@ -6,7 +6,7 @@ use std::thread;
 #[cfg(feature = "parallel")]
 use criterion::{black_box, Criterion, Throughput};
 #[cfg(feature = "parallel")]
-use jolt_field::packed::{PackedField, PackedValue};
+use jolt_field::packed::PackedField;
 #[cfg(feature = "parallel")]
 use jolt_field::{CanonicalField, FieldCore, Prime128Offset275, Prime31Offset19, Prime64Offset59};
 #[cfg(feature = "parallel")]

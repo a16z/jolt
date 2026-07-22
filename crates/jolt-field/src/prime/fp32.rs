@@ -4,9 +4,9 @@
 //! Uses Solinas-style two-fold reduction: the offset `c` and fold point `k`
 //! are computed at compile time from the const-generic modulus `P`.
 
-use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-
-use crate::{FieldCore, FromPrimitiveInt};
+use crate::native_algebra::{impl_native_ring_algebra, impl_prime_ops};
+use crate::prime::native_capability::impl_prime_native_capability;
+use crate::{FieldCore, FromPrimitiveInt, RingCore};
 use rand_core::RngCore;
 
 use crate::{CanonicalField, HalvingField, PseudoMersenneField};
@@ -278,82 +278,7 @@ impl<const P: u32> Fp32<P> {
     }
 }
 
-impl<const P: u32> Add for Fp32<P> {
-    type Output = Self;
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(Self::add_raw(self.0, rhs.0))
-    }
-}
-
-impl<const P: u32> Sub for Fp32<P> {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(Self::sub_raw(self.0, rhs.0))
-    }
-}
-
-impl<const P: u32> Mul for Fp32<P> {
-    type Output = Self;
-    #[inline]
-    fn mul(self, rhs: Self) -> Self::Output {
-        Self(Self::mul_raw(self.0, rhs.0))
-    }
-}
-
-impl<const P: u32> Neg for Fp32<P> {
-    type Output = Self;
-    #[inline]
-    fn neg(self) -> Self::Output {
-        Self(Self::sub_raw(0, self.0))
-    }
-}
-
-impl<const P: u32> AddAssign for Fp32<P> {
-    #[inline]
-    fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
-    }
-}
-
-impl<const P: u32> SubAssign for Fp32<P> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
-    }
-}
-
-impl<const P: u32> MulAssign for Fp32<P> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: Self) {
-        *self = *self * rhs;
-    }
-}
-
-impl<'a, const P: u32> Add<&'a Self> for Fp32<P> {
-    type Output = Self;
-    #[inline]
-    fn add(self, rhs: &'a Self) -> Self::Output {
-        self + *rhs
-    }
-}
-
-impl<'a, const P: u32> Sub<&'a Self> for Fp32<P> {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: &'a Self) -> Self::Output {
-        self - *rhs
-    }
-}
-
-impl<'a, const P: u32> Mul<&'a Self> for Fp32<P> {
-    type Output = Self;
-    #[inline]
-    fn mul(self, rhs: &'a Self) -> Self::Output {
-        self * *rhs
-    }
-}
+impl_prime_ops!(Fp32<P: u32>, zero_raw: 0);
 
 impl<const P: u32> FieldCore for Fp32<P> {
     #[inline(always)]
@@ -445,6 +370,20 @@ impl<const P: u32> PseudoMersenneField for Fp32<P> {
     const MODULUS_BITS: u32 = Self::BITS;
     const MODULUS_OFFSET: u128 = Self::C as u128;
 }
+
+impl_native_ring_algebra!(
+    impl[const P: u32] Fp32<P> {
+        zero: Self::default(),
+        is_zero(x): x.to_canonical_u128() == 0,
+        one: if P > 1 { Self::from_canonical_u32(1) } else { Self::default() },
+        display(x, f): write!(f, "{}", x.to_canonical_u128()),
+        hash(x, state): ::std::hash::Hash::hash(&x.to_canonical_u128(), state),
+    }
+);
+
+impl<const P: u32> RingCore for Fp32<P> {}
+
+impl_prime_native_capability!(Fp32<P: u32>, 4);
 
 impl<const P: u32> serde::Serialize for Fp32<P> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

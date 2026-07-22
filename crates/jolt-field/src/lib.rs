@@ -17,7 +17,6 @@
 //!
 //! - [`Field`] — Jolt compatibility umbrella
 //! - [`Accumulator`] — deferred-reduction fused multiply-add
-//! - [`OptimizedMul`] — fast-path short-circuits for zero/one
 //! - [`MontgomeryConstants`] — Montgomery form constants for GPU backends
 //!
 //! # BN254 types (feature `bn254`)
@@ -50,10 +49,12 @@ mod field;
 mod field_error;
 mod montgomery_constants;
 #[cfg(feature = "solinas")]
+mod native_algebra;
+#[cfg(feature = "solinas")]
 mod solinas_traits;
 
 pub use accumulator::{Accumulator, NaiveAccumulator, WithAccumulator};
-pub use algebra::{AdditiveGroup, FieldCore, FromPrimitiveInt, OptimizedMul, RingCore};
+pub use algebra::{AdditiveGroup, FieldCore, FromPrimitiveInt, RingCore};
 pub use canonical::CanonicalRepr;
 pub use field::Field;
 pub use field_error::FieldError;

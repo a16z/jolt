@@ -9,7 +9,6 @@ mod fp_ext2;
 mod fp_ext4;
 mod fp_ext8;
 pub(crate) mod lift;
-mod native_algebra;
 #[cfg(test)]
 mod tests;
 

@@ -31,7 +31,6 @@ mod wide;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use ::core::arch::asm;
-use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::{FieldCore, FromPrimitiveInt};
 use rand_core::RngCore;

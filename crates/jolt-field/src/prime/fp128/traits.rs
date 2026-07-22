@@ -1,81 +1,10 @@
 use super::*;
 
-impl<const P: u128> Add for Fp128<P> {
-    type Output = Self;
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(Self::add_raw(self.0, rhs.0))
-    }
-}
+use crate::native_algebra::{impl_native_ring_algebra, impl_prime_ops};
+use crate::prime::native_capability::impl_prime_native_capability;
+use crate::RingCore;
 
-impl<const P: u128> Sub for Fp128<P> {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(Self::sub_raw(self.0, rhs.0))
-    }
-}
-
-impl<const P: u128> Mul for Fp128<P> {
-    type Output = Self;
-    #[inline]
-    fn mul(self, rhs: Self) -> Self::Output {
-        Self(Self::mul_raw(self.0, rhs.0))
-    }
-}
-
-impl<const P: u128> Neg for Fp128<P> {
-    type Output = Self;
-    #[inline]
-    fn neg(self) -> Self::Output {
-        Self(Self::sub_raw(pack(0, 0), self.0))
-    }
-}
-
-impl<const P: u128> AddAssign for Fp128<P> {
-    #[inline]
-    fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
-    }
-}
-
-impl<const P: u128> SubAssign for Fp128<P> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
-    }
-}
-
-impl<const P: u128> MulAssign for Fp128<P> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: Self) {
-        *self = *self * rhs;
-    }
-}
-
-impl<'a, const P: u128> Add<&'a Self> for Fp128<P> {
-    type Output = Self;
-    #[inline]
-    fn add(self, rhs: &'a Self) -> Self::Output {
-        self + *rhs
-    }
-}
-
-impl<'a, const P: u128> Sub<&'a Self> for Fp128<P> {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: &'a Self) -> Self::Output {
-        self - *rhs
-    }
-}
-
-impl<'a, const P: u128> Mul<&'a Self> for Fp128<P> {
-    type Output = Self;
-    #[inline]
-    fn mul(self, rhs: &'a Self) -> Self::Output {
-        self * *rhs
-    }
-}
+impl_prime_ops!(Fp128<P: u128>, zero_raw: pack(0, 0));
 
 impl<const P: u128> FieldCore for Fp128<P> {
     #[inline(always)]
@@ -176,6 +105,20 @@ impl<const P: u128> PseudoMersenneField for Fp128<P> {
     const MODULUS_BITS: u32 = 128;
     const MODULUS_OFFSET: u128 = Self::C;
 }
+
+impl_native_ring_algebra!(
+    impl[const P: u128] Fp128<P> {
+        zero: Self::default(),
+        is_zero(x): x.to_canonical_u128() == 0,
+        one: if P > 1 { Self::from_canonical_u128(1) } else { Self::default() },
+        display(x, f): write!(f, "{}", x.to_canonical_u128()),
+        hash(x, state): ::std::hash::Hash::hash(&x.to_canonical_u128(), state),
+    }
+);
+
+impl<const P: u128> RingCore for Fp128<P> {}
+
+impl_prime_native_capability!(Fp128<P: u128>, 16);
 
 impl<const P: u128> serde::Serialize for Fp128<P> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

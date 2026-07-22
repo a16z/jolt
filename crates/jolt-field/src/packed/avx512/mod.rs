@@ -8,7 +8,7 @@
     reason = "ported AVX-512 kernels retain their audited intrinsic-level invariants"
 )]
 
-use super::{PackedField, PackedValue};
+use super::{PackedField};
 use crate::ext::FpExt2Config;
 use crate::FieldCore;
 use crate::{Fp128, Fp32, Fp64};

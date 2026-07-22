@@ -11,7 +11,7 @@
 )]
 
 use crate::ext::{ExtMulBackend, FpExt2, FpExt2Config, FpExt4, FpExt8};
-use crate::packed::{HasPacking, PackedField, PackedValue};
+use crate::packed::{HasPacking, PackedField};
 use crate::FieldCore;
 use core::ops::{Add, Mul, Sub};
 
@@ -56,34 +56,6 @@ impl<F: FieldCore, C: FpExt2Config<F>, PF: PackedField<Scalar = F>> PackedFpExt2
             c1,
             _marker: std::marker::PhantomData,
         }
-    }
-}
-
-impl<F, C, PF> PackedValue for PackedFpExt2<F, C, PF>
-where
-    F: FieldCore + 'static,
-    C: FpExt2Config<F> + 'static,
-    PF: PackedField<Scalar = F>,
-{
-    type Value = FpExt2<F, C>;
-    const WIDTH: usize = PF::WIDTH;
-
-    fn from_fn<G>(mut f: G) -> Self
-    where
-        G: FnMut(usize) -> Self::Value,
-    {
-        let mut c0s = Vec::with_capacity(PF::WIDTH);
-        let mut c1s = Vec::with_capacity(PF::WIDTH);
-        for i in 0..PF::WIDTH {
-            let val = f(i);
-            c0s.push(val.coeffs[0]);
-            c1s.push(val.coeffs[1]);
-        }
-        Self::new(PF::from_fn(|i| c0s[i]), PF::from_fn(|i| c1s[i]))
-    }
-
-    fn extract(&self, lane: usize) -> Self::Value {
-        FpExt2::new(self.c0.extract(lane), self.c1.extract(lane))
     }
 }
 
@@ -133,6 +105,25 @@ where
     C: FpExt2Config<F> + 'static,
     PF: PackedField<Scalar = F>,
 {
+    const WIDTH: usize = PF::WIDTH;
+
+    fn from_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> Self::Scalar,
+    {
+        let mut c0s = Vec::with_capacity(PF::WIDTH);
+        let mut c1s = Vec::with_capacity(PF::WIDTH);
+        for i in 0..PF::WIDTH {
+            let val = f(i);
+            c0s.push(val.coeffs[0]);
+            c1s.push(val.coeffs[1]);
+        }
+        Self::new(PF::from_fn(|i| c0s[i]), PF::from_fn(|i| c1s[i]))
+    }
+
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        FpExt2::new(self.c0.extract(lane), self.c1.extract(lane))
+    }
     type Scalar = FpExt2<F, C>;
 
     #[inline]
@@ -218,33 +209,6 @@ where
     }
 }
 
-impl<F, PF> PackedValue for PackedFpExt4<F, PF>
-where
-    F: FieldCore + 'static,
-    PF: PackedField<Scalar = F>,
-{
-    type Value = FpExt4<F>;
-    const WIDTH: usize = PF::WIDTH;
-
-    fn from_fn<G>(mut f: G) -> Self
-    where
-        G: FnMut(usize) -> Self::Value,
-    {
-        let mut coeffs: [Vec<F>; 4] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
-        for i in 0..PF::WIDTH {
-            let val = f(i);
-            for (j, coeff) in val.coeffs.into_iter().enumerate() {
-                coeffs[j].push(coeff);
-            }
-        }
-        Self::new(std::array::from_fn(|j| PF::from_fn(|i| coeffs[j][i])))
-    }
-
-    fn extract(&self, lane: usize) -> Self::Value {
-        FpExt4::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
-    }
-}
-
 impl<F, PF> Add for PackedFpExt4<F, PF>
 where
     F: FieldCore,
@@ -290,6 +254,25 @@ where
     F: FieldCore + ExtMulBackend + 'static,
     PF: PackedField<Scalar = F>,
 {
+    const WIDTH: usize = PF::WIDTH;
+
+    fn from_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> Self::Scalar,
+    {
+        let mut coeffs: [Vec<F>; 4] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
+        for i in 0..PF::WIDTH {
+            let val = f(i);
+            for (j, coeff) in val.coeffs.into_iter().enumerate() {
+                coeffs[j].push(coeff);
+            }
+        }
+        Self::new(std::array::from_fn(|j| PF::from_fn(|i| coeffs[j][i])))
+    }
+
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        FpExt4::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+    }
     type Scalar = FpExt4<F>;
 
     #[inline]
@@ -369,33 +352,6 @@ where
     }
 }
 
-impl<F, PF> PackedValue for PackedFpExt8<F, PF>
-where
-    F: FieldCore + 'static,
-    PF: PackedField<Scalar = F>,
-{
-    type Value = FpExt8<F>;
-    const WIDTH: usize = PF::WIDTH;
-
-    fn from_fn<G>(mut f: G) -> Self
-    where
-        G: FnMut(usize) -> Self::Value,
-    {
-        let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
-        for i in 0..PF::WIDTH {
-            let val = f(i);
-            for (j, coeff) in val.coeffs.into_iter().enumerate() {
-                coeffs[j].push(coeff);
-            }
-        }
-        Self::new(std::array::from_fn(|j| PF::from_fn(|i| coeffs[j][i])))
-    }
-
-    fn extract(&self, lane: usize) -> Self::Value {
-        FpExt8::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
-    }
-}
-
 impl<F, PF> Add for PackedFpExt8<F, PF>
 where
     F: FieldCore,
@@ -437,6 +393,25 @@ where
     F: FieldCore + ExtMulBackend + 'static,
     PF: PackedField<Scalar = F>,
 {
+    const WIDTH: usize = PF::WIDTH;
+
+    fn from_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> Self::Scalar,
+    {
+        let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
+        for i in 0..PF::WIDTH {
+            let val = f(i);
+            for (j, coeff) in val.coeffs.into_iter().enumerate() {
+                coeffs[j].push(coeff);
+            }
+        }
+        Self::new(std::array::from_fn(|j| PF::from_fn(|i| coeffs[j][i])))
+    }
+
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        FpExt8::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+    }
     type Scalar = FpExt8<F>;
 
     #[inline]

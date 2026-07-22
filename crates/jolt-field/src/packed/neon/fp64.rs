@@ -158,27 +158,6 @@ impl<const P: u64> Mul for PackedFp64Neon<P> {
     }
 }
 
-impl<const P: u64> PackedValue for PackedFp64Neon<P> {
-    type Value = Fp64<P>;
-    const WIDTH: usize = FP64_WIDTH;
-
-    #[inline]
-    fn from_fn<F>(mut f: F) -> Self
-    where
-        F: FnMut(usize) -> Self::Value,
-    {
-        Self {
-            vals: [f(0).0, f(1).0],
-        }
-    }
-
-    #[inline]
-    fn extract(&self, lane: usize) -> Self::Value {
-        debug_assert!(lane < FP64_WIDTH);
-        Fp64(self.vals[lane])
-    }
-}
-
 impl<const P: u64> AddAssign for PackedFp64Neon<P> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
@@ -201,6 +180,24 @@ impl<const P: u64> MulAssign for PackedFp64Neon<P> {
 }
 
 impl<const P: u64> PackedField for PackedFp64Neon<P> {
+    const WIDTH: usize = FP64_WIDTH;
+
+    #[inline]
+    fn from_fn<F>(mut f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Scalar,
+    {
+        Self {
+            vals: [f(0).0, f(1).0],
+        }
+    }
+
+    #[inline]
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        debug_assert!(lane < FP64_WIDTH);
+        Fp64(self.vals[lane])
+    }
+
     type Scalar = Fp64<P>;
 
     #[inline]

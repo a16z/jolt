@@ -3,7 +3,7 @@
     reason = "packed regression vectors retain their generated decimal form"
 )]
 
-use super::{HasPacking, PackedField, PackedValue};
+use super::{HasPacking, PackedField};
 use crate::{
     CanonicalField, FieldCore, Fp32, Prime128Offset275, Prime24Offset3, Prime31Offset19,
     Prime32Offset99, Prime40Offset195, Prime64Offset59,
@@ -19,7 +19,7 @@ fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {
 fn check_packed_add_sub_mul<F, PF>(seed: u64)
 where
     F: FieldCore + PartialEq + std::fmt::Debug,
-    PF: PackedField<Scalar = F> + PackedValue<Value = F>,
+    PF: PackedField<Scalar = F>,
 {
     let mut rng = StdRng::seed_from_u64(seed);
     let len = PF::WIDTH * 17 + 3;
@@ -77,7 +77,7 @@ where
 fn check_broadcast_roundtrip<F, PF>(val: F)
 where
     F: FieldCore + PartialEq + std::fmt::Debug,
-    PF: PackedField<Scalar = F> + PackedValue<Value = F>,
+    PF: PackedField<Scalar = F>,
 {
     let p = PF::broadcast(val);
     for lane in 0..PF::WIDTH {
@@ -87,7 +87,7 @@ where
 
 fn check_packed_fp32_edge_lanes<const P: u32, PF>()
 where
-    PF: PackedField<Scalar = Fp32<P>> + PackedValue<Value = Fp32<P>>,
+    PF: PackedField<Scalar = Fp32<P>>,
 {
     let p_minus_one = Fp32::<P>::from_canonical_u32(P - 1);
     let p_minus_two = Fp32::<P>::from_canonical_u32(P - 2);

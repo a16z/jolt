@@ -6,36 +6,33 @@
 //! modules; this module owns the shared derived-capability implementations used
 //! directly by both Jolt and Akita.
 
-use std::mem::size_of;
-
-use super::{Fp128, Fp32, Fp64};
-use crate::{
-    CanonicalField, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, NaiveAccumulator,
-    WithAccumulator,
-};
+use crate::{FieldCore, FromPrimitiveInt};
 
 macro_rules! impl_prime_native_capability {
     ($ty:ident<$p:ident: $p_ty:ty>, $bytes:expr) => {
-        impl<const $p: $p_ty> CanonicalRepr for $ty<$p> {
+        impl<const $p: $p_ty> $crate::CanonicalRepr for $ty<$p> {
             const NUM_BYTES: usize = $bytes;
 
             #[inline(always)]
             fn to_bytes_le(&self, out: &mut [u8]) {
-                assert_eq!(out.len(), <Self as CanonicalRepr>::NUM_BYTES);
+                assert_eq!(out.len(), <Self as $crate::CanonicalRepr>::NUM_BYTES);
                 out.copy_from_slice(
-                    &self.to_canonical_u128().to_le_bytes()[..<Self as CanonicalRepr>::NUM_BYTES],
+                    &self.to_canonical_u128().to_le_bytes()
+                        [..<Self as $crate::CanonicalRepr>::NUM_BYTES],
                 );
             }
 
             #[inline(always)]
             fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
-                if bytes.len() <= size_of::<u128>() {
-                    let mut padded = [0u8; size_of::<u128>()];
+                if bytes.len() <= ::std::mem::size_of::<u128>() {
+                    let mut padded = [0u8; ::std::mem::size_of::<u128>()];
                     padded[..bytes.len()].copy_from_slice(bytes);
-                    return <Self as FromPrimitiveInt>::from_u128(u128::from_le_bytes(padded));
+                    return <Self as $crate::FromPrimitiveInt>::from_u128(u128::from_le_bytes(
+                        padded,
+                    ));
                 }
 
-                reduce_le_bytes_mod_order(bytes)
+                $crate::prime::native_capability::reduce_le_bytes_mod_order(bytes)
             }
 
             #[inline]
@@ -50,27 +47,25 @@ macro_rules! impl_prime_native_capability {
             }
         }
 
-        impl<const $p: $p_ty> WithAccumulator for $ty<$p> {
-            type Accumulator = NaiveAccumulator<Self>;
+        impl<const $p: $p_ty> $crate::WithAccumulator for $ty<$p> {
+            type Accumulator = $crate::NaiveAccumulator<Self>;
         }
 
-        impl<const $p: $p_ty> Field for $ty<$p> {}
+        impl<const $p: $p_ty> $crate::Field for $ty<$p> {}
     };
 }
 
 /// Horner reduction of arbitrary-length little-endian bytes modulo the field
 /// order (the >16-byte path of `CanonicalRepr::from_le_bytes_mod_order`).
 #[inline(always)]
-fn reduce_le_bytes_mod_order<F: FieldCore + FromPrimitiveInt>(bytes: &[u8]) -> F {
+pub(crate) fn reduce_le_bytes_mod_order<F: FieldCore + FromPrimitiveInt>(bytes: &[u8]) -> F {
     let base = F::from_u64(256);
     bytes.iter().rev().fold(F::zero(), |acc, &byte| {
         acc * base + F::from_u64(byte as u64)
     })
 }
 
-impl_prime_native_capability!(Fp32<P: u32>, 4);
-impl_prime_native_capability!(Fp64<P: u64>, 8);
-impl_prime_native_capability!(Fp128<P: u128>, 16);
+pub(crate) use impl_prime_native_capability;
 
 #[cfg(test)]
 mod tests {
@@ -79,8 +74,9 @@ mod tests {
     //! These exercise the Solinas backend directly, so they run under
     //! `--no-default-features --features solinas` as well as combined builds.
     use super::*;
-    use crate::Accumulator;
-    use crate::Prime128Offset275;
+    use crate::{
+        Accumulator, CanonicalField, CanonicalRepr, Fp32, Fp64, Prime128Offset275, WithAccumulator,
+    };
 
     /// Asserts the full canonical byte round-trip on the native traits.
     fn assert_native_byte_roundtrip<F, const N: usize>(value: F, expected: [u8; N])

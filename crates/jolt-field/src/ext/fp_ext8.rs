@@ -479,3 +479,35 @@ impl<'de, F: FieldCore + serde::Deserialize<'de>> serde::Deserialize<'de> for Fp
         Ok(Self::new(<[F; 8]>::deserialize(deserializer)?))
     }
 }
+
+use crate::native_algebra::impl_native_ring_algebra;
+
+impl_native_ring_algebra!(
+    impl[F: FieldCore + ExtMulBackend] FpExt8<F> {
+        zero: Self::new([F::zero(); 8]),
+        is_zero(x): x.coeffs.iter().all(|c| ::num_traits::Zero::is_zero(c)),
+        one: Self::new([
+            F::one(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+        ]),
+        display(x, f): write!(
+            f,
+            "({}, {}, {}, {}, {}, {}, {}, {})",
+            x.coeffs[0],
+            x.coeffs[1],
+            x.coeffs[2],
+            x.coeffs[3],
+            x.coeffs[4],
+            x.coeffs[5],
+            x.coeffs[6],
+            x.coeffs[7]
+        ),
+        hash(x, state): ::std::hash::Hash::hash(&x.coeffs, state),
+    }
+);

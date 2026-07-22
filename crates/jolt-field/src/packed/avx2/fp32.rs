@@ -476,25 +476,6 @@ impl<const P: u32> Mul for PackedFp32Avx2<P> {
     }
 }
 
-impl<const P: u32> PackedValue for PackedFp32Avx2<P> {
-    type Value = Fp32<P>;
-    const WIDTH: usize = FP32_WIDTH;
-
-    #[inline]
-    fn from_fn<F>(mut f: F) -> Self
-    where
-        F: FnMut(usize) -> Self::Value,
-    {
-        Self([f(0), f(1), f(2), f(3), f(4), f(5), f(6), f(7)])
-    }
-
-    #[inline]
-    fn extract(&self, lane: usize) -> Self::Value {
-        debug_assert!(lane < FP32_WIDTH);
-        self.0[lane]
-    }
-}
-
 impl<const P: u32> AddAssign for PackedFp32Avx2<P> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
@@ -517,6 +498,22 @@ impl<const P: u32> MulAssign for PackedFp32Avx2<P> {
 }
 
 impl<const P: u32> PackedField for PackedFp32Avx2<P> {
+    const WIDTH: usize = FP32_WIDTH;
+
+    #[inline]
+    fn from_fn<F>(mut f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Scalar,
+    {
+        Self([f(0), f(1), f(2), f(3), f(4), f(5), f(6), f(7)])
+    }
+
+    #[inline]
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        debug_assert!(lane < FP32_WIDTH);
+        self.0[lane]
+    }
+
     type Scalar = Fp32<P>;
 
     #[inline]
@@ -613,7 +610,7 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     #[inline(always)]
     fn fp_ext4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
     where
-        Self::Scalar: Invertible,
+        Self::Scalar: FieldCore,
     {
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);

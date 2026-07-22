@@ -541,3 +541,16 @@ impl<A: AdditiveGroup> Neg for AccumPair<A> {
         Self(-self.0, -self.1)
     }
 }
+
+use crate::native_algebra::impl_native_additive;
+
+impl_native_additive!(impl[] Fp32ProductAccum { zero: Fp32ProductAccum([0; 2]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[] Fp64ProductAccum { zero: Fp64ProductAccum([0; 2]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[] Fp128MulU64Accum { zero: Fp128MulU64Accum([0; 3]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[] Fp128ProductAccum { zero: Fp128ProductAccum([0; 4]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[] FpExt4Fp32ProductAccum { zero: FpExt4Fp32ProductAccum([0; 4]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[] FpExt2Fp64ProductAccum { zero: FpExt2Fp64ProductAccum([0; 4]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[A: crate::AdditiveGroup] AccumPair<A> {
+    zero: Self(A::zero(), A::zero()),
+    is_zero(x): ::num_traits::Zero::is_zero(&x.0) && ::num_traits::Zero::is_zero(&x.1),
+});

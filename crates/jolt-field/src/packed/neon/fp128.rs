@@ -161,30 +161,6 @@ impl<const P: u128> PartialEq for PackedFp128Neon<P> {
 
 impl<const P: u128> Eq for PackedFp128Neon<P> {}
 
-impl<const P: u128> PackedValue for PackedFp128Neon<P> {
-    type Value = Fp128<P>;
-    const WIDTH: usize = FP128_WIDTH;
-
-    #[inline]
-    fn from_fn<F>(mut f: F) -> Self
-    where
-        F: FnMut(usize) -> Self::Value,
-    {
-        let x0 = f(0);
-        let x1 = f(1);
-        Self {
-            lo: [x0.0[0], x1.0[0]],
-            hi: [x0.0[1], x1.0[1]],
-        }
-    }
-
-    #[inline]
-    fn extract(&self, lane: usize) -> Self::Value {
-        debug_assert!(lane < FP128_WIDTH);
-        Fp128([self.lo[lane], self.hi[lane]])
-    }
-}
-
 impl<const P: u128> Add for PackedFp128Neon<P> {
     type Output = Self;
     #[inline]
@@ -305,6 +281,27 @@ impl<const P: u128> MulAssign for PackedFp128Neon<P> {
 }
 
 impl<const P: u128> PackedField for PackedFp128Neon<P> {
+    const WIDTH: usize = FP128_WIDTH;
+
+    #[inline]
+    fn from_fn<F>(mut f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Scalar,
+    {
+        let x0 = f(0);
+        let x1 = f(1);
+        Self {
+            lo: [x0.0[0], x1.0[0]],
+            hi: [x0.0[1], x1.0[1]],
+        }
+    }
+
+    #[inline]
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        debug_assert!(lane < FP128_WIDTH);
+        Fp128([self.lo[lane], self.hi[lane]])
+    }
+
     type Scalar = Fp128<P>;
 
     #[inline]

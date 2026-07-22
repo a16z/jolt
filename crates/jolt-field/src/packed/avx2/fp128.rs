@@ -171,32 +171,6 @@ impl<const P: u128> Mul for PackedFp128Avx2<P> {
     }
 }
 
-impl<const P: u128> PackedValue for PackedFp128Avx2<P> {
-    type Value = Fp128<P>;
-    const WIDTH: usize = FP128_WIDTH;
-
-    #[inline]
-    fn from_fn<F>(mut f: F) -> Self
-    where
-        F: FnMut(usize) -> Self::Value,
-    {
-        let mut lo = [0u64; FP128_WIDTH];
-        let mut hi = [0u64; FP128_WIDTH];
-        for i in 0..FP128_WIDTH {
-            let v = f(i);
-            lo[i] = v.0[0];
-            hi[i] = v.0[1];
-        }
-        Self { lo, hi }
-    }
-
-    #[inline]
-    fn extract(&self, lane: usize) -> Self::Value {
-        debug_assert!(lane < FP128_WIDTH);
-        Fp128([self.lo[lane], self.hi[lane]])
-    }
-}
-
 impl<const P: u128> AddAssign for PackedFp128Avx2<P> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
@@ -219,6 +193,29 @@ impl<const P: u128> MulAssign for PackedFp128Avx2<P> {
 }
 
 impl<const P: u128> PackedField for PackedFp128Avx2<P> {
+    const WIDTH: usize = FP128_WIDTH;
+
+    #[inline]
+    fn from_fn<F>(mut f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Scalar,
+    {
+        let mut lo = [0u64; FP128_WIDTH];
+        let mut hi = [0u64; FP128_WIDTH];
+        for i in 0..FP128_WIDTH {
+            let v = f(i);
+            lo[i] = v.0[0];
+            hi[i] = v.0[1];
+        }
+        Self { lo, hi }
+    }
+
+    #[inline]
+    fn extract(&self, lane: usize) -> Self::Scalar {
+        debug_assert!(lane < FP128_WIDTH);
+        Fp128([self.lo[lane], self.hi[lane]])
+    }
+
     type Scalar = Fp128<P>;
 
     #[inline]

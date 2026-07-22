@@ -24,7 +24,6 @@ use crate::{AdditiveGroup, CanonicalField, FieldCore};
 use super::prime::{Fp128, Fp32, Fp64};
 
 mod accum;
-mod native_algebra;
 pub use accum::*;
 
 /// Wide unreduced accumulator for `Fp32`: 2 × i32 limbs (16-bit data each).
@@ -562,12 +561,20 @@ impl Neg for Fp128x8i32 {
 pub trait ReduceTo<F> {
     /// Carry-propagate and reduce to a canonical field element.
     fn reduce(self) -> F;
+
+    /// Scale each element by `small`.
+    fn scale_i32(self, small: i32) -> Self;
 }
 
 impl<const P: u32> ReduceTo<Fp32<P>> for Fp32x2i32 {
     #[inline]
     fn reduce(self) -> Fp32<P> {
         Fp32x2i32::reduce::<P>(self)
+    }
+
+    #[inline]
+    fn scale_i32(self, small: i32) -> Self {
+        self.scale_i32(small)
     }
 }
 
@@ -576,12 +583,22 @@ impl<const P: u64> ReduceTo<Fp64<P>> for Fp64x4i32 {
     fn reduce(self) -> Fp64<P> {
         Fp64x4i32::reduce::<P>(self)
     }
+
+    #[inline]
+    fn scale_i32(self, small: i32) -> Self {
+        self.scale_i32(small)
+    }
 }
 
 impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
     #[inline]
     fn reduce(self) -> Fp128<P> {
         Fp128x8i32::reduce::<P>(self)
+    }
+
+    #[inline]
+    fn scale_i32(self, small: i32) -> Self {
+        self.scale_i32(small)
     }
 }
 
@@ -753,36 +770,10 @@ impl<const P: u128> HasUnreducedOps for Fp128<P> {
 }
 
 /// Element-wise scaling of a wide accumulator by a small signed integer.
-pub trait ScaleI32 {
-    /// Scale each element by `small`.
-    fn scale_i32(self, small: i32) -> Self;
-}
-
-impl ScaleI32 for Fp32x2i32 {
-    #[inline]
-    fn scale_i32(self, small: i32) -> Self {
-        self.scale_i32(small)
-    }
-}
-
-impl ScaleI32 for Fp64x4i32 {
-    #[inline]
-    fn scale_i32(self, small: i32) -> Self {
-        self.scale_i32(small)
-    }
-}
-
-impl ScaleI32 for Fp128x8i32 {
-    #[inline]
-    fn scale_i32(self, small: i32) -> Self {
-        self.scale_i32(small)
-    }
-}
-
 /// Associates a field type with its wide unreduced accumulator.
 pub trait HasWide: FieldCore {
     /// The wide accumulator type.
-    type Wide: AdditiveGroup + From<Self> + ReduceTo<Self> + ScaleI32;
+    type Wide: AdditiveGroup + From<Self> + ReduceTo<Self>;
 
     /// Convert `self` to wide form and scale every limb by `small`.
     ///
@@ -808,3 +799,9 @@ impl<const P: u128> HasWide for Fp128<P> {
 
 #[cfg(test)]
 mod tests;
+
+use crate::native_algebra::impl_native_additive;
+
+impl_native_additive!(impl[] Fp32x2i32 { zero: Fp32x2i32([0; 2]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[] Fp64x4i32 { zero: Fp64x4i32([0; 4]), is_zero(x): *x == Self::zero() });
+impl_native_additive!(impl[] Fp128x8i32 { zero: Fp128x8i32([0; 8]), is_zero(x): *x == Self::zero() });
