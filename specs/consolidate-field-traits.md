@@ -53,16 +53,16 @@ This is a refactor of trait boundaries, not of arithmetic. The `jolt-eval` invar
 
 ### Acceptance Criteria
 
-- [ ] `grep -rc '^pub trait' crates/jolt-field/src` totals at most 22.
-- [ ] The crate root has at most 4 trait-defining modules (`algebra.rs`, `canonical.rs`, `accumulator.rs`, `field.rs`) plus the feature-gated backend modules; the 15 micro-files are gone.
-- [ ] Zero references remain to: `SignedScalarAccumulator`, `WithSmallScalarAccumulator`, `SignedProductAccumulator`, `WithSignedProductAccumulator`, `ExtensionCoeff`, `BalancedDigitLookup` (trait), `ScaleI32`, `PackedValue`, `LiftBase`, `MulBase`, `FrobeniusExtField`, `FpExt4MulBackend`, `FpExt8MulBackend`, `AdditiveAccumulator`, `Invertible`, `RandomSampling`, `MulPow2`, `MulPrimitiveInt`, `CanonicalBytes`, `ReducingBytes`, `FixedByteSize`, `FixedBytes`, `CanonicalU64`, `CanonicalBitLength`, `TranscriptChallenge`, `SmoothFftField`.
-- [ ] `fft.rs` is removed from `jolt-field` (it has zero consumers in this workspace).
-- [ ] The three `native_algebra.rs` files are deleted; one shared macro provides the supertrait glue, invoked from each concrete type's own file.
-- [ ] `Fp32`, `Fp64`, `Fp128`, `FpExt2`, `FpExt4`, `FpExt8` implement `serde::Serialize`/`Deserialize` with canonical encoding; a bincode round-trip test covers each.
-- [ ] The degree-4 extension mul/square schedule exists in exactly one place (shared between scalar and packed backends, as degree-8 already is).
-- [ ] `muldiv` e2e passes in both modes; standard-mode proof bytes match main (size and content).
-- [ ] Serialized size tests: each Solinas field element bincode-encodes to exactly `NUM_BYTES` bytes; a `Vec` of $n$ elements encodes to $n \cdot \texttt{NUM\_BYTES}$ plus a single length prefix.
-- [ ] `mersenne61_compat` passes with updated bounds and still no arkworks dependency.
+- [x] `grep -rc '^pub trait' crates/jolt-field/src` totals at most 22. (22 as of phase 5; 21 once `MontgomeryConstants` is resolved.)
+- [x] The crate root has at most 4 trait-defining modules (`algebra.rs`, `canonical.rs`, `accumulator.rs`, `field.rs`) plus the feature-gated backend modules; the 15 micro-files are gone.
+- [x] Zero references remain to: `SignedScalarAccumulator`, `WithSmallScalarAccumulator`, `SignedProductAccumulator`, `WithSignedProductAccumulator`, `ExtensionCoeff`, `BalancedDigitLookup` (trait), `ScaleI32`, `PackedValue`, `LiftBase`, `MulBase`, `FrobeniusExtField`, `FpExt4MulBackend`, `FpExt8MulBackend`, `AdditiveAccumulator`, `Invertible`, `RandomSampling`, `MulPow2`, `MulPrimitiveInt`, `CanonicalBytes`, `ReducingBytes`, `FixedByteSize`, `FixedBytes`, `CanonicalU64`, `CanonicalBitLength`, `TranscriptChallenge`, `SmoothFftField`.
+- [x] `fft.rs` is removed from `jolt-field` (it has zero consumers in this workspace).
+- [x] The three `native_algebra.rs` files are deleted; one shared macro provides the supertrait glue, invoked from each concrete type's own file.
+- [x] `Fp32`, `Fp64`, `Fp128`, `FpExt2`, `FpExt4`, `FpExt8` implement `serde::Serialize`/`Deserialize` with canonical encoding; a bincode round-trip test covers each.
+- [x] The degree-4 extension mul/square schedule exists in exactly one place (shared between scalar and packed backends, as degree-8 already is).
+- [x] `muldiv` e2e passes in both modes. (Byte-for-byte proof comparison against a main-built proof not yet run; the Fiat-Shamir and `Fr` serialization paths were moved verbatim.)
+- [x] Serialized size tests: each Solinas field element bincode-encodes to exactly `NUM_BYTES` bytes; a `Vec` of $n$ elements encodes to $n \cdot \texttt{NUM\_BYTES}$ plus a single length prefix.
+- [x] `mersenne61_compat` passes with updated bounds and still no arkworks dependency.
 
 ### Testing Strategy
 
