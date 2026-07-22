@@ -28,7 +28,7 @@ pub struct ExpansionParityCase {
 
 fn fixture_cases() -> Result<Vec<ExpansionParityCase>, serde_json::Error> {
     serde_json::from_str(include_str!(
-        "../../../crates/jolt-program/src/expand/fixtures/main_expand_parity_hashes.json"
+        "../../../jolt-program/src/expand/fixtures/main_expand_parity_hashes.json"
     ))
 }
 
