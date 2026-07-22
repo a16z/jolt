@@ -143,6 +143,7 @@ where
 /// are the bespoke non-sumcheck duties (commit streaming, the uni-skip
 /// fronts, the advice opening evaluation, the joint opening).
 #[derive(KernelSlots)]
+#[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
 where
     F: Field,
@@ -298,6 +299,7 @@ mod kernel_slots_derive_tests {
     // Compiling proves the derive skipped the non-kernel fields: an impl
     // emitted for them would not type-check.
     #[derive(KernelSlots)]
+    #[kernel_slots(crate = "crate")]
     struct ToyRegistry<F: Field> {
         label: String,
         shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,

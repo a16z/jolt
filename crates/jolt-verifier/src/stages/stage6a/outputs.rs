@@ -31,6 +31,7 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// `wire_output_openings` override), so the generated output-shape
 /// count/validator cover the val-stage presence and count.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage6aSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,

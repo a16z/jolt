@@ -1100,6 +1100,7 @@ mod sumcheck_batch_derive_tests {
     }
 
     #[derive(SumcheckBatch)]
+    #[sumcheck_batch(crate = "crate")]
     // The generated absorb resolves the alias skip-sets statically (no instance
     // state), so this alias-free fixture's members are never read.
     #[expect(dead_code)]
@@ -1134,6 +1135,7 @@ mod sumcheck_batch_derive_tests {
     }
 
     #[derive(SumcheckBatch)]
+    #[sumcheck_batch(crate = "crate")]
     struct FixtureOptionSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: Option<RegistersValEvaluation<F>>,
@@ -1227,7 +1229,7 @@ mod sumcheck_batch_derive_tests {
     // methods of the same name), so this module compiling at all proves the
     // opt-out suppressed it.
     #[derive(SumcheckBatch)]
-    #[sumcheck_batch(no_opening_values)]
+    #[sumcheck_batch(no_opening_values, crate = "crate")]
     // The custom absorb below never reads the members (no aliased sets to consult).
     #[expect(dead_code)]
     struct FixtureCustomSumchecks<F: Field> {
@@ -1289,7 +1291,7 @@ mod sumcheck_batch_derive_tests {
     // collide with a generated one, so this module compiling at all proves the
     // opt-out suppressed it.
     #[derive(SumcheckBatch)]
-    #[sumcheck_batch(no_draw_challenges)]
+    #[sumcheck_batch(no_draw_challenges, crate = "crate")]
     #[expect(dead_code)]
     struct FixtureNoDrawSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
@@ -1317,6 +1319,7 @@ mod begin_batch_tests {
     use jolt_transcript::Transcript;
 
     #[derive(super::SumcheckBatch)]
+    #[sumcheck_batch(crate = "crate")]
     struct HeadFixtureSumchecks<F: Field> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: Option<RegistersValEvaluation<F>>,

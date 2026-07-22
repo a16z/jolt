@@ -29,6 +29,7 @@ pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 /// `validate_aliases` (run by `expected_final_claim`) enforces the aliased wire
 /// copies equal their sources.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage3Sumchecks<F: Field> {
     pub shift: SpartanShift<F>,
     pub instruction_input: InstructionInput<F>,

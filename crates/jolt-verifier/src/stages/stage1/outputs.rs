@@ -34,6 +34,7 @@ pub struct Stage1OutputClaims<F: Field> {
 /// bound point, so it completes itself lazily: `derive_opening_points` captures
 /// the point and the first `derive_output_term` call builds the table.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage1BatchSumchecks<F: Field> {
     /// On the prove side the remainder kernel is minted from the uni-skip
     /// pre-phase instance the stage front parked in the proof session

@@ -34,7 +34,7 @@ use super::registers_read_write_checking::RegistersReadWriteChecking;
 /// (see its `wire_output_openings` override), so the generated output-shape
 /// count/validator cover their presence and count.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(no_opening_values)]
+#[sumcheck_batch(no_opening_values, crate = "crate")]
 pub struct Stage4Sumchecks<F: Field> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     pub ram_val_check: RamValCheck<F>,

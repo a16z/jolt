@@ -34,10 +34,6 @@
 //! The commitment kernel streams PCS commitments of the committed witness
 //! polynomials over the proof's shared embedding grid.
 
-// Lets `jolt-kernels-derive` emit absolute `::jolt_kernels::` paths that
-// resolve both here and in downstream crates (the `jolt-claims` convention).
-extern crate self as jolt_kernels;
-
 mod backend;
 mod commitment;
 pub mod committed_program;

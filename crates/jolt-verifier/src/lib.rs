@@ -1,10 +1,5 @@
 //! Canonical verifier crate for Jolt proofs.
 
-// Lets `jolt-verifier-derive` emit absolute `::jolt_verifier::` paths that
-// resolve both here and in downstream crates deriving their own batches (the
-// `jolt-claims` convention).
-extern crate self as jolt_verifier;
-
 pub mod config;
 pub mod error;
 pub mod preprocessing;

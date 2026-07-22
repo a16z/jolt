@@ -42,6 +42,7 @@ pub struct Stage2OutputClaims<F: Field> {
 /// copies equal their sources) all derive from those per-member declarations.
 /// The two RAM relations slice their point at the phase-1 `instance_point_offset`.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage2BatchSumchecks<F: Field> {
     pub ram_read_write: RamReadWriteChecking<F>,
     /// On the prove side the remainder kernel is minted from the product
