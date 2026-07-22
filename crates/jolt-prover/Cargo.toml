@@ -15,9 +15,19 @@ workspace = true
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+# Compile-time ZK mode: committed sumcheck recorders, hiding witness
+# commitments and stage-8 opening, and the BlindFold tail. One compiled
+# prover produces exactly one protocol — there is no runtime mode flag.
+zk = [
+    "jolt-verifier/zk",
+    "jolt-kernels/zk",
+    "dep:jolt-blindfold",
+    "dep:rand_core",
+]
 
 [dependencies]
 common.workspace = true
+jolt-blindfold = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
@@ -30,6 +40,7 @@ jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
+rand_core = { workspace = true, features = ["getrandom"], optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
