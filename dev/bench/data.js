@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784676087397,
+  "lastUpdate": 1784748799122,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -124618,6 +124618,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 872044,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "20991467f4533a9f9bed242ef705e1cb2da4d632",
+          "message": "feat: Akita lattice PCS integration — verifier path and shared semantics (#1675)\n\n* feat: Akita lattice PCS integration — verifier path and shared semantics\n\nBrings the verifier-side Akita integration onto main as one commit:\nthe fused increment claim pipeline (IncVirtualization as its own stage,\nthe stage-6b fused-inc reduction, the stage-7 lattice hamming\nmega-reduction with the decode identity), MSB as a uniform one-hot\nmember, the native W_jolt one-hot group opened directly at one common\npoint behind layout-digest/metadata validation, the shared K=16/K=256\ntrace-length toggle, jolt-owned schedule catalogs injected through\nakita's catalog hook, and the joint packed opening for auxiliary\nobjects. Includes the claims-level akita feature with the cfg'd\nNUM_BYTECODE_VAL_STAGES const and fixed-size stage arrays, the\nconsolidated derive verify_clear with String stage labels, and the\nappend_length_prefixed transcript absorber rename (review feedback,\nmoodlezoup). Protocol design of the fused pipeline and native opening\nby Quang Dao (quangvdao).\n\nakita deps pin markosg04/akita @ cb13b79f (upstream main through the\nquantum SIS cutover + the K16 preset now upstream as\nLayerZero-Labs/akita#308); re-pin to upstream on its merge.\n\nMinimal jolt-prover-legacy compat touches (full prover lands in the\nfollow-up PR): the three jolt_verifier::verify call sites drop the\nremoved zk argument. The akita fixture-driven tamper suite rides the\nprover PR (it generates fixtures through the akita prover), so the\nakita,prover-fixtures feature combo activates there.\n\nGates: workspace clippy strict (base, akita, prover-fixtures,\njolt-prover/kernels); muldiv e2e host + host,zk with main's prover;\nverifier suites 75 base / 77 akita; modular crates green; fmt; typos.\n\n* refactor(bytecode-read-raf): size staged values by NUM_BYTECODE_VAL_STAGES\n\nAddress review: replace the Vec-typed committed publics/inputs and the\n([F; 5], bool) / ([F; 5], F) store side-channels with\n[_; NUM_BYTECODE_VAL_STAGES] arrays (5 base, 6 akita). The lattice store\nstage is now read_raf_row_values' sixth staged value, folded uniformly by\nfold_stage_values; the stage-6b akita arm resolves StageValue(5) from the\nstaged array instead of a separate store fold.\n\nGates: clippy base/akita/zk+fixtures clean; jolt-claims+kernels+prover 191\ntests; jolt-verifier 118 base (prover-fixtures) / 77 akita; muldiv e2e\nhost and host,zk.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(akita): dissolve IncVirtualization into the bytecode read-raf\n\nThe standalone log_T-round IncVirtualization phase (between stages 5 and\n6a) and the stage-6b FusedIncClaimReduction member both disappear: the\nbytecode read-raf gains four fused-inc consumer val stages that discharge\nthe four reduced inc claims directly.\n\nSubstituting Store(j) = sum_k val_store(k) ra(k,j) (and its complement,\nvalid because bytecode ra is one-hot per cycle) into the fused-inc\nidentities FusedInc*Store = RamInc and FusedInc*(1-Store) = RdInc turns\neach inc claim into a read-raf-shaped stage: a bytecode val column\n(store/notstore), the producing relation's cycle point, and the shared RA\nproduct, with one shared FusedInc cycle factor (cycle-phase degree d+1 ->\nd+2). The four claims are all available before stage 6a, so the timing\npin that forced the standalone phase (its store-selector opening feeding\nthe read-raf input fold) is gone, and no store opening exists anywhere.\n\n- jolt-claims: LatticeReadRafAddressPhase folds the inc claims at\n  gamma^5..8 (pc/shift/entry shift to gamma^9..11); new lattice cycle\n  symbolics carry the FusedInc opening; committed mode resolves the fused\n  stages through the staged store val and 1 - store, so the staged-val\n  wires are unchanged; READ_RAF_CYCLE_STAGES (5 base / 9 akita) sizes the\n  cycle-point and cycle-eq arrays, distinct from the staged-val wire\n  count; the stage-7 hamming decode leg re-points to\n  FusedInc@BytecodeReadRaf (same 6b cycle point).\n- jolt-verifier: the inc-virtualization stage, its proof field and claims\n  block, and the fused 6b member are deleted; stage 6a wires the four inc\n  claims from stages 2/4/5; stage 6b builds nine cycle points and\n  resolves the fused stages from the staged store fold.\n\nProof shrinks by the standalone phase (log_T degree-3 round polys and two\nclaim cells) net of one extra coefficient per 6b round; one fewer\nFiat-Shamir stage. The prover half lands with the jolt-prover-legacy\nintegration (#1676).\n\n* nit\n\n* docs(lattice): update the claims spec for the read-raf inc dissolution\n\nspecs/lattice-claims.md still described the superseded protocol (the\nstandalone IncVirtualization phase and the stage-6b FusedIncClaimReduction\nmember). Rewritten per the review follow-up:\n\n- scope, module inventory, and typed ids drop the two deleted relations;\n  relations/read_raf.rs joins the module tree\n- the inc one-hotting chain's first section now specifies the four fused-inc\n  consumer val stages at gamma^5..8 with the Store substitution, and the\n  second (point-alignment) section is gone — the FusedInc opening is born at\n  the shared 6b cycle point\n- the store-binding section states the structural binding (no selector\n  opening; the raw Store column stays the sixth staged-value wire)\n- READ_RAF_CYCLE_STAGES = 9 vs NUM_BYTECODE_VAL_STAGES = 6 made explicit\n- stage-7 inputs and the verifier/prover schedule re-pointed\n\n* perf(akita): one-hot trace follow-ups — naming and catalog setup sizing\n\nVerifier-side half of the #1685 follow-ups, re-expressed over the read-raf\ninc dissolution and the staged-value array refactor:\n\n- rename: the native committed group W_jolt becomes OneHotTrace and its\n  members become columns (one_hot_trace_columns, OneHotTraceLayout/Plan/\n  SetupShape, ONE_HOT_TRACE_LAYOUT, OneHotTraceCommitmentMetadata/\n  SetupMetadata); prose sweeps in the lattice specs\n- streamlined commitments: the scheme gains commit_one_hot_group_owned and\n  open_one_hot_group_from_hint so the prover commits owned columns and\n  opens from the hint without retaining the witness\n- catalog setup sizing: production OneHotTrace setup envelopes computed\n  from the checked-in K=16/K=256 schedule catalogs (every catalogued\n  sub-shape plus exact root A/B/D footprints, with overflow and\n  scalar-layout guards), replacing planner-DP scans; upstream planner\n  fallback retained for non-production shapes; only the fp128 D64 full and\n  one-hot schedule families are enabled\n\nThe packed-prover half lands with #1676.\n\n* review: shape-guard Akita deserialization, fix schedule drift oracle, CI lanes, cleanups\n\nAddresses quangvdao's pre-merge review on #1675:\n\n- jolt-akita: derive the expected backend commitment coefficient count and\n  batched proof shape from the trusted verifier setup / resolved schedule\n  (shape_guard module), rejecting mismatches before any shape-backed\n  allocation; require exact byte consumption on every backend\n  deserialization; add malformed-shape unit and wire-level tests.\n- schedules drift test: compare planner-regenerated catalogs by token\n  stream instead of byte-for-byte (the emitter output is unformatted while\n  checked-in modules are rustfmt-formatted outside the rustfmt::skip\n  tables); report the first mismatching token with context. Run it in a\n  dedicated CI lane.\n- CI: lint jolt-verifier under akita,prover-fixtures (the fixture suite\n  lands with the stacked prover PR); add the test-akita-schedules job.\n- Drop the six accidentally committed fuzz Cargo.lock files and revert\n  jolt-eval/fuzz/Cargo.lock to main (fuzz lanes regenerate lockfiles).\n- specs/lattice-claims.md: status in review, link PR #1675.\n\n* fix(akita): drift-test failure via assert_eq, workspace clippy denies panic\n\n* ci: move akita,prover-fixtures clippy lane to the prover PR\n\nThe combo cannot compile on this branch: prover-fixtures pulls in\njolt-prover-legacy, whose dory-only stage structs mismatch the akita-shaped\nverifier until the packed prover lands (#1676, where the lane now lives).\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Quang Dao <qvd@andrew.cmu.edu>",
+          "timestamp": "2026-07-22T11:27:25-07:00",
+          "tree_id": "011fc4cf05d6965c2b9ac9fbab2cdc551397fdba",
+          "url": "https://github.com/a16z/jolt/commit/20991467f4533a9f9bed242ef705e1cb2da4d632"
+        },
+        "date": 1784748796819,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7531,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 870632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.334,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 504748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 504688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 511272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7118,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5836,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 511020,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.6881,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 507060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9792,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 197476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4417,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 870088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5591,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4563,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511384,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.587,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 504604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7584,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 511192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.9373,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1050532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.4345,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 644540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 105.8646,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2124800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4795,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 511172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5332,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.9558,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 870552,
             "unit": "KB",
             "extra": ""
           }
