@@ -1,5 +1,8 @@
 //! Stage 6 coarse-kernel ABI used by Bolt-generated Jolt prover code.
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::fmt::{self, Display, Formatter};
 use std::{borrow::Cow, error::Error};
 
@@ -1344,9 +1347,23 @@ where
                 claim = claim.symbol
             )
             .entered();
-            Stage6ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage6ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         } else {
-            Stage6ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage6ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         };
         let init_nanos = init_start.map_or(0, |start| start.elapsed().as_nanos());
         instances.push(Stage6BatchedInstance {
@@ -1865,28 +1882,29 @@ impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
         inputs: &'a Stage6ProverInputs<'a, F>,
         store: &Stage6ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         match claim_relation(program, claim)? {
             Stage6Relation::BytecodeReadRaf => {
-                bytecode_read_raf_state(program, claim, inputs, store, active_scale)
+                bytecode_read_raf_state(program, claim, inputs, store, active_scale, backend)
             }
             Stage6Relation::Booleanity => {
-                booleanity_state(program, claim, inputs, store, active_scale)
+                booleanity_state(program, claim, inputs, store, active_scale, backend)
             }
             Stage6Relation::HammingBooleanity => {
-                hamming_booleanity_state(program, claim, inputs, store, active_scale)
+                hamming_booleanity_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::HammingBooleanity)
             }
             Stage6Relation::IncClaimReduction => {
-                inc_claim_reduction_state(program, claim, inputs, store, active_scale)
+                inc_claim_reduction_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::IncClaimReduction)
             }
             Stage6Relation::RamRaVirtual => {
-                ram_ra_virtual_state(program, claim, inputs, store, active_scale)
+                ram_ra_virtual_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::RamRaVirtual)
             }
             Stage6Relation::InstructionRaVirtual => {
-                instruction_ra_virtual_state(program, claim, inputs, store, active_scale)
+                instruction_ra_virtual_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::InstructionRaVirtual)
             }
             relation @ Stage6Relation::Batched => Err(Stage6KernelError::KernelNotImplemented {
@@ -2040,6 +2058,39 @@ impl<F: Field> BytecodeReadRafCycleFactors<F> {
 
     fn factor_eval(&self, chunk: usize) -> Option<F> {
         (chunk < self.len()).then(|| self.get(chunk, 0))
+    }
+
+    #[cfg(feature = "cuda")]
+    fn dense_chunk_vecs(&self) -> Option<Vec<Vec<F>>> {
+        use rayon::prelude::*;
+        let current_len = self.current_len();
+        Some(
+            (0..self.len())
+                .map(|chunk| {
+                    (0..current_len)
+                        .into_par_iter()
+                        .map(|index| self.get(chunk, index))
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "cuda")]
+    #[cfg(feature = "cuda")]
+    fn build_cuda_cycle_sparse_dev(
+        &self,
+        combined_eq: &crate::cuda::DeviceFrVec,
+        degree: usize,
+    ) -> Option<cuda::CudaBytecodeReadRafState> {
+        match self {
+            Self::SparseRound1 { tables, indices } => {
+                cuda::CudaBytecodeReadRafState::new_cycle_sparse_dev(
+                    tables, indices, combined_eq, degree,
+                )
+            }
+            _ => None,
+        }
     }
 
     fn get_pair(&self, chunk: usize, row: usize) -> (F, F) {
@@ -2261,6 +2312,8 @@ struct BytecodeReadRafStage6State<F: Field> {
     cycle_factors: BytecodeReadRafCycleFactors<F>,
     cycle_eqs: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     cycle_eq_scratch: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
+    stage_cycle_points: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
     cycle_entry_eq: Vec<F>,
     cycle_entry_eq_scratch: Vec<F>,
     cycle_combined_eq: Vec<F>,
@@ -2272,6 +2325,10 @@ struct BytecodeReadRafStage6State<F: Field> {
     active_scale: F,
     degree_bound: usize,
     phase: BytecodeReadRafPhase,
+    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
+    backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaBytecodeReadRafState>,
 }
 
 impl<F: Field> BytecodeReadRafStage6State<F> {
@@ -2288,6 +2345,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         active_scale: F,
         degree_bound: usize,
         outputs: Vec<FactorOutput>,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         if degree_bound < 2 || degree_bound < chunk_lens.len() + 1 {
             return Err(Stage6KernelError::InvalidProof {
@@ -2341,11 +2399,16 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         let gamma = store.scalar("stage6.bytecode_read_raf.gamma")?;
         let gamma_powers = bytecode_gamma_powers(gamma);
         let stage_cycle_points = bytecode_stage_cycle_points(store, log_t)?;
-        let cycle_eqs = stage_cycle_points.each_ref().map(|point| {
-            let eq = EqPolynomial::<F>::evals(point, None);
-            debug_assert_eq!(eq.len(), 1usize << log_t);
-            eq
-        });
+        let build_host_cycle_eqs = backend != "cuda";
+        let cycle_eqs: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT] = if build_host_cycle_eqs {
+            stage_cycle_points.each_ref().map(|point| {
+                let eq = EqPolynomial::<F>::evals(point, None);
+                debug_assert_eq!(eq.len(), 1usize << log_t);
+                eq
+            })
+        } else {
+            std::array::from_fn(|_| Vec::new())
+        };
 
         let stage1_gamma = store.scalar("stage6.bytecode_read_raf.stage1_gamma")?;
         let stage2_gamma = store.scalar("stage6.bytecode_read_raf.stage2_gamma")?;
@@ -2387,14 +2450,6 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             }
         }
 
-        let mut stage_factors: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT] =
-            std::array::from_fn(|_| vec![F::zero(); expected_entries]);
-        for (cycle, &bytecode_index) in bytecode_cycle_indices.iter().enumerate() {
-            for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
-                stage_factors[stage][bytecode_index] += cycle_eqs[stage][cycle];
-            }
-        }
-
         let mut entry_trace = vec![F::zero(); expected_entries];
         entry_trace[bytecode_cycle_indices[0]] = F::one();
         let mut entry_expected = vec![F::zero(); expected_entries];
@@ -2402,6 +2457,37 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
 
         let mut cycle_entry_eq = vec![F::zero(); 1usize << log_t];
         cycle_entry_eq[0] = F::one();
+
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            cuda_bytecode_address_state(
+                &stage_cycle_points,
+                &bytecode_cycle_indices,
+                expected_entries,
+                &stage_values,
+                &entry_trace,
+                &entry_expected,
+                &gamma_powers,
+            )
+        } else {
+            None
+        };
+
+        #[cfg(feature = "cuda")]
+        let build_host_factors = cuda.is_none();
+        #[cfg(not(feature = "cuda"))]
+        let build_host_factors = true;
+
+        let mut stage_factors: [Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT] =
+            std::array::from_fn(|_| Vec::new());
+        if build_host_factors {
+            stage_factors = std::array::from_fn(|_| vec![F::zero(); expected_entries]);
+            for (cycle, &bytecode_index) in bytecode_cycle_indices.iter().enumerate() {
+                for stage in 0..BYTECODE_READ_RAF_STAGE_COUNT {
+                    stage_factors[stage][bytecode_index] += cycle_eqs[stage][cycle];
+                }
+            }
+        }
 
         Ok(Self {
             log_k,
@@ -2424,6 +2510,7 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             cycle_factors: BytecodeReadRafCycleFactors::empty(),
             cycle_eqs,
             cycle_eq_scratch: std::array::from_fn(|_| Vec::new()),
+            stage_cycle_points,
             cycle_entry_eq,
             cycle_entry_eq_scratch: Vec::new(),
             cycle_combined_eq: Vec::new(),
@@ -2435,6 +2522,9 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             active_scale,
             degree_bound,
             phase: BytecodeReadRafPhase::Address,
+            backend,
+            #[cfg(feature = "cuda")]
+            cuda,
         })
     }
 
@@ -2467,6 +2557,18 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF address phase has invalid length",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(evals) = cuda.round_poly_evals() {
+                if let Some(evals) = evals
+                    .iter()
+                    .map(|v| crate::cuda::fr_into::<F>(*v).map(|v| v * self.active_scale))
+                    .collect::<Option<Vec<F>>>()
+                {
+                    return Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals));
+                }
+            }
         }
         let eval_count = 2;
         let eval_accs = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
@@ -2546,6 +2648,18 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF cycle phase has invalid length",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(evals) = cuda.round_poly_evals() {
+                if let Some(evals) = evals
+                    .iter()
+                    .map(|v| crate::cuda::fr_into::<F>(*v).map(|v| v * self.active_scale))
+                    .collect::<Option<Vec<F>>>()
+                {
+                    return Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals));
+                }
+            }
         }
         let eval_count = self.degree_bound;
         let eval_accs = if first_len / 2 >= DENSE_BIND_PAR_THRESHOLD {
@@ -2650,6 +2764,18 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn bind_address(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.address_challenges.push(challenge);
+                    if self.address_challenges.len() == self.log_k {
+                        self.init_cycle_phase();
+                    }
+                    return;
+                }
+            }
+        }
         rayon::join(
             || {
                 rayon::join(
@@ -2697,13 +2823,32 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn init_cycle_phase(&mut self) {
-        let bound_stage_values = std::array::from_fn(|stage| {
-            self.stage_values[stage]
-                .first()
-                .copied()
-                .unwrap_or(F::zero())
+        #[cfg(feature = "cuda")]
+        let device_bound: Option<([F; BYTECODE_READ_RAF_STAGE_COUNT], F)> =
+            self.cuda.as_ref().and_then(|cuda| {
+                let stages = BYTECODE_READ_RAF_STAGE_COUNT;
+                let mut values = [F::zero(); BYTECODE_READ_RAF_STAGE_COUNT];
+                for (stage, value) in values.iter_mut().enumerate() {
+                    *value = crate::cuda::fr_into::<F>(cuda.factor_first(stages + stage)?.ok()?)?;
+                }
+                let entry =
+                    crate::cuda::fr_into::<F>(cuda.factor_first(2 * stages + 1)?.ok()?)?;
+                Some((values, entry))
+            });
+        #[cfg(not(feature = "cuda"))]
+        let device_bound: Option<([F; BYTECODE_READ_RAF_STAGE_COUNT], F)> = None;
+
+        #[cfg_attr(not(feature = "cuda"), expect(clippy::unnecessary_literal_unwrap))]
+        let (bound_stage_values, bound_entry_expected) = device_bound.unwrap_or_else(|| {
+            let values = std::array::from_fn(|stage| {
+                self.stage_values[stage]
+                    .first()
+                    .copied()
+                    .unwrap_or(F::zero())
+            });
+            let entry = self.entry_expected.first().copied().unwrap_or(F::zero());
+            (values, entry)
         });
-        let bound_entry_expected = self.entry_expected.first().copied().unwrap_or(F::zero());
         let mut address_point = self.address_challenges.clone();
         address_point.reverse();
 
@@ -2720,20 +2865,32 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
             std::array::from_fn::<_, BYTECODE_READ_RAF_STAGE_COUNT, _>(|stage| {
                 self.gamma_powers[stage] * bound_stage_values[stage]
             });
-        let trace_len = 1usize << self.log_t;
-        self.cycle_combined_eq = (0..trace_len)
-            .into_par_iter()
-            .map(|index| {
-                let mut combined = F::zero();
-                for (stage, &coefficient) in stage_coefficients.iter().enumerate() {
-                    combined += coefficient * self.cycle_eqs[stage][index];
-                }
-                combined
-            })
-            .collect();
         let entry_coefficient = self.gamma_powers[7] * bound_entry_expected;
-        if let Some(combined) = self.cycle_combined_eq.first_mut() {
-            *combined += entry_coefficient;
+        let trace_len = 1usize << self.log_t;
+
+        #[cfg(feature = "cuda")]
+        let cuda_combined_eq = if self.backend == "cuda" {
+            cuda_bytecode_combined_eq(&self.stage_cycle_points, &stage_coefficients, entry_coefficient)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let cuda_combined_eq: Option<()> = None;
+
+        if cuda_combined_eq.is_none() {
+            self.cycle_combined_eq = (0..trace_len)
+                .into_par_iter()
+                .map(|index| {
+                    let mut combined = F::zero();
+                    for (stage, &coefficient) in stage_coefficients.iter().enumerate() {
+                        combined += coefficient * self.cycle_eqs[stage][index];
+                    }
+                    combined
+                })
+                .collect();
+            if let Some(combined) = self.cycle_combined_eq.first_mut() {
+                *combined += entry_coefficient;
+            }
         }
 
         self.bound_stage_values = Some(bound_stage_values);
@@ -2751,6 +2908,29 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
         self.cycle_entry_eq.clear();
         self.cycle_entry_eq_scratch.clear();
         self.phase = BytecodeReadRafPhase::Cycle;
+
+        #[cfg(feature = "cuda")]
+        if self.backend == "cuda" {
+            let degree_bound = self.degree_bound;
+            let combined = cuda_combined_eq;
+            self.cuda = crate::cuda::xfer_stats::timed(
+                crate::cuda::xfer_stats::Phase::Materialize,
+                || {
+                    let combined = combined?;
+                    self.cycle_factors
+                        .build_cuda_cycle_sparse_dev(&combined, degree_bound)
+                        .or_else(|| {
+                            self.cycle_factors.dense_chunk_vecs().and_then(|chunk_vecs| {
+                                cuda::CudaBytecodeReadRafState::new_cycle_dev(
+                                    &chunk_vecs,
+                                    &combined,
+                                    degree_bound,
+                                )
+                            })
+                        })
+                },
+            );
+        }
     }
 
     fn dense_cycle_factors(&self, address_point: &[F]) -> Vec<Vec<F>> {
@@ -2780,6 +2960,14 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
     }
 
     fn bind_cycle(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         self.cycle_factors.bind(challenge);
         bind_dense_evals_reuse(
             &mut self.cycle_combined_eq,
@@ -2800,6 +2988,22 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                 driver: relation.symbol(),
                 reason: "bytecode read RAF final eval missing entry value",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            let num_chunks = self.cycle_factors.len();
+            let device_factors: Option<Vec<F>> = (0..=num_chunks)
+                .map(|factor| {
+                    cuda.factor_first(factor)
+                        .and_then(|r| r.ok())
+                        .and_then(crate::cuda::fr_into::<F>)
+                })
+                .collect();
+            if let Some(factors) = device_factors {
+                let weighted = factors[num_chunks];
+                let ra_product = factors[..num_chunks].iter().copied().product::<F>();
+                return Ok(ra_product * weighted);
+            }
         }
         let mut ra_product = F::one();
         for chunk in 0..self.cycle_factors.len() {
@@ -2837,6 +3041,16 @@ impl<F: Field> BytecodeReadRafStage6State<F> {
                             driver: relation.symbol(),
                             reason: "bytecode read RAF output factor underflow",
                         })?;
+                #[cfg(feature = "cuda")]
+                if let Some(cuda) = &self.cuda {
+                    if let Some(value) = cuda
+                        .output_factor_first(factor)
+                        .and_then(|r| r.ok())
+                        .and_then(crate::cuda::fr_into::<F>)
+                    {
+                        return Ok(named_eval(output.name, output.oracle, value));
+                    }
+                }
                 let value = self.cycle_factors.factor_eval(factor).ok_or(
                     Stage6KernelError::InvalidProof {
                         driver: relation.symbol(),
@@ -2875,6 +3089,10 @@ fn multiply_linear_factor<F: Field>(
     coefficients[..=*degree].copy_from_slice(&scratch[..=*degree]);
 }
 
+// Unreachable via a real prover: dense host-only fallback selected only when the booleanity
+// witness has `index_chunks == None`. The production witness assembler
+// (Stage6ProverInputs::with_stage6_witness) always sets `index_chunks: Some(..)`, forcing the
+// device-capable CoreBooleanityStage6State. Only unit tests construct the None witness.
 struct BooleanityStage6State<F: Field> {
     eq: Vec<F>,
     eq_scratch: Vec<F>,
@@ -3147,9 +3365,20 @@ struct CoreBooleanityStage6State<'a, F: Field> {
     gamma_powers_square: Vec<F>,
     outputs: Vec<FactorOutput>,
     active_scale: F,
+    #[cfg_attr(not(feature = "cuda"), expect(dead_code))]
+    backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaCoreBooleanitySparse>,
+    #[cfg(feature = "cuda")]
+    cuda_address: Option<cuda::CudaCoreBooleanityAddressState>,
+    #[cfg(feature = "cuda")]
+    cuda_eq_b: Option<crate::split_eq::CudaGruenSplitEq>,
+    #[cfg(feature = "cuda")]
+    cuda_eq_d: Option<crate::split_eq::CudaGruenSplitEq>,
 }
 
 impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
+    #[expect(clippy::too_many_arguments)]
     fn new(
         r_address: &[F],
         r_cycle: &[F],
@@ -3158,6 +3387,7 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         gamma: F,
         outputs: Vec<FactorOutput>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         let log_k_chunk = r_address.len();
         let chunk_domain = 1usize << log_k_chunk;
@@ -3204,12 +3434,29 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
         let mut f_table = ExpandingTable::new(chunk_domain, BindingOrder::LowToHigh);
         f_table.reset(F::one());
 
+        #[cfg(feature = "cuda")]
+        let cuda_address = if backend == "cuda" {
+            cuda::CudaCoreBooleanityAddressState::new(&g, &gamma_powers_square)
+        } else {
+            None
+        };
+
+        let b = GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh);
+        let d = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh);
+        #[cfg(feature = "cuda")]
+        let cuda_eq_b = if cuda_address.is_some() {
+            crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &b))
+        } else {
+            None
+        };
+
         Ok(Self {
             log_k_chunk,
             num_polys,
             address_round: 0,
-            b: GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh),
-            d: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
+            b,
+            d,
             f_table,
             eq_r_r: F::zero(),
             eq_r_r_inv: F::zero(),
@@ -3221,6 +3468,15 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             gamma_powers_square,
             outputs,
             active_scale,
+            backend,
+            #[cfg(feature = "cuda")]
+            cuda: None,
+            #[cfg(feature = "cuda")]
+            cuda_address,
+            #[cfg(feature = "cuda")]
+            cuda_eq_b,
+            #[cfg(feature = "cuda")]
+            cuda_eq_d: None,
         })
     }
 
@@ -3259,6 +3515,19 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
         let m = self.address_round + 1;
         let f_values = self.f_table.values();
+
+        #[cfg(feature = "cuda")]
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda_address, &self.cuda_eq_b) {
+            if let Some(q) =
+                cuda.round_poly_q(f_values, cuda_eq.e_in_dev(), cuda_eq.e_out_dev(), m)
+            {
+                if let (Some(q0), Some(q1)) =
+                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
+                {
+                    return self.b.gruen_poly_deg_3(q0, q1, previous_claim);
+                }
+            }
+        }
 
         let quadratic_accs = self.b.fold_out_in(
             || [F::Accumulator::default(); 2],
@@ -3300,6 +3569,17 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     }
 
     fn cycle_round_poly(&self, previous_claim: F) -> Result<UnivariatePoly<F>, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq_d) {
+            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_dev(), cuda_eq.e_out_dev()) {
+                if let (Some(q0), Some(q1)) =
+                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
+                {
+                    let adjusted_claim = previous_claim * self.eq_r_r_inv;
+                    return Ok(self.d.gruen_poly_deg_3(q0, q1, adjusted_claim) * self.eq_r_r);
+                }
+            }
+        }
         let h = self.h.as_ref().ok_or(Stage6KernelError::InvalidProof {
             driver: Stage6Relation::Booleanity.symbol(),
             reason: "booleanity cycle state is missing",
@@ -3401,6 +3681,10 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
     fn bind(&mut self, challenge: F) {
         if self.h.is_none() {
             self.b.bind(challenge);
+            #[cfg(feature = "cuda")]
+            if let Some(cuda_eq) = &mut self.cuda_eq_b {
+                cuda_eq.sync_to_host(&self.b);
+            }
             self.f_table.update(challenge);
             self.address_round += 1;
             if self.address_round == self.log_k_chunk {
@@ -3420,16 +3704,65 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
                     .collect::<Vec<_>>();
                 let indices = std::mem::replace(&mut self.indices, Cow::Borrowed(&[]));
                 self.h = Some(CoreBooleanityHState::new(tables, indices));
+                #[cfg(feature = "cuda")]
+                self.maybe_build_cuda();
             }
         } else {
             self.d.bind(challenge);
+            #[cfg(feature = "cuda")]
+            if let Some(cuda_eq) = &mut self.cuda_eq_d {
+                cuda_eq.sync_to_host(&self.d);
+            }
+            #[cfg(feature = "cuda")]
+            if let Some(cuda) = &mut self.cuda {
+                if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                    if cuda.bind(challenge_fr).is_ok() {
+                        if let Some(h) = &mut self.h {
+                            h.bind(challenge);
+                        }
+                        return;
+                    }
+                }
+            }
             if let Some(h) = &mut self.h {
                 h.bind(challenge);
             }
         }
     }
 
+    #[cfg(feature = "cuda")]
+    fn maybe_build_cuda(&mut self) {
+        if self.backend != "cuda" || self.cuda.is_some() {
+            return;
+        }
+        let Some(CoreBooleanityHState::Round1 { tables, indices }) = self.h.as_ref() else {
+            return;
+        };
+        self.cuda = crate::cuda::xfer_stats::timed(
+            crate::cuda::xfer_stats::Phase::Materialize,
+            || {
+                cuda::CudaCoreBooleanitySparse::from_round1(
+                    tables,
+                    indices.as_ref(),
+                    &self.gamma_powers[..self.num_polys],
+                )
+            },
+        );
+        if self.cuda.is_some() {
+            self.cuda_eq_d = crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &self.d));
+        }
+    }
+
     fn factor_eval(&self, index: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.poly_first(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value * self.gamma_powers_inv[index]);
+                }
+            }
+        }
         self.h
             .as_ref()
             .map(|h| h.final_sumcheck_claim(index))
@@ -3448,6 +3781,17 @@ impl<'a, F: Field> CoreBooleanityStage6State<'a, F> {
             });
         }
         let eq = self.d.current_scalar() * self.eq_r_r;
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            let booleanity = (0..self.num_polys).try_fold(F::zero(), |acc, index| {
+                let value = cuda.poly_first(index).and_then(|v| v.ok())?;
+                let scaled = crate::cuda::fr_into::<F>(value)?;
+                Some(acc + scaled * (scaled - self.gamma_powers[index]))
+            });
+            if let Some(booleanity) = booleanity {
+                return Ok(eq * booleanity);
+            }
+        }
         let h = self.h.as_ref().ok_or(Stage6KernelError::InvalidProof {
             driver: relation.symbol(),
             reason: "booleanity cycle state is missing",
@@ -3888,21 +4232,26 @@ fn scale_booleanity_tables<F: Field>(tables: &[Vec<F>], scalar: F) -> Vec<Vec<F>
         .collect()
 }
 
-struct HammingBooleanityStage6State<F: Field> {
-    eq: GruenSplitEqPolynomial<F>,
-    hamming_weight: Vec<F>,
+pub(crate) struct HammingBooleanityStage6State<F: Field> {
+    pub(crate) eq: GruenSplitEqPolynomial<F>,
+    pub(crate) hamming_weight: Vec<F>,
     hamming_weight_scratch: Vec<F>,
     output: FactorOutput,
-    active_scale: F,
+    pub(crate) active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<cuda::CudaHammingBooleanityState>>,
+    #[cfg(feature = "cuda")]
+    cuda_eq: Option<Box<crate::split_eq::CudaGruenSplitEq>>,
 }
 
 impl<F: Field> HammingBooleanityStage6State<F> {
-    fn new(
+    pub(crate) fn new_with_backend(
         point: &[F],
         hamming_weight: Vec<F>,
         output: FactorOutput,
         active_scale: F,
         degree_bound: usize,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         if degree_bound < 3 {
             return Err(Stage6KernelError::InvalidProof {
@@ -3915,16 +4264,37 @@ impl<F: Field> HammingBooleanityStage6State<F> {
             hamming_weight.len(),
             1usize << point.len(),
         )?;
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            cuda::CudaHammingBooleanityState::new(&hamming_weight).map(Box::new)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
+        let eq = GruenSplitEqPolynomial::new(point, BindingOrder::LowToHigh);
+        #[cfg(feature = "cuda")]
+        let cuda_eq = if cuda.is_some() {
+            crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &eq))
+                .map(Box::new)
+        } else {
+            None
+        };
         Ok(Self {
-            eq: GruenSplitEqPolynomial::new(point, BindingOrder::LowToHigh),
+            eq,
             hamming_weight,
             hamming_weight_scratch: Vec::new(),
             output,
             active_scale,
+            #[cfg(feature = "cuda")]
+            cuda,
+            #[cfg(feature = "cuda")]
+            cuda_eq,
         })
     }
 
-    fn round_poly(
+    pub(crate) fn round_poly(
         &self,
         previous_claim: F,
         relation: Stage6Relation,
@@ -3934,6 +4304,26 @@ impl<F: Field> HammingBooleanityStage6State<F> {
                 driver: relation.symbol(),
                 reason: "wrong relation for hamming booleanity state",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
+            if let Some(q) = cuda.round_poly_q(cuda_eq.e_in_dev(), cuda_eq.e_out_dev()) {
+                if let (Some(q_constant), Some(q_top)) =
+                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
+                {
+                    let mut poly = self.eq.gruen_poly_deg_3(q_constant, q_top, previous_claim);
+                    if self.active_scale != F::one() {
+                        poly *= self.active_scale;
+                    }
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage6 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
         }
         let e_out = self.eq.e_out_current();
         let e_in = self.eq.e_in_current();
@@ -3980,6 +4370,18 @@ impl<F: Field> HammingBooleanityStage6State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.eq.bind(challenge);
+                    if let Some(cuda_eq) = &mut self.cuda_eq {
+                        cuda_eq.sync_to_host(&self.eq);
+                    }
+                    return;
+                }
+            }
+        }
         self.eq.bind(challenge);
         bind_dense_evals_reuse(
             &mut self.hamming_weight,
@@ -3989,6 +4391,15 @@ impl<F: Field> HammingBooleanityStage6State<F> {
     }
 
     fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(hw) = cuda.hamming_weight_first() {
+                if let Some(hamming_weight) = crate::cuda::fr_into::<F>(hw) {
+                    return Ok(self.eq.current_scalar()
+                        * (hamming_weight.square() - hamming_weight));
+                }
+            }
+        }
         let hamming_weight =
             self.hamming_weight
                 .first()
@@ -4004,6 +4415,14 @@ impl<F: Field> HammingBooleanityStage6State<F> {
         &self,
         relation: Stage6Relation,
     ) -> Result<Vec<Stage6NamedEval<F>>, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(hw) = cuda.hamming_weight_first() {
+                if let Some(value) = crate::cuda::fr_into::<F>(hw) {
+                    return Ok(vec![named_eval(self.output.name, self.output.oracle, value)]);
+                }
+            }
+        }
         Ok(vec![named_eval(
             self.output.name,
             self.output.oracle,
@@ -4030,6 +4449,8 @@ struct IncClaimReductionStage6State<F: Field> {
     gamma2: F,
     outputs: [FactorOutput; 2],
     active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<cuda::CudaIncState>>,
 }
 
 impl<F: Field> IncClaimReductionStage6State<F> {
@@ -4044,6 +4465,30 @@ impl<F: Field> IncClaimReductionStage6State<F> {
                 reason: "wrong relation for increment claim-reduction state",
             });
         }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(fr_evals) = cuda.round_poly_evals() {
+                if let (Some(e0), Some(e1)) = (
+                    crate::cuda::fr_into::<F>(fr_evals[0]),
+                    crate::cuda::fr_into::<F>(fr_evals[1]),
+                ) {
+                    let mut evals = [e0, e1];
+                    if self.active_scale != F::one() {
+                        evals[0] *= self.active_scale;
+                        evals[1] *= self.active_scale;
+                    }
+                    let poly = UnivariatePoly::from_evals_and_hint(previous_claim, &evals);
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage6 increment claim-reduction input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
+
         let len = self.eq_ram.len();
         if len == 0 || !len.is_power_of_two() || self.eq_rd.len() != len {
             return Err(Stage6KernelError::InvalidProof {
@@ -4121,6 +4566,14 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.eq_ram.len() / 2 >= DENSE_BIND_PAR_THRESHOLD {
             rayon::join(
                 || {
@@ -4169,6 +4622,16 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 
     fn factor_eval(&self, factor: usize, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if matches!(factor, 1 | 3) {
+                if let Ok(value) = cuda.factor_first(factor) {
+                    if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                        return Ok(value);
+                    }
+                }
+            }
+        }
         let values = match factor {
             1 => &self.ram_inc,
             3 => &self.rd_inc,
@@ -4189,6 +4652,10 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 
     fn final_relation_eval(&self, relation: Stage6Relation) -> Result<F, Stage6KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(value) = cuda::inc_final_relation_eval(self) {
+            return Ok(value);
+        }
         let eq_ram = self
             .eq_ram
             .first()
@@ -4227,6 +4694,11 @@ impl<F: Field> IncClaimReductionStage6State<F> {
     }
 }
 
+// Unreachable via a real prover: host-only dense fallback for bytecode_read_raf, selected only
+// when the witness provides neither sparse `bytecode_ra_index_chunks` (Some) nor one-hot-decodable
+// dense `bytecode_ra_chunks`. The production witness assembler always supplies sparse index chunks,
+// so bytecode_read_raf_state takes the device-capable BytecodeReadRafStage6State. Only unit tests
+// hit this fallback.
 struct DenseStage6State<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
@@ -4237,16 +4709,16 @@ struct DenseStage6State<F: Field> {
 }
 
 #[derive(Clone)]
-struct DenseTerm<F: Field> {
-    coefficient: F,
-    factors: Vec<usize>,
+pub(crate) struct DenseTerm<F: Field> {
+    pub(crate) coefficient: F,
+    pub(crate) factors: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
-struct FactorOutput {
-    name: &'static str,
-    oracle: &'static str,
-    factor: usize,
+pub(crate) struct FactorOutput {
+    pub(crate) name: &'static str,
+    pub(crate) oracle: &'static str,
+    pub(crate) factor: usize,
 }
 
 impl<F: Field> DenseStage6State<F> {
@@ -4470,6 +4942,16 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
         Self::Round1 { tables, indices }
     }
 
+    #[cfg(feature = "cuda")]
+    fn build_cuda_round1(&self, gamma_powers: &[F]) -> Option<cuda::CudaRaVirtualD4Sparse> {
+        match self {
+            Self::Round1 { tables, indices } => {
+                cuda::CudaRaVirtualD4Sparse::from_round1(tables, indices, gamma_powers)
+            }
+            _ => None,
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             Self::Round1 { tables, .. } => tables.len(),
@@ -4675,7 +5157,7 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
         }
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F, backend: &'static str) {
         let one_minus = F::one() - challenge;
         match std::mem::replace(
             self,
@@ -4749,24 +5231,18 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
                     &tables_011,
                     &tables_111,
                 ];
-                let new_len = indices.first().map_or(0, |chunk| chunk.len() / 8);
-                let chunks = (0..indices.len())
-                    .into_par_iter()
-                    .map(|chunk| {
-                        (0..new_len)
-                            .map(|index| {
-                                (0..8)
-                                    .map(|offset| {
-                                        indices[chunk][8 * index + offset]
-                                            .map_or(F::zero(), |value| {
-                                                table_groups[offset][chunk][usize::from(value)]
-                                            })
-                                    })
-                                    .sum()
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
+                #[cfg(feature = "cuda")]
+                let chunks = if backend == "cuda" {
+                    cuda::materialize_gather8(&table_groups, indices)
+                        .unwrap_or_else(|| materialize_gather8(&table_groups, indices))
+                } else {
+                    materialize_gather8(&table_groups, indices)
+                };
+                #[cfg(not(feature = "cuda"))]
+                let chunks = {
+                    let _ = backend;
+                    materialize_gather8(&table_groups, indices)
+                };
                 let scratch = (0..chunks.len()).map(|_| Vec::new()).collect();
                 *self = Self::Bound { chunks, scratch };
             }
@@ -4789,6 +5265,34 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
             }
         }
     }
+}
+
+/// Gather round-3 tables for use in instruction RA bind.
+// NOTE: This is factored out of the instruction RA bind function so it can be used in CUDA
+// equivalence tests.
+#[inline(always)]
+pub(crate) fn materialize_gather8<F: Field, R: AsRef<[Option<u8>]> + Sync>(
+    table_groups: &[&Vec<Vec<F>>; 8],
+    indices: &[R],
+) -> Vec<Vec<F>> {
+    let new_len = indices.first().map_or(0, |chunk| chunk.as_ref().len() / 8);
+    (0..indices.len())
+        .into_par_iter()
+        .map(|chunk| {
+            let row = indices[chunk].as_ref();
+            (0..new_len)
+                .map(|index| {
+                    (0..8)
+                        .map(|offset| {
+                            row[8 * index + offset].map_or(F::zero(), |value| {
+                                table_groups[offset][chunk][usize::from(value)]
+                            })
+                        })
+                        .sum()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
 }
 
 #[inline(always)]
@@ -4868,7 +5372,7 @@ fn eval_instruction_ra_product<F: Field>(pairs: &[(F, F)], evals: &mut [F]) {
 }
 
 #[inline(always)]
-fn accumulate_instruction_ra_d4_products<F: Field>(
+pub(crate) fn accumulate_instruction_ra_d4_products<F: Field>(
     weight: F,
     evals: &mut [F::Accumulator],
     a0: (F, F),
@@ -4962,11 +5466,50 @@ impl<F: Field> InstructionRaVirtualChunks<'_, F> {
         }
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F, backend: &'static str) {
         match self {
             Self::Dense(chunks) => chunks.bind(challenge),
-            Self::Sparse(chunks) => chunks.bind(challenge),
+            Self::Sparse(chunks) => chunks.bind(challenge, backend),
         }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn dense_chunk_vecs(&self) -> Option<Vec<Vec<F>>> {
+        match self {
+            Self::Dense(InstructionRaVirtualDenseChunks::Borrowed(chunks)) => {
+                Some(chunks.iter().map(|chunk| chunk.to_vec()).collect())
+            }
+            Self::Dense(InstructionRaVirtualDenseChunks::Bound { chunks, .. }) => {
+                Some(chunks.clone())
+            }
+            Self::Sparse(sparse) => {
+                let current_len = sparse.current_len();
+                Some(
+                    (0..sparse.len())
+                        .map(|chunk| {
+                            (0..current_len).map(|index| sparse.get(chunk, index)).collect()
+                        })
+                        .collect(),
+                )
+            }
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn build_cuda_sparse(&self, gamma_powers: &[F]) -> Option<cuda::CudaRaVirtualD4Sparse> {
+        if let Self::Sparse(sparse) = self {
+            if let Some(state) = sparse.build_cuda_round1(gamma_powers) {
+                return Some(state);
+            }
+        }
+        if let Self::Dense(InstructionRaVirtualDenseChunks::Borrowed(chunks)) = self {
+            return cuda::CudaRaVirtualD4State::new(chunks, gamma_powers)
+                .map(cuda::CudaRaVirtualD4Sparse::Dense);
+        }
+        let chunk_vecs = self.dense_chunk_vecs()?;
+        let refs: Vec<&[F]> = chunk_vecs.iter().map(Vec::as_slice).collect();
+        cuda::CudaRaVirtualD4State::new(&refs, gamma_powers)
+            .map(cuda::CudaRaVirtualD4Sparse::Dense)
     }
 }
 
@@ -4990,6 +5533,11 @@ struct InstructionRaVirtualStage6State<'a, F: Field> {
     output_factor_offset: usize,
     outputs: Vec<FactorOutput>,
     active_scale: F,
+    backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaRaVirtualD4Sparse>,
+    #[cfg(feature = "cuda")]
+    cuda_eq: Option<crate::split_eq::CudaGruenSplitEq>,
 }
 
 impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
@@ -5006,6 +5554,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         outputs: Vec<FactorOutput>,
         active_scale: F,
         degree_bound: usize,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         if chunks.len() == 0
             || chunks_per_virtual == 0
@@ -5029,7 +5578,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
                 reason: "RA virtual degree bound is unsupported",
             });
         }
-        if chunks.current_len() != eq_cycle.len() {
+        if split_eq.is_none() && chunks.current_len() != eq_cycle.len() {
             return Err(Stage6KernelError::InvalidProof {
                 driver: relation.symbol(),
                 reason: "RA virtual chunks have inconsistent lengths",
@@ -5051,6 +5600,26 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             gamma_power *= gamma;
         }
 
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" && chunks_per_virtual == 4 && split_eq.is_some() {
+            let d4_gamma: Vec<F> = if gamma_absorbed {
+                vec![F::one(); virtual_count]
+            } else {
+                gamma_powers.clone()
+            };
+            crate::cuda::xfer_stats::timed(crate::cuda::xfer_stats::Phase::Materialize, || {
+                chunks.build_cuda_sparse(&d4_gamma)
+            })
+        } else {
+            None
+        };
+        #[cfg(feature = "cuda")]
+        let cuda_eq = match (&cuda, &split_eq) {
+            (Some(_), Some(host_eq)) => crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, host_eq)),
+            _ => None,
+        };
+
         Ok(Self {
             relation,
             eq_cycle,
@@ -5064,6 +5633,11 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             output_factor_offset,
             outputs,
             active_scale,
+            backend,
+            #[cfg(feature = "cuda")]
+            cuda,
+            #[cfg(feature = "cuda")]
+            cuda_eq,
         })
     }
 
@@ -5206,6 +5780,30 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
     ) -> Result<UnivariatePoly<F>, Stage6KernelError> {
         debug_assert_eq!(self.chunks_per_virtual, 4);
 
+        #[cfg(feature = "cuda")]
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
+            if let Some(q) =
+                cuda.round_poly_evals(cuda_eq.e_in_dev(), cuda_eq.e_out_dev())
+            {
+                let evals: Option<Vec<F>> = q
+                    .iter()
+                    .map(|value| {
+                        crate::cuda::fr_into::<F>(*value).map(|v| v * self.active_scale)
+                    })
+                    .collect();
+                if let Some(evals) = evals {
+                    let poly = split_eq.gruen_poly_from_evals(&evals, previous_claim);
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage6 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
+
         let e_out = split_eq.e_out_current();
         let e_in = split_eq.e_in_current();
         let in_bits = e_in.len().trailing_zeros() as usize;
@@ -5342,10 +5940,24 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    if let Some(split_eq) = &mut self.split_eq {
+                        split_eq.bind(challenge);
+                        if let Some(cuda_eq) = &mut self.cuda_eq {
+                            cuda_eq.sync_to_host(split_eq);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
         if self.split_eq.is_none() {
             bind_dense_evals_reuse(&mut self.eq_cycle, &mut self.eq_scratch, challenge);
         }
-        self.chunks.bind(challenge);
+        self.chunks.bind(challenge, self.backend);
         if let Some(split_eq) = &mut self.split_eq {
             split_eq.bind(challenge);
         }
@@ -5378,7 +5990,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             };
             for offset in 0..self.chunks_per_virtual {
                 let chunk = virtual_index * self.chunks_per_virtual + offset;
-                product *= self.chunks.final_sumcheck_claim(chunk);
+                product *= self.chunk_final_claim(chunk);
             }
             virtual_sum += product;
         }
@@ -5389,8 +6001,20 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         self.chunks.len() / self.chunks_per_virtual
     }
 
+    fn chunk_final_claim(&self, chunk: usize) -> F {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.chunk_first(chunk) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return value;
+                }
+            }
+        }
+        self.chunks.final_sumcheck_claim(chunk)
+    }
+
     fn unscaled_factor_eval(&self, factor: usize) -> F {
-        let mut eval = self.chunks.final_sumcheck_claim(factor);
+        let mut eval = self.chunk_final_claim(factor);
         if self.gamma_absorbed && factor.is_multiple_of(self.chunks_per_virtual) {
             eval *= self.gamma_powers_inv[factor / self.chunks_per_virtual];
         }
@@ -5431,6 +6055,7 @@ fn bytecode_read_raf_state<'a, F: Field>(
     inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<Stage6ProverInstanceState<'a, F>, Stage6KernelError> {
     let witness = inputs
         .bytecode_read_raf
@@ -5543,6 +6168,7 @@ fn bytecode_read_raf_state<'a, F: Field>(
             active_scale,
             claim.degree,
             outputs,
+            backend,
         )
         .map(|state| Stage6ProverInstanceState::BytecodeReadRaf(Box::new(state)));
     }
@@ -5609,6 +6235,7 @@ fn booleanity_state<'a, F: Field>(
     inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<Stage6ProverInstanceState<'a, F>, Stage6KernelError> {
     let witness = inputs
         .booleanity
@@ -5654,6 +6281,7 @@ fn booleanity_state<'a, F: Field>(
             store.scalar("stage6.booleanity.gamma")?,
             booleanity_output_plans(program, index_chunks.len())?,
             active_scale,
+            backend,
         )
         .map(|state| Stage6ProverInstanceState::CoreBooleanity(Box::new(state)));
     }
@@ -5756,6 +6384,7 @@ fn hamming_booleanity_state<F: Field>(
     inputs: &Stage6ProverInputs<'_, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<HammingBooleanityStage6State<F>, Stage6KernelError> {
     let witness = inputs
         .hamming_booleanity
@@ -5791,13 +6420,93 @@ fn hamming_booleanity_state<F: Field>(
             symbol: "stage6.hamming_booleanity.eval.HammingWeight",
         })?;
 
-    HammingBooleanityStage6State::new(
+    HammingBooleanityStage6State::new_with_backend(
         &lookup_output_point,
         witness.hamming_weight.to_vec(),
         output,
         active_scale,
         claim.degree,
+        backend,
     )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_bytecode_combined_eq<F: Field>(
+    stage_cycle_points: &[Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    stage_coefficients: &[F; BYTECODE_READ_RAF_STAGE_COUNT],
+    entry_coefficient: F,
+) -> Option<crate::cuda::DeviceFrVec> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let mut combined: Option<crate::cuda::DeviceFrVec> = None;
+    for (point, coeff) in stage_cycle_points.iter().zip(stage_coefficients.iter()) {
+        let scaled = ctx
+            .eq_evals(crate::cuda::as_fr_slice(point)?, Some(crate::cuda::into_fr(*coeff)?))
+            .ok()?;
+        match &mut combined {
+            None => combined = Some(scaled),
+            Some(acc) => ctx.add(acc, &scaled).ok()?,
+        }
+    }
+    let mut combined = combined?;
+    ctx.add_scalar_at(&mut combined, crate::cuda::into_fr(entry_coefficient)?, 0)
+        .ok()?;
+    Some(combined)
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_bytecode_address_state<F: Field>(
+    stage_cycle_points: &[Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    bytecode_cycle_indices: &[usize],
+    expected_entries: usize,
+    stage_values: &[Vec<F>; BYTECODE_READ_RAF_STAGE_COUNT],
+    entry_trace: &[F],
+    entry_expected: &[F],
+    gamma_powers: &[F],
+) -> Option<cuda::CudaBytecodeReadRafState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let trace_len = bytecode_cycle_indices.len();
+    let addr: Vec<i32> = bytecode_cycle_indices.par_iter().map(|&i| i as i32).collect();
+    let addr_dev = ctx.upload_i32_slice(&addr).ok()?;
+    let mut stage_factors = Vec::with_capacity(BYTECODE_READ_RAF_STAGE_COUNT);
+    for point in stage_cycle_points {
+        let eq = ctx.eq_evals(crate::cuda::as_fr_slice(point)?, None).ok()?;
+        stage_factors.push(ctx.scatter_add_eq(&eq, &addr_dev, trace_len, expected_entries).ok()?);
+    }
+    cuda::CudaBytecodeReadRafState::new_address_dev(
+        stage_factors,
+        stage_values,
+        entry_trace,
+        entry_expected,
+        gamma_powers,
+    )
+}
+
+#[cfg(feature = "cuda")]
+#[expect(clippy::too_many_arguments)]
+fn build_cuda_inc_state<F: Field>(
+    ram_inc_stage2: &[F],
+    ram_inc_stage4: &[F],
+    rd_inc_stage4: &[F],
+    rd_inc_stage5: &[F],
+    gamma: F,
+    gamma2: F,
+    ram_inc: &[F],
+    rd_inc: &[F],
+) -> Option<cuda::CudaIncState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let gamma_fr = crate::cuda::into_fr(gamma)?;
+    let mut eq_ram = ctx.eq_evals(crate::cuda::as_fr_slice(ram_inc_stage2)?, None).ok()?;
+    let eq_ram_stage4 = ctx
+        .eq_evals(crate::cuda::as_fr_slice(ram_inc_stage4)?, Some(gamma_fr))
+        .ok()?;
+    ctx.add(&mut eq_ram, &eq_ram_stage4).ok()?;
+    let mut eq_rd = ctx.eq_evals(crate::cuda::as_fr_slice(rd_inc_stage4)?, None).ok()?;
+    let eq_rd_stage5 = ctx
+        .eq_evals(crate::cuda::as_fr_slice(rd_inc_stage5)?, Some(gamma_fr))
+        .ok()?;
+    ctx.add(&mut eq_rd, &eq_rd_stage5).ok()?;
+    cuda::CudaIncState::from_device(eq_ram, ram_inc, eq_rd, rd_inc, gamma2)
 }
 
 fn inc_claim_reduction_state<F: Field>(
@@ -5806,6 +6515,7 @@ fn inc_claim_reduction_state<F: Field>(
     inputs: &Stage6ProverInputs<'_, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<IncClaimReductionStage6State<F>, Stage6KernelError> {
     let witness = inputs
         .inc_claim_reduction
@@ -5851,49 +6561,85 @@ fn inc_claim_reduction_state<F: Field>(
     let gamma = store.scalar("stage6.inc_claim_reduction.gamma")?;
     let gamma2 = gamma.square();
 
-    let (eq_ram_combined, eq_rd_combined) = rayon::join(
-        || {
-            let (eq_ram_stage2, eq_ram_stage4) = rayon::join(
-                || EqPolynomial::<F>::evals(ram_inc_stage2, None),
-                || EqPolynomial::<F>::evals(ram_inc_stage4, None),
-            );
-            eq_ram_stage2
-                .par_iter()
-                .zip(eq_ram_stage4.par_iter())
-                .map(|(&stage2, &stage4)| stage2 + gamma * stage4)
-                .collect::<Vec<_>>()
-        },
-        || {
-            let (eq_rd_stage4, eq_rd_stage5) = rayon::join(
-                || EqPolynomial::<F>::evals(rd_inc_stage4, None),
-                || EqPolynomial::<F>::evals(rd_inc_stage5, None),
-            );
-            eq_rd_stage4
-                .par_iter()
-                .zip(eq_rd_stage5.par_iter())
-                .map(|(&stage4, &stage5)| stage4 + gamma * stage5)
-                .collect::<Vec<_>>()
-        },
-    );
-    require_operand_count(
-        "stage6.inc_claim_reduction.eq_ram",
-        witness.ram_inc.len(),
-        eq_ram_combined.len(),
-    )?;
-    require_operand_count(
-        "stage6.inc_claim_reduction.eq_rd",
-        witness.rd_inc.len(),
-        eq_rd_combined.len(),
-    )?;
+    let ram_inc = witness.ram_inc.to_vec();
+    let rd_inc = witness.rd_inc.to_vec();
+
+    #[cfg(feature = "cuda")]
+    let cuda = if backend == "cuda" {
+        build_cuda_inc_state(
+            ram_inc_stage2,
+            ram_inc_stage4,
+            rd_inc_stage4,
+            rd_inc_stage5,
+            gamma,
+            gamma2,
+            &ram_inc,
+            &rd_inc,
+        )
+        .map(Box::new)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "cuda"))]
+    let _ = backend;
+
+    let build_host_eq = || -> (Vec<F>, Vec<F>) {
+        rayon::join(
+            || {
+                let (eq_ram_stage2, eq_ram_stage4) = rayon::join(
+                    || EqPolynomial::<F>::evals(ram_inc_stage2, None),
+                    || EqPolynomial::<F>::evals(ram_inc_stage4, None),
+                );
+                eq_ram_stage2
+                    .par_iter()
+                    .zip(eq_ram_stage4.par_iter())
+                    .map(|(&stage2, &stage4)| stage2 + gamma * stage4)
+                    .collect::<Vec<_>>()
+            },
+            || {
+                let (eq_rd_stage4, eq_rd_stage5) = rayon::join(
+                    || EqPolynomial::<F>::evals(rd_inc_stage4, None),
+                    || EqPolynomial::<F>::evals(rd_inc_stage5, None),
+                );
+                eq_rd_stage4
+                    .par_iter()
+                    .zip(eq_rd_stage5.par_iter())
+                    .map(|(&stage4, &stage5)| stage4 + gamma * stage5)
+                    .collect::<Vec<_>>()
+            },
+        )
+    };
+
+    #[cfg(feature = "cuda")]
+    let (eq_ram_host, eq_rd_host) = if cuda.is_some() {
+        (Vec::new(), Vec::new())
+    } else {
+        build_host_eq()
+    };
+    #[cfg(not(feature = "cuda"))]
+    let (eq_ram_host, eq_rd_host) = build_host_eq();
+
+    if !eq_ram_host.is_empty() {
+        require_operand_count(
+            "stage6.inc_claim_reduction.eq_ram",
+            witness.ram_inc.len(),
+            eq_ram_host.len(),
+        )?;
+        require_operand_count(
+            "stage6.inc_claim_reduction.eq_rd",
+            witness.rd_inc.len(),
+            eq_rd_host.len(),
+        )?;
+    }
 
     Ok(IncClaimReductionStage6State {
-        eq_ram: eq_ram_combined,
+        eq_ram: eq_ram_host,
         eq_ram_scratch: Vec::new(),
-        ram_inc: witness.ram_inc.to_vec(),
+        ram_inc,
         ram_inc_scratch: Vec::new(),
-        eq_rd: eq_rd_combined,
+        eq_rd: eq_rd_host,
         eq_rd_scratch: Vec::new(),
-        rd_inc: witness.rd_inc.to_vec(),
+        rd_inc,
         rd_inc_scratch: Vec::new(),
         gamma2,
         outputs: [
@@ -5901,6 +6647,8 @@ fn inc_claim_reduction_state<F: Field>(
             factor_output_by_name(program, "stage6.inc_claim_reduction.eval.RdInc", 3)?,
         ],
         active_scale,
+        #[cfg(feature = "cuda")]
+        cuda,
     })
 }
 
@@ -5910,6 +6658,7 @@ fn ram_ra_virtual_state<'a, F: Field>(
     inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<InstructionRaVirtualStage6State<'a, F>, Stage6KernelError> {
     let witness = inputs
         .ram_ra_virtual
@@ -5941,8 +6690,13 @@ fn ram_ra_virtual_state<'a, F: Field>(
         trace_rounds,
         "stage6.input.stage5.ram_ra_claim_reduction.RamRa",
     )?;
-    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
-    require_operand_count("stage6.ram_ra_virtual.eq", trace_len, eq_cycle.len())?;
+    let eq_cycle = if backend == "cuda" {
+        Vec::new()
+    } else {
+        let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
+        require_operand_count("stage6.ram_ra_virtual.eq", trace_len, eq_cycle.len())?;
+        eq_cycle
+    };
 
     let outputs = ram_ra_virtual_output_plans(program, witness.ram_ra_chunks.len())?;
 
@@ -5963,6 +6717,7 @@ fn ram_ra_virtual_state<'a, F: Field>(
         outputs,
         active_scale,
         claim.degree,
+        backend,
     )
 }
 
@@ -5972,6 +6727,7 @@ fn instruction_ra_virtual_state<'a, F: Field>(
     inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<InstructionRaVirtualStage6State<'a, F>, Stage6KernelError> {
     let witness = inputs
         .instruction_ra_virtual
@@ -6010,13 +6766,6 @@ fn instruction_ra_virtual_state<'a, F: Field>(
         trace_rounds,
         "stage6.input.stage5.instruction_read_raf.InstructionRa_0",
     )?;
-    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
-    require_operand_count(
-        "stage6.instruction_ra_virtual.eq",
-        trace_len,
-        eq_cycle.len(),
-    )?;
-
     let chunks_per_virtual = witness.instruction_ra_chunks.len() / witness.virtual_count;
     let gamma = store.scalar("stage6.instruction_ra_virtual.gamma")?;
     let outputs =
@@ -6035,6 +6784,18 @@ fn instruction_ra_virtual_state<'a, F: Field>(
         _ => None,
     };
 
+    let eq_cycle = if backend == "cuda" && sparse_chunks.is_some() {
+        Vec::new()
+    } else {
+        let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
+        require_operand_count(
+            "stage6.instruction_ra_virtual.eq",
+            trace_len,
+            eq_cycle.len(),
+        )?;
+        eq_cycle
+    };
+
     if let Some(sparse_chunks) = sparse_chunks {
         return InstructionRaVirtualStage6State::new(
             Stage6Relation::InstructionRaVirtual,
@@ -6051,9 +6812,17 @@ fn instruction_ra_virtual_state<'a, F: Field>(
             outputs,
             active_scale,
             claim.degree,
+            backend,
         );
     }
 
+    // Unreachable via a real prover: dense (split_eq=None) InstructionRaVirtual fallback, reached
+    // only when `instruction_ra_index_chunks == None`. The production witness assembler always sets
+    // it to Some, so the sparse branch above is taken; and JoltProtocolParams forces
+    // chunks_per_virtual == 4, so that branch's device path is always available. Only unit tests
+    // hit this. (For RamRaVirtual, chunks_per_virtual = ram_d, and the degree_bound <= 5 check in
+    // ::new caps ram_d at 4 = the device path; ram_d >= 5 is protocol-unsupported and ram_d <= 3
+    // needs ram_K below the bytecode-region floor, so no real witness takes a RamRaVirtual host path.)
     InstructionRaVirtualStage6State::new(
         Stage6Relation::InstructionRaVirtual,
         eq_cycle,
@@ -6068,6 +6837,7 @@ fn instruction_ra_virtual_state<'a, F: Field>(
         outputs,
         active_scale,
         claim.degree,
+        backend,
     )
 }
 
@@ -7317,7 +8087,7 @@ fn round_poly_from_dense_terms<F: Field>(
     Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
 }
 
-fn accumulate_dense_row_evaluations<F: Field>(
+pub(crate) fn accumulate_dense_row_evaluations<F: Field>(
     factors: &[Vec<F>],
     terms: &[DenseTerm<F>],
     row: usize,

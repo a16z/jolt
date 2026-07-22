@@ -141,8 +141,21 @@ impl CoreMuldivCommitmentFixture {
         &'a self,
         r1cs_key: &'a R1csKey<Fr>,
     ) -> Stage1OuterRv64Data<'a> {
-        Stage1OuterRv64Data::new(r1cs_key, &self.r1cs_witness, &self.rv64_cycles)
-            .expect("valid RV64-backed stage1 data")
+        self.stage1_outer_rv64_data_with_backend(r1cs_key, "cpu")
+    }
+
+    pub fn stage1_outer_rv64_data_with_backend<'a>(
+        &'a self,
+        r1cs_key: &'a R1csKey<Fr>,
+        backend: &'static str,
+    ) -> Stage1OuterRv64Data<'a> {
+        Stage1OuterRv64Data::new_with_backend(
+            r1cs_key,
+            &self.r1cs_witness,
+            &self.rv64_cycles,
+            backend,
+        )
+        .expect("valid RV64-backed stage1 data")
     }
 
     pub fn stage1_outer_r1cs_data<'a>(

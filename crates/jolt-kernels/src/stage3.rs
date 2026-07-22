@@ -8,6 +8,11 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+#[cfg(feature = "cuda")]
+pub(crate) mod cuda;
+#[cfg(feature = "cuda")]
+use jolt_field::Fr;
+
 use crate::dense::DENSE_BIND_PAR_THRESHOLD;
 use crate::split_eq::SplitEqState;
 use jolt_field::{Field, FieldAccumulator};
@@ -1349,7 +1354,13 @@ where
             relation,
             offset: instance_round_offset(context.program, context.driver.symbol, claim.symbol)?,
             previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
-            state: Stage3ProverInstanceState::new(context.program, claim, inputs, &store)?,
+            state: Stage3ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                context.kernel.backend,
+            )?,
         });
     }
 
@@ -1542,8 +1553,8 @@ impl<F: Field> Stage3BatchedInstance<'_, F> {
 }
 
 enum Stage3ProverInstanceState<F: Field> {
-    SpartanShift(SpartanShiftState<F>),
-    SumOfProducts(SumOfProductsState<F>),
+    SpartanShift(Box<SpartanShiftState<F>>),
+    SumOfProducts(Box<SumOfProductsState<F>>),
 }
 
 impl<F: Field> Stage3ProverInstanceState<F> {
@@ -1552,18 +1563,24 @@ impl<F: Field> Stage3ProverInstanceState<F> {
         claim: &Stage3SumcheckClaimPlan,
         inputs: &Stage3ProverInputs<'_, F>,
         store: &Stage3ValueStore<F>,
+        backend: &'static str,
     ) -> Result<Self, Stage3KernelError> {
         match claim_relation(program, claim)? {
             Stage3Relation::SpartanShift => {
-                return spartan_shift_state(claim, inputs, store).map(Self::SpartanShift);
+                return spartan_shift_state(claim, inputs, store, backend)
+                    .map(|state| Self::SpartanShift(Box::new(state)));
             }
-            Stage3Relation::InstructionInput => instruction_input_state(claim, inputs, store),
-            Stage3Relation::RegistersClaimReduction => registers_state(claim, inputs, store),
+            Stage3Relation::InstructionInput => {
+                instruction_input_state(claim, inputs, store, backend)
+            }
+            Stage3Relation::RegistersClaimReduction => {
+                registers_state(claim, inputs, store, backend)
+            }
             relation @ Stage3Relation::Batched => Err(Stage3KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
             }),
         }
-        .map(Self::SumOfProducts)
+        .map(|state| Self::SumOfProducts(Box::new(state)))
     }
 
     fn round_poly(
@@ -1595,7 +1612,6 @@ impl<F: Field> Stage3ProverInstanceState<F> {
     }
 }
 
-#[derive(Clone)]
 struct SpartanShiftState<F: Field> {
     phase: SpartanShiftPhase<F>,
     r_outer: Vec<F>,
@@ -1605,22 +1621,23 @@ struct SpartanShiftState<F: Field> {
     gamma3: F,
     gamma4: F,
     point: Vec<F>,
+    backend: &'static str,
 }
 
-#[derive(Clone)]
 enum SpartanShiftPhase<F: Field> {
     Phase1(SpartanShiftPhase1<F>),
     Phase2(SpartanShiftPhase2<F>),
 }
 
-#[derive(Clone)]
 struct SpartanShiftPhase1<F: Field> {
     prefix_suffix_pairs: Vec<(Vec<F>, Vec<F>)>,
     scratch: Vec<(Vec<F>, Vec<F>)>,
     cycles: Vec<Stage3Cycle>,
+    round_len: usize,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaSpartanShiftState>,
 }
 
-#[derive(Clone)]
 struct SpartanShiftPhase2<F: Field> {
     eq_outer: Vec<F>,
     eq_product: Vec<F>,
@@ -1632,9 +1649,10 @@ struct SpartanShiftPhase2<F: Field> {
     is_first_in_sequence: Vec<F>,
     is_noop: Vec<F>,
     scratch: Vec<Vec<F>>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaSpartanShiftState>,
 }
 
-#[derive(Clone)]
 struct SumOfProductsState<F: Field> {
     kind: SumOfProductsKind,
     factors: Vec<Vec<F>>,
@@ -1644,6 +1662,8 @@ struct SumOfProductsState<F: Field> {
     outputs: Vec<FactorOutput>,
     deferred_outputs: Vec<DeferredOutput<F>>,
     point: Vec<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaSumOfProductsState>,
 }
 
 #[derive(Clone, Copy)]
@@ -1672,6 +1692,7 @@ struct DeferredOutput<F: Field> {
 }
 
 impl<F: Field> SumOfProductsState<F> {
+    #[cfg_attr(not(feature = "cuda"), expect(unused_variables))]
     fn new(
         kind: SumOfProductsKind,
         factors: Vec<Vec<F>>,
@@ -1679,8 +1700,16 @@ impl<F: Field> SumOfProductsState<F> {
         terms: Vec<ProductTerm<F>>,
         outputs: Vec<FactorOutput>,
         deferred_outputs: Vec<DeferredOutput<F>>,
+        backend: &'static str,
+        split_point: &[F],
     ) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            cuda_sum_of_products_state(kind, &factors, &terms, split_point)
+        } else {
+            None
+        };
         Self {
             kind,
             factors,
@@ -1690,10 +1719,40 @@ impl<F: Field> SumOfProductsState<F> {
             outputs,
             deferred_outputs,
             point: Vec::new(),
+            #[cfg(feature = "cuda")]
+            cuda,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn new_cuda(
+        kind: SumOfProductsKind,
+        cuda: cuda::CudaSumOfProductsState,
+        split_eq: Option<SplitEqState<F>>,
+        terms: Vec<ProductTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        deferred_outputs: Vec<DeferredOutput<F>>,
+    ) -> Self {
+        Self {
+            kind,
+            factors: Vec::new(),
+            factor_scratch: Vec::new(),
+            split_eq,
+            terms,
+            outputs,
+            deferred_outputs,
+            point: Vec::new(),
+            cuda: Some(cuda),
         }
     }
 
     fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(poly) = cuda_round_poly::<F>(cuda, self.kind, previous_claim) {
+                return poly;
+            }
+        }
         let Some(split_eq) = self.split_eq.as_ref() else {
             std::process::abort();
         };
@@ -1711,6 +1770,15 @@ impl<F: Field> SumOfProductsState<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.point.push(challenge);
+                    return;
+                }
+            }
+        }
         let half = self.factors.first().map_or(0, |factor| factor.len() / 2);
         if half >= DENSE_BIND_PAR_THRESHOLD {
             self.factors
@@ -1731,6 +1799,14 @@ impl<F: Field> SumOfProductsState<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage3Relation) -> Result<F, Stage3KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(value) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -1771,7 +1847,101 @@ impl<F: Field> SumOfProductsState<F> {
     }
 }
 
+#[cfg(feature = "cuda")]
+fn cuda_sum_of_products_state<F: Field>(
+    kind: SumOfProductsKind,
+    factors: &[Vec<F>],
+    terms: &[ProductTerm<F>],
+    split_point: &[F],
+) -> Option<cuda::CudaSumOfProductsState> {
+    let fr_factors: Vec<&[Fr]> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect::<Option<Vec<_>>>()?;
+    let fr_point = crate::cuda::as_fr_slice(split_point)?;
+    let cuda_kind = match kind {
+        SumOfProductsKind::InstructionInput => cuda::CudaGruenKind::InstructionInput {
+            gamma: crate::cuda::into_fr(terms[2].coefficient)?,
+        },
+        SumOfProductsKind::Registers => cuda::CudaGruenKind::Registers {
+            gamma: crate::cuda::into_fr(terms[1].coefficient)?,
+            gamma2: crate::cuda::into_fr(terms[2].coefficient)?,
+        },
+    };
+    cuda::CudaSumOfProductsState::new(cuda_kind, &fr_factors, fr_point, None)
+}
+
+#[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_spartan_shift_phase1<F: Field>(
+    prefix_suffix_pairs: &[(Vec<F>, Vec<F>)],
+) -> Option<cuda::CudaSpartanShiftState> {
+    let mut factors: Vec<&[Fr]> = Vec::with_capacity(prefix_suffix_pairs.len() * 2);
+    for (prefix, suffix) in prefix_suffix_pairs {
+        factors.push(crate::cuda::as_fr_slice(prefix)?);
+        factors.push(crate::cuda::as_fr_slice(suffix)?);
+    }
+    let num_terms = prefix_suffix_pairs.len();
+    let term_coeffs = vec![Fr::from(1u64); num_terms];
+    let term_factor_offsets: Vec<u32> = (0..=num_terms).map(|t| (t * 2) as u32).collect();
+    let term_factor_indices: Vec<u32> = (0..(num_terms * 2) as u32).collect();
+    let round_factors = factors.len();
+    cuda::CudaSpartanShiftState::new(
+        &factors,
+        &term_coeffs,
+        term_factor_offsets,
+        term_factor_indices,
+        round_factors,
+        2,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_spartan_shift_phase2<F: Field>(
+    factors: &[&[F]],
+) -> Option<cuda::CudaSpartanShiftState> {
+    let fr_factors: Vec<&[Fr]> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect::<Option<Vec<_>>>()?;
+    cuda::CudaSpartanShiftState::new(
+        &fr_factors,
+        &[Fr::from(1u64), Fr::from(1u64)],
+        vec![0u32, 2, 4],
+        vec![0u32, 2, 1, 3],
+        4,
+        2,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_round_poly<F: Field>(
+    cuda: &cuda::CudaSumOfProductsState,
+    kind: SumOfProductsKind,
+    previous_claim: F,
+) -> Option<UnivariatePoly<F>> {
+    let (q_constant, q_top) = cuda.q_coefficients().ok()?;
+    let target: F = crate::cuda::fr_into(cuda.current_target())?;
+    let q_constant: F = crate::cuda::fr_into(q_constant)?;
+    let poly = match kind {
+        SumOfProductsKind::InstructionInput => {
+            let q_quadratic: F = crate::cuda::fr_into(q_top)?;
+            gruen_cubic_poly(target, q_constant, q_quadratic, previous_claim)
+        }
+        SumOfProductsKind::Registers => gruen_quadratic_poly(target, q_constant, previous_claim),
+    };
+    Some(poly)
+}
+
 impl<F: Field> SpartanShiftState<F> {
+    #[expect(clippy::too_many_arguments)]
     fn new(
         cycles: &[Stage3Cycle],
         r_outer: &[F],
@@ -1780,10 +1950,11 @@ impl<F: Field> SpartanShiftState<F> {
         gamma2: F,
         gamma3: F,
         gamma4: F,
+        backend: &'static str,
     ) -> Self {
         Self {
             phase: SpartanShiftPhase::Phase1(SpartanShiftPhase1::new(
-                cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4,
+                cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4, backend,
             )),
             r_outer: r_outer.to_vec(),
             r_product: r_product.to_vec(),
@@ -1792,6 +1963,7 @@ impl<F: Field> SpartanShiftState<F> {
             gamma3,
             gamma4,
             point: Vec::new(),
+            backend,
         }
     }
 
@@ -1831,6 +2003,7 @@ impl<F: Field> SpartanShiftState<F> {
                 self.gamma2,
                 self.gamma3,
                 self.gamma4,
+                self.backend,
             );
             self.phase = SpartanShiftPhase::Phase2(phase2);
         }
@@ -1851,6 +2024,7 @@ impl<F: Field> SpartanShiftState<F> {
 }
 
 impl<F: Field> SpartanShiftPhase1<F> {
+    #[cfg_attr(not(feature = "cuda"), expect(unused_variables))]
     fn new(
         cycles: &[Stage3Cycle],
         r_outer: &[F],
@@ -1859,6 +2033,7 @@ impl<F: Field> SpartanShiftPhase1<F> {
         gamma2: F,
         gamma3: F,
         gamma4: F,
+        backend: &'static str,
     ) -> Self {
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);
@@ -1884,14 +2059,34 @@ impl<F: Field> SpartanShiftPhase1<F> {
             .iter()
             .map(|_| (Vec::new(), Vec::new()))
             .collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_spartan_shift_phase1(&prefix_suffix_pairs)
+        } else {
+            None
+        };
+        let round_len = prefix_suffix_pairs[0].0.len();
         Self {
             prefix_suffix_pairs,
             scratch,
             cycles: cycles.to_vec(),
+            round_len,
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     fn round_poly(&self) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(poly) = cuda
+                .round_poly()
+                .ok()
+                .and_then(|poly| fr_poly_into::<F>(poly))
+            {
+                return poly;
+            }
+        }
         let half = self.prefix_suffix_pairs[0].0.len() / 2;
         round_poly_from_stage3_coefficients(half, 2, |row, acc| {
             for (prefix, suffix) in &self.prefix_suffix_pairs {
@@ -1910,6 +2105,15 @@ impl<F: Field> SpartanShiftPhase1<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        self.round_len /= 2;
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         for ((prefix, suffix), (prefix_scratch, suffix_scratch)) in self
             .prefix_suffix_pairs
             .iter_mut()
@@ -1921,11 +2125,13 @@ impl<F: Field> SpartanShiftPhase1<F> {
     }
 
     fn should_transition_to_phase2(&self) -> bool {
-        self.prefix_suffix_pairs[0].0.len() == 2
+        self.round_len == 2
     }
 }
 
 impl<F: Field> SpartanShiftPhase2<F> {
+    #[cfg_attr(not(feature = "cuda"), expect(unused_variables))]
+    #[expect(clippy::too_many_arguments)]
     fn new(
         cycles: &[Stage3Cycle],
         low_challenges: &[F],
@@ -1935,6 +2141,7 @@ impl<F: Field> SpartanShiftPhase2<F> {
         gamma2: F,
         gamma3: F,
         gamma4: F,
+        backend: &'static str,
     ) -> Self {
         let low_point = reverse_slice(low_challenges);
         let low_eq = EqPolynomial::<F>::evals(&low_point, None);
@@ -1953,6 +2160,22 @@ impl<F: Field> SpartanShiftPhase2<F> {
             .iter()
             .map(|&value| gamma4 * value)
             .collect::<Vec<_>>();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_spartan_shift_phase2(&[
+                &eq_outer,
+                &eq_product,
+                &weighted_next_values,
+                &not_noop,
+                &unexpanded_pc,
+                &pc,
+                &is_virtual,
+                &is_first_in_sequence,
+                &is_noop,
+            ])
+        } else {
+            None
+        };
         Self {
             eq_outer,
             eq_product,
@@ -1964,10 +2187,22 @@ impl<F: Field> SpartanShiftPhase2<F> {
             is_first_in_sequence,
             is_noop,
             scratch: (0..9).map(|_| Vec::new()).collect(),
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(poly) = cuda
+                .round_poly()
+                .ok()
+                .and_then(|poly| fr_poly_into::<F>(poly))
+            {
+                return poly;
+            }
+        }
         round_poly_from_stage3_coefficients(self.eq_outer.len() / 2, 2, |row, acc| {
             let (eq_outer_0, eq_outer_delta) = linear_pair(&self.eq_outer, row);
             let (eq_product_0, eq_product_delta) = linear_pair(&self.eq_product, row);
@@ -1993,6 +2228,14 @@ impl<F: Field> SpartanShiftPhase2<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         bind_dense_evals_reuse_serial(&mut self.eq_outer, &mut self.scratch[0], challenge);
         bind_dense_evals_reuse_serial(&mut self.eq_product, &mut self.scratch[1], challenge);
         bind_dense_evals_reuse_serial(
@@ -2016,9 +2259,17 @@ impl<F: Field> SpartanShiftPhase2<F> {
         &self,
         relation: Stage3Relation,
     ) -> Result<Vec<Stage3NamedEval<F>>, Stage3KernelError> {
-        let value = |values: &[F]| {
-            values
-                .first()
+        #[cfg(feature = "cuda")]
+        let cuda_value = |index: usize| -> Option<F> {
+            let cuda = self.cuda.as_ref()?;
+            crate::cuda::fr_into::<F>(cuda.factor_eval(index).ok()?)
+        };
+        let value = |host: &[F], _index: usize| -> Result<F, Stage3KernelError> {
+            #[cfg(feature = "cuda")]
+            if let Some(value) = cuda_value(_index) {
+                return Ok(value);
+            }
+            host.first()
                 .copied()
                 .ok_or(Stage3KernelError::InvalidProof {
                     driver: relation.symbol(),
@@ -2029,23 +2280,23 @@ impl<F: Field> SpartanShiftPhase2<F> {
             named_eval(
                 "stage3.spartan_shift.eval.UnexpandedPC",
                 "UnexpandedPC",
-                value(&self.unexpanded_pc)?,
+                value(&self.unexpanded_pc, 4)?,
             ),
-            named_eval("stage3.spartan_shift.eval.PC", "PC", value(&self.pc)?),
+            named_eval("stage3.spartan_shift.eval.PC", "PC", value(&self.pc, 5)?),
             named_eval(
                 "stage3.spartan_shift.eval.OpFlagVirtualInstruction",
                 "OpFlagVirtualInstruction",
-                value(&self.is_virtual)?,
+                value(&self.is_virtual, 6)?,
             ),
             named_eval(
                 "stage3.spartan_shift.eval.OpFlagIsFirstInSequence",
                 "OpFlagIsFirstInSequence",
-                value(&self.is_first_in_sequence)?,
+                value(&self.is_first_in_sequence, 7)?,
             ),
             named_eval(
                 "stage3.spartan_shift.eval.InstructionFlagIsNoop",
                 "InstructionFlagIsNoop",
-                value(&self.is_noop)?,
+                value(&self.is_noop, 8)?,
             ),
         ])
     }
@@ -2055,6 +2306,7 @@ fn spartan_shift_state<F: Field>(
     claim: &Stage3SumcheckClaimPlan,
     inputs: &Stage3ProverInputs<'_, F>,
     store: &Stage3ValueStore<F>,
+    backend: &'static str,
 ) -> Result<SpartanShiftState<F>, Stage3KernelError> {
     let cycles = stage3_cycles(inputs, claim.num_rounds)?;
     let r_outer = store.point("stage3.input.stage1.NextPC")?;
@@ -2064,7 +2316,7 @@ fn spartan_shift_state<F: Field>(
     let gamma3 = store.scalar("stage3.spartan_shift.gamma3")?;
     let gamma4 = store.scalar("stage3.spartan_shift.gamma4")?;
     Ok(SpartanShiftState::new(
-        cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4,
+        cycles, r_outer, r_product, gamma, gamma2, gamma3, gamma4, backend,
     ))
 }
 
@@ -2072,10 +2324,20 @@ fn instruction_input_state<F: Field>(
     claim: &Stage3SumcheckClaimPlan,
     inputs: &Stage3ProverInputs<'_, F>,
     store: &Stage3ValueStore<F>,
+    backend: &'static str,
 ) -> Result<SumOfProductsState<F>, Stage3KernelError> {
     let cycles = stage3_cycles(inputs, claim.num_rounds)?;
     let eq_point = store.point("stage3.input.stage2.product_virtual.LeftInstructionInput")?;
     let gamma = store.scalar("stage3.instruction_input.gamma")?;
+    let outputs = instruction_input_outputs();
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(state) =
+            cuda_instruction_input_state(cycles, gamma, eq_point, outputs.clone())
+        {
+            return Ok(state);
+        }
+    }
     let (
         right_operand_is_rs2,
         rs2_value,
@@ -2110,61 +2372,76 @@ fn instruction_input_state<F: Field>(
             ProductTerm { coefficient: gamma },
             ProductTerm { coefficient: gamma },
         ],
-        vec![
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
-                oracle: "InstructionFlagLeftOperandIsRs1Value",
-                factor: 4,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.Rs1Value",
-                oracle: "Rs1Value",
-                factor: 5,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
-                oracle: "InstructionFlagLeftOperandIsPC",
-                factor: 6,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.UnexpandedPC",
-                oracle: "UnexpandedPC",
-                factor: 7,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
-                oracle: "InstructionFlagRightOperandIsRs2Value",
-                factor: 0,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.Rs2Value",
-                oracle: "Rs2Value",
-                factor: 1,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
-                oracle: "InstructionFlagRightOperandIsImm",
-                factor: 2,
-            },
-            FactorOutput {
-                name: "stage3.instruction_input.eval.Imm",
-                oracle: "Imm",
-                factor: 3,
-            },
-        ],
+        outputs,
         Vec::new(),
+        backend,
+        eq_point,
     ))
+}
+
+fn instruction_input_outputs() -> Vec<FactorOutput> {
+    vec![
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsRs1Value",
+            oracle: "InstructionFlagLeftOperandIsRs1Value",
+            factor: 4,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.Rs1Value",
+            oracle: "Rs1Value",
+            factor: 5,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagLeftOperandIsPC",
+            oracle: "InstructionFlagLeftOperandIsPC",
+            factor: 6,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.UnexpandedPC",
+            oracle: "UnexpandedPC",
+            factor: 7,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsRs2Value",
+            oracle: "InstructionFlagRightOperandIsRs2Value",
+            factor: 0,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.Rs2Value",
+            oracle: "Rs2Value",
+            factor: 1,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.InstructionFlagRightOperandIsImm",
+            oracle: "InstructionFlagRightOperandIsImm",
+            factor: 2,
+        },
+        FactorOutput {
+            name: "stage3.instruction_input.eval.Imm",
+            oracle: "Imm",
+            factor: 3,
+        },
+    ]
 }
 
 fn registers_state<F: Field>(
     claim: &Stage3SumcheckClaimPlan,
     inputs: &Stage3ProverInputs<'_, F>,
     store: &Stage3ValueStore<F>,
+    backend: &'static str,
 ) -> Result<SumOfProductsState<F>, Stage3KernelError> {
     let cycles = stage3_cycles(inputs, claim.num_rounds)?;
     let eq_point = store.point("stage3.input.stage1.RdWriteValue")?;
     let gamma = store.scalar("stage3.registers.gamma")?;
     let gamma2 = store.scalar("stage3.registers.gamma2")?;
+    let outputs = registers_outputs();
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(state) = cuda_registers_state(cycles, gamma, gamma2, eq_point, outputs.clone())
+        {
+            return Ok(state);
+        }
+    }
     let (rd_write_value, rs1_value, rs2_value) = register_factors(cycles);
     let factors = vec![rd_write_value, rs1_value, rs2_value];
     Ok(SumOfProductsState::new(
@@ -2180,25 +2457,31 @@ fn registers_state<F: Field>(
                 coefficient: gamma2,
             },
         ],
-        vec![
-            FactorOutput {
-                name: "stage3.registers_claim_reduction.eval.RdWriteValue",
-                oracle: "RdWriteValue",
-                factor: 0,
-            },
-            FactorOutput {
-                name: "stage3.registers_claim_reduction.eval.Rs1Value",
-                oracle: "Rs1Value",
-                factor: 1,
-            },
-            FactorOutput {
-                name: "stage3.registers_claim_reduction.eval.Rs2Value",
-                oracle: "Rs2Value",
-                factor: 2,
-            },
-        ],
+        outputs,
         Vec::new(),
+        backend,
+        eq_point,
     ))
+}
+
+fn registers_outputs() -> Vec<FactorOutput> {
+    vec![
+        FactorOutput {
+            name: "stage3.registers_claim_reduction.eval.RdWriteValue",
+            oracle: "RdWriteValue",
+            factor: 0,
+        },
+        FactorOutput {
+            name: "stage3.registers_claim_reduction.eval.Rs1Value",
+            oracle: "Rs1Value",
+            factor: 1,
+        },
+        FactorOutput {
+            name: "stage3.registers_claim_reduction.eval.Rs2Value",
+            oracle: "Rs2Value",
+            factor: 2,
+        },
+    ]
 }
 
 fn stage3_cycles<'a, F: Field>(
@@ -2420,6 +2703,82 @@ fn instruction_input_factors<F: Field>(cycles: &[Stage3Cycle]) -> InstructionInp
     )
 }
 
+#[cfg(feature = "cuda")]
+fn resident_stage3_trace(
+    cycles: &[Stage3Cycle],
+) -> Option<std::sync::Arc<crate::cuda::ResidentStage3Trace>> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let bool_col = |f: fn(&Stage3Cycle) -> bool| -> Vec<u64> {
+        cycles.par_iter().map(|c| u64::from(f(c))).collect()
+    };
+    let u64_col = |f: fn(&Stage3Cycle) -> u64| -> Vec<u64> { cycles.par_iter().map(f).collect() };
+    let (imm_abs_lo, (imm_abs_hi, imm_neg)): (Vec<u64>, (Vec<u64>, Vec<u8>)) = cycles
+        .par_iter()
+        .map(|c| {
+            let mag = c.imm.unsigned_abs();
+            (mag as u64, ((mag >> 64) as u64, u8::from(c.imm < 0)))
+        })
+        .unzip();
+    ctx.resident_stage3_trace(
+        cycles.as_ptr() as usize,
+        cycles.len(),
+        &u64_col(|c| c.unexpanded_pc),
+        &u64_col(|c| c.rs1_value),
+        &u64_col(|c| c.rs2_value),
+        &u64_col(|c| c.rd_write_value),
+        &imm_abs_lo,
+        &imm_abs_hi,
+        &imm_neg,
+        &bool_col(|c| c.right_operand_is_rs2),
+        &bool_col(|c| c.right_operand_is_imm),
+        &bool_col(|c| c.left_operand_is_rs1),
+        &bool_col(|c| c.left_operand_is_pc),
+    )
+    .ok()
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_instruction_input_state<F: Field>(
+    cycles: &[Stage3Cycle],
+    gamma: F,
+    split_point: &[F],
+    outputs: Vec<FactorOutput>,
+) -> Option<SumOfProductsState<F>> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let t = resident_stage3_trace(cycles)?;
+    let factors = vec![
+        ctx.u64_to_mont_dev(&t.right_operand_is_rs2, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs2_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.right_operand_is_imm, t.len).ok()?,
+        ctx.i128_to_mont_dev(&t.imm_abs_lo, &t.imm_abs_hi, &t.imm_neg, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.left_operand_is_rs1, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs1_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.left_operand_is_pc, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.unexpanded_pc, t.len).ok()?,
+    ];
+    let split_point_fr = crate::cuda::as_fr_slice(split_point)?;
+    let cuda = cuda::CudaSumOfProductsState::from_device_factors(
+        cuda::CudaGruenKind::InstructionInput { gamma: crate::cuda::into_fr(gamma)? },
+        factors,
+        split_point_fr,
+        None,
+    )?;
+    Some(SumOfProductsState::new_cuda(
+        SumOfProductsKind::InstructionInput,
+        cuda,
+        Some(SplitEqState::new_low_to_high(split_point, None)),
+        vec![
+            ProductTerm { coefficient: F::one() },
+            ProductTerm { coefficient: F::one() },
+            ProductTerm { coefficient: gamma },
+            ProductTerm { coefficient: gamma },
+        ],
+        outputs,
+        Vec::new(),
+    ))
+}
+
 fn register_factors<F: Field>(cycles: &[Stage3Cycle]) -> RegisterFactors<F> {
     let mut rd_write_value = vec![F::zero(); cycles.len()];
     let mut rs1_value = vec![F::zero(); cycles.len()];
@@ -2432,6 +2791,45 @@ fn register_factors<F: Field>(cycles: &[Stage3Cycle]) -> RegisterFactors<F> {
             *rs2_value = F::from_u64(cycle.rs2_value);
         });
     (rd_write_value, rs1_value, rs2_value)
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_registers_state<F: Field>(
+    cycles: &[Stage3Cycle],
+    gamma: F,
+    gamma2: F,
+    split_point: &[F],
+    outputs: Vec<FactorOutput>,
+) -> Option<SumOfProductsState<F>> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let t = resident_stage3_trace(cycles)?;
+    let factors = vec![
+        ctx.u64_to_mont_dev(&t.rd_write_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs1_value, t.len).ok()?,
+        ctx.u64_to_mont_dev(&t.rs2_value, t.len).ok()?,
+    ];
+    let split_point_fr = crate::cuda::as_fr_slice(split_point)?;
+    let cuda = cuda::CudaSumOfProductsState::from_device_factors(
+        cuda::CudaGruenKind::Registers {
+            gamma: crate::cuda::into_fr(gamma)?,
+            gamma2: crate::cuda::into_fr(gamma2)?,
+        },
+        factors,
+        split_point_fr,
+        None,
+    )?;
+    Some(SumOfProductsState::new_cuda(
+        SumOfProductsKind::Registers,
+        cuda,
+        Some(SplitEqState::new_low_to_high(split_point, None)),
+        vec![
+            ProductTerm { coefficient: F::one() },
+            ProductTerm { coefficient: gamma },
+            ProductTerm { coefficient: gamma2 },
+        ],
+        outputs,
+        Vec::new(),
+    ))
 }
 
 fn expected_batched_output_claim<F: Field>(
@@ -2686,7 +3084,7 @@ fn round_poly_from_registers<F: Field>(
     gruen_quadratic_poly(split_eq.current_target(), q_constant, previous_claim)
 }
 
-fn instruction_input_split_round_coefficients<F: Field>(
+pub(crate) fn instruction_input_split_round_coefficients<F: Field>(
     factors: &[Vec<F>],
     split_eq: &SplitEqState<F>,
     gamma: F,
@@ -2842,7 +3240,7 @@ fn accumulate_quadratic_coefficients<F: Field>(
     accumulators[1].fmadd(scaled_weight * left_delta, right_delta);
 }
 
-fn registers_split_round_constant<F: Field>(
+pub(crate) fn registers_split_round_constant<F: Field>(
     factors: &[Vec<F>],
     split_eq: &SplitEqState<F>,
     gamma: F,

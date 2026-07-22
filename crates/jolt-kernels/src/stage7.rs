@@ -4,6 +4,9 @@
 //! all RA one-hot polynomials. This module owns the prover-side runtime behind
 //! the generated `jolt.stage7.*` CPU ABI.
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -1067,8 +1070,14 @@ where
         }
         let relation = claim_relation(context.program, claim)?;
         let active_scale = F::one().mul_pow_2(max_rounds - offset - claim.num_rounds);
-        let state =
-            Stage7ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?;
+        let state = Stage7ProverInstanceState::new(
+            context.program,
+            claim,
+            inputs,
+            &store,
+            active_scale,
+            context.kernel.backend,
+        )?;
         instances.push(Stage7BatchedInstance {
             claim,
             relation,
@@ -1345,12 +1354,18 @@ impl<F: Field> Stage7ProverInstanceState<F> {
         inputs: &Stage7ProverInputs<'_, F>,
         store: &Stage7ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage7KernelError> {
         match claim_relation(program, claim)? {
-            Stage7Relation::HammingWeightClaimReduction => {
-                hamming_weight_claim_reduction_state(program, claim, inputs, store, active_scale)
-                    .map(Self::HammingWeightClaimReduction)
-            }
+            Stage7Relation::HammingWeightClaimReduction => hamming_weight_claim_reduction_state(
+                program,
+                claim,
+                inputs,
+                store,
+                active_scale,
+                backend,
+            )
+            .map(Self::HammingWeightClaimReduction),
             relation @ Stage7Relation::Batched => Err(Stage7KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
             }),
@@ -1389,23 +1404,27 @@ impl<F: Field> Stage7ProverInstanceState<F> {
     }
 }
 
-struct HammingWeightClaimReductionState<F: Field> {
-    g: Vec<Vec<F>>,
-    eq_bool: Vec<F>,
-    eq_virt: Vec<Vec<F>>,
-    gamma_powers: Vec<F>,
-    outputs: Vec<Stage7RaOutputPlan>,
-    active_scale: F,
+pub(crate) struct HammingWeightClaimReductionState<F: Field> {
+    pub(crate) g: Vec<Vec<F>>,
+    pub(crate) eq_bool: Vec<F>,
+    pub(crate) eq_virt: Vec<Vec<F>>,
+    pub(crate) gamma_powers: Vec<F>,
+    pub(crate) outputs: Vec<Stage7RaOutputPlan>,
+    pub(crate) active_scale: F,
+    #[expect(dead_code)]
+    pub(crate) backend: &'static str,
+    #[cfg(feature = "cuda")]
+    pub(crate) cuda: Option<cuda::CudaHammingWeightState>,
 }
 
 #[derive(Clone, Copy)]
-struct Stage7RaOutputPlan {
+pub(crate) struct Stage7RaOutputPlan {
     name: &'static str,
     oracle: &'static str,
 }
 
 impl<F: Field> HammingWeightClaimReductionState<F> {
-    fn round_poly(
+    pub(crate) fn round_poly(
         &mut self,
         previous_claim: F,
         relation: Stage7Relation,
@@ -1415,6 +1434,16 @@ impl<F: Field> HammingWeightClaimReductionState<F> {
                 driver: relation.symbol(),
                 reason: "wrong relation for hamming-weight claim-reduction state",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(raw) = cuda.round_poly() {
+                if let (Some(e0), Some(e1)) =
+                    (crate::cuda::fr_into::<F>(raw[0]), crate::cuda::fr_into::<F>(raw[1]))
+                {
+                    return Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &[e0, e1]));
+                }
+            }
         }
         let half_len = self
             .g
@@ -1449,6 +1478,14 @@ impl<F: Field> HammingWeightClaimReductionState<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         let mut scratch = Vec::new();
         for g in &mut self.g {
             bind_dense_evals_reuse(g, &mut scratch, challenge);
@@ -1466,11 +1503,11 @@ impl<F: Field> HammingWeightClaimReductionState<F> {
                 reason: "wrong relation for hamming-weight claim-reduction state",
             });
         }
-        let eq_bool = single_final_eval(&self.eq_bool, "stage7.eq_bool")?;
+        let eq_bool = self.eq_bool_final(relation)?;
         let mut value = F::zero();
         for index in 0..self.g.len() {
-            let g = single_final_eval(&self.g[index], "stage7.G")?;
-            let eq_virt = single_final_eval(&self.eq_virt[index], "stage7.eq_virt")?;
+            let g = self.g_final(index, relation)?;
+            let eq_virt = self.eq_virt_final(index, relation)?;
             value += g
                 * (self.gamma_powers[3 * index]
                     + self.gamma_powers[3 * index + 1] * eq_bool
@@ -1496,17 +1533,69 @@ impl<F: Field> HammingWeightClaimReductionState<F> {
                 actual: self.outputs.len(),
             });
         }
-        self.g
+        self.outputs
+            .clone()
             .iter()
-            .zip(&self.outputs)
-            .map(|(g, output)| {
+            .enumerate()
+            .map(|(index, output)| {
                 Ok(Stage7NamedEval {
                     name: output.name,
                     oracle: output.oracle,
-                    value: single_final_eval(g, output.name)?,
+                    value: self.g_final(index, relation)?,
                 })
             })
             .collect()
+    }
+
+    #[cfg(feature = "cuda")]
+    fn g_final(&self, index: usize, relation: Stage7Relation) -> Result<F, Stage7KernelError> {
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.g_first(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
+        single_final_eval(&self.g[index], relation.symbol())
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    fn g_final(&self, index: usize, relation: Stage7Relation) -> Result<F, Stage7KernelError> {
+        single_final_eval(&self.g[index], relation.symbol())
+    }
+
+    #[cfg(feature = "cuda")]
+    fn eq_bool_final(&self, relation: Stage7Relation) -> Result<F, Stage7KernelError> {
+        if let Some(cuda) = &self.cuda {
+            if let Ok(value) = cuda.eq_bool_first() {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
+        single_final_eval(&self.eq_bool, relation.symbol())
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    fn eq_bool_final(&self, relation: Stage7Relation) -> Result<F, Stage7KernelError> {
+        single_final_eval(&self.eq_bool, relation.symbol())
+    }
+
+    #[cfg(feature = "cuda")]
+    fn eq_virt_final(&self, index: usize, relation: Stage7Relation) -> Result<F, Stage7KernelError> {
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.eq_virt_first(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
+        single_final_eval(&self.eq_virt[index], relation.symbol())
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    fn eq_virt_final(&self, index: usize, relation: Stage7Relation) -> Result<F, Stage7KernelError> {
+        single_final_eval(&self.eq_virt[index], relation.symbol())
     }
 }
 
@@ -1516,6 +1605,7 @@ fn hamming_weight_claim_reduction_state<F: Field>(
     inputs: &Stage7ProverInputs<'_, F>,
     store: &Stage7ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<HammingWeightClaimReductionState<F>, Stage7KernelError> {
     let log_k_chunk = claim.num_rounds;
     let booleanity_point = store.point("stage7.input.stage6.booleanity.InstructionRa_0")?;
@@ -1583,6 +1673,12 @@ fn hamming_weight_claim_reduction_state<F: Field>(
     }
     let gamma = store.scalar("stage7.hamming_weight_claim_reduction.gamma")?;
     let gamma_powers = gamma_powers(gamma, 3 * outputs.len());
+    #[cfg(feature = "cuda")]
+    let cuda = if backend == "cuda" {
+        cuda::CudaHammingWeightState::new(&g, &eq_bool, &eq_virt, &gamma_powers, active_scale)
+    } else {
+        None
+    };
     Ok(HammingWeightClaimReductionState {
         g,
         eq_bool,
@@ -1590,6 +1686,9 @@ fn hamming_weight_claim_reduction_state<F: Field>(
         gamma_powers,
         outputs,
         active_scale,
+        backend,
+        #[cfg(feature = "cuda")]
+        cuda,
     })
 }
 

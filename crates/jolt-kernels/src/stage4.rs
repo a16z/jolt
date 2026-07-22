@@ -9,6 +9,9 @@
     reason = "kernel constructors mirror generated staged protocol inputs"
 )]
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::mem::MaybeUninit;
@@ -17,6 +20,8 @@ use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 use crate::split_eq::SplitEqState;
 use crate::stage2::Stage2RamAccess;
 use jolt_field::{Field, FieldAccumulator};
+#[cfg(feature = "cuda")]
+use jolt_field::Fr;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
@@ -1429,6 +1434,7 @@ where
                 inputs,
                 &store,
                 active_scale,
+                context.kernel.backend,
             )?,
         });
     }
@@ -1638,13 +1644,14 @@ impl<F: Field> Stage4ProverInstanceState<F> {
         inputs: &Stage4ProverInputs<'_, F>,
         store: &Stage4ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage4KernelError> {
         match claim_relation(program, claim)? {
             Stage4Relation::RegistersReadWrite => {
-                registers_read_write_state(claim, inputs, store, active_scale)
+                registers_read_write_state(claim, inputs, store, active_scale, backend)
             }
             Stage4Relation::RamValCheck => {
-                ram_val_check_state(claim, inputs, store, active_scale).map(Self::Dense)
+                ram_val_check_state(claim, inputs, store, active_scale, backend).map(Self::Dense)
             }
             relation @ Stage4Relation::Batched => Err(Stage4KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
@@ -1681,13 +1688,14 @@ impl<F: Field> Stage4ProverInstanceState<F> {
     }
 }
 
-#[derive(Clone)]
 struct DenseStage4State<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
     terms: Vec<DenseTerm<F>>,
     outputs: Vec<FactorOutput>,
     active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaDenseState>,
 }
 
 #[derive(Clone)]
@@ -1703,12 +1711,321 @@ struct FactorOutput {
     factor: usize,
 }
 
+#[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_sparse_registers<F: Field>(
+    entries: &[SparseRegisterEntry<F>],
+    rd_inc: &[F],
+    trace_point: &[F],
+    trace_rounds: usize,
+) -> Option<cuda::CudaSparseRegistersState> {
+    let rows: Vec<usize> = entries.par_iter().map(|entry| entry.row).collect();
+    let cols: Vec<u8> = entries.par_iter().map(|entry| entry.col).collect();
+    let val: Vec<F> = entries.par_iter().map(|entry| entry.val).collect();
+    let read_ra: Vec<F> = entries.par_iter().map(|entry| entry.read_ra).collect();
+    let rd_wa: Vec<F> = entries.par_iter().map(|entry| entry.rd_wa).collect();
+    let prev_val: Vec<u64> = entries.par_iter().map(|entry| entry.prev_val).collect();
+    let next_val: Vec<u64> = entries.par_iter().map(|entry| entry.next_val).collect();
+    cuda::CudaSparseRegistersState::new(
+        &rows, &cols, &val, &read_ra, &rd_wa, &prev_val, &next_val, rd_inc, trace_point,
+        trace_rounds,
+    )
+}
+
+#[cfg(feature = "cuda")]
+struct SparseRegisterRawColumns {
+    rows: Vec<usize>,
+    cols: Vec<u8>,
+    prev_val: Vec<u64>,
+    next_val: Vec<u64>,
+    rs1_flag: Vec<u8>,
+    rs2_flag: Vec<u8>,
+    rd_flag: Vec<u8>,
+}
+
+#[cfg(feature = "cuda")]
+#[cfg_attr(not(test), expect(dead_code, reason = "host reference retained for D2b parity tests"))]
+fn sparse_register_raw_columns(
+    register_count: usize,
+    accesses: &[Stage4RegisterAccess],
+) -> Result<SparseRegisterRawColumns, Stage4KernelError> {
+    let mut out = SparseRegisterRawColumns {
+        rows: Vec::with_capacity(accesses.len() * 3),
+        cols: Vec::with_capacity(accesses.len() * 3),
+        prev_val: Vec::with_capacity(accesses.len() * 3),
+        next_val: Vec::with_capacity(accesses.len() * 3),
+        rs1_flag: Vec::with_capacity(accesses.len() * 3),
+        rs2_flag: Vec::with_capacity(accesses.len() * 3),
+        rd_flag: Vec::with_capacity(accesses.len() * 3),
+    };
+    for (row, access) in accesses.iter().enumerate() {
+        let start = out.cols.len();
+        let find = |cols: &[u8], col: u8| cols[start..].iter().position(|&c| c == col).map(|p| start + p);
+
+        if let Some(rs1) = access.rs1 {
+            validate_register_address(register_count, rs1.address)?;
+            let col = sparse_register_col(rs1.address)?;
+            out.rows.push(row);
+            out.cols.push(col);
+            out.prev_val.push(rs1.value);
+            out.next_val.push(rs1.value);
+            out.rs1_flag.push(1);
+            out.rs2_flag.push(0);
+            out.rd_flag.push(0);
+        }
+        if let Some(rs2) = access.rs2 {
+            validate_register_address(register_count, rs2.address)?;
+            let col = sparse_register_col(rs2.address)?;
+            if let Some(idx) = find(&out.cols, col) {
+                out.rs2_flag[idx] = 1;
+            } else {
+                out.rows.push(row);
+                out.cols.push(col);
+                out.prev_val.push(rs2.value);
+                out.next_val.push(rs2.value);
+                out.rs1_flag.push(0);
+                out.rs2_flag.push(1);
+                out.rd_flag.push(0);
+            }
+        }
+        if let Some(rd) = access.rd {
+            validate_register_address(register_count, rd.address)?;
+            let col = sparse_register_col(rd.address)?;
+            if let Some(idx) = find(&out.cols, col) {
+                out.rd_flag[idx] = 1;
+                out.next_val[idx] = rd.post_value;
+            } else {
+                out.rows.push(row);
+                out.cols.push(col);
+                out.prev_val.push(rd.pre_value);
+                out.next_val.push(rd.post_value);
+                out.rs1_flag.push(0);
+                out.rs2_flag.push(0);
+                out.rd_flag.push(1);
+            }
+        }
+
+        let mut order: Vec<usize> = (start..out.cols.len()).collect();
+        order.sort_by_key(|&i| out.cols[i]);
+        apply_permutation(&mut out.rows, start, &order);
+        apply_permutation(&mut out.cols, start, &order);
+        apply_permutation(&mut out.prev_val, start, &order);
+        apply_permutation(&mut out.next_val, start, &order);
+        apply_permutation(&mut out.rs1_flag, start, &order);
+        apply_permutation(&mut out.rs2_flag, start, &order);
+        apply_permutation(&mut out.rd_flag, start, &order);
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "cuda")]
+fn apply_permutation<T: Copy>(values: &mut [T], start: usize, order: &[usize]) {
+    let reordered: Vec<T> = order.iter().map(|&i| values[i]).collect();
+    values[start..].copy_from_slice(&reordered);
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_sparse_registers_from_raw<F: Field>(
+    register_count: usize,
+    accesses: &[Stage4RegisterAccess],
+    rd_inc: &[F],
+    trace_point: &[F],
+    gamma: F,
+    gamma2: F,
+    trace_rounds: usize,
+) -> Result<Option<cuda::CudaSparseRegistersState>, Stage4KernelError> {
+    let n = accesses.len();
+    let mut rs1_addr = Vec::with_capacity(n);
+    let mut rs1_val = Vec::with_capacity(n);
+    let mut rs2_addr = Vec::with_capacity(n);
+    let mut rs2_val = Vec::with_capacity(n);
+    let mut rd_addr = Vec::with_capacity(n);
+    let mut rd_pre = Vec::with_capacity(n);
+    let mut rd_post = Vec::with_capacity(n);
+    for access in accesses {
+        let (a1, v1) = match access.rs1 {
+            Some(r) => {
+                validate_register_address(register_count, r.address)?;
+                (sparse_register_col(r.address)? as i32, r.value)
+            }
+            None => (-1, 0),
+        };
+        let (a2, v2) = match access.rs2 {
+            Some(r) => {
+                validate_register_address(register_count, r.address)?;
+                (sparse_register_col(r.address)? as i32, r.value)
+            }
+            None => (-1, 0),
+        };
+        let (a3, pre, post) = match access.rd {
+            Some(w) => {
+                validate_register_address(register_count, w.address)?;
+                (sparse_register_col(w.address)? as i32, w.pre_value, w.post_value)
+            }
+            None => (-1, 0, 0),
+        };
+        rs1_addr.push(a1);
+        rs1_val.push(v1);
+        rs2_addr.push(a2);
+        rs2_val.push(v2);
+        rd_addr.push(a3);
+        rd_pre.push(pre);
+        rd_post.push(post);
+    }
+
+    Ok(cuda::CudaSparseRegistersState::new_device_native(
+        &rs1_addr,
+        &rs1_val,
+        &rs2_addr,
+        &rs2_val,
+        &rd_addr,
+        &rd_pre,
+        &rd_post,
+        rd_inc,
+        trace_point,
+        gamma,
+        gamma2,
+        trace_rounds,
+    ))
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_dense_state<F: Field>(
+    factors: &[Vec<F>],
+    terms: &[DenseTerm<F>],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let degree = terms.iter().map(|term| term.factors.len()).max()?;
+    if degree == 0 {
+        return None;
+    }
+    let fr_factors: Vec<&[Fr]> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect::<Option<_>>()?;
+    let mut term_coeffs = Vec::with_capacity(terms.len());
+    let mut term_factor_offsets = vec![0u32];
+    let mut term_factor_indices = Vec::new();
+    for term in terms {
+        term_coeffs.push(crate::cuda::into_fr(term.coefficient)?);
+        for &factor in &term.factors {
+            term_factor_indices.push(factor as u32);
+        }
+        term_factor_offsets.push(term_factor_indices.len() as u32);
+    }
+    let active_scale = crate::cuda::into_fr(active_scale)?;
+    cuda::CudaDenseState::new(
+        &fr_factors,
+        term_coeffs,
+        term_factor_offsets,
+        term_factor_indices,
+        degree,
+        active_scale,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_ram_val_check_state<F: Field>(
+    cycle_point: &[F],
+    gamma: F,
+    ram_ra_at_address: &[F],
+    ram_inc: &[F],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
+    let mut lt_plus_gamma = ctx.lt_evals(cycle_point_fr).ok()?;
+    ctx.add_scalar(&mut lt_plus_gamma, crate::cuda::into_fr(gamma)?).ok()?;
+    let ram_ra_dev = ctx.upload(crate::cuda::as_fr_slice(ram_ra_at_address)?).ok()?;
+    let ram_inc_dev = ctx.resident_committed_clone(crate::cuda::as_fr_slice(ram_inc)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![lt_plus_gamma, ram_ra_dev, ram_inc_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 3],
+        vec![0, 1, 2],
+        3,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_ram_val_check_from_resident_addr<F: Field>(
+    address_point: &[F],
+    cycle_point: &[F],
+    gamma: F,
+    ram_inc: &[F],
+    active_scale: F,
+    trace_len: usize,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let resident = ctx.resident_ram_addresses().filter(|s| s.len == trace_len)?;
+    let address_eq = ctx.eq_evals(crate::cuda::as_fr_slice(address_point)?, None).ok()?;
+    let ram_ra_dev = ctx.ram_ra_gather(&address_eq, &resident.addr, trace_len).ok()?;
+    let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
+    let mut lt_plus_gamma = ctx.lt_evals(cycle_point_fr).ok()?;
+    ctx.add_scalar(&mut lt_plus_gamma, crate::cuda::into_fr(gamma)?).ok()?;
+    let ram_inc_dev = ctx.resident_committed_clone(crate::cuda::as_fr_slice(ram_inc)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![lt_plus_gamma, ram_ra_dev, ram_inc_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 3],
+        vec![0, 1, 2],
+        3,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
 impl<F: Field> DenseStage4State<F> {
     fn new(
         factors: Vec<Vec<F>>,
         terms: Vec<DenseTerm<F>>,
         outputs: Vec<FactorOutput>,
         active_scale: F,
+    ) -> Self {
+        Self::new_with_backend(factors, terms, outputs, active_scale, "cpu")
+    }
+
+    fn new_with_backend(
+        factors: Vec<Vec<F>>,
+        terms: Vec<DenseTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+        backend: &'static str,
+    ) -> Self {
+        let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_dense_state(&factors, &terms, active_scale)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
+        Self {
+            factors,
+            factor_scratch,
+            terms,
+            outputs,
+            active_scale,
+            #[cfg(feature = "cuda")]
+            cuda,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn from_host_and_cuda(
+        factors: Vec<Vec<F>>,
+        terms: Vec<DenseTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+        cuda: Option<cuda::CudaDenseState>,
     ) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
         Self {
@@ -1717,6 +2034,7 @@ impl<F: Field> DenseStage4State<F> {
             terms,
             outputs,
             active_scale,
+            cuda,
         }
     }
 
@@ -1725,6 +2043,20 @@ impl<F: Field> DenseStage4State<F> {
         previous_claim: F,
         relation: Stage4Relation,
     ) -> Result<UnivariatePoly<F>, Stage4KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage4 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
         let first_len = self.factors.first().map_or(0, Vec::len);
         if first_len == 0 || !first_len.is_power_of_two() {
             return Err(Stage4KernelError::InvalidProof {
@@ -1750,6 +2082,14 @@ impl<F: Field> DenseStage4State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.factors.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
             self.factors
                 .par_iter_mut()
@@ -1765,6 +2105,14 @@ impl<F: Field> DenseStage4State<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage4Relation) -> Result<F, Stage4KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -1792,7 +2140,6 @@ impl<F: Field> DenseStage4State<F> {
     }
 }
 
-#[derive(Clone)]
 struct SparseRegistersState<F: Field> {
     register_count: usize,
     trace_len: usize,
@@ -1808,6 +2155,9 @@ struct SparseRegistersState<F: Field> {
     active_scale: F,
     bound_point: Vec<F>,
     dense: Option<DenseStage4State<F>>,
+    backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaSparseRegistersState>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1831,9 +2181,52 @@ impl<F: Field> SparseRegistersState<F> {
         gamma: F,
         gamma2: F,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage4KernelError> {
         require_operand_count("stage4.registers.accesses", trace_len, accesses.len())?;
         require_operand_count("stage4.registers.RdInc", trace_len, rd_inc.len())?;
+
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" && trace_len > 1 {
+            if let Some(cuda) = cuda_sparse_registers_from_raw(
+                register_count,
+                accesses,
+                rd_inc,
+                trace_point,
+                gamma,
+                gamma2,
+                log2_exact(trace_len, "stage4.trace_len")?,
+            )? {
+                let mut rs2_reads = Vec::new();
+                for (row, access) in accesses.iter().enumerate() {
+                    if let Some(rs2) = access.rs2 {
+                        rs2_reads.push((row, rs2.address));
+                    }
+                }
+                return Ok(Self {
+                    register_count,
+                    trace_len,
+                    current_trace_len: trace_len,
+                    entries: Vec::new(),
+                    entry_scratch: Vec::new(),
+                    rs2_reads,
+                    eq_cycle: SplitEqState::new_low_to_high(trace_point, None),
+                    rd_inc: Vec::new(),
+                    rd_inc_scratch: Vec::new(),
+                    gamma,
+                    gamma2,
+                    active_scale,
+                    bound_point: Vec::with_capacity(
+                        log2_exact(register_count, "stage4.register_count")?
+                            + log2_exact(trace_len, "stage4.trace_len")?,
+                    ),
+                    dense: None,
+                    backend,
+                    cuda: Some(cuda),
+                });
+            }
+        }
+
         let mut entries = Vec::with_capacity(accesses.len().saturating_mul(3));
         let mut rs2_reads = Vec::with_capacity(accesses.len());
         for (row, access) in accesses.iter().enumerate() {
@@ -1850,6 +2243,19 @@ impl<F: Field> SparseRegistersState<F> {
             }
         }
         let eq_cycle = SplitEqState::new_low_to_high(trace_point, None);
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" && trace_len > 1 {
+            build_cuda_sparse_registers(
+                &entries,
+                rd_inc,
+                trace_point,
+                log2_exact(trace_len, "stage4.trace_len")?,
+            )
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         let mut state = Self {
             register_count,
             trace_len,
@@ -1868,6 +2274,9 @@ impl<F: Field> SparseRegistersState<F> {
                     + log2_exact(trace_len, "stage4.trace_len")?,
             ),
             dense: None,
+            backend,
+            #[cfg(feature = "cuda")]
+            cuda,
         };
         if trace_len == 1 {
             state.materialize_dense()?;
@@ -1888,6 +2297,28 @@ impl<F: Field> SparseRegistersState<F> {
                 driver: relation.symbol(),
                 reason: "stage4 sparse registers state was not materialized",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(q) = cuda.round_poly_q() {
+                if let (Some(q_constant), Some(q_quadratic)) =
+                    (crate::cuda::fr_into::<F>(q[0]), crate::cuda::fr_into::<F>(q[1]))
+                {
+                    let poly = gruen_cubic_poly(
+                        self.eq_cycle.current_target(),
+                        q_constant * self.active_scale,
+                        q_quadratic * self.active_scale,
+                        previous_claim,
+                    );
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage4 sparse registers input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
         }
         let (mut q_constant, mut q_quadratic) = sparse_register_split_round_coefficients(
             &self.entries,
@@ -1917,6 +2348,19 @@ impl<F: Field> SparseRegistersState<F> {
         if let Some(dense) = &mut self.dense {
             dense.bind(challenge);
             return;
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.eq_cycle.bind(challenge);
+                    self.current_trace_len /= 2;
+                    if self.current_trace_len == 1 {
+                        let _ = self.materialize_dense();
+                    }
+                    return;
+                }
+            }
         }
         bind_sparse_register_entries_into(
             &self.entries,
@@ -1979,24 +2423,46 @@ impl<F: Field> SparseRegistersState<F> {
     }
 
     fn materialize_dense(&mut self) -> Result<(), Stage4KernelError> {
-        let mut registers_val = vec![F::zero(); self.register_count];
-        let mut read_ra = vec![F::zero(); self.register_count];
-        let mut rd_wa = vec![F::zero(); self.register_count];
-        for entry in &self.entries {
-            let col = usize::from(entry.col);
-            if entry.row != 0 || col >= self.register_count {
-                return Err(Stage4KernelError::InvalidInputLength {
-                    input: "stage4.registers.accesses",
-                    expected: self.register_count,
-                    actual: col + 1,
-                });
+        #[cfg(feature = "cuda")]
+        let cuda_materialized = self
+            .cuda
+            .as_ref()
+            .and_then(|cuda| cuda.materialize::<F>(self.register_count));
+        #[cfg(not(feature = "cuda"))]
+        let cuda_materialized: Option<(Vec<F>, Vec<F>, Vec<F>)> = None;
+
+        let (registers_val, read_ra, rd_wa) = if let Some(materialized) = cuda_materialized {
+            materialized
+        } else {
+            let mut registers_val = vec![F::zero(); self.register_count];
+            let mut read_ra = vec![F::zero(); self.register_count];
+            let mut rd_wa = vec![F::zero(); self.register_count];
+            for entry in &self.entries {
+                let col = usize::from(entry.col);
+                if entry.row != 0 || col >= self.register_count {
+                    return Err(Stage4KernelError::InvalidInputLength {
+                        input: "stage4.registers.accesses",
+                        expected: self.register_count,
+                        actual: col + 1,
+                    });
+                }
+                registers_val[col] = entry.val;
+                read_ra[col] = entry.read_ra;
+                rd_wa[col] = entry.rd_wa;
             }
-            registers_val[col] = entry.val;
-            read_ra[col] = entry.read_ra;
-            rd_wa[col] = entry.rd_wa;
-        }
+            (registers_val, read_ra, rd_wa)
+        };
         let eq_eval = self.eq_cycle.eval();
-        let rd_inc_eval =
+        #[cfg(feature = "cuda")]
+        let cuda_rd_inc = self
+            .cuda
+            .as_ref()
+            .and_then(|cuda| crate::cuda::fr_into::<F>(cuda.rd_inc_first().ok()?));
+        #[cfg(not(feature = "cuda"))]
+        let cuda_rd_inc: Option<F> = None;
+        let rd_inc_eval = if let Some(rd_inc_eval) = cuda_rd_inc {
+            rd_inc_eval
+        } else {
             self.rd_inc
                 .first()
                 .copied()
@@ -2004,7 +2470,8 @@ impl<F: Field> SparseRegistersState<F> {
                     input: "stage4.registers.RdInc",
                     expected: 1,
                     actual: 0,
-                })?;
+                })?
+        };
         self.dense = Some(registers_combined_dense_state(
             vec![eq_eval; self.register_count],
             registers_val,
@@ -2012,6 +2479,7 @@ impl<F: Field> SparseRegistersState<F> {
             rd_wa,
             vec![rd_inc_eval; self.register_count],
             self.active_scale,
+            self.backend,
         ));
         Ok(())
     }
@@ -2052,6 +2520,7 @@ fn registers_read_write_state<F: Field>(
     inputs: &Stage4ProverInputs<'_, F>,
     store: &Stage4ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<Stage4ProverInstanceState<F>, Stage4KernelError> {
     let witness = inputs
         .registers
@@ -2097,6 +2566,7 @@ fn registers_read_write_state<F: Field>(
             gamma,
             gamma2,
             active_scale,
+            backend,
         )
         .map(Stage4ProverInstanceState::SparseRegisters);
     }
@@ -2204,8 +2674,9 @@ fn registers_combined_dense_state<F: Field>(
     rd_wa: Vec<F>,
     rd_inc: Vec<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> DenseStage4State<F> {
-    DenseStage4State::new(
+    DenseStage4State::new_with_backend(
         vec![eq_cycle, registers_val, read_ra, rd_wa, rd_inc],
         vec![
             DenseTerm {
@@ -2223,6 +2694,7 @@ fn registers_combined_dense_state<F: Field>(
         ],
         Vec::new(),
         active_scale,
+        backend,
     )
 }
 
@@ -2921,6 +3393,7 @@ fn ram_val_check_state<F: Field>(
     inputs: &Stage4ProverInputs<'_, F>,
     store: &Stage4ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<DenseStage4State<F>, Stage4KernelError> {
     let witness = inputs.ram.ok_or(Stage4KernelError::MissingKernelInput {
         kernel: "jolt_stage4_batched",
@@ -2949,10 +3422,68 @@ fn ram_val_check_state<F: Field>(
         ram_val_point.len(),
     )?;
     let (address_point, cycle_point) = ram_val_point.split_at(ram_rounds);
+
+    let gamma = store.scalar("stage4.ram_val_check.gamma")?;
+
+    let terms = vec![DenseTerm {
+        coefficient: F::one(),
+        factors: vec![0, 1, 2],
+    }];
+    let outputs = vec![
+        FactorOutput {
+            name: "stage4.ram_val_check.eval.RamRa",
+            oracle: "RamRa",
+            factor: 1,
+        },
+        FactorOutput {
+            name: "stage4.ram_val_check.eval.RamInc",
+            oracle: "RamInc",
+            factor: 2,
+        },
+    ];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_val_check_from_resident_addr(
+            address_point,
+            cycle_point,
+            gamma,
+            witness.ram_inc,
+            active_scale,
+            witness.trace_len,
+        ) {
+            return Ok(DenseStage4State::from_host_and_cuda(
+                vec![Vec::new(), Vec::new(), Vec::new()],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
     let address_eq = EqPolynomial::<F>::evals(address_point, None);
     let ram_ra_at_address = ram_ra_at_address(witness, &address_eq, expected_len)?;
 
-    let gamma = store.scalar("stage4.ram_val_check.gamma")?;
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = build_cuda_ram_val_check_state(
+            cycle_point,
+            gamma,
+            &ram_ra_at_address,
+            witness.ram_inc,
+            active_scale,
+        ) {
+            return Ok(DenseStage4State::from_host_and_cuda(
+                vec![Vec::new(), ram_ra_at_address, witness.ram_inc.to_vec()],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
     let mut lt_plus_gamma = lt_evals_big_endian(cycle_point);
     require_operand_count(
         "stage4.ram_val_check.lt",
@@ -2963,25 +3494,12 @@ fn ram_val_check_state<F: Field>(
         .par_iter_mut()
         .for_each(|value| *value += gamma);
 
-    Ok(DenseStage4State::new(
+    Ok(DenseStage4State::new_with_backend(
         vec![lt_plus_gamma, ram_ra_at_address, witness.ram_inc.to_vec()],
-        vec![DenseTerm {
-            coefficient: F::one(),
-            factors: vec![0, 1, 2],
-        }],
-        vec![
-            FactorOutput {
-                name: "stage4.ram_val_check.eval.RamRa",
-                oracle: "RamRa",
-                factor: 1,
-            },
-            FactorOutput {
-                name: "stage4.ram_val_check.eval.RamInc",
-                oracle: "RamInc",
-                factor: 2,
-            },
-        ],
+        terms,
+        outputs,
         active_scale,
+        backend,
     ))
 }
 

@@ -4,6 +4,9 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::mem::MaybeUninit;
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 use crate::split_eq::SplitEqState;
 use jolt_field::signed::{S128, S256};
@@ -1661,7 +1664,13 @@ where
             relation: claim_relation(context.program, claim)?,
             offset: instance_round_offset(context.program, context.driver.symbol, claim.symbol)?,
             previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
-            state: Stage2ProverInstanceState::new(context.program, claim, inputs, &store)?,
+            state: Stage2ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                context.kernel.backend,
+            )?,
         });
     }
 
@@ -1871,24 +1880,25 @@ impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
         claim: &Stage2SumcheckClaimPlan,
         inputs: &Stage2ProverInputs<'a, F>,
         store: &Stage2ValueStore<F>,
+        backend: &'static str,
     ) -> Result<Self, Stage2KernelError> {
         match claim_relation(program, claim)? {
             Stage2Relation::RamReadWrite => Ok(Self::RamReadWrite(RamReadWriteState::new(
-                claim, inputs, store,
+                claim, inputs, store, backend,
             )?)),
             Stage2Relation::ProductVirtualRemainder => Ok(Self::ProductVirtualRemainder(
-                product_remainder_state(claim, inputs, store)?,
+                product_remainder_state(claim, inputs, store, backend)?,
             )),
             Stage2Relation::InstructionLookupClaimReduction => {
                 Ok(Self::InstructionLookupClaimReduction(
-                    instruction_lookup_state(claim, inputs, store)?,
+                    instruction_lookup_state(claim, inputs, store, backend)?,
                 ))
             }
-            Stage2Relation::RamRafEvaluation => {
-                Ok(Self::RamRafEvaluation(ram_raf_state(claim, inputs, store)?))
-            }
+            Stage2Relation::RamRafEvaluation => Ok(Self::RamRafEvaluation(ram_raf_state(
+                claim, inputs, store, backend,
+            )?)),
             Stage2Relation::RamOutputCheck => Ok(Self::RamOutputCheck(ram_output_state(
-                claim, inputs, store,
+                claim, inputs, store, backend,
             )?)),
             relation => Err(Stage2KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
@@ -1974,15 +1984,38 @@ struct ProductRemainderState<'a, F: Field> {
     right_scratch: Vec<F>,
     split_eq: SplitEqState<F>,
     point: Vec<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<crate::stage3::cuda::CudaSumOfProductsState>>,
 }
 
 impl<F: Field> ProductRemainderState<'_, F> {
     fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok((q_constant, q_quadratic)) = cuda.q_coefficients() {
+                if let (Some(target), Some(q_constant), Some(q_quadratic)) = (
+                    crate::cuda::fr_into::<F>(cuda.current_target()),
+                    crate::cuda::fr_into::<F>(q_constant),
+                    crate::cuda::fr_into::<F>(q_quadratic),
+                ) {
+                    return gruen_cubic_poly(target, q_constant, q_quadratic, previous_claim);
+                }
+            }
+        }
         product_remainder_split_round_poly(&self.left, &self.right, &self.split_eq, previous_claim)
     }
 
     #[tracing::instrument(skip_all, name = "ProductRemainderState::bind")]
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.point.push(challenge);
+                    return;
+                }
+            }
+        }
         let left = &mut self.left;
         let left_scratch = &mut self.left_scratch;
         let right = &mut self.right;
@@ -2174,6 +2207,7 @@ struct InstructionLookupState<'a, F: Field> {
     gamma_cub: F,
     gamma_quart: F,
     phase: InstructionLookupPhase<F>,
+    backend: &'static str,
 }
 
 impl<F: Field> InstructionLookupState<'_, F> {
@@ -2191,6 +2225,7 @@ impl<F: Field> InstructionLookupState<'_, F> {
                     &self.r_spartan,
                     &challenges,
                     [self.gamma, self.gamma_sqr, self.gamma_cub, self.gamma_quart],
+                    self.backend,
                 ));
                 return;
             }
@@ -2237,14 +2272,88 @@ struct InstructionLookupPhase1<F: Field> {
     p: Vec<F>,
     q: Vec<F>,
     challenges: Vec<F>,
+    p_len: usize,
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<cuda::CudaDenseState>>,
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_instruction_lookup_phase1<F: Field>(
+    cycles: &[Stage2InstructionLookupCycle],
+    r_lo: &[F],
+    r_hi: &[F],
+    gamma_powers: [F; 4],
+) -> Option<cuda::CudaDenseState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let prefix_len = 1usize << r_lo.len();
+    let suffix_len = 1usize << r_hi.len();
+
+    let lookup_output: Vec<u64> = cycles.par_iter().map(|c| c.lookup_output).collect();
+    let left_lookup_operand: Vec<u64> = cycles.par_iter().map(|c| c.left_lookup_operand).collect();
+    let (rlo, rhi): (Vec<u64>, Vec<u64>) = cycles
+        .par_iter()
+        .map(|c| (c.right_lookup_operand as u64, (c.right_lookup_operand >> 64) as u64))
+        .unzip();
+    let left_instruction_input: Vec<u64> =
+        cycles.par_iter().map(|c| c.left_instruction_input).collect();
+    let (ri_lo, (ri_hi, ri_neg)): (Vec<u64>, (Vec<u64>, Vec<u8>)) = cycles
+        .par_iter()
+        .map(|c| {
+            let mag = c.right_instruction_input.unsigned_abs();
+            (mag as u64, ((mag >> 64) as u64, u8::from(c.right_instruction_input < 0)))
+        })
+        .unzip();
+
+    let p = ctx.eq_evals(crate::cuda::as_fr_slice(r_lo)?, None).ok()?;
+    let eq_suffix = ctx.eq_evals(crate::cuda::as_fr_slice(r_hi)?, None).ok()?;
+    let q = ctx
+        .instruction_lookup_q(crate::cuda::InstructionLookupQInputs {
+            lookup_output: &ctx.upload_u64_slice(&lookup_output).ok()?,
+            left_lookup_operand: &ctx.upload_u64_slice(&left_lookup_operand).ok()?,
+            right_lookup_operand_lo: &ctx.upload_u64_slice(&rlo).ok()?,
+            right_lookup_operand_hi: &ctx.upload_u64_slice(&rhi).ok()?,
+            left_instruction_input: &ctx.upload_u64_slice(&left_instruction_input).ok()?,
+            right_instruction_input_abs_lo: &ctx.upload_u64_slice(&ri_lo).ok()?,
+            right_instruction_input_abs_hi: &ctx.upload_u64_slice(&ri_hi).ok()?,
+            right_instruction_input_neg: &ctx.upload_u8_slice(&ri_neg).ok()?,
+            eq_suffix: &eq_suffix,
+            gamma: crate::cuda::into_fr(gamma_powers[0])?,
+            gamma_sqr: crate::cuda::into_fr(gamma_powers[1])?,
+            gamma_cub: crate::cuda::into_fr(gamma_powers[2])?,
+            gamma_quart: crate::cuda::into_fr(gamma_powers[3])?,
+            prefix_len,
+            suffix_len,
+        })
+        .ok()?;
+    cuda::CudaDenseState::from_device_factors(vec![p, q])
 }
 
 impl<F: Field> InstructionLookupPhase1<F> {
-    fn new(cycles: &[Stage2InstructionLookupCycle], r_spartan: &[F], gamma_powers: [F; 4]) -> Self {
+    fn new(
+        cycles: &[Stage2InstructionLookupCycle],
+        r_spartan: &[F],
+        gamma_powers: [F; 4],
+        backend: &'static str,
+    ) -> Self {
         let (r_hi, r_lo) = r_spartan.split_at(r_spartan.len() / 2);
+        let prefix_len = 1usize << r_lo.len();
+
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" {
+            if let Some(cuda) = cuda_instruction_lookup_phase1(cycles, r_lo, r_hi, gamma_powers) {
+                return Self {
+                    p: Vec::new(),
+                    q: Vec::new(),
+                    challenges: Vec::new(),
+                    p_len: prefix_len,
+                    cuda: Some(Box::new(cuda)),
+                };
+            }
+        }
+
         let p = EqPolynomial::<F>::evals(r_lo, None);
         let eq_suffix = EqPolynomial::<F>::evals(r_hi, None);
-        let prefix_len = p.len();
         let q = (0..prefix_len)
             .into_par_iter()
             .map(|x_lo| {
@@ -2262,29 +2371,54 @@ impl<F: Field> InstructionLookupPhase1<F> {
                     gamma_powers,
                 )
             })
-            .collect();
+            .collect::<Vec<F>>();
+        #[cfg(feature = "cuda")]
+        let cuda = build_cuda_dense(backend, &[&p, &q]);
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
+        let p_len = p.len();
         Self {
             p,
             q,
             challenges: Vec::new(),
+            p_len,
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase1::round_poly")]
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    return poly;
+                }
+            }
+        }
         round_poly_from_factor_slices(&[&self.p, &self.q], 2)
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase1::bind")]
     fn bind(&mut self, challenge: F) {
         self.challenges.push(challenge);
+        self.p_len /= 2;
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         let mut scratch = Vec::new();
         bind_dense_evals_reuse(&mut self.p, &mut scratch, challenge);
         bind_dense_evals_reuse(&mut self.q, &mut scratch, challenge);
     }
 
     fn should_transition_to_phase2(&self) -> bool {
-        self.p.len() == 2
+        self.p_len == 2
     }
 }
 
@@ -2292,6 +2426,10 @@ struct InstructionLookupPhase2<F: Field> {
     eq: Vec<F>,
     combined: Vec<F>,
     outputs: [Vec<F>; 5],
+    #[cfg(feature = "cuda")]
+    cuda: Option<Box<cuda::CudaDenseState>>,
+    #[cfg(feature = "cuda")]
+    cuda_outputs: Option<Box<cuda::CudaDenseState>>,
 }
 
 impl<F: Field> InstructionLookupPhase2<F> {
@@ -2301,6 +2439,7 @@ impl<F: Field> InstructionLookupPhase2<F> {
         r_spartan: &[F],
         challenges: &[F],
         gamma_powers: [F; 4],
+        backend: &'static str,
     ) -> Self {
         let n_remaining_rounds = r_spartan.len() - challenges.len();
         let remaining_len = 1usize << n_remaining_rounds;
@@ -2333,20 +2472,52 @@ impl<F: Field> InstructionLookupPhase2<F> {
             }
             combined.push(row_combined);
         }
+        let eq = EqPolynomial::<F>::evals(r_hi, Some(eq_prefix));
+        #[cfg(feature = "cuda")]
+        let cuda = build_cuda_dense(backend, &[&eq, &combined]);
+        #[cfg(feature = "cuda")]
+        let cuda_outputs = build_cuda_dense(
+            backend,
+            &[
+                &outputs[0], &outputs[1], &outputs[2], &outputs[3], &outputs[4],
+            ],
+        );
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Self {
-            eq: EqPolynomial::<F>::evals(r_hi, Some(eq_prefix)),
+            eq,
             combined,
             outputs,
+            #[cfg(feature = "cuda")]
+            cuda,
+            #[cfg(feature = "cuda")]
+            cuda_outputs,
         }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase2::round_poly")]
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    return poly;
+                }
+            }
+        }
         round_poly_from_factor_slices(&[&self.eq, &self.combined], 2)
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupPhase2::bind")]
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let (Some(cuda), Some(cuda_outputs)) = (&mut self.cuda, &mut self.cuda_outputs) {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() && cuda_outputs.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         let mut scratch = Vec::new();
         bind_dense_evals_reuse(&mut self.eq, &mut scratch, challenge);
         bind_dense_evals_reuse(&mut self.combined, &mut scratch, challenge);
@@ -2358,9 +2529,17 @@ impl<F: Field> InstructionLookupPhase2<F> {
     fn final_evals(&self) -> Result<Vec<Stage2NamedEval<F>>, Stage2KernelError> {
         INSTRUCTION_LOOKUP_EVAL_NAMES
             .iter()
-            .zip(&self.outputs)
-            .map(|(&(name, oracle), output)| {
-                output
+            .enumerate()
+            .map(|(index, &(name, oracle))| {
+                #[cfg(feature = "cuda")]
+                if let Some(cuda_outputs) = &self.cuda_outputs {
+                    if let Ok(value) = cuda_outputs.factor_eval(index) {
+                        if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                            return Ok(named_eval(name, oracle, value));
+                        }
+                    }
+                }
+                self.outputs[index]
                     .first()
                     .copied()
                     .map(|value| named_eval(name, oracle, value))
@@ -2381,25 +2560,57 @@ fn combine_instruction_lookup_values<F: Field>(values: [F; 5], gamma_powers: [F;
         + gamma_powers[3] * values[4]
 }
 
-#[derive(Clone)]
 struct DenseInstanceState<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
     point: Vec<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaDenseState>,
 }
 
 impl<F: Field> DenseInstanceState<F> {
-    fn new(factors: Vec<Vec<F>>) -> Self {
+
+    fn new_with_backend(factors: Vec<Vec<F>>, backend: &'static str) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            crate::cuda::as_fr_slice(&[F::zero()])
+                .and_then(|_| as_fr_factors(&factors))
+                .and_then(|fr_factors| cuda::CudaDenseState::new(&fr_factors))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Self {
             factors,
             factor_scratch,
             point: Vec::new(),
+            #[cfg(feature = "cuda")]
+            cuda,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn new_with_device_factors(cuda: cuda::CudaDenseState) -> Self {
+        Self {
+            factors: Vec::new(),
+            factor_scratch: Vec::new(),
+            point: Vec::new(),
+            cuda: Some(cuda),
         }
     }
 
     #[tracing::instrument(skip_all, name = "Stage2DenseState::round_poly")]
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    return poly;
+                }
+            }
+        }
         round_poly_from_factors(&self.factors, self.degree())
     }
 
@@ -2409,6 +2620,15 @@ impl<F: Field> DenseInstanceState<F> {
 
     #[tracing::instrument(skip_all, name = "Stage2DenseState::bind")]
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.point.push(challenge);
+                    return;
+                }
+            }
+        }
         for (factor, scratch) in self.factors.iter_mut().zip(&mut self.factor_scratch) {
             bind_dense_evals_reuse(factor, scratch, challenge);
         }
@@ -2416,6 +2636,14 @@ impl<F: Field> DenseInstanceState<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage2Relation) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(value) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -2427,7 +2655,104 @@ impl<F: Field> DenseInstanceState<F> {
     }
 }
 
-#[derive(Clone)]
+#[cfg(feature = "cuda")]
+fn as_fr_factors<F: Field>(factors: &[Vec<F>]) -> Option<Vec<&[Fr]>> {
+    factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_dense<F: Field>(
+    backend: &'static str,
+    factors: &[&[F]],
+) -> Option<Box<cuda::CudaDenseState>> {
+    if backend != "cuda" {
+        return None;
+    }
+    let fr_factors = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect::<Option<Vec<&[Fr]>>>()?;
+    cuda::CudaDenseState::new(&fr_factors).map(Box::new)
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_ram_read_write<F: Field>(
+    cycle_entries: &[RamCycleEntry<F>],
+    inc: &[F],
+    val_init: &[F],
+    r_cycle: &[F],
+    gamma: F,
+) -> Option<cuda::CudaRamReadWriteState> {
+    let rows: Vec<usize> = cycle_entries.iter().map(|entry| entry.row).collect();
+    let cols: Vec<usize> = cycle_entries.iter().map(|entry| entry.col).collect();
+    let val_coeff: Vec<F> = cycle_entries.iter().map(|entry| entry.val_coeff).collect();
+    let ra_coeff: Vec<F> = cycle_entries.iter().map(|entry| entry.ra_coeff).collect();
+    let prev_val: Vec<u64> = cycle_entries.iter().map(|entry| entry.prev_val).collect();
+    let next_val: Vec<u64> = cycle_entries.iter().map(|entry| entry.next_val).collect();
+    cuda::CudaRamReadWriteState::new(
+        &rows, &cols, &val_coeff, &ra_coeff, &prev_val, &next_val, inc, val_init, r_cycle, gamma,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_ram_read_write_from_raw<F: Field>(
+    ram: &Stage2RamData<'_>,
+    r_cycle: &[F],
+    gamma: F,
+) -> Option<cuda::CudaRamReadWriteState> {
+    use rayon::prelude::*;
+    let all_read: Vec<u64> = ram.accesses.par_iter().map(|a| a.read_value).collect();
+    let all_write: Vec<u64> = ram.accesses.par_iter().map(|a| a.write_value).collect();
+
+    let mut rows = Vec::new();
+    let mut cols = Vec::new();
+    let mut filtered_read = Vec::new();
+    let mut filtered_write = Vec::new();
+    for (row, access) in ram.accesses.iter().enumerate() {
+        if let Some(col) = access.remapped_address {
+            rows.push(row);
+            cols.push(col);
+            filtered_read.push(access.read_value);
+            filtered_write.push(access.write_value);
+        }
+    }
+
+    cuda::CudaRamReadWriteState::new_from_raw(
+        &rows,
+        &cols,
+        &filtered_read,
+        &filtered_write,
+        &all_read,
+        &all_write,
+        ram.initial_ram,
+        r_cycle,
+        gamma,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_final<F: Field>(
+    value: Result<Fr, crate::cuda::CudaError>,
+) -> Result<F, Stage2KernelError> {
+    let value = value.map_err(|_| Stage2KernelError::KernelNotImplemented {
+        abi: "jolt_stage2_ram_read_write",
+    })?;
+    crate::cuda::fr_into::<F>(value).ok_or(Stage2KernelError::KernelNotImplemented {
+        abi: "jolt_stage2_ram_read_write",
+    })
+}
+
+#[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
 struct RamOutputState<'a, F: Field> {
     dense: DenseInstanceState<F>,
     final_ram: &'a [u64],
@@ -2456,10 +2781,73 @@ impl<F: Field> RamOutputState<'_, F> {
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::product_remainder_state")]
+#[cfg(feature = "cuda")]
+fn cuda_product_remainder_state<F: Field>(
+    cycles: &[Stage2ProductVirtualCycle],
+    weights: &[F],
+    tau_low: &[F],
+    lagrange_tau_r0: F,
+) -> Option<crate::stage3::cuda::CudaSumOfProductsState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let left_input: Vec<u64> = cycles.par_iter().map(|c| c.instruction_left_input).collect();
+    let sblo: Vec<u64> = cycles.par_iter().map(|c| c.should_branch_lookup_output).collect();
+    let jump: Vec<u8> = cycles.par_iter().map(|c| u8::from(c.jump_flag)).collect();
+    let (ri_lo, (ri_hi, ri_neg)): (Vec<u64>, (Vec<u64>, Vec<u8>)) = cycles
+        .par_iter()
+        .map(|c| {
+            let mag = c.instruction_right_input.unsigned_abs();
+            (mag as u64, ((mag >> 64) as u64, u8::from(c.instruction_right_input < 0)))
+        })
+        .unzip();
+    let sbf: Vec<u8> = cycles.par_iter().map(|c| u8::from(c.should_branch_flag)).collect();
+    let nnn: Vec<u8> = cycles.par_iter().map(|c| u8::from(c.not_next_noop)).collect();
+
+    let t = ctx
+        .resident_stage2_product_trace(
+            cycles.as_ptr() as usize,
+            cycles.len(),
+            &left_input,
+            &sblo,
+            &jump,
+            &ri_lo,
+            &ri_hi,
+            &ri_neg,
+            &sbf,
+            &nnn,
+        )
+        .ok()?;
+    let (left, right) = ctx
+        .stage2_product_factors(crate::cuda::Stage2ProductFactorInputs {
+            left_input: &t.left_input,
+            should_branch_lookup_output: &t.should_branch_lookup_output,
+            jump_flag: &t.jump_flag,
+            right_input_abs_lo: &t.right_input_abs_lo,
+            right_input_abs_hi: &t.right_input_abs_hi,
+            right_input_neg: &t.right_input_neg,
+            should_branch_flag: &t.should_branch_flag,
+            not_next_noop: &t.not_next_noop,
+            w0: crate::cuda::into_fr(weights[0])?,
+            w1: crate::cuda::into_fr(weights[1])?,
+            w2: crate::cuda::into_fr(weights[2])?,
+            len: t.len,
+        })
+        .ok()?;
+    let tau_low_fr = crate::cuda::as_fr_slice(tau_low)?;
+    let scaling = crate::cuda::into_fr(lagrange_tau_r0)?;
+    crate::stage3::cuda::CudaSumOfProductsState::from_device_factors(
+        crate::stage3::cuda::CudaGruenKind::Product,
+        vec![left, right],
+        tau_low_fr,
+        Some(scaling),
+    )
+}
+
 fn product_remainder_state<'a, F: Field>(
     _claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<ProductRemainderState<'a, F>, Stage2KernelError> {
     let cycles = inputs
         .product_virtual_cycles
@@ -2501,31 +2889,49 @@ fn product_remainder_state<'a, F: Field>(
         PRODUCT_VIRTUAL_UNISKIP_DOMAIN_SIZE,
         r0,
     );
-    let mut left = vec![F::zero(); cycles.len()];
-    let mut right = vec![F::zero(); cycles.len()];
-    left.par_iter_mut()
-        .zip(right.par_iter_mut())
-        .zip(cycles.par_iter())
-        .for_each(|((left, right), cycle)| {
-            *left = weights[0].mul_u64(cycle.instruction_left_input)
-                + weights[1].mul_u64(cycle.should_branch_lookup_output)
-                + if cycle.jump_flag {
-                    weights[2]
-                } else {
-                    F::zero()
-                };
-            *right = weights[0].mul_i128(cycle.instruction_right_input)
-                + if cycle.should_branch_flag {
-                    weights[1]
-                } else {
-                    F::zero()
-                }
-                + if cycle.not_next_noop {
-                    weights[2]
-                } else {
-                    F::zero()
-                };
-        });
+    #[cfg(feature = "cuda")]
+    let cuda = if backend == "cuda" {
+        cuda_product_remainder_state(cycles, &weights, tau_low, lagrange_tau_r0).map(Box::new)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "cuda"))]
+    let _ = backend;
+
+    #[cfg(feature = "cuda")]
+    let build_host = cuda.is_none();
+    #[cfg(not(feature = "cuda"))]
+    let build_host = true;
+
+    let (mut left, mut right) = (Vec::new(), Vec::new());
+    if build_host {
+        left = vec![F::zero(); cycles.len()];
+        right = vec![F::zero(); cycles.len()];
+        left.par_iter_mut()
+            .zip(right.par_iter_mut())
+            .zip(cycles.par_iter())
+            .for_each(|((left, right), cycle)| {
+                *left = weights[0].mul_u64(cycle.instruction_left_input)
+                    + weights[1].mul_u64(cycle.should_branch_lookup_output)
+                    + if cycle.jump_flag {
+                        weights[2]
+                    } else {
+                        F::zero()
+                    };
+                *right = weights[0].mul_i128(cycle.instruction_right_input)
+                    + if cycle.should_branch_flag {
+                        weights[1]
+                    } else {
+                        F::zero()
+                    }
+                    + if cycle.not_next_noop {
+                        weights[2]
+                    } else {
+                        F::zero()
+                    };
+            });
+    }
+
     Ok(ProductRemainderState {
         cycles,
         left,
@@ -2534,6 +2940,8 @@ fn product_remainder_state<'a, F: Field>(
         right_scratch: Vec::new(),
         split_eq: SplitEqState::new_low_to_high(tau_low, Some(lagrange_tau_r0)),
         point: Vec::new(),
+        #[cfg(feature = "cuda")]
+        cuda,
     })
 }
 
@@ -2542,6 +2950,7 @@ fn instruction_lookup_state<'a, F: Field>(
     _claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<InstructionLookupState<'a, F>, Stage2KernelError> {
     let cycles = inputs
         .instruction_lookup_cycles
@@ -2579,7 +2988,9 @@ fn instruction_lookup_state<'a, F: Field>(
             cycles,
             r_spartan,
             [gamma, gamma_sqr, gamma_cub, gamma_quart],
+            backend,
         )),
+        backend,
     })
 }
 
@@ -2588,6 +2999,7 @@ fn ram_raf_state<F: Field>(
     claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'_, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<DenseInstanceState<F>, Stage2KernelError> {
     let ram = inputs.ram.ok_or(Stage2KernelError::MissingKernelInput {
         kernel: "jolt_stage2_ram_raf_evaluation",
@@ -2595,15 +3007,17 @@ fn ram_raf_state<F: Field>(
     })?;
     require_operand_count("stage2.ram_raf.num_rounds", ram.log_k, claim.num_rounds)?;
     let r_cycle = store.point("stage2.input.stage1.RamAddress")?;
-    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
-    if ram.accesses.len() != eq_cycle.len() {
-        return Err(Stage2KernelError::InvalidInputLength {
-            input: "stage2.ram.accesses",
-            expected: eq_cycle.len(),
-            actual: ram.accesses.len(),
-        });
-    }
     let k = 1usize << ram.log_k;
+    require_operand_count("stage2.ram.accesses", 1usize << r_cycle.len(), ram.accesses.len())?;
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_raf_state(ram, r_cycle, k) {
+            return Ok(DenseInstanceState::new_with_device_factors(cuda));
+        }
+    }
+
+    let eq_cycle = EqPolynomial::<F>::evals(r_cycle, None);
     let mut ra = vec![F::zero(); k];
     for (access, weight) in ram.accesses.iter().zip(eq_cycle) {
         if let Some(address) = access.remapped_address {
@@ -2617,7 +3031,38 @@ fn ram_raf_state<F: Field>(
         unmap.push(next_address);
         next_address += address_step;
     }
-    Ok(DenseInstanceState::new(vec![ra, unmap]))
+    Ok(DenseInstanceState::new_with_backend(
+        vec![ra, unmap],
+        backend,
+    ))
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_ram_raf_state<F: Field>(
+    ram: &Stage2RamData<'_>,
+    r_cycle: &[F],
+    k: usize,
+) -> Option<cuda::CudaDenseState> {
+    use rayon::prelude::*;
+    let ctx = crate::cuda::shared_ctx()?;
+    let eq = ctx.eq_evals(crate::cuda::as_fr_slice(r_cycle)?, None).ok()?;
+    let resident = ctx
+        .resident_ram_addresses()
+        .filter(|s| s.len == ram.accesses.len());
+    let ra = if let Some(resident) = &resident {
+        ctx.scatter_add_eq(&eq, &resident.addr, ram.accesses.len(), k).ok()?
+    } else {
+        let addr: Vec<i32> = ram
+            .accesses
+            .par_iter()
+            .map(|a| a.remapped_address.map_or(-1i32, |x| x as i32))
+            .collect();
+        let addr_dev = ctx.upload_i32_slice(&addr).ok()?;
+        ctx.scatter_add_eq(&eq, &addr_dev, ram.accesses.len(), k).ok()?
+    };
+    let unmap_raw: Vec<u64> = (0..k as u64).map(|i| ram.start_address + 8 * i).collect();
+    let unmap = ctx.u64_to_mont(&unmap_raw).ok()?;
+    cuda::CudaDenseState::from_device_factors(vec![ra, unmap])
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::ram_output_state")]
@@ -2625,6 +3070,7 @@ fn ram_output_state<'a, F: Field>(
     claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'a, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<RamOutputState<'a, F>, Stage2KernelError> {
     let ram = inputs.ram.ok_or(Stage2KernelError::MissingKernelInput {
         kernel: "jolt_stage2_ram_output_check",
@@ -2640,15 +3086,29 @@ fn ram_output_state<'a, F: Field>(
     let k = 1usize << ram.log_k;
     require_operand_count("stage2.ram.final_ram", k, ram.final_ram.len())?;
     let r_address = store.point("stage2.ram_output.r_address")?;
-    let eq = EqPolynomial::<F>::evals(r_address, None);
-    let mut io_mask = vec![F::zero(); k];
-    let mut diff = vec![F::zero(); k];
+
     let mut nonzero_final_ram = Vec::new();
-    for index in 0..k {
-        let final_value = ram.final_ram[index];
+    for (index, &final_value) in ram.final_ram.iter().enumerate() {
         if final_value != 0 {
             nonzero_final_ram.push((index, final_value));
         }
+    }
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_output_state(ram, r_address, &layout, k) {
+            return Ok(RamOutputState {
+                dense: DenseInstanceState::new_with_device_factors(cuda),
+                final_ram: ram.final_ram,
+                nonzero_final_ram,
+            });
+        }
+    }
+
+    let eq = EqPolynomial::<F>::evals(r_address, None);
+    let mut io_mask = vec![F::zero(); k];
+    let mut diff = vec![F::zero(); k];
+    for (index, &final_value) in ram.final_ram.iter().enumerate() {
         if index >= layout.io_start && index < layout.io_end {
             io_mask[index] = F::one();
         } else if final_value != 0 {
@@ -2656,45 +3116,67 @@ fn ram_output_state<'a, F: Field>(
         }
     }
     Ok(RamOutputState {
-        dense: DenseInstanceState::new(vec![eq, io_mask, diff]),
+        dense: DenseInstanceState::new_with_backend(vec![eq, io_mask, diff], backend),
         final_ram: ram.final_ram,
         nonzero_final_ram,
     })
 }
 
-#[derive(Clone, Debug)]
-struct RamCycleEntry<F: Field> {
-    row: usize,
-    col: usize,
-    prev_val: u64,
-    next_val: u64,
-    val_coeff: F,
-    ra_coeff: F,
+#[cfg(feature = "cuda")]
+fn cuda_ram_output_state<F: Field>(
+    ram: &Stage2RamData<'_>,
+    r_address: &[F],
+    layout: &Stage2RamOutputLayout,
+    k: usize,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let eq = ctx.eq_evals(crate::cuda::as_fr_slice(r_address)?, None).ok()?;
+    let resident = ctx.resident_ram_state().filter(|s| s.len == ram.final_ram.len());
+    let (io_mask, diff) = if let Some(resident) = &resident {
+        ctx.ram_output_factors(&resident.final_ram, layout.io_start, layout.io_end, k)
+            .ok()?
+    } else {
+        let final_dev = ctx.upload_u64_slice(ram.final_ram).ok()?;
+        ctx.ram_output_factors(&final_dev, layout.io_start, layout.io_end, k)
+            .ok()?
+    };
+    cuda::CudaDenseState::from_device_factors(vec![eq, io_mask, diff])
 }
 
 #[derive(Clone, Debug)]
-struct RamAddressEntry<F: Field> {
-    row: usize,
-    col: usize,
-    prev_val: F,
-    next_val: F,
-    val_coeff: F,
-    ra_coeff: F,
+pub(crate) struct RamCycleEntry<F: Field> {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) prev_val: u64,
+    pub(crate) next_val: u64,
+    pub(crate) val_coeff: F,
+    pub(crate) ra_coeff: F,
 }
 
-#[derive(Clone)]
-struct RamReadWriteState<F: Field> {
-    gamma: F,
-    log_t: usize,
-    round: usize,
-    cycle_eq: SplitEqState<F>,
-    cycle_entries: Vec<RamCycleEntry<F>>,
-    address_entries: Vec<RamAddressEntry<F>>,
-    address_scratch: Vec<RamAddressEntry<F>>,
-    inc: Vec<F>,
-    inc_scratch: Vec<F>,
-    val_init: Vec<F>,
-    val_init_scratch: Vec<F>,
+#[derive(Clone, Debug)]
+pub(crate) struct RamAddressEntry<F: Field> {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) prev_val: F,
+    pub(crate) next_val: F,
+    pub(crate) val_coeff: F,
+    pub(crate) ra_coeff: F,
+}
+
+pub(crate) struct RamReadWriteState<F: Field> {
+    pub(crate) gamma: F,
+    pub(crate) log_t: usize,
+    pub(crate) round: usize,
+    pub(crate) cycle_eq: SplitEqState<F>,
+    pub(crate) cycle_entries: Vec<RamCycleEntry<F>>,
+    pub(crate) address_entries: Vec<RamAddressEntry<F>>,
+    pub(crate) address_scratch: Vec<RamAddressEntry<F>>,
+    pub(crate) inc: Vec<F>,
+    pub(crate) inc_scratch: Vec<F>,
+    pub(crate) val_init: Vec<F>,
+    pub(crate) val_init_scratch: Vec<F>,
+    #[cfg(feature = "cuda")]
+    pub(crate) cuda: Option<Box<cuda::CudaRamReadWriteState>>,
 }
 
 impl<F: Field> RamReadWriteState<F> {
@@ -2703,6 +3185,7 @@ impl<F: Field> RamReadWriteState<F> {
         _claim: &Stage2SumcheckClaimPlan,
         inputs: &Stage2ProverInputs<'_, F>,
         store: &Stage2ValueStore<F>,
+        backend: &'static str,
     ) -> Result<Self, Stage2KernelError> {
         let ram = inputs.ram.ok_or(Stage2KernelError::MissingKernelInput {
             kernel: "jolt_stage2_ram_read_write",
@@ -2715,6 +3198,27 @@ impl<F: Field> RamReadWriteState<F> {
         require_operand_count("stage2.ram.accesses", t, ram.accesses.len())?;
         require_operand_count("stage2.ram.initial_ram", k, ram.initial_ram.len())?;
         let gamma = store.scalar("stage2.ram_read_write.gamma")?;
+
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" {
+            if let Some(cuda) = cuda_ram_read_write_from_raw(ram, r_cycle, gamma) {
+                return Ok(Self {
+                    gamma,
+                    log_t,
+                    round: 0,
+                    cycle_eq: SplitEqState::new_low_to_high(r_cycle, None),
+                    cycle_entries: Vec::new(),
+                    address_entries: Vec::new(),
+                    address_scratch: Vec::new(),
+                    inc: Vec::new(),
+                    inc_scratch: Vec::new(),
+                    val_init: Vec::new(),
+                    val_init_scratch: Vec::new(),
+                    cuda: Some(Box::new(cuda)),
+                });
+            }
+        }
+
         let mut cycle_entries = Vec::with_capacity(ram.accesses.len());
         let mut inc = Vec::with_capacity(t);
         for (row, access) in ram.accesses.iter().enumerate() {
@@ -2734,6 +3238,25 @@ impl<F: Field> RamReadWriteState<F> {
                 });
             }
         }
+        let val_init: Vec<F> = ram
+            .initial_ram
+            .iter()
+            .map(|&value| {
+                if value == 0 {
+                    F::zero()
+                } else {
+                    F::from_u64(value)
+                }
+            })
+            .collect();
+        let _ = backend;
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_ram_read_write(&cycle_entries, &inc, &val_init, r_cycle, gamma)
+                .map(Box::new)
+        } else {
+            None
+        };
         Ok(Self {
             gamma,
             log_t,
@@ -2744,26 +3267,28 @@ impl<F: Field> RamReadWriteState<F> {
             address_scratch: Vec::new(),
             inc,
             inc_scratch: Vec::new(),
-            val_init: ram
-                .initial_ram
-                .iter()
-                .map(|&value| {
-                    if value == 0 {
-                        F::zero()
-                    } else {
-                        F::from_u64(value)
-                    }
-                })
-                .collect(),
+            val_init,
             val_init_scratch: Vec::new(),
+            #[cfg(feature = "cuda")]
+            cuda,
         })
     }
 
-    fn round_poly(
+    pub(crate) fn round_poly(
         &mut self,
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if self.cuda.is_some() {
+            return self
+                .cuda
+                .as_ref()
+                .and_then(|cuda| cuda.round_poly::<F>(previous_claim))
+                .ok_or(Stage2KernelError::KernelNotImplemented {
+                    abi: "jolt_stage2_ram_read_write",
+                });
+        }
         if self.round < self.log_t {
             Ok(self.cycle_round_poly(previous_claim))
         } else {
@@ -2771,7 +3296,19 @@ impl<F: Field> RamReadWriteState<F> {
         }
     }
 
-    fn ingest_challenge(&mut self, challenge: F) -> Result<(), Stage2KernelError> {
+    pub(crate) fn ingest_challenge(&mut self, challenge: F) -> Result<(), Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            let challenge_fr =
+                crate::cuda::into_fr(challenge).ok_or(Stage2KernelError::KernelNotImplemented {
+                    abi: "jolt_stage2_ram_read_write",
+                })?;
+            cuda.bind(challenge_fr).map_err(|_| Stage2KernelError::KernelNotImplemented {
+                abi: "jolt_stage2_ram_read_write",
+            })?;
+            self.round += 1;
+            return Ok(());
+        }
         if self.round < self.log_t {
             self.bind_cycle(challenge);
             if self.round + 1 == self.log_t {
@@ -2821,7 +3358,7 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::address_round_poly")]
-    fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+    pub(crate) fn address_round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
         let mut evals = [F::zero(); 2];
         let cycle_eq = self.cycle_eq_eval();
         let mut cursor = 0;
@@ -2867,7 +3404,7 @@ impl<F: Field> RamReadWriteState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteState::bind_address")]
-    fn bind_address(&mut self, challenge: F) {
+    pub(crate) fn bind_address(&mut self, challenge: F) {
         let mut bound = std::mem::take(&mut self.address_scratch);
         bound.clear();
         bound.reserve(self.address_entries.len());
@@ -2896,7 +3433,11 @@ impl<F: Field> RamReadWriteState<F> {
         bind_dense_evals_reuse(&mut self.val_init, &mut self.val_init_scratch, challenge);
     }
 
-    fn ra_eval(&self) -> Result<F, Stage2KernelError> {
+    pub(crate) fn ra_eval(&self) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            return cuda_final(cuda.ra_eval());
+        }
         Ok(self
             .address_entries
             .first()
@@ -2904,7 +3445,11 @@ impl<F: Field> RamReadWriteState<F> {
             .map_or(F::zero(), |entry| entry.ra_coeff))
     }
 
-    fn val_eval(&self) -> Result<F, Stage2KernelError> {
+    pub(crate) fn val_eval(&self) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            return cuda_final(cuda.val_eval());
+        }
         Ok(self
             .address_entries
             .first()
@@ -2912,7 +3457,11 @@ impl<F: Field> RamReadWriteState<F> {
             .map_or(self.val_init[0], |entry| entry.val_coeff))
     }
 
-    fn inc_eval(&self) -> Result<F, Stage2KernelError> {
+    pub(crate) fn inc_eval(&self) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            return cuda_final(cuda.inc_eval());
+        }
         Ok(self.inc[0])
     }
 
@@ -2921,7 +3470,7 @@ impl<F: Field> RamReadWriteState<F> {
     }
 }
 
-fn cycle_low_round_coefficients<F: Field>(
+pub(crate) fn cycle_low_round_coefficients<F: Field>(
     entries: &[RamCycleEntry<F>],
     inc: &[F],
     e_in: &[F],
@@ -3209,7 +3758,7 @@ fn address_entry_eval<F: Field>(
     weights.eq * ra * (val + weights.gamma * (val + weights.inc))
 }
 
-fn bind_cycle_entries_parallel<F: Field>(
+pub(crate) fn bind_cycle_entries_parallel<F: Field>(
     entries: &[RamCycleEntry<F>],
     challenge: F,
 ) -> Vec<RamCycleEntry<F>> {
@@ -3973,7 +4522,11 @@ fn round_poly_from_factors<F: Field>(factors: &[Vec<F>], degree: usize) -> Univa
     round_poly_from_factor_slices(&factor_slices, degree)
 }
 
-fn round_poly_from_factor_slices<F: Field>(factors: &[&[F]], degree: usize) -> UnivariatePoly<F> {
+#[doc(hidden)]
+pub fn round_poly_from_factor_slices<F: Field>(
+    factors: &[&[F]],
+    degree: usize,
+) -> UnivariatePoly<F> {
     if factors.is_empty() {
         return UnivariatePoly::zero();
     }

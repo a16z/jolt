@@ -9,11 +9,16 @@
     reason = "kernel constructors mirror generated staged protocol inputs"
 )]
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
+#[cfg(feature = "cuda")]
+use jolt_field::Fr;
 use jolt_field::{Field, FieldAccumulator, FieldScalarAccumulator};
 use jolt_lookup_tables::{
     tables::{
@@ -29,7 +34,7 @@ use jolt_transcript::{Label, LabelWithCount, Transcript};
 use jolt_witness::Stage45SparseTraceWitness;
 use rayon::prelude::*;
 
-type PrefixPairEvals<F> = ([PrefixEval<F>; NUM_PREFIXES], [PrefixEval<F>; NUM_PREFIXES]);
+pub(crate) type PrefixPairEvals<F> = ([PrefixEval<F>; NUM_PREFIXES], [PrefixEval<F>; NUM_PREFIXES]);
 
 fn trace_stage5_inner_spans() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1146,9 +1151,23 @@ where
                 claim = claim.symbol
             )
             .entered();
-            Stage5ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage5ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         } else {
-            Stage5ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage5ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         };
         let init_nanos = init_start.map_or(0, |start| start.elapsed().as_nanos());
         instances.push(Stage5BatchedInstance {
@@ -1382,17 +1401,20 @@ impl<F: Field> Stage5ProverInstanceState<F> {
         inputs: &Stage5ProverInputs<'_, F>,
         store: &Stage5ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage5KernelError> {
         match claim_relation(program, claim)? {
             Stage5Relation::InstructionReadRaf => {
-                instruction_read_raf_state(program, claim, inputs, store, active_scale)
+                instruction_read_raf_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::InstructionReadRaf)
             }
             Stage5Relation::RegistersValEvaluation => {
-                registers_val_evaluation_state(claim, inputs, store, active_scale).map(Self::Dense)
+                registers_val_evaluation_state(claim, inputs, store, active_scale, backend)
+                    .map(Self::Dense)
             }
             Stage5Relation::RamRaClaimReduction => {
-                ram_ra_claim_reduction_state(claim, inputs, store, active_scale).map(Self::Dense)
+                ram_ra_claim_reduction_state(claim, inputs, store, active_scale, backend)
+                    .map(Self::Dense)
             }
             relation @ Stage5Relation::Batched => Err(Stage5KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
@@ -1435,6 +1457,8 @@ struct DenseStage5State<F: Field> {
     terms: Vec<DenseTerm<F>>,
     outputs: Vec<FactorOutput>,
     active_scale: F,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaDenseState>,
 }
 
 #[derive(Clone)]
@@ -1448,6 +1472,150 @@ struct FactorOutput {
     name: &'static str,
     oracle: &'static str,
     factor: usize,
+}
+
+#[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_dense_state<F: Field>(
+    factors: &[Vec<F>],
+    terms: &[DenseTerm<F>],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let degree = terms.iter().map(|term| term.factors.len()).max()?;
+    if degree == 0 {
+        return None;
+    }
+    let fr_factors: Vec<&[Fr]> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor))
+        .collect::<Option<_>>()?;
+    let mut term_coeffs = Vec::with_capacity(terms.len());
+    let mut term_factor_offsets = vec![0u32];
+    let mut term_factor_indices = Vec::new();
+    for term in terms {
+        term_coeffs.push(crate::cuda::into_fr(term.coefficient)?);
+        for &factor in &term.factors {
+            term_factor_indices.push(factor as u32);
+        }
+        term_factor_offsets.push(term_factor_indices.len() as u32);
+    }
+    let active_scale = crate::cuda::into_fr(active_scale)?;
+    cuda::CudaDenseState::new(
+        &fr_factors,
+        term_coeffs,
+        term_factor_offsets,
+        term_factor_indices,
+        degree,
+        active_scale,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_registers_val_state<F: Field>(
+    rd_inc: &[F],
+    address_eq: &[F],
+    rd_write_addresses: &[Option<usize>],
+    register_count: usize,
+    cycle_point: &[F],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let address_eq_fr = crate::cuda::as_fr_slice(address_eq)?;
+    let addresses: Vec<i16> = rd_write_addresses
+        .iter()
+        .map(|address| match address {
+            Some(address) if *address < register_count => Some(*address as i16),
+            Some(_) => None,
+            None => Some(-1),
+        })
+        .collect::<Option<Vec<i16>>>()?;
+    let rd_wa_dev = ctx.rd_wa_gather(address_eq_fr, &addresses).ok()?;
+    let cycle_point_fr = crate::cuda::as_fr_slice(cycle_point)?;
+    let lt = ctx.lt_evals(cycle_point_fr).ok()?;
+    let rd_inc_dev = ctx.resident_committed_clone(crate::cuda::as_fr_slice(rd_inc)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![rd_inc_dev, rd_wa_dev, lt],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 3],
+        vec![0, 1, 2],
+        3,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
+#[cfg(feature = "cuda")]
+fn build_cuda_ram_ra_state<F: Field>(
+    r_cycle_raf: &[F],
+    r_cycle_rw: &[F],
+    r_cycle_val: &[F],
+    gamma: F,
+    gamma2: F,
+    ram_ra: &[F],
+    active_scale: F,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let raf_fr = crate::cuda::as_fr_slice(r_cycle_raf)?;
+    let rw_fr = crate::cuda::as_fr_slice(r_cycle_rw)?;
+    let val_fr = crate::cuda::as_fr_slice(r_cycle_val)?;
+    let gamma_fr = crate::cuda::into_fr(gamma)?;
+    let gamma2_fr = crate::cuda::into_fr(gamma2)?;
+    let mut eq_combined = ctx.eq_evals(raf_fr, None).ok()?;
+    let eq_rw = ctx.eq_evals(rw_fr, Some(gamma_fr)).ok()?;
+    let eq_val = ctx.eq_evals(val_fr, Some(gamma2_fr)).ok()?;
+    ctx.add(&mut eq_combined, &eq_rw).ok()?;
+    ctx.add(&mut eq_combined, &eq_val).ok()?;
+    let ram_ra_dev = ctx.upload(crate::cuda::as_fr_slice(ram_ra)?).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![eq_combined, ram_ra_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 2],
+        vec![0, 1],
+        2,
+        crate::cuda::into_fr(active_scale)?,
+    )
+}
+
+#[cfg(feature = "cuda")]
+#[expect(clippy::too_many_arguments)]
+fn cuda_ram_ra_state_from_resident_addr<F: Field>(
+    address_point: &[F],
+    r_cycle_raf: &[F],
+    r_cycle_rw: &[F],
+    r_cycle_val: &[F],
+    gamma: F,
+    gamma2: F,
+    active_scale: F,
+    trace_len: usize,
+) -> Option<cuda::CudaDenseState> {
+    let ctx = crate::cuda::shared_ctx()?;
+    let resident = ctx.resident_ram_addresses().filter(|s| s.len == trace_len)?;
+    let raf_fr = crate::cuda::as_fr_slice(r_cycle_raf)?;
+    let rw_fr = crate::cuda::as_fr_slice(r_cycle_rw)?;
+    let val_fr = crate::cuda::as_fr_slice(r_cycle_val)?;
+    let gamma_fr = crate::cuda::into_fr(gamma)?;
+    let gamma2_fr = crate::cuda::into_fr(gamma2)?;
+    let mut eq_combined = ctx.eq_evals(raf_fr, None).ok()?;
+    let eq_rw = ctx.eq_evals(rw_fr, Some(gamma_fr)).ok()?;
+    let eq_val = ctx.eq_evals(val_fr, Some(gamma2_fr)).ok()?;
+    ctx.add(&mut eq_combined, &eq_rw).ok()?;
+    ctx.add(&mut eq_combined, &eq_val).ok()?;
+    let address_eq = ctx.eq_evals(crate::cuda::as_fr_slice(address_point)?, None).ok()?;
+    let ram_ra_dev = ctx.ram_ra_gather(&address_eq, &resident.addr, trace_len).ok()?;
+    cuda::CudaDenseState::from_device_factors(
+        vec![eq_combined, ram_ra_dev],
+        vec![crate::cuda::into_fr(F::one())?],
+        vec![0, 2],
+        vec![0, 1],
+        2,
+        crate::cuda::into_fr(active_scale)?,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -1489,6 +1657,11 @@ struct InstructionReadRafStage5State<F: Field> {
     read_prefix_checkpoints: Vec<PrefixEval<F>>,
     cycle_state: Option<InstructionReadRafCycleState<F>>,
     outputs: Vec<InstructionReadRafOutputPlan>,
+    backend: &'static str,
+    #[cfg(feature = "cuda")]
+    cuda_address: Option<cuda::CudaAddressPhaseState>,
+    #[cfg(feature = "cuda")]
+    cuda_address_round: Option<cuda::CudaAddressPhaseRound>,
 }
 
 struct InstructionReadRafLookupGroup<F: Field> {
@@ -1513,9 +1686,9 @@ struct InstructionReadRafAddressPhase<F: Field> {
     read_suffix_polys: Vec<InstructionReadRafReadTablePhase<F>>,
 }
 
-struct InstructionReadRafReadTablePhase<F: Field> {
-    table: LookupTableKind<64>,
-    suffix_polys: Vec<Vec<F>>,
+pub(crate) struct InstructionReadRafReadTablePhase<F: Field> {
+    pub(crate) table: LookupTableKind<64>,
+    pub(crate) suffix_polys: Vec<Vec<F>>,
 }
 
 struct InstructionReadRafCycleState<F: Field> {
@@ -1523,6 +1696,10 @@ struct InstructionReadRafCycleState<F: Field> {
     fixed_factor_scratch: Vec<Vec<F>>,
     ra_factors: InstructionReadRafCycleRaFactors<F>,
     split_eq: GruenSplitEqPolynomial<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaInstructionRafCycleSparse>,
+    #[cfg(feature = "cuda")]
+    cuda_eq: Option<crate::split_eq::CudaGruenSplitEq>,
 }
 
 enum InstructionReadRafCycleRaFactors<F: Field> {
@@ -1552,11 +1729,40 @@ enum InstructionReadRafCycleRaFactors<F: Field> {
 }
 
 impl<F: Field> DenseStage5State<F> {
-    fn new(
+    fn new_with_backend(
         factors: Vec<Vec<F>>,
         terms: Vec<DenseTerm<F>>,
         outputs: Vec<FactorOutput>,
         active_scale: F,
+        backend: &'static str,
+    ) -> Self {
+        let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            build_cuda_dense_state(&factors, &terms, active_scale)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
+        Self {
+            factors,
+            factor_scratch,
+            terms,
+            outputs,
+            active_scale,
+            #[cfg(feature = "cuda")]
+            cuda,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn from_host_and_cuda(
+        factors: Vec<Vec<F>>,
+        terms: Vec<DenseTerm<F>>,
+        outputs: Vec<FactorOutput>,
+        active_scale: F,
+        cuda: Option<cuda::CudaDenseState>,
     ) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
         Self {
@@ -1565,6 +1771,7 @@ impl<F: Field> DenseStage5State<F> {
             terms,
             outputs,
             active_scale,
+            cuda,
         }
     }
 
@@ -1573,6 +1780,20 @@ impl<F: Field> DenseStage5State<F> {
         previous_claim: F,
         relation: Stage5Relation,
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "stage5 relation input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
         let first_len = self.factors.first().map_or(0, Vec::len);
         if first_len == 0 || !first_len.is_power_of_two() {
             return Err(Stage5KernelError::InvalidProof {
@@ -1598,6 +1819,14 @@ impl<F: Field> DenseStage5State<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.factors.first().map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
             self.factors
                 .par_iter_mut()
@@ -1613,6 +1842,14 @@ impl<F: Field> DenseStage5State<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage5Relation) -> Result<F, Stage5KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(Ok(value)) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -1651,6 +1888,15 @@ impl<F: Field> InstructionReadRafStage5State<F> {
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
         if self.round < Self::LOG_K {
             self.ensure_address_phase();
+            #[cfg(feature = "cuda")]
+            if let Some(round_state) = self.cuda_address_round.as_ref() {
+                let previous_claim_fr = crate::cuda::into_fr(previous_claim)
+                    .unwrap_or_else(|| std::process::abort());
+                let poly = round_state
+                    .round_poly(previous_claim_fr)
+                    .unwrap_or_else(|_| std::process::abort());
+                return Ok(fr_poly_into::<F>(poly).unwrap_or_else(|| std::process::abort()));
+            }
             let Some(address_phase) = self.address_phase.as_ref() else {
                 std::process::abort();
             };
@@ -1717,7 +1963,18 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         if self.round < Self::LOG_K {
             self.ensure_address_phase();
             self.address_challenges.push(challenge);
-            if let Some(phase) = &mut self.address_phase {
+            #[cfg(feature = "cuda")]
+            let device_round = self.cuda_address_round.is_some();
+            #[cfg(not(feature = "cuda"))]
+            let device_round = false;
+            if device_round {
+                #[cfg(feature = "cuda")]
+                if let Some(round_state) = self.cuda_address_round.as_mut() {
+                    let challenge_fr = crate::cuda::into_fr(challenge)
+                        .unwrap_or_else(|| std::process::abort());
+                    round_state.bind(challenge_fr).unwrap_or_else(|_| std::process::abort());
+                }
+            } else if let Some(phase) = &mut self.address_phase {
                 phase.bind(challenge);
             }
             if (self.round + 1).is_multiple_of(Self::ADDRESS_CHUNK_BITS) {
@@ -1803,50 +2060,80 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let _span = trace_stage5_inner_spans().then(|| {
             tracing::info_span!("Stage5::instruction_read_raf.build_address_phase").entered()
         });
-        self.address_phase = Some(self.build_address_phase(phase));
+        #[cfg(feature = "cuda")]
+        let device_round = self.cuda_address.is_some();
+        #[cfg(not(feature = "cuda"))]
+        let device_round = false;
+        let built = self.build_address_phase(phase, device_round);
+        #[cfg(feature = "cuda")]
+        {
+            self.cuda_address_round = self.try_build_cuda_address_round(phase, &built);
+        }
+        self.address_phase = Some(built);
     }
 
-    fn build_address_phase(&self, phase: usize) -> InstructionReadRafAddressPhase<F> {
+    #[cfg(feature = "cuda")]
+    fn try_build_cuda_address_round(
+        &self,
+        phase: usize,
+        built: &InstructionReadRafAddressPhase<F>,
+    ) -> Option<cuda::CudaAddressPhaseRound> {
+        let state = self.cuda_address.as_ref()?;
         let chunk_bits = Self::ADDRESS_CHUNK_BITS;
         let poly_len = 1usize << chunk_bits;
         let suffix_len = Self::LOG_K - (phase + 1) * chunk_bits;
-        let left_operand_prefix =
-            operand_prefix_poly(self.left_operand_checkpoint, chunk_bits, true);
-        let right_operand_prefix =
-            operand_prefix_poly(self.right_operand_checkpoint, chunk_bits, false);
-        let identity_prefix = identity_prefix_poly(self.identity_checkpoint, chunk_bits);
-        let read_prefix_polys = {
-            let _span = trace_stage5_inner_spans().then(|| {
-                tracing::info_span!("Stage5::instruction_read_raf.build.read_prefix").entered()
-            });
-            ALL_PREFIXES
-                .par_iter()
-                .map(|prefix| {
-                    (0..poly_len)
-                        .map(|bits| {
-                            prefix
-                                .evaluate(
-                                    &self.read_prefix_checkpoints,
-                                    LookupBits::new(bits as u128, chunk_bits),
-                                    suffix_len,
-                                )
-                                .into_inner()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
-        };
 
+        let ctx = crate::cuda::shared_ctx()?;
+        let upload = |poly: &[F]| ctx.upload(crate::cuda::as_fr_slice(poly)?).ok();
+        let operand_prefixes = [
+            upload(&built.left_operand_prefix)?,
+            upload(&built.right_operand_prefix)?,
+            upload(&built.identity_prefix)?,
+        ];
+
+        let mut raf_banks = state.raf_banks_dev(suffix_len).ok()?;
         let shift_half_value = 1u128 << (suffix_len / 2);
         let shift_full_value = 1u128 << suffix_len;
-        let shift_half = F::from_u128(shift_half_value);
-        let shift_full = F::from_u128(shift_full_value);
-        let suffix_mask = if suffix_len == 128 {
-            u128::MAX
-        } else {
-            (1u128 << suffix_len) - 1
-        };
+        if shift_half_value != 1 {
+            ctx.mul_scalar(&mut raf_banks[0], Fr::from_u128(shift_half_value)).ok()?;
+        }
+        if shift_full_value != 1 {
+            ctx.mul_scalar(&mut raf_banks[3], Fr::from_u128(shift_full_value)).ok()?;
+        }
 
+        let read_prefix_flat: Vec<F> =
+            built.read_prefix_polys.iter().flatten().copied().collect();
+        let read_prefix_blob = upload(&read_prefix_flat)?;
+
+        let tables = LookupTableKind::<64>::all();
+        let mut table_variants = Vec::with_capacity(built.read_suffix_polys.len());
+        let mut read_suffix_banks = Vec::with_capacity(built.read_suffix_polys.len());
+        for read_table in &built.read_suffix_polys {
+            let variant = tables.iter().position(|t| *t == read_table.table)? as u32;
+            let table_index = variant as usize;
+            table_variants.push(variant);
+            read_suffix_banks.push(state.read_suffix_banks_dev(table_index, suffix_len).ok()?);
+        }
+
+        cuda::CudaAddressPhaseRound::new(
+            operand_prefixes,
+            raf_banks,
+            read_prefix_blob,
+            read_suffix_banks,
+            table_variants,
+            crate::cuda::into_fr(self.gamma)?,
+            crate::cuda::into_fr(self.gamma2)?,
+            crate::cuda::into_fr(self.active_scale)?,
+            poly_len,
+        )
+    }
+
+    fn build_raf_q_cpu(
+        &self,
+        poly_len: usize,
+        suffix_len: usize,
+        suffix_mask: u128,
+    ) -> [Vec<F>; 5] {
         let q_total_len = 5 * poly_len;
         let q_chunk_size = self
             .lookup_groups
@@ -1902,44 +2189,155 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                     },
                 )
         };
-        let mut raf_shift_half_q = q_rows[..poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let raf_left_q = q_rows[poly_len..2 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let raf_right_q = q_rows[2 * poly_len..3 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let mut raf_shift_full_q = q_rows[3 * poly_len..4 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        let raf_identity_q = q_rows[4 * poly_len..5 * poly_len]
-            .par_iter()
-            .copied()
-            .map(FieldScalarAccumulator::reduce)
-            .collect::<Vec<_>>();
-        if shift_half_value != 1 {
-            for value in &mut raf_shift_half_q {
-                *value *= shift_half;
+        let reduce_range = |range: std::ops::Range<usize>| {
+            q_rows[range]
+                .par_iter()
+                .copied()
+                .map(FieldScalarAccumulator::reduce)
+                .collect::<Vec<_>>()
+        };
+        [
+            reduce_range(0..poly_len),
+            reduce_range(poly_len..2 * poly_len),
+            reduce_range(2 * poly_len..3 * poly_len),
+            reduce_range(3 * poly_len..4 * poly_len),
+            reduce_range(4 * poly_len..5 * poly_len),
+        ]
+    }
+
+    fn build_address_phase(
+        &self,
+        phase: usize,
+        device_round: bool,
+    ) -> InstructionReadRafAddressPhase<F> {
+        let chunk_bits = Self::ADDRESS_CHUNK_BITS;
+        let poly_len = 1usize << chunk_bits;
+        let suffix_len = Self::LOG_K - (phase + 1) * chunk_bits;
+        let left_operand_prefix =
+            operand_prefix_poly(self.left_operand_checkpoint, chunk_bits, true);
+        let right_operand_prefix =
+            operand_prefix_poly(self.right_operand_checkpoint, chunk_bits, false);
+        let identity_prefix = identity_prefix_poly(self.identity_checkpoint, chunk_bits);
+        let read_prefix_polys = {
+            let _span = trace_stage5_inner_spans().then(|| {
+                tracing::info_span!("Stage5::instruction_read_raf.build.read_prefix").entered()
+            });
+            ALL_PREFIXES
+                .par_iter()
+                .map(|prefix| {
+                    (0..poly_len)
+                        .map(|bits| {
+                            prefix
+                                .evaluate(
+                                    &self.read_prefix_checkpoints,
+                                    LookupBits::new(bits as u128, chunk_bits),
+                                    suffix_len,
+                                )
+                                .into_inner()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let shift_half_value = 1u128 << (suffix_len / 2);
+        let shift_full_value = 1u128 << suffix_len;
+        let shift_half = F::from_u128(shift_half_value);
+        let shift_full = F::from_u128(shift_full_value);
+        let suffix_mask = if suffix_len == 128 {
+            u128::MAX
+        } else {
+            (1u128 << suffix_len) - 1
+        };
+
+        #[cfg(feature = "cuda")]
+        let cuda_raf: Option<[Vec<F>; 5]> = if device_round {
+            Some(std::array::from_fn(|_| Vec::new()))
+        } else {
+            self.cuda_address.as_ref().map(|state| {
+                let banks = state.raf_banks(suffix_len).unwrap_or_else(|_| std::process::abort());
+                let converted: Option<Vec<Vec<F>>> = banks
+                    .into_iter()
+                    .map(|bank| bank.into_iter().map(crate::cuda::fr_into::<F>).collect())
+                    .collect();
+                match converted.and_then(|v| <[Vec<F>; 5]>::try_from(v).ok()) {
+                    Some(arrays) => arrays,
+                    None => std::process::abort(),
+                }
+            })
+        };
+        #[cfg(not(feature = "cuda"))]
+        let cuda_raf: Option<[Vec<F>; 5]> = None;
+
+        #[cfg_attr(not(feature = "cuda"), expect(clippy::unnecessary_literal_unwrap))]
+        let [mut raf_shift_half_q, raf_left_q, raf_right_q, mut raf_shift_full_q, raf_identity_q] =
+            cuda_raf.unwrap_or_else(|| self.build_raf_q_cpu(poly_len, suffix_len, suffix_mask));
+
+        if !device_round {
+            if shift_half_value != 1 {
+                for value in &mut raf_shift_half_q {
+                    *value *= shift_half;
+                }
             }
-        }
-        if shift_full_value != 1 {
-            for value in &mut raf_shift_full_q {
-                *value *= shift_full;
+            if shift_full_value != 1 {
+                for value in &mut raf_shift_full_q {
+                    *value *= shift_full;
+                }
             }
         }
 
         let tables = LookupTableKind::<64>::all();
-        let read_suffix_polys = {
+
+        #[cfg(feature = "cuda")]
+        let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> = if device_round {
+            Some(
+                tables
+                    .iter()
+                    .enumerate()
+                    .filter(|(table_index, _)| {
+                        self.cuda_address
+                            .as_ref()
+                            .is_some_and(|state| !state.table_is_empty(*table_index))
+                    })
+                    .map(|(_, table)| InstructionReadRafReadTablePhase {
+                        table: *table,
+                        suffix_polys: Vec::new(),
+                    })
+                    .collect(),
+            )
+        } else {
+            self.cuda_address.as_ref().map(|state| {
+                tables
+                    .iter()
+                    .enumerate()
+                    .filter(|(table_index, _)| !state.table_is_empty(*table_index))
+                    .map(|(table_index, table)| {
+                        let banks = state
+                            .read_suffix_banks(table_index, suffix_len)
+                            .unwrap_or_else(|_| std::process::abort());
+                        let suffix_polys: Option<Vec<Vec<F>>> = banks
+                            .into_iter()
+                            .map(|bank| {
+                                bank.into_iter().map(crate::cuda::fr_into::<F>).collect()
+                            })
+                            .collect();
+                        match suffix_polys {
+                            Some(polys) => InstructionReadRafReadTablePhase {
+                                table: *table,
+                                suffix_polys: polys,
+                            },
+                            None => std::process::abort(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        #[cfg(not(feature = "cuda"))]
+        let cuda_read_suffix: Option<Vec<InstructionReadRafReadTablePhase<F>>> = None;
+
+        let read_suffix_polys = if let Some(polys) = cuda_read_suffix {
+            polys
+        } else {
             const MAX_SUFFIXES: usize = 4;
             let _span = trace_stage5_inner_spans().then(|| {
                 tracing::info_span!("Stage5::instruction_read_raf.build.read_suffix").entered()
@@ -2061,14 +2459,47 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let Some(phase) = self.address_phase.take() else {
             return;
         };
-        self.left_operand_checkpoint = phase.left_operand_prefix[0];
-        self.right_operand_checkpoint = phase.right_operand_prefix[0];
-        self.identity_checkpoint = phase.identity_prefix[0];
-        self.read_prefix_checkpoints = phase
-            .read_prefix_polys
-            .iter()
-            .map(|poly| PrefixEval::from(poly[0]))
-            .collect();
+
+        #[cfg(feature = "cuda")]
+        let device_round = self.cuda_address_round.take();
+        #[cfg(not(feature = "cuda"))]
+        let device_round: Option<()> = None;
+
+        if let Some(_round_state) = device_round {
+            #[cfg(feature = "cuda")]
+            {
+                let (left, right, identity) = _round_state
+                    .operand_checkpoints()
+                    .unwrap_or_else(|_| std::process::abort());
+                self.left_operand_checkpoint =
+                    crate::cuda::fr_into::<F>(left).unwrap_or_else(|| std::process::abort());
+                self.right_operand_checkpoint =
+                    crate::cuda::fr_into::<F>(right).unwrap_or_else(|| std::process::abort());
+                self.identity_checkpoint =
+                    crate::cuda::fr_into::<F>(identity).unwrap_or_else(|| std::process::abort());
+                let read_first = _round_state
+                    .read_prefix_first(NUM_PREFIXES)
+                    .unwrap_or_else(|_| std::process::abort());
+                self.read_prefix_checkpoints = read_first
+                    .into_iter()
+                    .map(|v| {
+                        PrefixEval::from(
+                            crate::cuda::fr_into::<F>(v)
+                                .unwrap_or_else(|| std::process::abort()),
+                        )
+                    })
+                    .collect();
+            }
+        } else {
+            self.left_operand_checkpoint = phase.left_operand_prefix[0];
+            self.right_operand_checkpoint = phase.right_operand_prefix[0];
+            self.identity_checkpoint = phase.identity_prefix[0];
+            self.read_prefix_checkpoints = phase
+                .read_prefix_polys
+                .iter()
+                .map(|poly| PrefixEval::from(poly[0]))
+                .collect();
+        }
 
         let chunk_bits = Self::ADDRESS_CHUNK_BITS;
         let start = phase.phase * chunk_bits;
@@ -2079,6 +2510,17 @@ impl<F: Field> InstructionReadRafStage5State<F> {
         let eq_table = (0..(1usize << chunk_bits))
             .map(|bits| eq_eval_at_bits(point, bits as u128, chunk_bits))
             .collect::<Vec<_>>();
+
+        #[cfg(feature = "cuda")]
+        if let Some(state) = self.cuda_address.as_mut() {
+            let eq_table_fr =
+                crate::cuda::as_fr_slice(&eq_table).unwrap_or_else(|| std::process::abort());
+            state
+                .advance_phase(eq_table_fr, shift, mask as usize)
+                .unwrap_or_else(|_| std::process::abort());
+            return;
+        }
+
         self.lookup_groups.par_iter_mut().for_each(|group| {
             let chunk_value = (group.lookup_index >> shift) & mask;
             group.phase_u_eval_sum *= eq_table[chunk_value as usize];
@@ -2094,23 +2536,89 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             self.address_challenges.len(),
         )?;
         let tables = LookupTableKind::<64>::all();
+        let table_count = tables.len();
         let ra_chunks = Self::LOG_K / self.ra_virtual_log_k_chunk;
-        let mut fixed_factors = Vec::with_capacity(2);
-        fixed_factors.push(self.u_evals.clone());
+
+        #[cfg(feature = "cuda")]
+        let use_per_cycle = self.cuda_address.is_some();
+        #[cfg(not(feature = "cuda"))]
+        let use_per_cycle = false;
+
+        let table_present: Vec<bool> = if use_per_cycle {
+            let mut present = vec![false; table_count];
+            for table_index in self.lookup_table_indices.iter().flatten() {
+                present[*table_index] = true;
+            }
+            present
+        } else {
+            (0..table_count)
+                .map(|table_index| !self.lookup_groups_by_table[table_index].is_empty())
+                .collect()
+        };
         let table_values_at_address = tables
             .par_iter()
             .enumerate()
             .map(|(table_index, table)| {
-                if self.lookup_groups_by_table[table_index].is_empty() {
-                    F::zero()
-                } else {
+                if table_present[table_index] {
                     table.evaluate_mle::<F, F>(&self.address_challenges)
+                } else {
+                    F::zero()
                 }
             })
             .collect::<Vec<_>>();
         let raf_interleaved = self.gamma * operand_polynomial_eval(&self.address_challenges, true)
             + self.gamma2 * operand_polynomial_eval(&self.address_challenges, false);
         let raf_identity = self.gamma2 * identity_polynomial_eval(&self.address_challenges);
+
+        let chunk_bits = self.ra_virtual_log_k_chunk;
+
+        #[cfg(feature = "cuda")]
+        if use_per_cycle && chunk_bits <= 16 && ra_chunks == 8 {
+            if let Some(state) = self.cuda_address.as_ref() {
+                let device = crate::cuda::xfer_stats::timed(
+                    crate::cuda::xfer_stats::Phase::Materialize,
+                    || {
+                        let tables = (0..ra_chunks)
+                            .map(|chunk| {
+                                let chunk_point = &self.address_challenges
+                                    [chunk * chunk_bits..(chunk + 1) * chunk_bits];
+                                EqPolynomial::<F>::evals(chunk_point, None)
+                            })
+                            .collect::<Vec<_>>();
+                        let values = state.cycle_chunk_values(ra_chunks, chunk_bits).ok()?;
+                        let table_index: Vec<u32> = self
+                            .lookup_table_indices
+                            .par_iter()
+                            .map(|table_index| {
+                                table_index.map_or(u32::MAX, |index| index as u32)
+                            })
+                            .collect();
+                        let ctx = crate::cuda::shared_ctx()?;
+                        let table_index_dev = ctx.upload_u32_slice(&table_index).ok()?;
+                        let combined = state
+                            .cycle_combined(
+                                &table_index_dev,
+                                crate::cuda::as_fr_slice(&table_values_at_address)?,
+                                crate::cuda::into_fr(raf_interleaved)?,
+                                crate::cuda::into_fr(raf_identity)?,
+                            )
+                            .ok()?;
+                        InstructionReadRafCycleState::new_device_native(
+                            &tables,
+                            values,
+                            combined,
+                            &self.r_reduction,
+                        )
+                    },
+                );
+                if let Some(state) = device {
+                    return Ok(state);
+                }
+            }
+        }
+
+        let mut fixed_factors = Vec::with_capacity(2);
+        fixed_factors.push(self.u_evals.clone());
         fixed_factors.push(
             (0..self.trace_len)
                 .into_par_iter()
@@ -2127,7 +2635,6 @@ impl<F: Field> InstructionReadRafStage5State<F> {
                 .collect(),
         );
 
-        let chunk_bits = self.ra_virtual_log_k_chunk;
         let ra_factors = if chunk_bits <= 16 {
             let tables = (0..ra_chunks)
                 .map(|chunk| {
@@ -2175,6 +2682,7 @@ impl<F: Field> InstructionReadRafStage5State<F> {
             ra_factors,
             &self.r_reduction,
             Stage5Relation::InstructionReadRaf,
+            self.backend,
         )
     }
 
@@ -2212,24 +2720,48 @@ impl<F: Field> InstructionReadRafStage5State<F> {
 
         let mut lookup_table_flags = vec![F::zero(); table_count];
         let mut instruction_raf_flag = F::zero();
-        let mut group_weights = vec![F::zero(); self.lookup_groups.len()];
-        for (&group_index, &weight) in self.lookup_group_indices_by_cycle.iter().zip(&cycle_eq) {
-            group_weights[group_index] += weight;
-        }
 
-        for (group, &weight) in self.lookup_groups.iter().zip(&group_weights) {
-            if let Some(table_index) = group.lookup_table_index {
-                let Some(flag) = lookup_table_flags.get_mut(table_index) else {
-                    return Err(Stage5KernelError::InvalidInputLength {
-                        input: "stage5.instruction_read_raf.lookup_table_indices",
-                        expected: table_count,
-                        actual: table_index + 1,
-                    });
-                };
-                *flag += weight;
+        #[cfg(feature = "cuda")]
+        let use_per_cycle = self.cuda_address.is_some();
+        #[cfg(not(feature = "cuda"))]
+        let use_per_cycle = false;
+
+        if use_per_cycle {
+            for (cycle, &weight) in cycle_eq.iter().enumerate().take(self.trace_len) {
+                if let Some(table_index) = self.lookup_table_indices[cycle] {
+                    let Some(flag) = lookup_table_flags.get_mut(table_index) else {
+                        return Err(Stage5KernelError::InvalidInputLength {
+                            input: "stage5.instruction_read_raf.lookup_table_indices",
+                            expected: table_count,
+                            actual: table_index + 1,
+                        });
+                    };
+                    *flag += weight;
+                }
+                if !self.is_interleaved_operands[cycle] {
+                    instruction_raf_flag += weight;
+                }
             }
-            if !group.is_interleaved_operands {
-                instruction_raf_flag += weight;
+        } else {
+            let mut group_weights = vec![F::zero(); self.lookup_groups.len()];
+            for (&group_index, &weight) in self.lookup_group_indices_by_cycle.iter().zip(&cycle_eq) {
+                group_weights[group_index] += weight;
+            }
+
+            for (group, &weight) in self.lookup_groups.iter().zip(&group_weights) {
+                if let Some(table_index) = group.lookup_table_index {
+                    let Some(flag) = lookup_table_flags.get_mut(table_index) else {
+                        return Err(Stage5KernelError::InvalidInputLength {
+                            input: "stage5.instruction_read_raf.lookup_table_indices",
+                            expected: table_count,
+                            actual: table_index + 1,
+                        });
+                    };
+                    *flag += weight;
+                }
+                if !group.is_interleaved_operands {
+                    instruction_raf_flag += weight;
+                }
             }
         }
 
@@ -2403,7 +2935,7 @@ impl<F: Field> InstructionReadRafAddressPhase<F> {
     }
 }
 
-fn read_table_component_eval<F: Field>(
+pub(crate) fn read_table_component_eval<F: Field>(
     read_table: &InstructionReadRafReadTablePhase<F>,
     half: usize,
     prefix_evals: &[PrefixPairEvals<F>],
@@ -2434,7 +2966,11 @@ fn read_table_component_eval<F: Field>(
 }
 
 #[inline]
-fn prefix_suffix_round_evals<F: Field>(prefix: Option<&[F]>, q0: &[F], q1: &[F]) -> (F, F) {
+pub(crate) fn prefix_suffix_round_evals<F: Field>(
+    prefix: Option<&[F]>,
+    q0: &[F],
+    q1: &[F],
+) -> (F, F) {
     let len = q0.len();
     debug_assert_eq!(q1.len(), len);
     debug_assert!(len > 1);
@@ -2486,6 +3022,7 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         ra_factors: InstructionReadRafCycleRaFactors<F>,
         r_reduction: &[F],
         relation: Stage5Relation,
+        backend: &'static str,
     ) -> Result<Self, Stage5KernelError> {
         let first_len = fixed_factors.first().map_or(0, Vec::len);
         if first_len == 0 || !first_len.is_power_of_two() {
@@ -2508,11 +3045,62 @@ impl<F: Field> InstructionReadRafCycleState<F> {
             r_reduction.len(),
         )?;
         let fixed_factor_scratch = (0..fixed_factors.len()).map(|_| Vec::new()).collect();
+        // The degree-9 cycle round poly uses fixed_factors[1] (combined) x 8 ra chunks.
+        // Only that shape is offloaded; ra_factors.len() must be 8.
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" && ra_factors.len() == 8 && fixed_factors.len() >= 2 {
+            crate::cuda::xfer_stats::timed(crate::cuda::xfer_stats::Phase::Materialize, || {
+                ra_factors
+                    .build_cuda_cycle_sparse(&fixed_factors[1])
+                    .or_else(|| {
+                        let chunk_vecs = ra_factors.dense_chunk_vecs();
+                        cuda::CudaInstructionRafCycleState::new(&fixed_factors[1], &chunk_vecs)
+                            .map(cuda::CudaInstructionRafCycleSparse::Dense)
+                    })
+            })
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
+        let split_eq = GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh);
+        #[cfg(feature = "cuda")]
+        let cuda_eq = if cuda.is_some() {
+            crate::cuda::shared_ctx()
+                .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &split_eq))
+        } else {
+            None
+        };
         Ok(Self {
             fixed_factors,
             fixed_factor_scratch,
             ra_factors,
-            split_eq: GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh),
+            split_eq,
+            #[cfg(feature = "cuda")]
+            cuda,
+            #[cfg(feature = "cuda")]
+            cuda_eq,
+        })
+    }
+
+    #[cfg(feature = "cuda")]
+    fn new_device_native(
+        tables: &[Vec<F>],
+        values: crate::cuda::CudaSlice<u16>,
+        combined: crate::cuda::DeviceFrVec,
+        r_reduction: &[F],
+    ) -> Option<Self> {
+        let cuda = cuda::CudaInstructionRafCycleSparse::from_round1_dev(tables, values, combined)?;
+        let split_eq = GruenSplitEqPolynomial::new(r_reduction, BindingOrder::LowToHigh);
+        let cuda_eq = crate::cuda::shared_ctx()
+            .and_then(|ctx| crate::split_eq::CudaGruenSplitEq::new(ctx, &split_eq))?;
+        Some(Self {
+            fixed_factors: Vec::new(),
+            fixed_factor_scratch: Vec::new(),
+            ra_factors: InstructionReadRafCycleRaFactors::dense(Vec::new()),
+            split_eq,
+            cuda: Some(cuda),
+            cuda_eq: Some(cuda_eq),
         })
     }
 
@@ -2522,6 +3110,27 @@ impl<F: Field> InstructionReadRafCycleState<F> {
         active_scale: F,
         relation: Stage5Relation,
     ) -> Result<UnivariatePoly<F>, Stage5KernelError> {
+        #[cfg(feature = "cuda")]
+        if let (Some(cuda), Some(cuda_eq)) = (&self.cuda, &self.cuda_eq) {
+            if let Some(raw) =
+                cuda.round_poly_evals(cuda_eq.e_in_dev(), cuda_eq.e_out_dev())
+            {
+                let evals = raw
+                    .into_iter()
+                    .map(|value| crate::cuda::fr_into::<F>(value).map(|value| value * active_scale))
+                    .collect::<Option<Vec<F>>>();
+                if let Some(evals) = evals {
+                    let poly = self.split_eq.gruen_poly_from_evals(&evals, previous_claim);
+                    check_round_claim(
+                        &poly,
+                        previous_claim,
+                        relation.symbol(),
+                        "instruction read raf cycle input claim mismatch",
+                    )?;
+                    return Ok(poly);
+                }
+            }
+        }
         let evals = self.round_quotient_evals(active_scale);
         let poly = self.split_eq.gruen_poly_from_evals(&evals, previous_claim);
         check_round_claim(
@@ -2534,6 +3143,14 @@ impl<F: Field> InstructionReadRafCycleState<F> {
     }
 
     fn factor_eval(&self, index: usize) -> Option<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if index >= 2 {
+                if let Some(Ok(value)) = cuda.chunk_first(index - 2) {
+                    return crate::cuda::fr_into::<F>(value);
+                }
+            }
+        }
         match index {
             0 | 1 => self
                 .fixed_factors
@@ -2630,6 +3247,18 @@ impl<F: Field> InstructionReadRafCycleState<F> {
 
     fn bind(&mut self, challenge: F) {
         self.split_eq.bind(challenge);
+        #[cfg(feature = "cuda")]
+        if let Some(cuda_eq) = &mut self.cuda_eq {
+            cuda_eq.sync_to_host(&self.split_eq);
+        }
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    return;
+                }
+            }
+        }
         if self.fixed_factors.get(1).map_or(0, Vec::len) / 2 >= DENSE_BIND_PAR_THRESHOLD {
             self.fixed_factors[1..]
                 .par_iter_mut()
@@ -2731,6 +3360,40 @@ impl<F: Field> InstructionReadRafCycleRaFactors<F> {
 
     fn factor_eval(&self, chunk: usize) -> Option<F> {
         (chunk < self.len()).then(|| self.get(chunk, 0))
+    }
+
+    #[cfg(feature = "cuda")]
+    fn dense_chunk_vecs(&self) -> Vec<Vec<F>> {
+        let len = self.current_len();
+        (0..self.len())
+            .map(|chunk| (0..len).map(|index| self.get(chunk, index)).collect())
+            .collect()
+    }
+
+    #[cfg(feature = "cuda")]
+    fn build_cuda_cycle_sparse(
+        &self,
+        combined: &[F],
+    ) -> Option<cuda::CudaInstructionRafCycleSparse> {
+        match self {
+            Self::SparseRound1 {
+                tables,
+                lookup_indices,
+                chunk_bits,
+            } => {
+                let num_chunks = tables.len();
+                let source_rows = lookup_indices.len();
+                let mut values = vec![0u16; num_chunks * source_rows];
+                for (chunk, chunk_values) in values.chunks_mut(source_rows).enumerate() {
+                    for (value, &lookup_index) in chunk_values.iter_mut().zip(lookup_indices) {
+                        *value = instruction_read_raf_lookup_chunk(lookup_index, chunk, *chunk_bits)
+                            as u16;
+                    }
+                }
+                cuda::CudaInstructionRafCycleSparse::from_round1(tables, &values, combined)
+            }
+            _ => None,
+        }
     }
 
     fn fill_eight_pairs(&self, row: usize, pairs: &mut [(F, F); 8]) {
@@ -3067,7 +3730,7 @@ fn instruction_read_raf_lookup_chunk(lookup_index: u128, chunk: usize, chunk_bit
 }
 
 #[inline(always)]
-fn eval_product_9<F: Field>(pairs: &[(F, F); 9]) -> [F; 9] {
+pub(crate) fn eval_product_9<F: Field>(pairs: &[(F, F); 9]) -> [F; 9] {
     let first = [
         pairs[0], pairs[1], pairs[2], pairs[3], pairs[4], pairs[5], pairs[6], pairs[7],
     ];
@@ -3187,6 +3850,7 @@ fn instruction_read_raf_state<F: Field>(
     inputs: &Stage5ProverInputs<'_, F>,
     store: &Stage5ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<InstructionReadRafStage5State<F>, Stage5KernelError> {
     const LOG_K: usize = 128;
     const XLEN: usize = 64;
@@ -3258,8 +3922,44 @@ fn instruction_read_raf_state<F: Field>(
     let ra_chunks = LOG_K / witness.ra_virtual_log_k_chunk;
     let outputs = instruction_read_raf_output_plans(program, claim, table_count, ra_chunks)?;
 
-    let (lookup_groups, lookup_group_indices_by_cycle) =
-        instruction_read_raf_lookup_groups(witness, &u_evals)?;
+    #[cfg(feature = "cuda")]
+    let cuda_address = if backend == "cuda" {
+        const ADDRESS_CHUNK_BITS: usize = 8;
+        let poly_len = 1usize << ADDRESS_CHUNK_BITS;
+        let table_suffix_codes: Option<Vec<Vec<u32>>> = LookupTableKind::<XLEN>::all()
+            .iter()
+            .map(|table| {
+                table
+                    .suffixes()
+                    .iter()
+                    .map(|suffix| crate::cuda::suffix_variant_code(*suffix))
+                    .collect::<Option<Vec<u32>>>()
+            })
+            .collect();
+        table_suffix_codes.and_then(|codes| {
+            cuda::CudaAddressPhaseState::new(
+                &u_evals,
+                witness.lookup_indices,
+                witness.lookup_table_indices,
+                witness.is_interleaved_operands,
+                codes,
+                poly_len,
+            )
+        })
+    } else {
+        None
+    };
+
+    #[cfg(feature = "cuda")]
+    let build_groups = cuda_address.is_none();
+    #[cfg(not(feature = "cuda"))]
+    let build_groups = true;
+
+    let (lookup_groups, lookup_group_indices_by_cycle) = if build_groups {
+        instruction_read_raf_lookup_groups(witness, &u_evals)?
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let mut lookup_groups_by_table = vec![Vec::new(); table_count];
     for (group_index, group) in lookup_groups.iter().enumerate() {
         if let Some(table_index) = group.lookup_table_index {
@@ -3294,6 +3994,11 @@ fn instruction_read_raf_state<F: Field>(
             .collect(),
         cycle_state: None,
         outputs,
+        backend,
+        #[cfg(feature = "cuda")]
+        cuda_address,
+        #[cfg(feature = "cuda")]
+        cuda_address_round: None,
     })
 }
 
@@ -3466,6 +4171,7 @@ fn ram_ra_claim_reduction_state<F: Field>(
     inputs: &Stage5ProverInputs<'_, F>,
     store: &Stage5ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<DenseStage5State<F>, Stage5KernelError> {
     let witness = inputs.ram_ra.ok_or(Stage5KernelError::MissingKernelInput {
         kernel: "jolt_stage5_batched",
@@ -3492,12 +4198,67 @@ fn ram_ra_claim_reduction_state<F: Field>(
     let (address_point, r_cycle_raf) = ram_raf_point.split_at(ram_rounds);
     let (_, r_cycle_rw) = ram_rw_point.split_at(ram_rounds);
     let (_, r_cycle_val) = ram_val_point.split_at(ram_rounds);
-    let address_eq = EqPolynomial::<F>::evals(address_point, None);
-    let ram_ra = ram_ra_at_address(witness, &address_eq)?;
     let gamma = store.scalar("stage5.ram_ra_claim_reduction.gamma")?;
     let gamma2 = store
         .try_scalar("stage5.ram_ra_claim_reduction.gamma2")
         .unwrap_or_else(|| gamma * gamma);
+
+    let terms = vec![DenseTerm {
+        coefficient: F::one(),
+        factors: vec![0, 1],
+    }];
+    let outputs = vec![FactorOutput {
+        name: "stage5.ram_ra_claim_reduction.eval.RamRa",
+        oracle: "RamRa",
+        factor: 1,
+    }];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = cuda_ram_ra_state_from_resident_addr(
+            address_point,
+            r_cycle_raf,
+            r_cycle_rw,
+            r_cycle_val,
+            gamma,
+            gamma2,
+            active_scale,
+            witness.trace_len,
+        ) {
+            return Ok(DenseStage5State::from_host_and_cuda(
+                vec![Vec::new(), Vec::new()],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
+    let address_eq = EqPolynomial::<F>::evals(address_point, None);
+    let ram_ra = ram_ra_at_address(witness, &address_eq)?;
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(cuda) = build_cuda_ram_ra_state(
+            r_cycle_raf,
+            r_cycle_rw,
+            r_cycle_val,
+            gamma,
+            gamma2,
+            &ram_ra,
+            active_scale,
+        ) {
+            return Ok(DenseStage5State::from_host_and_cuda(
+                vec![Vec::new(), ram_ra],
+                terms,
+                outputs,
+                active_scale,
+                Some(cuda),
+            ));
+        }
+    }
+
     let mut eq_combined = EqPolynomial::<F>::evals(r_cycle_raf, None);
     let eq_rw = EqPolynomial::<F>::evals(r_cycle_rw, None);
     let eq_val = EqPolynomial::<F>::evals(r_cycle_val, None);
@@ -3510,18 +4271,12 @@ fn ram_ra_claim_reduction_state<F: Field>(
         *combined += gamma * rw + gamma2 * val;
     }
 
-    Ok(DenseStage5State::new(
+    Ok(DenseStage5State::new_with_backend(
         vec![eq_combined, ram_ra],
-        vec![DenseTerm {
-            coefficient: F::one(),
-            factors: vec![0, 1],
-        }],
-        vec![FactorOutput {
-            name: "stage5.ram_ra_claim_reduction.eval.RamRa",
-            oracle: "RamRa",
-            factor: 1,
-        }],
+        terms,
+        outputs,
         active_scale,
+        backend,
     ))
 }
 
@@ -3586,6 +4341,7 @@ fn registers_val_evaluation_state<F: Field>(
     inputs: &Stage5ProverInputs<'_, F>,
     store: &Stage5ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<DenseStage5State<F>, Stage5KernelError> {
     let witness = inputs
         .registers_val
@@ -3614,6 +4370,46 @@ fn registers_val_evaluation_state<F: Field>(
     )?;
     let (address_point, cycle_point) = registers_val_point.split_at(register_rounds);
     let address_eq = EqPolynomial::<F>::evals(address_point, None);
+
+    let terms = vec![DenseTerm {
+        coefficient: F::one(),
+        factors: vec![0, 1, 2],
+    }];
+    let outputs = vec![
+        FactorOutput {
+            name: "stage5.registers_val_evaluation.eval.RdInc",
+            oracle: "RdInc",
+            factor: 0,
+        },
+        FactorOutput {
+            name: "stage5.registers_val_evaluation.eval.RdWa",
+            oracle: "RdWa",
+            factor: 1,
+        },
+    ];
+
+    #[cfg(feature = "cuda")]
+    if backend == "cuda" {
+        if let Some(rd_write_addresses) = witness.rd_write_addresses {
+            if let Some(cuda) = build_cuda_registers_val_state(
+                witness.rd_inc,
+                &address_eq,
+                rd_write_addresses,
+                witness.register_count,
+                cycle_point,
+                active_scale,
+            ) {
+                return Ok(DenseStage5State::from_host_and_cuda(
+                    vec![witness.rd_inc.to_vec(), Vec::new(), Vec::new()],
+                    terms,
+                    outputs,
+                    active_scale,
+                    Some(cuda),
+                ));
+            }
+        }
+    }
+
     let rd_wa_at_address = rd_wa_at_register_address(witness, &address_eq)?;
     let lt = lt_evals_big_endian(cycle_point);
     require_operand_count(
@@ -3622,25 +4418,12 @@ fn registers_val_evaluation_state<F: Field>(
         lt.len(),
     )?;
 
-    Ok(DenseStage5State::new(
+    Ok(DenseStage5State::new_with_backend(
         vec![witness.rd_inc.to_vec(), rd_wa_at_address, lt],
-        vec![DenseTerm {
-            coefficient: F::one(),
-            factors: vec![0, 1, 2],
-        }],
-        vec![
-            FactorOutput {
-                name: "stage5.registers_val_evaluation.eval.RdInc",
-                oracle: "RdInc",
-                factor: 0,
-            },
-            FactorOutput {
-                name: "stage5.registers_val_evaluation.eval.RdWa",
-                oracle: "RdWa",
-                factor: 1,
-            },
-        ],
+        terms,
+        outputs,
         active_scale,
+        backend,
     ))
 }
 

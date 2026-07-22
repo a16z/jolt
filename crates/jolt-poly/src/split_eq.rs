@@ -269,6 +269,26 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
     }
 
     #[inline]
+    pub fn e_in_levels(&self) -> &[Vec<F>] {
+        &self.e_in_vec
+    }
+
+    #[inline]
+    pub fn e_out_levels(&self) -> &[Vec<F>] {
+        &self.e_out_vec
+    }
+
+    #[inline]
+    pub fn e_in_num_levels(&self) -> usize {
+        self.e_in_vec.len()
+    }
+
+    #[inline]
+    pub fn e_out_num_levels(&self) -> usize {
+        self.e_out_vec.len()
+    }
+
+    #[inline]
     pub fn current_w(&self) -> F {
         match self.binding_order {
             BindingOrder::LowToHigh => self.w[self.current_index - 1],
