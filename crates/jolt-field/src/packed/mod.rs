@@ -18,7 +18,10 @@ pub(crate) mod neon;
 
 pub use ext::{PackedFpExt2, PackedFpExt4, PackedFpExt8};
 
-use crate::ext::{fp_ext8_mul_schedule, fp_ext8_square_schedule, FpExt2Config};
+use crate::ext::{
+    fp_ext4_mul_coeffs, fp_ext4_square_coeffs, fp_ext8_mul_schedule, fp_ext8_square_schedule,
+    FpExt2Config,
+};
 use crate::{FieldCore, Fp128, Fp32, Fp64};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::Zero;
@@ -125,45 +128,13 @@ pub trait PackedField:
     /// Backend hook for multiplying packed ring-subfield quartics.
     #[inline(always)]
     fn fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
-        let [a0, a1, a2, a3] = a;
-        let [b0, b1, b2, b3] = b;
-        let tail0 = a1 * b1 + a2 * b2 + a3 * b3;
-        [
-            a0 * b0 + tail0 + tail0,
-            a0 * b1 + a1 * b0 + a1 * b2 + a2 * b1 + a2 * b3 + a3 * b2,
-            a0 * b2 + a2 * b0 + a1 * b1 + a1 * b3 + a3 * b1 - a3 * b3,
-            a0 * b3 + a3 * b0 + a1 * b2 + a2 * b1 - a2 * b3 - a3 * b2,
-        ]
+        fp_ext4_mul_coeffs::<Self>(a, b)
     }
 
     /// Backend hook for squaring packed ring-subfield quartics.
     #[inline(always)]
     fn fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
-        let [a0, a1, a2, a3] = a;
-        let x0 = a0;
-        let x1 = a2;
-        let y0 = a1 - a3;
-        let y1 = a3;
-
-        let x0x1 = x0 * x1;
-        let y0y1 = y0 * y1;
-        let x1_square = x1 * x1;
-        let y1_square = y1 * y1;
-        let aa = (x0 * x0 + x1_square + x1_square, x0x1 + x0x1);
-        let bb = (y0 * y0 + y1_square + y1_square, y0y1 + y0y1);
-
-        let v0 = x0 * y0;
-        let v1 = x1 * y1;
-        let ab = (v0 + v1 + v1, (x0 + x1) * (y0 + y1) - v0 - v1);
-        let constant = (bb.0 + bb.0 + bb.1 + bb.1, bb.0 + bb.1 + bb.1);
-        let coeff_e1 = (ab.0 + ab.0, ab.1 + ab.1);
-
-        [
-            aa.0 + constant.0,
-            coeff_e1.0 + coeff_e1.1,
-            aa.1 + constant.1,
-            coeff_e1.1,
-        ]
+        fp_ext4_square_coeffs::<Self>(a)
     }
 
     /// Backend hook for inverting packed ring-subfield quartics.

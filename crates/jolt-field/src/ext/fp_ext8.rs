@@ -126,22 +126,9 @@ where
 }
 
 #[inline(always)]
-fn fp_ext8_mul_coeffs<F: FieldCore>(a: [F; 8], b: [F; 8]) -> [F; 8] {
+pub(crate) fn fp_ext8_mul_coeffs<F: FieldCore>(a: [F; 8], b: [F; 8]) -> [F; 8] {
     fp_ext8_mul_schedule(a, b, F::zero(), |x, y| x + y, |x, y| x - y, |x, y| x * y)
 }
-
-/// Backend hook for scalar ring-subfield degree-8 multiplication.
-pub trait FpExt8MulBackend: FieldCore {
-    /// Multiply coefficient arrays in `[1, e1, ..., e7]` basis.
-    #[inline(always)]
-    fn fp_ext8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        fp_ext8_mul_coeffs::<Self>(a, b)
-    }
-}
-
-impl<const P: u32> FpExt8MulBackend for Fp32<P> {}
-impl<const P: u64> FpExt8MulBackend for Fp64<P> {}
-impl<const P: u128> FpExt8MulBackend for Fp128<P> {}
 
 /// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -292,7 +279,7 @@ impl<F: FieldCore> SubAssign for FpExt8<F> {
     }
 }
 
-impl<F: FpExt8MulBackend> Mul for FpExt8<F> {
+impl<F: ExtMulBackend> Mul for FpExt8<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -301,7 +288,7 @@ impl<F: FpExt8MulBackend> Mul for FpExt8<F> {
     }
 }
 
-impl<F: FpExt8MulBackend> MulAssign for FpExt8<F> {
+impl<F: ExtMulBackend> MulAssign for FpExt8<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
@@ -324,7 +311,7 @@ impl<'a, F: FieldCore> Sub<&'a Self> for FpExt8<F> {
     }
 }
 
-impl<'a, F: FpExt8MulBackend> Mul<&'a Self> for FpExt8<F> {
+impl<'a, F: ExtMulBackend> Mul<&'a Self> for FpExt8<F> {
     type Output = Self;
 
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -332,14 +319,14 @@ impl<'a, F: FpExt8MulBackend> Mul<&'a Self> for FpExt8<F> {
     }
 }
 
-impl<F: FieldCore + FpExt8MulBackend> RingCore for FpExt8<F> {
+impl<F: FieldCore + ExtMulBackend> RingCore for FpExt8<F> {
     #[inline(always)]
     fn square(&self) -> Self {
         *self * *self
     }
 }
 
-impl<F: FieldCore + FpExt8MulBackend> FieldCore for FpExt8<F> {
+impl<F: FieldCore + ExtMulBackend> FieldCore for FpExt8<F> {
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self::new(std::array::from_fn(|_| F::random(rng)))
     }
@@ -391,14 +378,14 @@ impl<F: FieldCore + FpExt8MulBackend> FieldCore for FpExt8<F> {
     }
 }
 
-impl<F: HalvingField + FpExt8MulBackend> HalvingField for FpExt8<F> {
+impl<F: HalvingField + ExtMulBackend> HalvingField for FpExt8<F> {
     #[inline]
     fn half(self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i].half()))
     }
 }
 
-impl<F: FieldCore + FromPrimitiveInt + FpExt8MulBackend> FromPrimitiveInt for FpExt8<F> {
+impl<F: FieldCore + FromPrimitiveInt + ExtMulBackend> FromPrimitiveInt for FpExt8<F> {
     fn from_u64(val: u64) -> Self {
         Self::from_u64(val)
     }

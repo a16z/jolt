@@ -8,7 +8,7 @@
 use super::*;
 use crate::ext::lift::{
     canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
-    ExtField, FrobeniusExtField,
+    ExtField,
 };
 use crate::Fp64;
 use crate::{FieldCore, FromPrimitiveInt};
@@ -180,16 +180,10 @@ fn fp_ext8_inv() {
 #[test]
 fn frobenius_fp_ext2_is_conjugation() {
     let x = E2::new(F::from_u64(13), F::from_u64(21));
-    assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 0), x);
-    assert_eq!(
-        <E2 as FrobeniusExtField<F>>::frobenius_pow(x, 1),
-        x.conjugate()
-    );
-    assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 2), x);
-    assert_eq!(
-        <E2 as FrobeniusExtField<F>>::frobenius_inv_pow(x, 1),
-        x.conjugate()
-    );
+    assert_eq!(<E2 as ExtField<F>>::frobenius_pow(x, 0), x);
+    assert_eq!(<E2 as ExtField<F>>::frobenius_pow(x, 1), x.conjugate());
+    assert_eq!(<E2 as ExtField<F>>::frobenius_pow(x, 2), x);
+    assert_eq!(<E2 as ExtField<F>>::frobenius_inv_pow(x, 1), x.conjugate());
 }
 
 #[test]
@@ -206,7 +200,7 @@ fn canonical_moore_thetas_solve_fp_ext2() {
                 .iter()
                 .zip(z.iter())
                 .fold(E2::zero(), |acc, (&theta, &z_h)| {
-                    acc + <E2 as FrobeniusExtField<F>>::frobenius_inv_pow(theta, row) * z_h
+                    acc + <E2 as ExtField<F>>::frobenius_inv_pow(theta, row) * z_h
                 })
         })
         .collect::<Vec<_>>();

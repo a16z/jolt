@@ -85,12 +85,12 @@ fn fp32_modulus_bits<const P: u32>() -> u32 {
     32 - P.leading_zeros()
 }
 
-/// Backend hook for scalar ring-subfield quartic multiplication.
+/// Backend hook for scalar ring-subfield extension multiplication (degree 4 and 8).
 ///
 /// The default is the generic coefficient formula. Concrete base fields can
 /// override this when their representation supports fusing product sums before
 /// reduction.
-pub trait FpExt4MulBackend: FieldCore {
+pub trait ExtMulBackend: FieldCore {
     /// Multiply two ring-subfield coefficient arrays in `[1, e1, e2, e3]` basis.
     #[inline(always)]
     fn fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
@@ -102,12 +102,18 @@ pub trait FpExt4MulBackend: FieldCore {
     fn fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
         fp_ext4_square_coeffs::<Self>(a)
     }
+
+    /// Multiply coefficient arrays in `[1, e1, ..., e7]` basis.
+    #[inline(always)]
+    fn fp_ext8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        fp_ext8_mul_coeffs::<Self>(a, b)
+    }
 }
 
-impl<const P: u64> FpExt4MulBackend for Fp64<P> {}
-impl<const P: u128> FpExt4MulBackend for Fp128<P> {}
+impl<const P: u64> ExtMulBackend for Fp64<P> {}
+impl<const P: u128> ExtMulBackend for Fp128<P> {}
 
-impl<const P: u32> FpExt4MulBackend for Fp32<P> {
+impl<const P: u32> ExtMulBackend for Fp32<P> {
     #[inline(always)]
     fn fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
@@ -398,7 +404,7 @@ impl<F: FieldCore> SubAssign for FpExt4<F> {
     }
 }
 
-impl<F: FpExt4MulBackend> Mul for FpExt4<F> {
+impl<F: ExtMulBackend> Mul for FpExt4<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -407,7 +413,7 @@ impl<F: FpExt4MulBackend> Mul for FpExt4<F> {
     }
 }
 
-impl<F: FpExt4MulBackend> MulAssign for FpExt4<F> {
+impl<F: ExtMulBackend> MulAssign for FpExt4<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
@@ -430,7 +436,7 @@ impl<'a, F: FieldCore> Sub<&'a Self> for FpExt4<F> {
     }
 }
 
-impl<'a, F: FpExt4MulBackend> Mul<&'a Self> for FpExt4<F> {
+impl<'a, F: ExtMulBackend> Mul<&'a Self> for FpExt4<F> {
     type Output = Self;
 
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -438,14 +444,14 @@ impl<'a, F: FpExt4MulBackend> Mul<&'a Self> for FpExt4<F> {
     }
 }
 
-impl<F: FieldCore + FpExt4MulBackend> RingCore for FpExt4<F> {
+impl<F: FieldCore + ExtMulBackend> RingCore for FpExt4<F> {
     #[inline(always)]
     fn square(&self) -> Self {
         Self::new(F::fp_ext4_square(self.coeffs))
     }
 }
 
-impl<F: FieldCore + FpExt4MulBackend> FieldCore for FpExt4<F> {
+impl<F: FieldCore + ExtMulBackend> FieldCore for FpExt4<F> {
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self::new(std::array::from_fn(|_| F::random(rng)))
     }
@@ -478,14 +484,14 @@ impl<F: FieldCore + FpExt4MulBackend> FieldCore for FpExt4<F> {
     }
 }
 
-impl<F: HalvingField + FpExt4MulBackend> HalvingField for FpExt4<F> {
+impl<F: HalvingField + ExtMulBackend> HalvingField for FpExt4<F> {
     #[inline]
     fn half(self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i].half()))
     }
 }
 
-impl<F: FieldCore + FromPrimitiveInt + FpExt4MulBackend> FromPrimitiveInt for FpExt4<F> {
+impl<F: FieldCore + FromPrimitiveInt + ExtMulBackend> FromPrimitiveInt for FpExt4<F> {
     fn from_u64(val: u64) -> Self {
         Self::from_u64(val)
     }

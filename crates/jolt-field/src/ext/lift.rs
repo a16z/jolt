@@ -1,4 +1,4 @@
-//! Helpers for embedding base fields into extension fields.
+//! The extension-field abstraction over a base field.
 //!
 //! [`FpExt4`] and [`FpExt8`] use the cyclotomic ring-subfield basis aligned with
 //! trace reduction and production fp32 presets.
@@ -8,37 +8,33 @@
     reason = "registered pseudo-Mersenne parameters are a field-type invariant"
 )]
 
-use crate::ext::{FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend};
+use crate::ext::{ExtMulBackend, FpExt2, FpExt2Config, FpExt4, FpExt8};
 use crate::unreduced::HasUnreducedOps;
 use crate::{
     pseudo_mersenne_modulus, FieldCore, FieldError, FromPrimitiveInt, PseudoMersenneField,
 };
 
-/// Lift a base-field element into an extension field.
-///
-/// This is intentionally small: for extension towers we embed into the constant term.
-pub trait LiftBase<F: FieldCore>: FieldCore {
-    /// Embed `x ∈ F` as a constant in `Self`.
-    fn lift_base(x: F) -> Self;
-}
-
-/// Multiply an extension-field element by a base-field scalar.
-///
-/// This avoids materializing the base scalar as an extension element and then
-/// using a full extension multiply. For tower extensions this scales each
-/// base-field coordinate directly.
-pub trait MulBase<F: FieldCore>: FieldCore {
-    /// Return `self * x`, where `x` is interpreted as a base-field scalar.
-    fn mul_base(self, x: F) -> Self;
-}
-
 /// An algebraic extension of base field `F`.
 ///
-/// Provides the extension degree and a constructor from a slice of base-field
-/// coefficients (in the canonical basis `{1, u, u^2, ...}`).
-pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + MulBase<F> + FromPrimitiveInt {
+/// Provides the extension degree, embedding of and multiplication by base
+/// elements, coefficient access in the canonical basis `{1, u, u^2, ...}`,
+/// and Frobenius powers.
+pub trait ExtField<F: FieldCore>: FieldCore + FromPrimitiveInt {
     /// Extension degree: `[Self : F]`.
     const EXT_DEGREE: usize;
+
+    /// Embed `x ∈ F` as a constant in `Self`.
+    ///
+    /// This is intentionally small: for extension towers we embed into the
+    /// constant term.
+    fn lift_base(x: F) -> Self;
+
+    /// Return `self * x`, where `x` is interpreted as a base-field scalar.
+    ///
+    /// This avoids materializing the base scalar as an extension element and
+    /// then using a full extension multiply. For tower extensions this scales
+    /// each base-field coordinate directly.
+    fn mul_base(self, x: F) -> Self;
 
     /// Construct from a coefficient slice `[c0, c1, ..., c_{d-1}]`.
     ///
@@ -48,37 +44,13 @@ pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + MulBase<F> + FromPri
 
     /// Return base-field coefficients in the canonical basis.
     fn to_base_vec(&self) -> Vec<F>;
-}
 
-/// Deferred-reduction extension-times-base multiply.
-///
-/// `mul_base_to_product_accum` scales `self` by a base scalar `x` and writes the
-/// result into [`HasUnreducedOps::ProductAccum`] without reducing, so a batch of
-/// `E × F` products can be summed and reduced once. When
-/// [`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`] holds, the reduced sum equals
-/// the per-term [`MulBase::mul_base`] sum within the accumulator's headroom.
-///
-/// `E × F` has no cross terms, so the default body (lift `x` and reuse
-/// [`HasUnreducedOps::mul_to_product_accum`]) is correct everywhere; extensions
-/// whose product-accumulator layout admits cheaper coordinate scaling override it.
-pub trait MulBaseUnreduced<F: FieldCore>: ExtField<F> + HasUnreducedOps {
-    /// Accumulate `self * x` (extension times base scalar) without reducing.
-    #[inline]
-    fn mul_base_to_product_accum(self, x: F) -> Self::ProductAccum {
-        self.mul_to_product_accum(Self::lift_base(x))
-    }
-}
-
-impl<F: FieldCore + FromPrimitiveInt + HasUnreducedOps> MulBaseUnreduced<F> for F {}
-
-/// Frobenius operations for an extension field over `F`.
-///
-/// The default implementations below are intentionally algebraic rather than
-/// basis-specific: they raise to powers of the base-field modulus. Specialized
-/// extension types can add cheaper implementations later, but this gives the
-/// protocol a single auditable contract first.
-pub trait FrobeniusExtField<F: FieldCore>: ExtField<F> {
     /// Apply `x -> x^(q^power)`, where `q = |F|`.
+    ///
+    /// The provided implementations are intentionally algebraic rather than
+    /// basis-specific: they raise to powers of the base-field modulus.
+    /// Specialized extension types can add cheaper implementations later, but
+    /// this gives the protocol a single auditable contract first.
     fn frobenius_pow(self, power: usize) -> Self;
 
     /// Apply the inverse Frobenius power. Since `x -> x^q` has order
@@ -91,6 +63,27 @@ pub trait FrobeniusExtField<F: FieldCore>: ExtField<F> {
         self.frobenius_pow((degree - (power % degree)) % degree)
     }
 }
+
+/// Deferred-reduction extension-times-base multiply.
+///
+/// `mul_base_to_product_accum` scales `self` by a base scalar `x` and writes the
+/// result into [`HasUnreducedOps::ProductAccum`] without reducing, so a batch of
+/// `E × F` products can be summed and reduced once. When
+/// [`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`] holds, the reduced sum equals
+/// the per-term [`ExtField::mul_base`] sum within the accumulator's headroom.
+///
+/// `E × F` has no cross terms, so the default body (lift `x` and reuse
+/// [`HasUnreducedOps::mul_to_product_accum`]) is correct everywhere; extensions
+/// whose product-accumulator layout admits cheaper coordinate scaling override it.
+pub trait MulBaseUnreduced<F: FieldCore>: ExtField<F> + HasUnreducedOps {
+    /// Accumulate `self * x` (extension times base scalar) without reducing.
+    #[inline]
+    fn mul_base_to_product_accum(self, x: F) -> Self::ProductAccum {
+        self.mul_to_product_accum(Self::lift_base(x))
+    }
+}
+
+impl<F: PseudoMersenneField + HasUnreducedOps> MulBaseUnreduced<F> for F {}
 
 #[inline]
 fn field_pow_u128<E: FieldCore>(mut base: E, mut exp: u128) -> E {
@@ -122,48 +115,6 @@ where
         out = field_pow_u128(out, q);
     }
     out
-}
-
-impl<F> FrobeniusExtField<F> for F
-where
-    F: PseudoMersenneField,
-{
-    #[inline]
-    fn frobenius_pow(self, power: usize) -> Self {
-        let _ = power;
-        self
-    }
-}
-
-impl<F, C> FrobeniusExtField<F> for FpExt2<F, C>
-where
-    F: PseudoMersenneField,
-    C: FpExt2Config<F>,
-{
-    #[inline]
-    fn frobenius_pow(self, power: usize) -> Self {
-        frobenius_pow_via_base_modulus::<F, Self>(self, power)
-    }
-}
-
-impl<F> FrobeniusExtField<F> for FpExt4<F>
-where
-    F: PseudoMersenneField + FpExt4MulBackend,
-{
-    #[inline]
-    fn frobenius_pow(self, power: usize) -> Self {
-        frobenius_pow_via_base_modulus::<F, Self>(self, power)
-    }
-}
-
-impl<F> FrobeniusExtField<F> for FpExt8<F>
-where
-    F: PseudoMersenneField + FpExt8MulBackend,
-{
-    #[inline]
-    fn frobenius_pow(self, power: usize) -> Self {
-        frobenius_pow_via_base_modulus::<F, Self>(self, power)
-    }
 }
 
 /// Return the first `width` elements of the canonical extension basis.
@@ -209,7 +160,7 @@ where
 pub fn solve_frobenius_moore<F, E>(thetas: &[E], rhs: &[E]) -> Result<Vec<E>, FieldError>
 where
     F: PseudoMersenneField,
-    E: FrobeniusExtField<F>,
+    E: ExtField<F>,
 {
     let n = thetas.len();
     if rhs.len() != n {
@@ -274,7 +225,7 @@ where
 pub fn validate_canonical_frobenius_thetas<F, E>(width: usize) -> Result<(), FieldError>
 where
     F: PseudoMersenneField,
-    E: FrobeniusExtField<F>,
+    E: ExtField<F>,
 {
     let thetas = canonical_frobenius_thetas::<F, E>(width)?;
     let rhs = (0..width)
@@ -283,8 +234,18 @@ where
     solve_frobenius_moore::<F, E>(&thetas, &rhs).map(|_| ())
 }
 
-impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {
+impl<F: PseudoMersenneField> ExtField<F> for F {
     const EXT_DEGREE: usize = 1;
+
+    #[inline]
+    fn lift_base(x: F) -> Self {
+        x
+    }
+
+    #[inline]
+    fn mul_base(self, x: F) -> Self {
+        self * x
+    }
 
     #[inline]
     fn from_base_slice(coeffs: &[F]) -> Self {
@@ -296,14 +257,30 @@ impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {
     fn to_base_vec(&self) -> Vec<F> {
         vec![*self]
     }
+
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        let _ = power;
+        self
+    }
 }
 
 impl<F, C> ExtField<F> for FpExt2<F, C>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: PseudoMersenneField,
     C: FpExt2Config<F>,
 {
     const EXT_DEGREE: usize = 2;
+
+    #[inline]
+    fn lift_base(x: F) -> Self {
+        Self::new(x, F::zero())
+    }
+
+    #[inline]
+    fn mul_base(self, x: F) -> Self {
+        Self::new(self.coeffs[0] * x, self.coeffs[1] * x)
+    }
 
     #[inline]
     fn from_base_slice(coeffs: &[F]) -> Self {
@@ -315,13 +292,28 @@ where
     fn to_base_vec(&self) -> Vec<F> {
         vec![self.coeffs[0], self.coeffs[1]]
     }
+
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
+    }
 }
 
 impl<F> ExtField<F> for FpExt4<F>
 where
-    F: FieldCore + FromPrimitiveInt + FpExt4MulBackend,
+    F: PseudoMersenneField + ExtMulBackend,
 {
     const EXT_DEGREE: usize = 4;
+
+    #[inline]
+    fn lift_base(x: F) -> Self {
+        Self::new([x, F::zero(), F::zero(), F::zero()])
+    }
+
+    #[inline]
+    fn mul_base(self, x: F) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] * x))
+    }
 
     #[inline]
     fn from_base_slice(coeffs: &[F]) -> Self {
@@ -333,88 +325,19 @@ where
     fn to_base_vec(&self) -> Vec<F> {
         self.coeffs.to_vec()
     }
+
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
+    }
 }
 
 impl<F> ExtField<F> for FpExt8<F>
 where
-    F: FieldCore + FromPrimitiveInt + FpExt8MulBackend,
+    F: PseudoMersenneField + ExtMulBackend,
 {
     const EXT_DEGREE: usize = 8;
 
-    #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 8);
-        Self::new([
-            coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4], coeffs[5], coeffs[6], coeffs[7],
-        ])
-    }
-
-    #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
-    }
-}
-
-impl<F: FieldCore> LiftBase<F> for F {
-    #[inline]
-    fn lift_base(x: F) -> Self {
-        x
-    }
-}
-
-impl<F: FieldCore> MulBase<F> for F {
-    #[inline]
-    fn mul_base(self, x: F) -> Self {
-        self * x
-    }
-}
-
-impl<F, C> LiftBase<F> for FpExt2<F, C>
-where
-    F: FieldCore,
-    C: FpExt2Config<F>,
-{
-    #[inline]
-    fn lift_base(x: F) -> Self {
-        Self::new(x, F::zero())
-    }
-}
-
-impl<F, C> MulBase<F> for FpExt2<F, C>
-where
-    F: FieldCore,
-    C: FpExt2Config<F>,
-{
-    #[inline]
-    fn mul_base(self, x: F) -> Self {
-        Self::new(self.coeffs[0] * x, self.coeffs[1] * x)
-    }
-}
-
-impl<F> LiftBase<F> for FpExt4<F>
-where
-    F: FieldCore + FpExt4MulBackend,
-{
-    #[inline]
-    fn lift_base(x: F) -> Self {
-        Self::new([x, F::zero(), F::zero(), F::zero()])
-    }
-}
-
-impl<F> MulBase<F> for FpExt4<F>
-where
-    F: FieldCore + FpExt4MulBackend,
-{
-    #[inline]
-    fn mul_base(self, x: F) -> Self {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] * x))
-    }
-}
-
-impl<F> LiftBase<F> for FpExt8<F>
-where
-    F: FieldCore + FpExt8MulBackend,
-{
     #[inline]
     fn lift_base(x: F) -> Self {
         Self::new([
@@ -428,15 +351,28 @@ where
             F::zero(),
         ])
     }
-}
 
-impl<F> MulBase<F> for FpExt8<F>
-where
-    F: FieldCore + FpExt8MulBackend,
-{
     #[inline]
     fn mul_base(self, x: F) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i] * x))
+    }
+
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), 8);
+        Self::new([
+            coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4], coeffs[5], coeffs[6], coeffs[7],
+        ])
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        self.coeffs.to_vec()
+    }
+
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
     }
 }
 

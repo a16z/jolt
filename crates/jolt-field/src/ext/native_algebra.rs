@@ -11,7 +11,7 @@ use std::iter::{Product, Sum};
 
 use num_traits::{One, Zero};
 
-use super::{FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend};
+use super::{ExtMulBackend, FpExt2, FpExt2Config, FpExt4, FpExt8};
 use crate::{AdditiveGroup, FieldCore};
 
 // --- FpExt2 -----------------------------------------------------------------
@@ -88,7 +88,7 @@ impl<F: FieldCore> Zero for FpExt4<F> {
     }
 }
 
-impl<F: FieldCore + FpExt4MulBackend> One for FpExt4<F> {
+impl<F: FieldCore + ExtMulBackend> One for FpExt4<F> {
     #[inline]
     fn one() -> Self {
         Self::new([F::one(), F::zero(), F::zero(), F::zero()])
@@ -123,19 +123,19 @@ impl<'a, F: FieldCore> Sum<&'a Self> for FpExt4<F> {
     }
 }
 
-impl<F: FieldCore + FpExt4MulBackend> Product for FpExt4<F> {
+impl<F: FieldCore + ExtMulBackend> Product for FpExt4<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore + FpExt4MulBackend> Product<&'a Self> for FpExt4<F> {
+impl<'a, F: FieldCore + ExtMulBackend> Product<&'a Self> for FpExt4<F> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore + FpExt4MulBackend> AdditiveGroup for FpExt4<F> {}
+impl<F: FieldCore + ExtMulBackend> AdditiveGroup for FpExt4<F> {}
 
 // --- FpExt8 -----------------------------------------------------
 
@@ -160,7 +160,7 @@ impl<F: FieldCore> Zero for FpExt8<F> {
     }
 }
 
-impl<F: FieldCore + FpExt8MulBackend> One for FpExt8<F> {
+impl<F: FieldCore + ExtMulBackend> One for FpExt8<F> {
     #[inline]
     fn one() -> Self {
         Self::new([
@@ -211,16 +211,16 @@ impl<'a, F: FieldCore> Sum<&'a Self> for FpExt8<F> {
     }
 }
 
-impl<F: FieldCore + FpExt8MulBackend> Product for FpExt8<F> {
+impl<F: FieldCore + ExtMulBackend> Product for FpExt8<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore + FpExt8MulBackend> Product<&'a Self> for FpExt8<F> {
+impl<'a, F: FieldCore + ExtMulBackend> Product<&'a Self> for FpExt8<F> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore + FpExt8MulBackend> AdditiveGroup for FpExt8<F> {}
+impl<F: FieldCore + ExtMulBackend> AdditiveGroup for FpExt8<F> {}

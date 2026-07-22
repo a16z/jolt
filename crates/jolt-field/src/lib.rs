@@ -81,12 +81,10 @@ pub mod unreduced;
 #[cfg(feature = "solinas")]
 pub use ext::lift::{
     canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
-    ExtField, FrobeniusExtField, LiftBase, MulBase, MulBaseUnreduced,
+    ExtField, MulBaseUnreduced,
 };
 #[cfg(feature = "solinas")]
-pub use ext::{
-    Ext2, FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend, NegOneNr, TwoNr,
-};
+pub use ext::{Ext2, ExtMulBackend, FpExt2, FpExt2Config, FpExt4, FpExt8, NegOneNr, TwoNr};
 #[cfg(feature = "solinas")]
 pub use prime::{
     is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec, Fp128, Fp32,

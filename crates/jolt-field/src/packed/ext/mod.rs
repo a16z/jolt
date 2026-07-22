@@ -10,7 +10,7 @@
     reason = "manual Clone avoids adding irrelevant generic Clone bounds"
 )]
 
-use crate::ext::{FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend};
+use crate::ext::{ExtMulBackend, FpExt2, FpExt2Config, FpExt4, FpExt8};
 use crate::packed::{HasPacking, PackedField, PackedValue};
 use crate::FieldCore;
 use core::ops::{Add, Mul, Sub};
@@ -287,7 +287,7 @@ where
 
 impl<F, PF> PackedField for PackedFpExt4<F, PF>
 where
-    F: FieldCore + FpExt4MulBackend + 'static,
+    F: FieldCore + ExtMulBackend + 'static,
     PF: PackedField<Scalar = F>,
 {
     type Scalar = FpExt4<F>;
@@ -313,7 +313,7 @@ where
 
 impl<F> HasPacking for FpExt4<F>
 where
-    F: FieldCore + HasPacking + FpExt4MulBackend + 'static,
+    F: FieldCore + HasPacking + ExtMulBackend + 'static,
 {
     type Packing = PackedFpExt4<F, F::Packing>;
 }
@@ -434,7 +434,7 @@ where
 
 impl<F, PF> PackedField for PackedFpExt8<F, PF>
 where
-    F: FieldCore + FpExt8MulBackend + 'static,
+    F: FieldCore + ExtMulBackend + 'static,
     PF: PackedField<Scalar = F>,
 {
     type Scalar = FpExt8<F>;
@@ -471,7 +471,7 @@ where
 
 impl<F> HasPacking for FpExt8<F>
 where
-    F: FieldCore + HasPacking + FpExt8MulBackend + 'static,
+    F: FieldCore + HasPacking + ExtMulBackend + 'static,
 {
     type Packing = PackedFpExt8<F, F::Packing>;
 }
