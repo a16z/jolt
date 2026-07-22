@@ -68,20 +68,6 @@ pub enum KernelError<F: FieldCore> {
         got: usize,
     },
 
-    /// Final values were requested before every round was bound.
-    #[error("final table values requested with {remaining} unbound rounds")]
-    NotFullyBound { remaining: usize },
-
-    /// A bound derived table's final value disagrees with the verifier's
-    /// `derive_output_term` at the bound point — the hand-written table
-    /// resolver drifted from the relation's scalar path.
-    #[error("derived table {id:?} bound to {got}, but derive_output_term gives {expected}")]
-    DerivedTableDrift {
-        id: JoltDerivedId,
-        expected: F,
-        got: F,
-    },
-
     /// A capability the kernel does not implement yet. Recoverable in
     /// principle: a caller may retry the slot against a different backend.
     #[error("unsupported: {reason}")]

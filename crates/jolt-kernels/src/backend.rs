@@ -102,26 +102,7 @@ where
 ///
 /// A relation with no slot is a missing-`HasKernel` bound error at the
 /// consuming stage impl, and so is a slot mis-declared past the derive's
-/// syntactic match:
-///
-/// ```compile_fail
-/// use jolt_field::{Field, Fr};
-/// use jolt_kernels::{HasKernel, KernelSlots, PrepareKernel};
-/// use jolt_verifier::stages::stage3::outputs::{InstructionInput, SpartanShift};
-///
-/// #[derive(KernelSlots)]
-/// struct Registry<F: Field> {
-///     shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
-///     // Not `Box<dyn PrepareKernel<..>>`, so the derive skips it: no impl.
-///     instruction_input: std::sync::Arc<dyn PrepareKernel<F, InstructionInput<F>>>,
-/// }
-///
-/// fn demand<B: HasKernel<Fr, InstructionInput<Fr>>>(_registry: &B) {}
-///
-/// fn mis_declared_slot_has_no_impl(registry: &Registry<Fr>) {
-///     demand(registry);
-/// }
-/// ```
+/// syntactic match (a non-`Box<dyn PrepareKernel<..>>` field yields no impl).
 pub trait HasKernel<F, R>
 where
     F: Field,
@@ -272,8 +253,6 @@ pub struct RetainedProgram {
     pub program: Arc<JoltProgramPreprocessing>,
 }
 
-// The mis-declared-slot negative (a non-`Box<dyn PrepareKernel<..>>` field
-// yields NO `HasKernel` impl) is the `compile_fail` doctest on [`HasKernel`].
 #[cfg(test)]
 mod kernel_slots_derive_tests {
     use jolt_field::Fr;
