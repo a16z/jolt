@@ -1,10 +1,10 @@
-//! The committed-bytecode claim-reduction kernel (stage 6b cycle phase →
-//! stage 7 address phase): reduces the five staged `BytecodeValStage(i)`
-//! claims into per-chunk `BytecodeChunk(i)` openings over the shared
-//! precommitted schedule.
+//! The committed-bytecode claim-reduction kernel (stage 6b cycle phase;
+//! stage 7's address phase resumes from the parked carry): reduces the five
+//! staged `BytecodeValStage(i)` claims into per-chunk `BytecodeChunk(i)`
+//! openings over the shared precommitted schedule.
 //!
-//! The shared [`PrecommittedReductionKernel`](crate::precommitted_reduction)
-//! core runs over:
+//! The shared [`CycleReductionKernel`](crate::precommitted_reduction) runs
+//! over:
 //! - value table: the chunk-weight fold `Σ_c chunk_rbc_weight_c · chunk_c`
 //!   of the committed chunk coefficient grids,
 //! - eq table: `lane_weights[lane] · eq(r_bc)[cycle]` over the `(lane,
@@ -24,10 +24,9 @@ use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhase;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use super::precommitted_reduction::{permute_tables, PrecommittedReductionKernel};
 use super::views::eq_table;
 use crate::committed_program::{build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle};
-use crate::precommitted_reduction::{bytecode_reduction_cycle_kernel, PrecommittedReductionProver};
+use crate::precommitted_reduction::{permute_tables, CycleReductionKernel};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ReferenceBackend, RetainedProgram, SumcheckKernel,
 };
@@ -50,26 +49,21 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for ReferenceBac
             })?
             .program
             .clone();
-        let prover = bytecode_reduction_prover(
+        Ok(Box::new(bytecode_reduction_kernel(
             layout,
             inputs.relation.weights(),
             &program.bytecode.bytecode,
-        )?;
-        Ok(bytecode_reduction_cycle_kernel(
-            session,
-            prover,
-            layout.dimensions().has_address_phase(),
-        ))
+        )?))
     }
 }
 
-/// The two-phase committed-bytecode reduction prover — see the module doc for
-/// the value/eq/aux table construction.
-fn bytecode_reduction_prover<F: Field>(
+/// The committed-bytecode reduction's cycle-phase kernel — see the module doc
+/// for the value/eq/aux table construction.
+fn bytecode_reduction_kernel<F: Field>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
     bytecode: &[JoltInstructionRow],
-) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>> {
+) -> Result<CycleReductionKernel<F, BytecodeReductionCyclePhase<F>>, KernelError<F>> {
     let reduction = layout.precommitted().clone();
     let chunk_coeffs: Vec<Vec<F>> = build_committed_bytecode_chunk_coeffs(
         bytecode,
@@ -124,12 +118,7 @@ fn bytecode_reduction_prover<F: Field>(
             });
         }
     };
-    Ok(Box::new(PrecommittedReductionKernel::new(
-        reduction,
-        value,
-        eq,
-        permuted.collect(),
-    )?))
+    CycleReductionKernel::new(reduction, value, eq, permuted.collect())
 }
 
 /// The final per-chunk opening ids, in chunk order — the wire order of the

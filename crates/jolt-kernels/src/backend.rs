@@ -217,11 +217,13 @@ impl ProofSession {
     }
 
     /// Park `value` as a cross-stage carry, replacing any previous carry of
-    /// the same type. The producing side (a backend slot's `prepare` or an
-    /// earlier stage's kernel) parks; the consuming kernel's `prepare`
-    /// reclaims with [`take`](Self::take) — a missing or stale carry is a
-    /// proof-time [`KernelError`](crate::KernelError), the accepted cost of
-    /// keeping every batch member uniform.
+    /// the same type. The producing side (a stage front, a backend slot's
+    /// `prepare`, or a kernel's post-extraction
+    /// [`park_residue`](crate::SumcheckKernel::park_residue)) parks; the
+    /// consuming kernel's `prepare` reclaims with [`take`](Self::take) — a
+    /// missing or stale carry is a proof-time
+    /// [`KernelError`](crate::KernelError), the accepted cost of keeping
+    /// every batch member uniform.
     pub fn park<T: Any>(&mut self, value: T) {
         let _ = self.state.insert(TypeId::of::<T>(), Box::new(value));
     }

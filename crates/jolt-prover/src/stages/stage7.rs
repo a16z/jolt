@@ -6,9 +6,10 @@
 //! is present exactly when its layout is committed AND its schedule has
 //! active address rounds), the challenges come from the generated
 //! declaration-order draw, and the inputs from the promoted
-//! `stage7_input_values_from_upstream`. The address-phase members are the
-//! SAME two-phase objects stage 6b's cycle kernels bound and parked in the
-//! proof session — each `prepare` reclaims its carry and flips the phase.
+//! `stage7_input_values_from_upstream`. The address-phase members resume
+//! from the post-cycle bound state stage 6b's cycle kernels parked in the
+//! proof session (`park_residue`) — each `prepare` reclaims its carry by
+//! move and mounts a fresh address-phase kernel over it.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;

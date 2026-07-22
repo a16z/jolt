@@ -14,11 +14,12 @@
 //! reaches a kernel through the two other channels `prepare` receives:
 //! typed witness rows off the [`JoltVmWitnessPlane`](jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane)
 //! accessors, and [`ProofSession`] carries (prover-retained program data,
-//! parked at proof start; cross-stage kernel state). Only the bespoke slots
-//! keep hand-shaped trait modules at the crate root: the uni-skip fronts
-//! ([`uniskip`]), the two-batch precommitted reduction family
-//! ([`precommitted_reduction`]), commitment streaming, and the joint
-//! opening. Reference implementations live under [`reference`].
+//! parked at proof start; cross-stage kernel state, parked by
+//! `SumcheckKernel::park_residue` after extraction — the two-batch
+//! precommitted reduction family in [`precommitted_reduction`] is the
+//! carrier). Only the bespoke slots keep hand-shaped trait modules at the
+//! crate root: the uni-skip fronts ([`uniskip`]), commitment streaming, and
+//! the joint opening. Reference implementations live under [`reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness

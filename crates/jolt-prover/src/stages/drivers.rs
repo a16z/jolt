@@ -152,9 +152,9 @@ mod stage7 {
 /// present), and a session-carried member whose kernel is reclaimed from a
 /// [`ProofSession`](jolt_kernels::ProofSession) carry (the uni-skip-remainder
 /// / precommitted-span pattern) — driven end to end (head → prepare → round
-/// loop → typed extraction → shape validation → final-claim self-check →
-/// finish) and byte-compared against the generated `verify_clear` on a twin
-/// transcript.
+/// loop → typed extraction → per-member `park_residue` → shape validation →
+/// final-claim self-check → finish) and byte-compared against the generated
+/// `verify_clear` on a twin transcript.
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod twin_tests {
@@ -413,6 +413,11 @@ mod twin_tests {
             SumcheckOutputClaims::<Fr, R>::from_opening_values(|_| Some(value))
                 .map_err(SumcheckKernelError::from)
         }
+
+        fn park_residue(self: Box<Self>, session: &mut ProofSession) {
+            assert_eq!(self.evals.len(), 1, "kernel parked before fully bound");
+            log_residue(session, <R::Symbolic as SymbolicSumcheck>::id());
+        }
     }
 
     /// The prepare call order, recorded through the proof session (the
@@ -424,6 +429,19 @@ mod twin_tests {
     fn log_prepare(session: &mut ProofSession, member: &'static str) {
         session
             .state_or_insert_with(PrepareCallLog::default)
+            .0
+            .push(member);
+    }
+
+    /// The `park_residue` call order — the toy kernels' residue is a log
+    /// entry, pinning that the driver consumes every present member into the
+    /// session hook after extraction.
+    #[derive(Default)]
+    struct ResidueCallLog(Vec<JoltRelationId>);
+
+    fn log_residue(session: &mut ProofSession, member: JoltRelationId) {
+        session
+            .state_or_insert_with(ResidueCallLog::default)
             .0
             .push(member);
     }
@@ -591,8 +609,15 @@ mod twin_tests {
 
     /// Drive the macro-expanded `prove` and its `verify_clear` twin, assert
     /// byte-identical transcript states, and return the driver's output plus
-    /// the recorded prepare call order.
-    fn drive(beta: bool) -> (Proved<Fr, ToyDriverSumchecks<Fr>, Fr>, Vec<&'static str>) {
+    /// the recorded prepare and residue call orders.
+    #[expect(clippy::type_complexity)]
+    fn drive(
+        beta: bool,
+    ) -> (
+        Proved<Fr, ToyDriverSumchecks<Fr>, Fr>,
+        Vec<&'static str>,
+        Vec<JoltRelationId>,
+    ) {
         let sumchecks = fixture(beta);
         let inputs = inputs(beta);
         let kernels = toy_kernels();
@@ -650,25 +675,42 @@ mod twin_tests {
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
         let calls = session.take::<PrepareCallLog>().unwrap().0;
-        (proved, calls)
+        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        (proved, calls, residues)
     }
 
     #[test]
     fn driver_twin_with_present_option_member() {
-        let (proved, calls) = drive(true);
+        let (proved, calls, residues) = drive(true);
         // Prepare ran in declaration order.
         assert_eq!(calls, vec!["alpha", "beta", "gamma"]);
         assert!(proved.output_claims.beta.is_some());
         // Typed extraction filled every slot, the session carry included.
         assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
         assert_eq!(proved.output_claims.gamma.opening_values().len(), 1);
+        // The driver parked every member's residue, in declaration order.
+        assert_eq!(
+            residues,
+            vec![
+                JoltRelationId::RegistersValEvaluation,
+                JoltRelationId::RamValCheck,
+                JoltRelationId::SpartanShift,
+            ]
+        );
     }
 
     #[test]
     fn driver_twin_with_absent_option_member() {
-        let (proved, calls) = drive(false);
+        let (proved, calls, residues) = drive(false);
         assert_eq!(calls, vec!["alpha", "gamma"]);
         assert!(proved.output_claims.beta.is_none());
+        assert_eq!(
+            residues,
+            vec![
+                JoltRelationId::RegistersValEvaluation,
+                JoltRelationId::SpartanShift,
+            ]
+        );
     }
 
     /// A session-carried member with no parked carry fails at prepare with a

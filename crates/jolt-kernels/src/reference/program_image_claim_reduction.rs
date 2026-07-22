@@ -1,10 +1,10 @@
-//! The program-image claim-reduction kernel (stage 6b cycle phase → stage 7
-//! address phase): reduces the stage-4 `ProgramImageInitContributionRw`
-//! contribution into a final `ProgramImageInit` opening over the shared
-//! precommitted schedule.
+//! The program-image claim-reduction kernel (stage 6b cycle phase; stage 7's
+//! address phase resumes from the parked carry): reduces the stage-4
+//! `ProgramImageInitContributionRw` contribution into a final
+//! `ProgramImageInit` opening over the shared precommitted schedule.
 //!
-//! The shared [`PrecommittedReductionKernel`](crate::precommitted_reduction)
-//! core runs over the padded program-image word vector as the value table and
+//! The shared [`CycleReductionKernel`](crate::precommitted_reduction) runs
+//! over the padded program-image word vector as the value table and
 //! the SHIFTED eq slice `eq(r_addr_rw, start_index + ·)` (indices wrapping
 //! mod the RAM domain) as the eq table — the image occupies the RAM address
 //! block starting at `start_index`, so the slice makes `Σ value · eq` exactly
@@ -17,12 +17,9 @@ use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::ProgramImageReductionCyclePhase;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-use super::precommitted_reduction::{permute_tables, PrecommittedReductionKernel};
 use super::views::eq_table;
 use crate::committed_program::program_image_words_padded;
-use crate::precommitted_reduction::{
-    program_image_reduction_cycle_kernel, PrecommittedReductionProver,
-};
+use crate::precommitted_reduction::{permute_tables, CycleReductionKernel};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ReferenceBackend, RetainedProgram, SumcheckKernel,
 };
@@ -45,28 +42,23 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Referenc
             })?
             .program
             .clone();
-        let prover = program_image_reduction_prover(
+        Ok(Box::new(program_image_reduction_kernel(
             layout,
             inputs.relation.r_addr_rw(),
             layout.start_index(),
             &program.ram.bytecode_words,
-        )?;
-        Ok(program_image_reduction_cycle_kernel(
-            session,
-            prover,
-            layout.dimensions().has_address_phase(),
-        ))
+        )?))
     }
 }
 
-/// The two-phase program-image reduction prover — see the module doc for the
-/// value/eq table construction.
-fn program_image_reduction_prover<F: Field>(
+/// The program-image reduction's cycle-phase kernel — see the module doc for
+/// the value/eq table construction.
+fn program_image_reduction_kernel<F: Field>(
     layout: &ProgramImageClaimReductionLayout,
     r_addr_rw: &[F],
     start_index: usize,
     bytecode_words: &[u64],
-) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>> {
+) -> Result<CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>>, KernelError<F>> {
     let reduction = layout.precommitted().clone();
     let words = program_image_words_padded(bytecode_words);
     let padded_len = words.len();
@@ -104,10 +96,5 @@ fn program_image_reduction_prover<F: Field>(
             });
         }
     };
-    Ok(Box::new(PrecommittedReductionKernel::new(
-        reduction,
-        value,
-        eq,
-        Vec::new(),
-    )?))
+    CycleReductionKernel::new(reduction, value, eq, Vec::new())
 }

@@ -10,7 +10,9 @@
 //! (through [`KernelSource`], the per-stage `HasKernel` bound collector) →
 //! the engine round loop → derived opening points → per-member
 //! `validate_derived_tables` → typed extraction into the stage's
-//! `OutputClaims` aggregate → [`curate_opening_values`](StageProver::curate_opening_values)
+//! `OutputClaims` aggregate → per-member `park_residue` (cross-batch residues
+//! into the session; consumes the kernels, so it follows the borrowing
+//! extraction) → [`curate_opening_values`](StageProver::curate_opening_values)
 //! (default: the derive-generated canonical absorb order; curated stages
 //! override at the invocation site) → shape validation → the
 //! `expected_final_claim` hard self-check → `recorder.finish`. The recorder
@@ -293,6 +295,14 @@ macro_rules! __stage_member {
     (extract optional $member:ident) => {
         $crate::driver::extract_optional($member.as_deref_mut())?
     };
+    (park required $member:ident, $session:expr) => {
+        ::jolt_kernels::SumcheckKernel::park_residue($member, $session);
+    };
+    (park optional $member:ident, $session:expr) => {
+        if let ::core::option::Option::Some(__kernel) = $member {
+            ::jolt_kernels::SumcheckKernel::park_residue(__kernel, $session);
+        }
+    };
 }
 
 /// The output-shape leg of the generated driver, keyed by the derive-emitted
@@ -406,6 +416,7 @@ macro_rules! impl_stage_prover {
                 let mut __output_claims = $output_claims {
                     $($member: $crate::driver::__stage_member!(extract $presence $member),)+
                 };
+                $($crate::driver::__stage_member!(park $presence $member, session);)+
 
                 let __opening_values =
                     self.curate_opening_values(&mut __output_claims, &__output_points)?;

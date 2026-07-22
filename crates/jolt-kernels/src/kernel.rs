@@ -15,6 +15,8 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::VerifierError;
 
+use crate::ProofSession;
+
 /// Extraction/self-check failures a [`SumcheckKernel`] can surface: the
 /// kernel-side error vocabulary the generated prove drivers name. Deliberately
 /// small — compute-level failures (witness access, geometry) belong to
@@ -95,6 +97,15 @@ where
     ) -> Result<(), SumcheckKernelError<F>> {
         Ok(())
     }
+
+    /// Move any cross-batch residue this kernel carries into the session. The
+    /// generated stage drivers call it uniformly on every member, after typed
+    /// extraction and derived-table validation (both borrow the kernel; this
+    /// call consumes it, so it is necessarily last). The default parks
+    /// nothing; the stage-6b precommitted cycle kernels override it to park
+    /// their post-cycle bound state as plain owned data for stage 7's
+    /// address-phase `prepare` to reclaim.
+    fn park_residue(self: Box<Self>, _session: &mut ProofSession) {}
 }
 
 /// One batch member's prepare-time protocol inputs, bundled: the stage's

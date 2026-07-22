@@ -2,10 +2,11 @@
 //! phases, RAM Hamming booleanity, both RA virtualizations, the increment
 //! claim reduction, and the present precommitted claim-reduction cycle
 //! phases (advice, committed bytecode, program image — head-aligned
-//! members). A precommitted member's cycle kernel parks its shared two-phase
-//! state in the proof session; when the schedule has active address-phase
-//! rounds it stages its intermediate claim here and stage 7's address-phase
-//! member reclaims the carry.
+//! members). A precommitted member whose schedule has active address-phase
+//! rounds stages its intermediate claim here and — via the driver's uniform
+//! post-extraction `park_residue` hook — parks its post-cycle bound state in
+//! the proof session as plain data; stage 7's address-phase member reclaims
+//! the carry.
 //!
 //! Pure orchestration mirroring `stage6b::verify`: the bytecode gamma is
 //! carried from stage 6a's squeeze (no draw here), the instruction-RA and
@@ -50,8 +51,8 @@ use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 6b's outputs: the wire proof, the wire claims, and the verifier-typed
-/// cross-stage carrier stage 7 consumes. The precommitted reduction kernels
-/// that span into stage 7's address phase travel as `ProofSession` carries,
+/// cross-stage carrier stage 7 consumes. The precommitted reduction state
+/// that spans into stage 7's address phase travels as `ProofSession` carries,
 /// not output fields.
 pub struct Stage6bProverOutput<F: Field, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,

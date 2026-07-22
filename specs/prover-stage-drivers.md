@@ -74,10 +74,12 @@ Key abstractions introduced or modified:
   - *Typed witness rows* (stage-5 instruction read-RAF, stage-6 bytecode indices): fetched
     inside `prepare` through the witness plane's typed-row accessors.
   - *`ProofSession` residency*: prover-retained program data (bytecode rows for the stage-6
-    table folds) is parked in the session at proof start; uni-skip pre-phase instances and
-    the precommitted 6b→7 phase-spanning kernel state are parked by the front / the previous
-    stage's kernel and reclaimed by the next `prepare` — the session's documented purpose
-    ("cross-stage carries"). A missing or stale carry is a `KernelError` at proof time; the
+    table folds) is parked in the session at proof start; uni-skip pre-phase instances are
+    parked by the front, and the precommitted 6b→7 post-cycle bound state by the cycle
+    kernel's `park_residue` (the default-no-op `SumcheckKernel` hook the driver runs on
+    every member after extraction) — each reclaimed by the next `prepare`, the session's
+    documented purpose ("cross-stage carries"). Parked values are plain owned data, moved
+    in and moved out once. A missing or stale carry is a `KernelError` at proof time; the
     byte-diff harness and the toy-stage twins gate it.
   Only the non-sumcheck slots (`commit`, `joint_opening`) keep hand-shaped traits — they
   have no relation `R` to be universal over.
@@ -94,7 +96,9 @@ Key abstractions introduced or modified:
   PR kills.
 - **`SumcheckKernel<F>`** (jolt-kernels; né `ProveSumcheck`): the execution object — pairs
   the fused `ProveRounds` round interface with typed extraction (`output_claims()`,
-  `validate_derived_tables()`). Returns to jolt-kernels (its v0 home) together with
+  `validate_derived_tables()`) and the default-no-op cross-batch residue hook
+  (`park_residue(self: Box<Self>, &mut ProofSession)`, invoked by the driver on every
+  member after extraction). Returns to jolt-kernels (its v0 home) together with
   `SumcheckKernelError`: with the driver generated into jolt-prover, nothing in
   jolt-verifier needs to name it. Kernels own no relation copy — the stage's relation is the
   single source of geometry, threaded back through `validate_derived_tables`.
@@ -353,9 +357,10 @@ stage3_sumchecks_members!(impl_stage_prover);
 `kernels.kernel::<R>().prepare(session, witness, ProverInputs { .. })` in declaration order
 (`Option` members gated on presence, mismatched presence attributed to the member's relation
 id) → `prove_batch` → `derive_opening_points` → per-member `validate_derived_tables` → typed
-`output_claims()` into the aggregate → `validate_output_claims` → `expected_final_claim`
-hard check → `curate_opening_values` (default: generated canonical order) →
-`recorder.finish`.
+`output_claims()` into the aggregate → per-member `park_residue` (cross-batch residues into
+the session; the call consumes the kernel, so it follows the borrowing extraction) →
+`validate_output_claims` → `expected_final_claim` hard check → `curate_opening_values`
+(default: generated canonical order) → `recorder.finish`.
 
 **Edge classes and their mechanisms** (the exhaustive list; v1's `external` row replaced):
 
@@ -363,7 +368,7 @@ hard check → `curate_opening_values` (default: generated canonical order) →
 |---|---|
 | Mid-head hand draws (stage 2/6b fronts; stage 6a's booleanity reference draws since moved into its member's `draw_challenges` override) | Stay in `prove_stageX`, between `draw_challenges` and `prove` — same seam `verify` uses today. The derive's existing draw-suppression opt-outs are unchanged. |
 | Uni-skip pre-phases (stages 1–2) | The front runs the uni-skip round (`SpartanOuterInstance` etc.) and parks the bound instance in `ProofSession`; the remainder member is a regular batch member whose `PrepareKernel<F, OuterRemainder>::prepare` reclaims the instance and calls `into_remainder(&relation)`. |
-| Cross-batch 6b→7 precommitted carry | The 6b kernel parks its post-cycle bound state in `ProofSession` at extraction; stage 7's `PrepareKernel` for the address-phase relation reclaims it. Intermediate-vs-final wire claims (`has_address_phase()`) resolve inside the kernel's `output_claims()` — the layout lives on the relation. |
+| Cross-batch 6b→7 precommitted carry | The 6b cycle kernel's `park_residue` override — the default-no-op `SumcheckKernel` hook the driver invokes uniformly on every member after extraction — moves its post-cycle bound state (tables, running scale, schedule) into `ProofSession` as a plain owned carry keyed by the address-phase relation; stage 7's `PrepareKernel` reclaims it by move and mounts a fresh address-phase kernel. No live object spans the batches. Intermediate-vs-final wire claims (`has_address_phase()`) resolve inside the kernel's `output_claims()` — the layout lives on the relation. |
 | Output curation (6b opening-value dedup) | `curate_opening_values` override at the macro invocation site, calling the promoted `stage6b_opening_values`. The derive's `no_opening_values` opt-out continues to suppress the verify-side generated absorb for the same stages. |
 | Non-oracle witness channels (read-RAF rows, stage-6 bytecode indices, prover-retained program data) | Typed rows: fetched inside `prepare` via the witness plane's typed accessors. Program data: `ProofSession` residency established at proof start. Never a driver concern. |
 
