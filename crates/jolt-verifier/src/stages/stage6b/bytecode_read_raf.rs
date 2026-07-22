@@ -560,7 +560,7 @@ impl<F: Field> BytecodeReadRafCycle<F> {
         }
     }
 
-    pub fn stage_cycle_points(&self) -> &[Vec<F>; 5] {
+    pub fn stage_cycle_points(&self) -> &[Vec<F>; READ_RAF_CYCLE_STAGES] {
         match &self.variant {
             BytecodeReadRafCycleVariant::Full(relation) => &relation.stage_cycle_points,
             BytecodeReadRafCycleVariant::Committed(relation) => &relation.stage_cycle_points,
@@ -585,17 +585,17 @@ impl<F: Field> BytecodeReadRafCycle<F> {
     /// `BytecodeValStage` values the cycle kernel's tables carry. Full mode
     /// computes the fold at construction (clear only); committed mode's
     /// constants ARE the stage-6a staged raw values.
-    pub fn stage_values_at_r_address(&self) -> Result<[F; 5], VerifierError> {
+    pub fn stage_values_at_r_address(&self) -> Result<[F; NUM_BYTECODE_VAL_STAGES], VerifierError> {
         match &self.variant {
             BytecodeReadRafCycleVariant::Full(relation) => relation
                 .stage_values_at_r_address
                 .ok_or_else(|| public_input_failed("bytecode table fold is unavailable")),
             BytecodeReadRafCycleVariant::Committed(relation) => {
                 let staged: &[F] = &relation.val_stages;
-                let mut stage_values = [F::zero(); 5];
+                let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
                 if staged.len() != stage_values.len() {
                     return Err(public_input_failed(format!(
-                        "expected 5 staged bytecode val stages, got {}",
+                        "expected {NUM_BYTECODE_VAL_STAGES} staged bytecode val stages, got {}",
                         staged.len()
                     )));
                 }

@@ -88,6 +88,7 @@ pub struct UntrustedAdviceReconstructionChallenges<F> {
     pub gamma: F,
 }
 
+#[derive(Clone)]
 pub struct UntrustedAdviceReconstruction {
     shape: AdviceReconstructionDimensions,
 }
@@ -168,6 +169,7 @@ pub struct TrustedAdviceReconstructionInputClaims<C> {
     pub word: C,
 }
 
+#[derive(Clone)]
 pub struct TrustedAdviceReconstruction;
 
 impl SymbolicSumcheck for TrustedAdviceReconstruction {

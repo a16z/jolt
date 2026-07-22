@@ -90,7 +90,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 impl<F: Field> Booleanity<F> {
     pub fn dimensions(&self) -> BooleanityDimensions {
-        self.dimensions
+        *self.base_dimensions()
     }
 
     pub fn r_address(&self) -> &[F] {

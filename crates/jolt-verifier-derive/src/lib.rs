@@ -315,18 +315,29 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     });
     // The representative relation id used in a batch-level sumcheck error: the first
     // non-`Option` member (the batch's leading instance), matching the hand-written
-    // stages' choice. Falls back to the first member if every member is optional.
-    let stage_id_ident = plans
-        .iter()
-        .find(|plan| !plan.is_option)
-        .map_or(&plans[0].ident, |plan| &plan.ident);
+    // stages' choice. An all-optional batch has no instance to read at runtime, so
+    // it falls back to the first member's type-level id (the default
+    // `ConcreteSumcheck::id` body, which no impl overrides).
+    let stage_id_body = plans.iter().find(|plan| !plan.is_option).map_or_else(
+        || {
+            let instance = &plans[0].instance;
+            quote! {
+                <<#instance as #relations::ConcreteSumcheck<#f>>::Symbolic
+                    as ::jolt_claims::SymbolicSumcheck>::id()
+            }
+        },
+        |plan| {
+            let id = &plan.ident;
+            quote!(#relations::ConcreteSumcheck::id(&self.#id))
+        },
+    );
     let stage_relation_id_method = quote! {
         /// The batch's representative relation id for batch-level error
         /// attribution: the first non-`Option` member's relation id. The single
         /// source read by the generated verify drivers and by `jolt-prover`'s
         /// `impl_stage_prover!` expansion.
         pub fn stage_relation_id(&self) -> ::jolt_claims::protocols::jolt::JoltRelationId {
-            #relations::ConcreteSumcheck::id(&self.#stage_id_ident)
+            #stage_id_body
         }
     };
 
