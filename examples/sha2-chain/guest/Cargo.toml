@@ -8,7 +8,7 @@ guest = []
 field-inline = ["jolt/field-inline"]
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../crates/jolt-sdk", features = [] }
+jolt = { package = "jolt-sdk", path = "../../../crates/jolt-sdk" }
 jolt-inlines-sha2.workspace = true
 
 [lib]
