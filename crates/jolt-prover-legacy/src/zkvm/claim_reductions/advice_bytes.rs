@@ -123,16 +123,87 @@ impl<F: JoltField> SumcheckInstanceParams<F> for UntrustedAdviceReconstructionSu
     }
 }
 
+/// The prover never materializes the three cell-domain tables the relation is
+/// phrased over — at 1 MB advice those would be ~4 GiB *per kernel*. Instead
+/// it exploits their structure (the same one-hot machinery the trace columns
+/// use, adapted to this instance's rows-first binding order):
+///
+/// - the column is a strict K=256 one-hot, held as per-row sparse lane
+///   weights that start singleton and only densify as row rounds merge rows;
+/// - `eq(cell, r_ref)` factors as `eq_byte ⊗ eq_row`, and the hamming kernel
+///   is literally the same `eq_row` table;
+/// - the decode kernel factors as `value(byte) · (256^limb · eq_word)`.
+///
+/// The round polynomials are the same multilinear-extension sums as the dense
+/// form — same degree, rounds, and transcript — computed per row pair over
+/// the union of the two sparse lane supports (absent lanes contribute zero to
+/// both `kb·(B²−B)` and `kl·B`). After the `3 + word_vars` row rounds the
+/// state collapses to three 256-entry lane tables and binds densely.
 #[derive(Allocative)]
 pub struct UntrustedAdviceReconstructionSumcheckProver<F: JoltField> {
-    /// The 0/1 byte one-hot column over the cell domain.
-    bytes: MultilinearPolynomial<F>,
-    /// The booleanity kernel `eq(cell, r_ref)`.
-    k_bool: MultilinearPolynomial<F>,
-    /// The linear kernel `γ·eq_lw + γ²·id·place·eq_word`, multiplying the
-    /// column directly (the hamming and reconstruction legs).
-    k_lin: MultilinearPolynomial<F>,
+    phase: Phase<F>,
     pub params: UntrustedAdviceReconstructionSumcheckParams<F>,
+}
+
+#[derive(Allocative)]
+enum Phase<F: JoltField> {
+    /// The first `3 + word_vars` rounds bind the `(limb ‖ word)` row
+    /// variables (the cell domain's low bits under LowToHigh binding).
+    Rows {
+        /// Per merged row, the nonzero `(lane, weight)` pairs sorted by lane.
+        rows: Vec<Vec<(u8, F)>>,
+        /// `eq(row, r_ref_lw)` — the booleanity kernel's row factor and,
+        /// γ-scaled, the whole hamming kernel.
+        eq_row: MultilinearPolynomial<F>,
+        /// `256^limb · eq(word, r_word)` — the decode kernel's row factor.
+        pw_row: MultilinearPolynomial<F>,
+        /// `eq(byte, r_ref_byte)` over the 256 lanes; fixed until the lane
+        /// rounds.
+        eq_byte: Vec<F>,
+        /// `γ²·value(byte)` over the 256 lanes — the decode kernel's lane
+        /// factor, γ²-scaled once here.
+        value_byte: Vec<F>,
+    },
+    /// The last `BYTE_BITS` rounds bind the byte-lane variables densely over
+    /// 256-entry tables (the shape the dense implementation had, collapsed).
+    Lanes {
+        bytes: MultilinearPolynomial<F>,
+        k_bool: MultilinearPolynomial<F>,
+        k_lin: MultilinearPolynomial<F>,
+    },
+}
+
+/// Walks the union of two lane-sorted sparse rows, yielding each lane with
+/// its two weights (zero where absent). Both the round-message accumulation
+/// and the bind-merge consume the exact per-lane sequence the dense
+/// implementation saw, so sharing the walk keeps the two consensus-critical
+/// loops from drifting apart.
+fn for_each_lane_union<F: JoltField>(
+    lo: &[(u8, F)],
+    hi: &[(u8, F)],
+    mut visit: impl FnMut(u8, F, F),
+) {
+    let (mut i, mut j) = (0, 0);
+    while i < lo.len() || j < hi.len() {
+        // Lanes are u8, so u16::MAX is a safe exhausted-side sentinel.
+        let l0 = lo.get(i).map_or(u16::MAX, |&(lane, _)| lane as u16);
+        let l1 = hi.get(j).map_or(u16::MAX, |&(lane, _)| lane as u16);
+        match l0.cmp(&l1) {
+            std::cmp::Ordering::Less => {
+                visit(lo[i].0, lo[i].1, F::zero());
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                visit(hi[j].0, F::zero(), hi[j].1);
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                visit(lo[i].0, lo[i].1, hi[j].1);
+                i += 1;
+                j += 1;
+            }
+        }
+    }
 }
 
 impl<F: JoltField> UntrustedAdviceReconstructionSumcheckProver<F> {
@@ -150,40 +221,81 @@ impl<F: JoltField> UntrustedAdviceReconstructionSumcheckProver<F> {
         debug_assert!(words.len() <= 1 << word_vars);
         debug_assert_eq!(cell_vars, BYTE_BITS + limb_bits + word_vars);
 
-        let mut bytes = vec![0u8; 1 << cell_vars];
-        for limb in 0..WORD_BYTES {
-            for word_index in 0..(1usize << word_vars) {
+        // Rows past `words.len()` encode byte 0 hot, matching the committed
+        // column's padding (the shifted-zero encoding the hamming leg needs).
+        let rows: Vec<Vec<(u8, F)>> = (0..WORD_BYTES << word_vars)
+            .map(|row| {
+                let word_index = row & ((1 << word_vars) - 1);
+                let limb = row >> word_vars;
                 let byte = words
                     .get(word_index)
-                    .map_or(0, |word| (word >> (8 * limb)) as u8)
-                    as usize;
-                bytes[(((byte << limb_bits) | limb) << word_vars) | word_index] = 1;
-            }
-        }
+                    .map_or(0, |word| (word >> (8 * limb)) as u8);
+                vec![(byte, F::one())]
+            })
+            .collect();
 
-        let k_bool = EqPolynomial::<F>::evals(&params.r_reference);
-        let eq_lw = EqPolynomial::<F>::evals(&params.r_reference[BYTE_BITS..]);
+        let eq_byte = EqPolynomial::<F>::evals(&params.r_reference[..BYTE_BITS]);
+        let eq_row = EqPolynomial::<F>::evals(&params.r_reference[BYTE_BITS..]);
         let eq_word = EqPolynomial::<F>::evals(&params.r_word.r);
-        let gamma = params.gamma;
-        let gamma_squared = gamma * gamma;
-        let k_lin = (0..1usize << cell_vars)
+        let places: Vec<F> = (0..WORD_BYTES)
+            .map(|limb| F::from_u64(1u64 << (8 * limb)))
+            .collect();
+        let pw_row = (0..WORD_BYTES << word_vars)
             .into_par_iter()
-            .map(|cell| {
-                let word_index = cell & ((1 << word_vars) - 1);
-                let limb = (cell >> word_vars) & (WORD_BYTES - 1);
-                let symbol = cell >> (word_vars + limb_bits);
-                let place = F::from_u64(1u64 << (8 * limb));
-                gamma * eq_lw[cell & ((1 << (limb_bits + word_vars)) - 1)]
-                    + gamma_squared * F::from_u64(symbol as u64) * place * eq_word[word_index]
+            .map(|row| {
+                let word_index = row & ((1 << word_vars) - 1);
+                let limb = row >> word_vars;
+                places[limb] * eq_word[word_index]
             })
             .collect::<Vec<F>>();
+        let gamma_squared = params.gamma * params.gamma;
+        let value_byte: Vec<F> = (0..1u64 << BYTE_BITS)
+            .map(|lane| gamma_squared * F::from_u64(lane))
+            .collect();
 
         Self {
+            phase: Phase::Rows {
+                rows,
+                eq_row: MultilinearPolynomial::from(eq_row),
+                pw_row: MultilinearPolynomial::from(pw_row),
+                eq_byte,
+                value_byte,
+            },
+            params,
+        }
+    }
+
+    /// Collapses the fully-row-bound state to the three dense 256-entry lane
+    /// tables the last `BYTE_BITS` rounds bind.
+    fn transition_to_lanes(&mut self) {
+        let Phase::Rows {
+            rows,
+            eq_row,
+            pw_row,
+            eq_byte,
+            value_byte,
+        } = &self.phase
+        else {
+            unreachable!("the transition fires exactly once, at the end of the row rounds");
+        };
+        debug_assert_eq!(rows.len(), 1);
+        let e_row = eq_row.final_sumcheck_claim();
+        let p_row = pw_row.final_sumcheck_claim();
+        let mut bytes = vec![F::zero(); 1 << BYTE_BITS];
+        for &(lane, weight) in &rows[0] {
+            bytes[lane as usize] = weight;
+        }
+        let gamma_e = self.params.gamma * e_row;
+        let k_bool: Vec<F> = eq_byte.iter().map(|eq| *eq * e_row).collect();
+        let k_lin: Vec<F> = value_byte
+            .iter()
+            .map(|value| gamma_e + *value * p_row)
+            .collect();
+        self.phase = Phase::Lanes {
             bytes: MultilinearPolynomial::from(bytes),
             k_bool: MultilinearPolynomial::from(k_bool),
             k_lin: MultilinearPolynomial::from(k_lin),
-            params,
-        }
+        };
     }
 }
 
@@ -199,33 +311,68 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         name = "UntrustedAdviceReconstructionSumcheckProver::compute_message"
     )]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        let half = self.bytes.len() / 2;
-        let [eval_0, eval_2, eval_3] = (0..half)
-            .into_par_iter()
-            .map(|g| {
-                let b0 = self.bytes.get_bound_coeff(2 * g);
-                let b1 = self.bytes.get_bound_coeff(2 * g + 1);
-                let kb0 = self.k_bool.get_bound_coeff(2 * g);
-                let kb1 = self.k_bool.get_bound_coeff(2 * g + 1);
-                let kl0 = self.k_lin.get_bound_coeff(2 * g);
-                let kl1 = self.k_lin.get_bound_coeff(2 * g + 1);
-                let b_delta = b1 - b0;
-                let kb_delta = kb1 - kb0;
-                let kl_delta = kl1 - kl0;
-                let term = |b: F, kb: F, kl: F| kb * (b.square() - b) + kl * b;
-                let b2 = b1 + b_delta;
-                let b3 = b2 + b_delta;
-                [
-                    term(b0, kb0, kl0),
-                    term(b2, kb1 + kb_delta, kl1 + kl_delta),
-                    term(b3, kb1 + kb_delta + kb_delta, kl1 + kl_delta + kl_delta),
-                ]
-            })
-            .reduce(
-                || [F::zero(); 3],
-                |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-            );
-        UniPoly::from_evals(&[eval_0, previous_claim - eval_0, eval_2, eval_3])
+        let term = |b: F, kb: F, kl: F| kb * (b.square() - b) + kl * b;
+        let evals = match &self.phase {
+            Phase::Rows {
+                rows,
+                eq_row,
+                pw_row,
+                eq_byte,
+                value_byte,
+            } => {
+                let gamma = self.params.gamma;
+                (0..rows.len() / 2)
+                    .into_par_iter()
+                    .map(|p| {
+                        let e = eq_row.sumcheck_evals_array::<3>(p, BindingOrder::LowToHigh);
+                        let pw = pw_row.sumcheck_evals_array::<3>(p, BindingOrder::LowToHigh);
+                        // The hamming leg's per-pair factor, hoisted out of
+                        // the lane walk.
+                        let gamma_e = [gamma * e[0], gamma * e[1], gamma * e[2]];
+                        let mut acc = [F::zero(); 3];
+                        for_each_lane_union(&rows[2 * p], &rows[2 * p + 1], |lane, b0, b1| {
+                            let eq_b = eq_byte[lane as usize];
+                            let value = value_byte[lane as usize];
+                            let b_delta = b1 - b0;
+                            let (b2, b3) = (b1 + b_delta, b1 + b_delta + b_delta);
+                            // `b0` is exactly zero for lanes hot only in the
+                            // odd half; the point-0 term is then an exact
+                            // zero and is skipped.
+                            if !b0.is_zero() {
+                                acc[0] += term(b0, eq_b * e[0], gamma_e[0] + value * pw[0]);
+                            }
+                            acc[1] += term(b2, eq_b * e[1], gamma_e[1] + value * pw[1]);
+                            acc[2] += term(b3, eq_b * e[2], gamma_e[2] + value * pw[2]);
+                        });
+                        acc
+                    })
+                    .reduce(
+                        || [F::zero(); 3],
+                        |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+                    )
+            }
+            Phase::Lanes {
+                bytes,
+                k_bool,
+                k_lin,
+            } => (0..bytes.len() / 2)
+                .into_par_iter()
+                .map(|g| {
+                    let b = bytes.sumcheck_evals_array::<3>(g, BindingOrder::LowToHigh);
+                    let kb = k_bool.sumcheck_evals_array::<3>(g, BindingOrder::LowToHigh);
+                    let kl = k_lin.sumcheck_evals_array::<3>(g, BindingOrder::LowToHigh);
+                    [
+                        term(b[0], kb[0], kl[0]),
+                        term(b[1], kb[1], kl[1]),
+                        term(b[2], kb[2], kl[2]),
+                    ]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+                ),
+        };
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
     #[tracing::instrument(
@@ -233,9 +380,41 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         name = "UntrustedAdviceReconstructionSumcheckProver::ingest_challenge"
     )]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        self.bytes.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.k_bool.bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.k_lin.bind_parallel(r_j, BindingOrder::LowToHigh);
+        match &mut self.phase {
+            Phase::Rows {
+                rows,
+                eq_row,
+                pw_row,
+                ..
+            } => {
+                let merged_rows: Vec<Vec<(u8, F)>> = (0..rows.len() / 2)
+                    .into_par_iter()
+                    .map(|p| {
+                        let (lo, hi) = (&rows[2 * p], &rows[2 * p + 1]);
+                        let mut merged = Vec::with_capacity(lo.len() + hi.len());
+                        for_each_lane_union(lo, hi, |lane, w0, w1| {
+                            merged.push((lane, w0 + (w1 - w0) * r_j));
+                        });
+                        merged
+                    })
+                    .collect();
+                *rows = merged_rows;
+                eq_row.bind_parallel(r_j, BindingOrder::LowToHigh);
+                pw_row.bind_parallel(r_j, BindingOrder::LowToHigh);
+                if rows.len() == 1 {
+                    self.transition_to_lanes();
+                }
+            }
+            Phase::Lanes {
+                bytes,
+                k_bool,
+                k_lin,
+            } => {
+                bytes.bind_parallel(r_j, BindingOrder::LowToHigh);
+                k_bool.bind_parallel(r_j, BindingOrder::LowToHigh);
+                k_lin.bind_parallel(r_j, BindingOrder::LowToHigh);
+            }
+        }
     }
 
     fn cache_openings(
@@ -243,10 +422,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         accumulator: &mut ProverOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) {
+        let Phase::Lanes { bytes, .. } = &self.phase else {
+            unreachable!("cache_openings runs after every round is bound");
+        };
         accumulator.append_untrusted_advice(
             SumcheckId::UntrustedAdviceReconstruction,
             self.params.normalize_opening_point(sumcheck_challenges),
-            self.bytes.final_sumcheck_claim(),
+            bytes.final_sumcheck_claim(),
         );
     }
 
@@ -563,5 +745,161 @@ mod tests {
         }
         assert_eq!(cell_vars, opening_point.len());
         assert_eq!(bytes_claim, direct, "byte opening must decode the column");
+    }
+
+    /// The dense cell-domain tables the prover materialized before the
+    /// factored rewrite — kept as a reference oracle: the factored prover
+    /// must produce identical round polynomials and final opening claim.
+    struct DenseReference {
+        bytes: MultilinearPolynomial<Fr>,
+        k_bool: MultilinearPolynomial<Fr>,
+        k_lin: MultilinearPolynomial<Fr>,
+    }
+
+    impl DenseReference {
+        fn initialize(
+            params: &UntrustedAdviceReconstructionSumcheckParams<Fr>,
+            words: &[u64],
+        ) -> Self {
+            let word_vars = params.word_vars;
+            let limb_bits = WORD_BYTES.log_2();
+            let cell_vars = word_byte_num_vars(word_vars);
+            let mut bytes = vec![0u8; 1 << cell_vars];
+            for limb in 0..WORD_BYTES {
+                for word_index in 0..(1usize << word_vars) {
+                    let byte = words
+                        .get(word_index)
+                        .map_or(0, |word| (word >> (8 * limb)) as u8)
+                        as usize;
+                    bytes[(((byte << limb_bits) | limb) << word_vars) | word_index] = 1;
+                }
+            }
+            let k_bool = EqPolynomial::<Fr>::evals(&params.r_reference);
+            let eq_lw = EqPolynomial::<Fr>::evals(&params.r_reference[BYTE_BITS..]);
+            let eq_word = EqPolynomial::<Fr>::evals(&params.r_word.r);
+            let gamma = params.gamma;
+            let gamma_squared = gamma * gamma;
+            let k_lin = (0..1usize << cell_vars)
+                .map(|cell| {
+                    let word_index = cell & ((1 << word_vars) - 1);
+                    let limb = (cell >> word_vars) & (WORD_BYTES - 1);
+                    let symbol = cell >> (word_vars + limb_bits);
+                    let place = Fr::from_u64(1u64 << (8 * limb));
+                    gamma * eq_lw[cell & ((1 << (limb_bits + word_vars)) - 1)]
+                        + gamma_squared * Fr::from_u64(symbol as u64) * place * eq_word[word_index]
+                })
+                .collect::<Vec<Fr>>();
+            Self {
+                bytes: MultilinearPolynomial::from(bytes),
+                k_bool: MultilinearPolynomial::from(k_bool),
+                k_lin: MultilinearPolynomial::from(k_lin),
+            }
+        }
+
+        fn compute_message(&self, previous_claim: Fr) -> UniPoly<Fr> {
+            let term = |b: Fr, kb: Fr, kl: Fr| kb * (b.square() - b) + kl * b;
+            let mut evals = [Fr::from_u64(0); 3];
+            for g in 0..self.bytes.len() / 2 {
+                let b0 = self.bytes.get_bound_coeff(2 * g);
+                let b1 = self.bytes.get_bound_coeff(2 * g + 1);
+                let kb0 = self.k_bool.get_bound_coeff(2 * g);
+                let kb1 = self.k_bool.get_bound_coeff(2 * g + 1);
+                let kl0 = self.k_lin.get_bound_coeff(2 * g);
+                let kl1 = self.k_lin.get_bound_coeff(2 * g + 1);
+                let (b_delta, kb_delta, kl_delta) = (b1 - b0, kb1 - kb0, kl1 - kl0);
+                let (b2, b3) = (b1 + b_delta, b1 + b_delta + b_delta);
+                evals[0] += term(b0, kb0, kl0);
+                evals[1] += term(b2, kb1 + kb_delta, kl1 + kl_delta);
+                evals[2] += term(b3, kb1 + kb_delta + kb_delta, kl1 + kl_delta + kl_delta);
+            }
+            UniPoly::from_evals(&[evals[0], previous_claim - evals[0], evals[1], evals[2]])
+        }
+
+        fn bind(&mut self, r_j: Challenge) {
+            self.bytes.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.k_bool.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.k_lin.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+    }
+
+    /// Runs the factored prover and the dense reference through the full
+    /// round loop on the same challenges, comparing every round polynomial
+    /// coefficient-for-coefficient and the final opening claim — across word
+    /// patterns exercising duplicate lanes, all-zero rows, implicit padding
+    /// rows (`words.len() < 2^word_vars`), and both row/lane phase shapes.
+    #[test]
+    fn factored_prover_matches_the_dense_reference() {
+        let cases: Vec<(usize, Vec<u64>)> = vec![
+            (2, vec![0x0102030405060708, 0, u64::MAX, 0xdeadbeef]),
+            // Duplicate lanes: every row of a word hits the same byte value.
+            (2, vec![0x4242424242424242; 4]),
+            // Pure padding: the all-zero column (lane 0 hot everywhere).
+            (2, vec![]),
+            // Implicit padding rows past words.len().
+            (3, vec![0xa5, 0x00ff00ff00ff00ff, 0x8000000000000001]),
+        ];
+        for (case_index, (word_vars, words)) in cases.into_iter().enumerate() {
+            let r_word: Vec<Challenge> = (0..word_vars)
+                .map(|i| Challenge::from((17 + 5 * (i + case_index) as u64) as u128))
+                .collect();
+            let mut padded = words.clone();
+            padded.resize(1 << word_vars, 0);
+            let word_claim = MultilinearPolynomial::<Fr>::from(padded).evaluate(&r_word);
+            let mut accumulator = ProverOpeningAccumulator::<Fr>::new(word_vars);
+            accumulator.append_untrusted_advice(
+                SumcheckId::AdviceClaimReduction,
+                OpeningPoint::new(r_word),
+                word_claim,
+            );
+            let mut transcript = Blake2bTranscript::new(b"advice-bytes-dense-diff");
+            let params = UntrustedAdviceReconstructionSumcheckParams::<Fr>::new(
+                word_vars,
+                &accumulator,
+                &mut transcript,
+            );
+            let mut prover =
+                UntrustedAdviceReconstructionSumcheckProver::initialize(params.clone(), &words);
+            let mut reference = DenseReference::initialize(&params, &words);
+
+            let mut claim = params.input_claim(&accumulator);
+            let mut challenges = Vec::new();
+            for round in 0..params.num_rounds() {
+                let message = SumcheckInstanceProver::<Fr, Blake2bTranscript>::compute_message(
+                    &mut prover,
+                    round,
+                    claim,
+                );
+                let expected = reference.compute_message(claim);
+                assert_eq!(
+                    message.coeffs, expected.coeffs,
+                    "case {case_index} round {round}: factored round polynomial diverges"
+                );
+                let r_j = Challenge::from((97 + 29 * (round + case_index)) as u128);
+                claim = message.evaluate(&r_j);
+                challenges.push(r_j);
+                SumcheckInstanceProver::<Fr, Blake2bTranscript>::ingest_challenge(
+                    &mut prover,
+                    r_j,
+                    round,
+                );
+                reference.bind(r_j);
+            }
+            SumcheckInstanceProver::<Fr, Blake2bTranscript>::cache_openings(
+                &prover,
+                &mut accumulator,
+                &challenges,
+            );
+            let (_, bytes_claim) = accumulator
+                .get_advice_opening(
+                    AdviceKind::Untrusted,
+                    SumcheckId::UntrustedAdviceReconstruction,
+                )
+                .expect("factored prover caches the byte opening");
+            assert_eq!(
+                bytes_claim,
+                reference.bytes.final_sumcheck_claim(),
+                "case {case_index}: final byte opening diverges from the dense reference"
+            );
+        }
     }
 }

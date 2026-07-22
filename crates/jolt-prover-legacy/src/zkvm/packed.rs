@@ -2006,6 +2006,82 @@ mod advice_tests {
             "a dropped auxiliary opening proof must be rejected"
         );
     }
+
+    /// The advice-size boundary e2e: the untrusted advice buffer fills
+    /// `max_untrusted_advice_size` exactly, so the byte column carries
+    /// non-degenerate lane content on every row (the 32-byte case above is
+    /// padding-dominated) and the exact-capacity edge is exercised end to
+    /// end. The guest reads only its postcard-encoded leaf prefix; the
+    /// remaining filler bytes still enter the committed column.
+    #[test]
+    #[serial]
+    #[expect(clippy::unwrap_used)]
+    fn advice_e2e_akita_full_advice() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("merkle-tree-guest");
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+
+        let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
+        let mut trusted_advice = postcard::to_stdvec(&[6u8; 32]).unwrap();
+        trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
+        let leaf = postcard::to_stdvec(&[8u8; 32]).unwrap();
+
+        // Fill the advice capacity exactly (the test never overrides the
+        // default, and the traced layout below re-confirms the size).
+        let max_untrusted = common::constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE as usize;
+        let mut untrusted_advice = leaf;
+        untrusted_advice
+            .extend((untrusted_advice.len()..max_untrusted).map(|index| (index * 31 + 7) as u8));
+        assert_eq!(untrusted_advice.len(), max_untrusted);
+
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        assert_eq!(
+            io_device.memory_layout.max_untrusted_advice_size as usize,
+            max_untrusted
+        );
+        let program_data =
+            ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
+        let shared: JoltSharedPreprocessing<AkitaPackedScheme> =
+            JoltSharedPreprocessing::new(program_data, io_device.memory_layout.clone(), 1 << 16);
+        let prover_preprocessing = JoltProverPreprocessing::new(shared);
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
+
+        let trusted_object = commit_trusted_advice_one_hot(
+            &trusted_advice,
+            io_device.memory_layout.max_trusted_advice_size as usize,
+        )
+        .expect("trusted advice object must commit");
+
+        let prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
+            &prover_preprocessing,
+            &elf_contents,
+            &inputs,
+            &untrusted_advice,
+            &trusted_advice,
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+
+        let (object_setup, verifier_setup) =
+            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
+                .expect("the transparent packed setup must derive");
+        let trusted_commitment = trusted_object.commitment.clone();
+        let proof = prover
+            .prove_packed(&object_setup, Some(trusted_object), None)
+            .expect("packed prover should produce a verifier-native proof");
+
+        let verifier_preprocessing =
+            akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            &verifier_preprocessing,
+            &io_device,
+            &proof,
+            Some(&trusted_commitment),
+        )
+        .expect("packed verifier should accept the full-advice proof");
+    }
 }
 
 #[cfg(all(test, feature = "host"))]
