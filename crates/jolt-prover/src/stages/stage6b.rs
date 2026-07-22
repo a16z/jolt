@@ -36,7 +36,9 @@ use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
 use jolt_verifier::stages::stage6b::batch::Stage6bBuildParts;
 use jolt_verifier::stages::stage6b::booleanity::BooleanityCyclePhaseChallenges;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCyclePhaseCommittedChallenges;
-use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhaseChallenges;
+use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
+    advice_reference_point_from_upstream, BytecodeReductionCyclePhaseChallenges,
+};
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReductionChallenges;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualizationChallenges;
 use jolt_verifier::stages::stage6b::outputs::{
@@ -125,14 +127,6 @@ where
         .program
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
-    // The staged advice RAM address points from stage 4's RAM value-check —
-    // the clear-only references the advice `FinalScale` terms read.
-    let advice_reference = |kind| {
-        stage4
-            .ram_val_check_init
-            .advice_contribution(kind)
-            .map(|contribution| contribution.opening_point.clone())
-    };
     let sumchecks = Stage6bSumchecks::build_from_parts(Stage6bBuildParts {
         formula_dimensions: &formula_dimensions,
         ram_log_k: log_k,
@@ -147,11 +141,16 @@ where
         stage3_points: &stage3.output_points,
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
-        stage5_instruction_address: stage5.instruction_r_address.clone(),
         stage6a_points: &stage6a.output_points,
         address_val_stages: stage6a.output_values.bytecode_read_raf.val_stages.clone(),
-        trusted_advice_reference_point: advice_reference(JoltAdviceKind::Trusted),
-        untrusted_advice_reference_point: advice_reference(JoltAdviceKind::Untrusted),
+        trusted_advice_reference_point: advice_reference_point_from_upstream(
+            &stage4.ram_val_check_init,
+            JoltAdviceKind::Trusted,
+        ),
+        untrusted_advice_reference_point: advice_reference_point_from_upstream(
+            &stage4.ram_val_check_init,
+            JoltAdviceKind::Untrusted,
+        ),
     })?;
 
     // Hand-assembled (the generated draw is suppressed): the bytecode gamma

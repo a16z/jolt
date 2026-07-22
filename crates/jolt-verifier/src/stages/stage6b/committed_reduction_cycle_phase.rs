@@ -72,6 +72,19 @@ pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
     Ok(UntrustedAdviceCyclePhaseInputClaims { untrusted })
 }
 
+/// Wire the staged RAM value-check advice RAM-address *point* off the RAM
+/// value-check initial evaluation — the clear-only reference the advice
+/// `FinalScale` terms read. `None` when the RAM value-check produced no
+/// contribution of this kind.
+pub fn advice_reference_point_from_upstream<F: Field>(
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
+    kind: JoltAdviceKind,
+) -> Option<Vec<F>> {
+    ram_val_check_init
+        .advice_contribution(kind)
+        .map(|contribution| contribution.opening_point.clone())
+}
+
 fn advice_public_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::AdviceClaimReductionCyclePhase,

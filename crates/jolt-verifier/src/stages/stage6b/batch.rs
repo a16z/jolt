@@ -30,8 +30,8 @@ use super::bytecode_read_raf::{
     BytecodeReadRafTableFoldInputs, READ_RAF_CYCLE_STAGES,
 };
 use super::committed_reduction_cycle_phase::{
-    bytecode_reduction_weights, BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
-    TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
+    advice_reference_point_from_upstream, bytecode_reduction_weights, BytecodeReductionCyclePhase,
+    ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
@@ -125,7 +125,6 @@ pub struct Stage6bBuildParts<'a, F: Field> {
     pub stage3_points: &'a Stage3OutputPoints<F>,
     pub stage4_points: &'a Stage4OutputPoints<F>,
     pub stage5_points: &'a Stage5OutputPoints<F>,
-    pub stage5_instruction_address: Vec<F>,
     pub stage6a_points: &'a Stage6aOutputPoints<F>,
     /// The staged `BytecodeValStage` openings (clear committed-program mode;
     /// empty otherwise).
@@ -187,17 +186,21 @@ impl<F: Field> Stage6bSumchecks<F> {
                 (Vec::new(), None, None)
             } else {
                 let stage4 = stage4.clear()?;
-                let claims_6a = &proof.clear_claims()?.stage6a;
-                let reference = |kind| {
-                    stage4
-                        .ram_val_check_init
-                        .advice_contribution(kind)
-                        .map(|contribution| contribution.opening_point.clone())
-                };
                 (
-                    claims_6a.bytecode_read_raf.val_stages.clone(),
-                    reference(JoltAdviceKind::Trusted),
-                    reference(JoltAdviceKind::Untrusted),
+                    stage6a
+                        .clear()?
+                        .output_values
+                        .bytecode_read_raf
+                        .val_stages
+                        .clone(),
+                    advice_reference_point_from_upstream(
+                        &stage4.ram_val_check_init,
+                        JoltAdviceKind::Trusted,
+                    ),
+                    advice_reference_point_from_upstream(
+                        &stage4.ram_val_check_init,
+                        JoltAdviceKind::Untrusted,
+                    ),
                 )
             };
 
@@ -215,7 +218,6 @@ impl<F: Field> Stage6bSumchecks<F> {
             stage3_points: stage3.output_points(),
             stage4_points: stage4.output_points(),
             stage5_points: stage5.output_points(),
-            stage5_instruction_address: stage5.instruction_r_address().to_vec(),
             stage6a_points: stage6a.output_points(),
             address_val_stages,
             trusted_advice_reference_point,
@@ -242,7 +244,6 @@ impl<F: Field> Stage6bSumchecks<F> {
             stage3_points,
             stage4_points,
             stage5_points,
-            stage5_instruction_address,
             stage6a_points,
             address_val_stages,
             trusted_advice_reference_point,
@@ -412,7 +413,7 @@ impl<F: Field> Stage6bSumchecks<F> {
         );
         let instruction_ra_virtualization = InstructionRaVirtualization::new(
             formula_dimensions.instruction_ra_virtualization,
-            stage5_instruction_address,
+            stage5_points.instruction_r_address(),
             stage5_instruction_cycle.to_vec(),
             committed_chunk_bits,
         );
