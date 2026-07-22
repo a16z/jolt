@@ -9,10 +9,57 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
+#[cfg(not(feature = "zk"))]
+use jolt_openings::StreamingCommitment;
+#[cfg(feature = "zk")]
+use jolt_openings::ZkStreamingCommitment;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use crate::{KernelError, ProofSession};
+
+/// The streaming-commitment surface a streaming commit kernel requires in the
+/// compiled proof mode: transparent finishes without the `zk` feature, hiding
+/// finishes (blinded top-tier commitment, e.g. Dory's masked tier-2) with it.
+/// The mode lives in this trait alias so kernels carry no runtime flag.
+#[cfg(not(feature = "zk"))]
+pub trait ModeStreamingCommitment: StreamingCommitment {}
+#[cfg(not(feature = "zk"))]
+impl<PCS: StreamingCommitment> ModeStreamingCommitment for PCS {}
+#[cfg(feature = "zk")]
+pub trait ModeStreamingCommitment: ZkStreamingCommitment {}
+#[cfg(feature = "zk")]
+impl<PCS: ZkStreamingCommitment> ModeStreamingCommitment for PCS {}
+
+/// Finish a streamed dense commitment in the compiled proof mode.
+pub fn finish_streamed<PCS>(
+    partial: PCS::PartialCommitment,
+    setup: &PCS::ProverSetup,
+) -> (PCS::Output, PCS::OpeningHint)
+where
+    PCS: ModeStreamingCommitment,
+{
+    #[cfg(feature = "zk")]
+    return PCS::finish_zk_with_hint(partial, setup);
+    #[cfg(not(feature = "zk"))]
+    PCS::finish_with_hint(partial, setup)
+}
+
+/// Finish a streamed column-major one-hot commitment in the compiled proof
+/// mode.
+pub fn finish_streamed_one_hot<PCS>(
+    setup: &PCS::ProverSetup,
+    one_hot_k: usize,
+    chunks: &[PCS::OneHotChunkCommitment],
+) -> (PCS::Output, PCS::OpeningHint)
+where
+    PCS: ModeStreamingCommitment,
+{
+    #[cfg(feature = "zk")]
+    return PCS::finish_zk_one_hot_column_major_chunks(setup, one_hot_k, chunks);
+    #[cfg(not(feature = "zk"))]
+    PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, chunks)
+}
 
 /// The shared embedding grid every witness polynomial is committed in:
 /// `2^⌈total_vars/2⌉` columns, where `total_vars` is the maximum over the

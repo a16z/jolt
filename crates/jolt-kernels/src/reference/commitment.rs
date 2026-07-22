@@ -16,17 +16,20 @@
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_openings::CommitmentScheme;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::{OracleRef, PolynomialChunk, PolynomialEncoding, WitnessProvider};
 
-use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
+use crate::commitment::{
+    finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
+    ModeStreamingCommitment, WitnessCommitment,
+};
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F, PCS> CommitWitness<F, PCS> for ReferenceBackend
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     fn commit_witness(
         &self,
@@ -57,7 +60,7 @@ fn commit_one<F, PCS>(
 ) -> Result<(PCS::Output, PCS::OpeningHint), KernelError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let descriptor = witness.describe_oracle(OracleRef::<JoltVmNamespace>::Committed(id))?;
     let row_width = grid.num_columns();
@@ -71,7 +74,7 @@ where
         for row in table.chunks(row_width) {
             PCS::feed(&mut partial, row, setup);
         }
-        return Ok(PCS::finish_with_hint(partial, setup));
+        return Ok(finish_streamed::<PCS>(partial, setup));
     }
 
     match descriptor.encoding {
@@ -90,7 +93,7 @@ where
             for row in flat.chunks(row_width) {
                 PCS::feed(&mut partial, row, setup);
             }
-            Ok(PCS::finish_with_hint(partial, setup))
+            Ok(finish_streamed::<PCS>(partial, setup))
         }
         PolynomialEncoding::OneHot => {
             // The one-hot `(K × T)` matrix: `K = 2^(log_rows − log_t)` and the
@@ -123,7 +126,7 @@ where
                     &indices,
                 ));
             }
-            Ok(PCS::finish_one_hot_column_major_chunks(
+            Ok(finish_streamed_one_hot::<PCS>(
                 setup,
                 one_hot_k,
                 &chunk_commitments,
@@ -134,7 +137,7 @@ where
             while let Some(chunk) = stream.next_chunk()? {
                 feed_dense_chunk::<F, PCS>(&mut partial, chunk, row_width, id, setup)?;
             }
-            Ok(PCS::finish_with_hint(partial, setup))
+            Ok(finish_streamed::<PCS>(partial, setup))
         }
     }
 }
@@ -287,7 +290,7 @@ fn feed_dense_chunk<F, PCS>(
 ) -> Result<(), KernelError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     match chunk {
         PolynomialChunk::Dense(values) => PCS::feed(partial, &values, setup),

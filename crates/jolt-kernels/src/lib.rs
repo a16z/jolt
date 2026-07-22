@@ -45,7 +45,7 @@ pub mod reference;
 pub mod uniskip;
 
 pub use backend::{HasKernel, JoltBackend, PrepareKernel, ProofSession, RetainedProgram};
-pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
+pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
 pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};

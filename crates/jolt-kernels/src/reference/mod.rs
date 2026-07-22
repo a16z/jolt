@@ -11,8 +11,9 @@
 //! test oracle at harness scale, never a performance path.
 
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_openings::CommitmentScheme;
 
+use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
 use self::precommitted_reduction::{
@@ -64,11 +65,11 @@ where
     /// The always-present reference backend: every slot served by the naive
     /// tier. It is the equivalence anchor optimized backends are tested
     /// against, and the fallback partial backends compose over. Its commit
-    /// slot streams, hence the [`StreamingCommitment`] bound — a
+    /// slot streams, hence the [`ModeStreamingCommitment`] bound — a
     /// reference-implementation requirement, not a seam one.
     pub fn reference() -> Self
     where
-        PCS: StreamingCommitment,
+        PCS: ModeStreamingCommitment,
     {
         Self {
             commit: Box::new(ReferenceBackend),
