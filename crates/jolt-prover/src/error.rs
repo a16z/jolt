@@ -20,10 +20,6 @@ pub enum ProverError<F: FieldCore> {
     #[error(transparent)]
     Kernel(#[from] KernelError<F>),
 
-    /// Extraction/self-check failures from the typed kernel seam.
-    #[error(transparent)]
-    SumcheckKernel(#[from] SumcheckKernelError<F>),
-
     #[error(transparent)]
     Witness(#[from] jolt_witness::WitnessError),
 
@@ -38,4 +34,14 @@ pub enum ProverError<F: FieldCore> {
     /// retrying with different inputs or another backend.
     #[error("prover invariant violated: {reason}")]
     InvariantViolation { reason: &'static str },
+}
+
+/// Route the typed kernel seam's extraction/self-check failures through
+/// [`ProverError::Kernel`] — [`KernelError`] already wraps
+/// [`SumcheckKernelError`] transparently, so a dedicated variant would surface
+/// the same failure under two names depending on path.
+impl<F: FieldCore> From<SumcheckKernelError<F>> for ProverError<F> {
+    fn from(error: SumcheckKernelError<F>) -> Self {
+        Self::Kernel(error.into())
+    }
 }
