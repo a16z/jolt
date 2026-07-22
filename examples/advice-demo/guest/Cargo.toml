@@ -9,7 +9,7 @@ field-inline = ["jolt/field-inline"]
 compute_advice = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
+jolt = { package = "jolt-sdk", path = "../../../crates/jolt-sdk", features = [
   "guest-std",
 ] }
 bytemuck = "1.23.2"

@@ -8,7 +8,7 @@ guest = []
 field-inline = ["jolt_sdk/field-inline"]
 
 [dependencies]
-jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
+jolt_sdk = { package = "jolt-sdk", path = "../../../crates/jolt-sdk", features = [
   "guest-verifier",
   "thread",
   "random",

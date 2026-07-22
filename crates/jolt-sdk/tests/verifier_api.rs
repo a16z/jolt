@@ -20,10 +20,10 @@ mod tests {
             // pass without verifying anything. Fail loudly in that case.
             assert!(
                 std::env::var_os("CI").is_none(),
-                "verifier fixtures missing under CI; jolt-sdk/tests/gen-fixtures.sh must produce \
+                "verifier fixtures missing under CI; crates/jolt-sdk/tests/gen-fixtures.sh must produce \
                  {preprocessing_path}, {proof_path}, and {io_path} before this test runs",
             );
-            eprintln!("skipping verifier fixture test; run jolt-sdk/tests/gen-fixtures.sh first");
+            eprintln!("skipping verifier fixture test; run crates/jolt-sdk/tests/gen-fixtures.sh first");
             return;
         }
 

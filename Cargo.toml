@@ -51,8 +51,8 @@ members = [
   "crates/jolt-tracer",
   "crates/jolt-common",
   "crates/jolt-platform",
-  "jolt-sdk",
-  "jolt-sdk/macros",
+  "crates/jolt-sdk",
+  "crates/jolt-sdk/macros",
   "jolt-inlines/sdk",
   "jolt-inlines/fixtures",
   "jolt-inlines/sha2",
@@ -422,8 +422,8 @@ jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./crates/jolt-platform", default-features = false }
-jolt-sdk = { path = "./jolt-sdk", default-features = false }
-jolt-sdk-macros = { path = "./jolt-sdk/macros" }
+jolt-sdk = { path = "./crates/jolt-sdk", default-features = false }
+jolt-sdk-macros = { path = "./crates/jolt-sdk/macros" }
 jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
 jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
 jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }

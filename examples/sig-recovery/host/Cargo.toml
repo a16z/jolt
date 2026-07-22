@@ -8,7 +8,7 @@ name = "sig-recovery"
 path = "src/main.rs"
 
 [dependencies]
-jolt-sdk = { path = "../../../jolt-sdk", features = ["host"] }
+jolt-sdk = { path = "../../../crates/jolt-sdk", features = ["host"] }
 guest = { package = "sig-recovery-guest", path = "../guest" }
 alloy-primitives = { workspace = true }
 alloy-consensus = { workspace = true }

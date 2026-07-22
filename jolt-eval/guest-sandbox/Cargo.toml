@@ -19,4 +19,4 @@ test = false
 bench = false
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../jolt-sdk" }
+jolt = { package = "jolt-sdk", path = "../../crates/jolt-sdk" }

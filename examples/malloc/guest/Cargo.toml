@@ -8,7 +8,7 @@ guest = []
 field-inline = ["jolt/field-inline"]
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
+jolt = { package = "jolt-sdk", path = "../../../crates/jolt-sdk", features = [
   "malloc-shim",
 ] }
 
