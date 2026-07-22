@@ -66,6 +66,18 @@ pub struct BytecodeStagePoints<F: Field> {
     pub register_val_evaluation_point: Vec<F>,
 }
 
+impl<F: Field> BytecodeStagePoints<F> {
+    /// The stage-4 register read-write cycle leg (`stage_cycle_points[3]`).
+    pub fn register_read_write_cycle(&self) -> &[F] {
+        &self.stage_cycle_points[3]
+    }
+
+    /// The stage-5 register value-evaluation cycle leg (`stage_cycle_points[4]`).
+    pub fn register_val_evaluation_cycle(&self) -> &[F] {
+        &self.stage_cycle_points[4]
+    }
+}
+
 /// Derive the [`BytecodeStagePoints`] from the mode-agnostic upstream opening
 /// points. Shared by [`Stage6bSumchecks::build`] (both proving modes) and the
 /// prove-side stage-6a/6b recipes, so the five-leg wiring cannot drift.
@@ -271,22 +283,17 @@ impl<F: Field> Stage6bSumchecks<F> {
         // outputs; the post-batch opening points are derived against these same
         // values through the relation objects.
         let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
-        let BytecodeStagePoints {
-            stage_cycle_points: shared_cycle_points,
-            register_read_write_point,
-            register_val_evaluation_point,
-        } = bytecode_stage_points(
+        let stage_points = bytecode_stage_points(
             &stage1_cycle_binding,
             stage2_points,
             stage3_points,
             stage4_points,
             stage5_points,
         )?;
-        let register_read_write_address = &register_read_write_point[..REGISTER_ADDRESS_BITS];
+        let register_read_write_address =
+            &stage_points.register_read_write_point[..REGISTER_ADDRESS_BITS];
         let register_val_evaluation_address =
-            &register_val_evaluation_point[..REGISTER_ADDRESS_BITS];
-        let register_read_write_cycle = shared_cycle_points[3].as_slice();
-        let register_val_evaluation_cycle = shared_cycle_points[4].as_slice();
+            &stage_points.register_val_evaluation_point[..REGISTER_ADDRESS_BITS];
         let ram_reduced = stage5_points.ram_reduced_opening_point();
         if ram_reduced.len() != log_k + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
@@ -311,29 +318,28 @@ impl<F: Field> Stage6bSumchecks<F> {
             log_k,
             JoltRelationId::IncClaimReduction,
         )?;
-        let inc_cycle_points = [
-            ram_read_write_cycle.to_vec(),
-            ram_val_check_cycle.to_vec(),
-            register_read_write_cycle.to_vec(),
-            register_val_evaluation_cycle.to_vec(),
-        ];
+        let registers_read_write_cycle = stage_points.register_read_write_cycle().to_vec();
+        let registers_val_evaluation_cycle = stage_points.register_val_evaluation_cycle().to_vec();
         #[cfg(not(feature = "akita"))]
-        let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = shared_cycle_points;
+        let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = stage_points.stage_cycle_points;
         // The packed fused-inc consumer points appended to the shared five: the
         // four inc-producing relations' cycle bindings, in stage order (γ^5..8).
+        // The register cycle vectors move in here (no clones): the akita build
+        // fuses the inc reduction into the read-RAF legs, so no `IncClaimReduction`
+        // member consumes them.
         #[cfg(feature = "akita")]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = {
-            let [stage1, stage2, stage3, stage4, stage5] = shared_cycle_points;
+            let [stage1, stage2, stage3, stage4, stage5] = stage_points.stage_cycle_points;
             [
                 stage1,
                 stage2,
                 stage3,
                 stage4,
                 stage5,
-                inc_cycle_points[0].clone(),
-                inc_cycle_points[1].clone(),
-                inc_cycle_points[2].clone(),
-                inc_cycle_points[3].clone(),
+                ram_read_write_cycle.to_vec(),
+                ram_val_check_cycle.to_vec(),
+                registers_read_write_cycle,
+                registers_val_evaluation_cycle,
             ]
         };
         // The full-program table fold is expected_output-only (absent rows mean
@@ -345,28 +351,34 @@ impl<F: Field> Stage6bSumchecks<F> {
                 register_val_evaluation_point: register_val_evaluation_address,
                 stage_gammas: stage_gamma_powers.each_ref().map(Vec::as_slice),
             });
-        // `eta` is drawn exactly when the bytecode layout is committed, so a
-        // committed layout always carries weights and the member's `(Some, None)`
-        // case is unreachable.
-        let cycle_bytecode_reduction_weights = bytecode_reduction_layout
-            .zip(eta)
-            .map(|(layout, eta)| {
-                bytecode_reduction_weights(
-                    layout,
-                    BytecodeLaneWeightInputs {
-                        eta,
-                        stage1_gammas: &stage_gamma_powers[0],
-                        stage2_gammas: &stage_gamma_powers[1],
-                        stage3_gammas: &stage_gamma_powers[2],
-                        stage4_gammas: &stage_gamma_powers[3],
-                        stage5_gammas: &stage_gamma_powers[4],
-                        register_read_write_point: register_read_write_address,
-                        register_val_evaluation_point: register_val_evaluation_address,
-                    },
-                    &bytecode_r_address,
-                )
-            })
-            .transpose()?;
+        // Both fronts draw `eta` exactly when the bytecode layout is committed;
+        // a front that broke the coupling would otherwise surface only as a
+        // downstream transcript mismatch, so reject it here by name.
+        let cycle_bytecode_reduction_weights = match (bytecode_reduction_layout, eta) {
+            (Some(layout), Some(eta)) => Some(bytecode_reduction_weights(
+                layout,
+                BytecodeLaneWeightInputs {
+                    eta,
+                    stage1_gammas: &stage_gamma_powers[0],
+                    stage2_gammas: &stage_gamma_powers[1],
+                    stage3_gammas: &stage_gamma_powers[2],
+                    stage4_gammas: &stage_gamma_powers[3],
+                    stage5_gammas: &stage_gamma_powers[4],
+                    register_read_write_point: register_read_write_address,
+                    register_val_evaluation_point: register_val_evaluation_address,
+                },
+                &bytecode_r_address,
+            )?),
+            (None, None) => None,
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeClaimReductionCyclePhase,
+                    reason: "the bytecode claim-reduction eta must be drawn exactly when the \
+                             bytecode layout is committed"
+                        .to_string(),
+                })
+            }
+        };
 
         let bytecode_read_raf = if committed_program {
             BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
@@ -418,28 +430,21 @@ impl<F: Field> Stage6bSumchecks<F> {
             committed_chunk_bits,
         );
         #[cfg(not(feature = "akita"))]
-        let inc_claim_reduction = {
-            let [ram_read_write_cycle, ram_val_check_cycle, registers_read_write_cycle, registers_val_evaluation_cycle] =
-                inc_cycle_points;
-            IncClaimReduction::new(
-                trace_dimensions,
-                ram_read_write_cycle,
-                ram_val_check_cycle,
-                registers_read_write_cycle,
-                registers_val_evaluation_cycle,
-            )
-        };
+        let inc_claim_reduction = IncClaimReduction::new(
+            trace_dimensions,
+            ram_read_write_cycle.to_vec(),
+            ram_val_check_cycle.to_vec(),
+            registers_read_write_cycle,
+            registers_val_evaluation_cycle,
+        );
+
         let trusted_advice = trusted_advice_layout
             .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
         let untrusted_advice = untrusted_advice_layout
             .map(|layout| UntrustedAdviceCyclePhase::new(layout, untrusted_advice_reference_point));
-        let bytecode_reduction = match (bytecode_reduction_layout, cycle_bytecode_reduction_weights)
-        {
-            (Some(layout), Some(weights)) => {
-                Some(BytecodeReductionCyclePhase::new(layout, weights))
-            }
-            _ => None,
-        };
+        let bytecode_reduction = bytecode_reduction_layout
+            .zip(cycle_bytecode_reduction_weights)
+            .map(|(layout, weights)| BytecodeReductionCyclePhase::new(layout, weights));
         let program_image_reduction = program_image_reduction_layout.map(|layout| {
             ProgramImageReductionCyclePhase::new(layout, ram_val_check_address.to_vec())
         });
