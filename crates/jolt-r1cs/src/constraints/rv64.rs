@@ -684,3 +684,584 @@ mod tests {
         assert_eq!(input_column(NUM_R1CS_INPUTS), None);
     }
 }
+
+/// Satisfaction tests with realistic per-instruction execution witnesses.
+///
+/// Each witness models one cycle of a concrete RV64 instruction with
+/// hand-computed values from the RISC-V spec. Cell semantics follow the
+/// witness generation pipeline:
+/// - circuit flags per instruction: `jolt-riscv/src/instructions/` (the
+///   `jolt_instruction!` macro in `jolt-riscv/src/lib.rs` adds the row-level
+///   `VirtualInstruction`/`DoNotUpdateUnexpandedPC`/`IsLastInSequence`/
+///   `IsCompressed` flags);
+/// - instruction inputs and lookup operands: the per-instruction
+///   `LookupQuery` impls in `jolt-lookup-tables/src/instructions/riscv/`;
+/// - remaining trace columns: `trace_virtual_value` in
+///   `jolt-witness/src/protocols/jolt_vm/trace.rs`.
+///
+/// Falsification tests perturb one semantically meaningful cell and assert
+/// the exact first-violated constraint row reported by `check_witness`.
+#[cfg(test)]
+mod execution_witness_tests {
+    use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use num_traits::Zero;
+
+    // Constraint row indices, matching the push order in
+    // `rv64_eq_constraint_rows` and `append_product_constraints`.
+    const RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE: usize = 0;
+    const RAM_READ_EQ_RAM_WRITE_IF_LOAD: usize = 2;
+    const RAM_READ_EQ_RD_WRITE_IF_LOAD: usize = 3;
+    const RS2_EQ_RAM_WRITE_IF_STORE: usize = 4;
+    const LEFT_LOOKUP_EQ_LEFT_INPUT_OTHERWISE: usize = 6;
+    const RIGHT_LOOKUP_ADD: usize = 7;
+    const RIGHT_LOOKUP_EQ_PRODUCT_IF_MUL: usize = 9;
+    const RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD: usize = 12;
+    const RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP: usize = 13;
+    const NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP: usize = 14;
+    const NEXT_UNEXP_PC_EQ_PC_PLUS_IMM_IF_SHOULD_BRANCH: usize = 15;
+    const NEXT_UNEXP_PC_UPDATE_OTHERWISE: usize = 16;
+    const NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE: usize = 17;
+    const MUST_START_SEQUENCE_FROM_BEGINNING: usize = 18;
+    const PRODUCT_EQ_LEFT_TIMES_RIGHT: usize = 19;
+    const SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH: usize = 20;
+    const SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP: usize = 21;
+
+    fn check(witness: &[Fr]) -> Result<(), usize> {
+        rv64_trace_constraints::<Fr>().check_witness(witness)
+    }
+
+    fn with_cell(witness: &[Fr], cell: usize, value: Fr) -> Vec<Fr> {
+        let mut witness = witness.to_vec();
+        witness[cell] = value;
+        witness
+    }
+
+    fn cycle_witness() -> Vec<Fr> {
+        let mut w = vec![Fr::zero(); NUM_VARS_PER_CYCLE];
+        w[V_CONST] = Fr::from_u64(1);
+        w
+    }
+
+    /// `ADD x3, x1, x2` with rs1 = 2^64 − 2, rs2 = 5.
+    ///
+    /// Circuit flags [AddOperands, WriteLookupOutputToRD] (i/add.rs). The
+    /// right lookup operand carries the unwrapped 65-bit sum
+    /// (2^64 − 2) + 5 = 2^64 + 3, while rd receives the RV64 wrapped
+    /// result 3.
+    fn add_witness() -> Vec<Fr> {
+        const RS1: u64 = u64::MAX - 1; // 2^64 − 2
+        const RS2: u64 = 5;
+        const UNWRAPPED_SUM: u128 = (1u128 << 64) + 3;
+        const WRAPPED_SUM: u64 = 3;
+        const UNEXPANDED_PC: u64 = 0x8000_0010;
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(RS1);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(RS2);
+        // (2^64 − 2)·5 = 5·2^64 − 10, committed unconditionally (row 19).
+        w[V_PRODUCT] = Fr::from_u128(5 * ((1u128 << 64) - 2));
+        w[V_PC] = Fr::from_u64(7);
+        w[V_NEXT_PC] = Fr::from_u64(8);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_RS1_VALUE] = Fr::from_u64(RS1);
+        w[V_RS2_VALUE] = Fr::from_u64(RS2);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(WRAPPED_SUM);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u128(UNWRAPPED_SUM);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(WRAPPED_SUM);
+        w[V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
+        w[V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
+        w
+    }
+
+    /// `SLTU x5, x1, x2` with rs1 = 7, rs2 = 9, so rd = 1.
+    ///
+    /// Circuit flags [WriteLookupOutputToRD] (i/sltu.rs). No operand
+    /// combination flag is set, so the lookup operands pass through the
+    /// instruction inputs unchanged (interleaved-operand default).
+    fn sltu_witness() -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0020;
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(7);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(9);
+        w[V_PRODUCT] = Fr::from_u64(63);
+        w[V_PC] = Fr::from_u64(9);
+        w[V_NEXT_PC] = Fr::from_u64(10);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_RS1_VALUE] = Fr::from_u64(7);
+        w[V_RS2_VALUE] = Fr::from_u64(9);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(1); // 7 <u 9
+        w[V_LEFT_LOOKUP_OPERAND] = Fr::from_u64(7);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(9);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(1);
+        w[V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
+        w
+    }
+
+    /// `LD x11, 8(x10)` with base 0x8000_1000 loading 0xDEAD_BEEF_CAFE_F00D.
+    ///
+    /// Circuit flags [Load] (i/ld.rs). Loads route the loaded value into
+    /// RamReadValue, RamWriteValue (read-write identity), and RdWriteValue;
+    /// instruction inputs and the lookup are unused (all zero).
+    fn ld_witness() -> Vec<Fr> {
+        const BASE: u64 = 0x8000_1000;
+        const LOADED: u64 = 0xDEAD_BEEF_CAFE_F00D;
+        const UNEXPANDED_PC: u64 = 0x8000_0030;
+
+        let mut w = cycle_witness();
+        w[V_PC] = Fr::from_u64(11);
+        w[V_NEXT_PC] = Fr::from_u64(12);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_IMM] = Fr::from_u64(8);
+        w[V_RAM_ADDRESS] = Fr::from_u64(BASE + 8);
+        w[V_RS1_VALUE] = Fr::from_u64(BASE);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(LOADED);
+        w[V_RAM_READ_VALUE] = Fr::from_u64(LOADED);
+        w[V_RAM_WRITE_VALUE] = Fr::from_u64(LOADED);
+        w[V_FLAG_LOAD] = Fr::from_u64(1);
+        w
+    }
+
+    /// `SD x12, -8(x10)` with base 0x8000_2000 storing 0x1122_3344_5566_7788
+    /// over old memory value 0x0F0F_0F0F_0F0F_0F0F.
+    ///
+    /// Circuit flags [Store] (i/sd.rs). Stores write rs2 to memory
+    /// (RamWriteValue = Rs2Value) and write no register (RdWriteValue = 0).
+    /// The negative offset exercises signed immediate handling in the
+    /// address constraint.
+    fn sd_witness() -> Vec<Fr> {
+        const BASE: u64 = 0x8000_2000;
+        const STORED: u64 = 0x1122_3344_5566_7788;
+        const OLD_VALUE: u64 = 0x0F0F_0F0F_0F0F_0F0F;
+        const UNEXPANDED_PC: u64 = 0x8000_0034;
+
+        let mut w = cycle_witness();
+        w[V_PC] = Fr::from_u64(12);
+        w[V_NEXT_PC] = Fr::from_u64(13);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_IMM] = Fr::from_i64(-8);
+        w[V_RAM_ADDRESS] = Fr::from_u64(BASE - 8);
+        w[V_RS1_VALUE] = Fr::from_u64(BASE);
+        w[V_RS2_VALUE] = Fr::from_u64(STORED);
+        w[V_RAM_READ_VALUE] = Fr::from_u64(OLD_VALUE);
+        w[V_RAM_WRITE_VALUE] = Fr::from_u64(STORED);
+        w[V_FLAG_STORE] = Fr::from_u64(1);
+        w
+    }
+
+    /// `BEQ x1, x2, -16` at 0x8000_0040 with rs1 = rs2 = 42: branch taken.
+    ///
+    /// BEQ sets no circuit flags (i/beq.rs); Branch is an instruction flag
+    /// surfacing as the committed product factor `V_BRANCH`. The Equal
+    /// lookup returns 1, so ShouldBranch = 1·1 and the next unexpanded PC
+    /// is the backward target 0x8000_0040 − 16.
+    fn beq_taken_witness() -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0040;
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(42);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(42);
+        w[V_PRODUCT] = Fr::from_u64(1764); // 42·42
+        w[V_SHOULD_BRANCH] = Fr::from_u64(1);
+        w[V_PC] = Fr::from_u64(15);
+        w[V_NEXT_PC] = Fr::from_u64(11);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC - 16);
+        w[V_IMM] = Fr::from_i64(-16);
+        w[V_RS1_VALUE] = Fr::from_u64(42);
+        w[V_RS2_VALUE] = Fr::from_u64(42);
+        w[V_LEFT_LOOKUP_OPERAND] = Fr::from_u64(42);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(42);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(1);
+        w[V_BRANCH] = Fr::from_u64(1);
+        w
+    }
+
+    /// `BEQ x1, x2, -16` at 0x8000_0040 with rs1 = 7 ≠ rs2 = 9: not taken.
+    ///
+    /// The Equal lookup returns 0, so ShouldBranch = 0 and execution falls
+    /// through to 0x8000_0040 + 4.
+    fn beq_not_taken_witness() -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0040;
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(7);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(9);
+        w[V_PRODUCT] = Fr::from_u64(63);
+        w[V_PC] = Fr::from_u64(15);
+        w[V_NEXT_PC] = Fr::from_u64(16);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_IMM] = Fr::from_i64(-16);
+        w[V_RS1_VALUE] = Fr::from_u64(7);
+        w[V_RS2_VALUE] = Fr::from_u64(9);
+        w[V_LEFT_LOOKUP_OPERAND] = Fr::from_u64(7);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(9);
+        w[V_BRANCH] = Fr::from_u64(1);
+        w
+    }
+
+    /// `JAL x1, +0x100` at 0x8000_0100: jump to 0x8000_0200, link 0x8000_0104.
+    ///
+    /// Circuit flags [AddOperands, Jump] (i/jal.rs); the left instruction
+    /// input is the unexpanded PC and the right is the immediate, so the
+    /// RangeCheck lookup computes the jump target PC + imm. The next row is
+    /// a real instruction, so ShouldJump = Jump·(1 − NextIsNoop) = 1.
+    fn jal_witness() -> Vec<Fr> {
+        const UNEXPANDED_PC: u64 = 0x8000_0100;
+        const IMM: u64 = 0x100;
+        const TARGET: u64 = 0x8000_0200;
+        const LINK: u64 = 0x8000_0104; // PC + 4
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(IMM);
+        w[V_PRODUCT] = Fr::from_u128((UNEXPANDED_PC as u128) * (IMM as u128));
+        w[V_PC] = Fr::from_u64(12);
+        w[V_NEXT_PC] = Fr::from_u64(37);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(TARGET);
+        w[V_IMM] = Fr::from_u64(IMM);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(LINK);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(TARGET);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(TARGET);
+        w[V_SHOULD_JUMP] = Fr::from_u64(1);
+        w[V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
+        w[V_FLAG_JUMP] = Fr::from_u64(1);
+        w
+    }
+
+    /// `MUL x5, x1, x2` with rs1 = 2^63 + 1, rs2 = 3.
+    ///
+    /// Circuit flags [MultiplyOperands, WriteLookupOutputToRD] (m/mul.rs).
+    /// The full product (2^63 + 1)·3 = 2^64 + 2^63 + 3 exceeds 64 bits: the
+    /// right lookup operand and the committed Product carry the full value,
+    /// while rd receives the RV64 truncated low 64 bits 2^63 + 3.
+    fn mul_witness() -> Vec<Fr> {
+        const RS1: u64 = 0x8000_0000_0000_0001; // 2^63 + 1
+        const RS2: u64 = 3;
+        const FULL_PRODUCT: u128 = 0x1_8000_0000_0000_0003; // 2^64 + 2^63 + 3
+        const TRUNCATED: u64 = 0x8000_0000_0000_0003; // 2^63 + 3
+        const UNEXPANDED_PC: u64 = 0x8000_0060;
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(RS1);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(RS2);
+        w[V_PRODUCT] = Fr::from_u128(FULL_PRODUCT);
+        w[V_PC] = Fr::from_u64(22);
+        w[V_NEXT_PC] = Fr::from_u64(23);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC + 4);
+        w[V_RS1_VALUE] = Fr::from_u64(RS1);
+        w[V_RS2_VALUE] = Fr::from_u64(RS2);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(TRUNCATED);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u128(FULL_PRODUCT);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(TRUNCATED);
+        w[V_FLAG_MULTIPLY_OPERANDS] = Fr::from_u64(1);
+        w[V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
+        w
+    }
+
+    /// A mid-sequence inline step of a virtual expansion (e.g. Virtual
+    /// MOVSIGN inside a DIV expansion) with rs1 = 2^63 (negative), so the
+    /// sign-mask lookup output is all-ones.
+    ///
+    /// Per the `jolt_instruction!` macro, `virtual_sequence_remaining =
+    /// Some(k > 0)` sets [VirtualInstruction, DoNotUpdateUnexpandedPC] and
+    /// not IsLastInSequence, so the expanded PC advances by 1 while the
+    /// unexpanded PC stays put. The next row is the following (non-first)
+    /// step of the same sequence.
+    fn virtual_inline_step_witness() -> Vec<Fr> {
+        const RS1: u64 = 0x8000_0000_0000_0000; // 2^63, sign bit set
+        const SIGN_MASK: u64 = u64::MAX;
+        const UNEXPANDED_PC: u64 = 0x8000_0050;
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(RS1);
+        w[V_PC] = Fr::from_u64(20);
+        w[V_NEXT_PC] = Fr::from_u64(21);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_RS1_VALUE] = Fr::from_u64(RS1);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(SIGN_MASK);
+        w[V_LEFT_LOOKUP_OPERAND] = Fr::from_u64(RS1);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(SIGN_MASK);
+        w[V_NEXT_IS_VIRTUAL] = Fr::from_u64(1);
+        w[V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
+        w[V_FLAG_VIRTUAL_INSTRUCTION] = Fr::from_u64(1);
+        w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        w
+    }
+
+    #[test]
+    fn add_with_carry_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&add_witness()), Ok(()));
+    }
+
+    #[test]
+    fn add_rejects_wrong_rd_write_value() {
+        // rd must receive the wrapped sum 3, not 4.
+        let w = with_cell(&add_witness(), V_RD_WRITE_VALUE, Fr::from_u64(4));
+        assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
+    }
+
+    #[test]
+    fn add_rejects_wrapped_right_lookup_operand() {
+        // Claiming the wrapped sum 3 instead of 2^64 + 3 drops the carry.
+        let w = with_cell(&add_witness(), V_RIGHT_LOOKUP_OPERAND, Fr::from_u64(3));
+        assert_eq!(check(&w), Err(RIGHT_LOOKUP_ADD));
+    }
+
+    #[test]
+    fn add_rejects_wrong_next_unexpanded_pc() {
+        let w = with_cell(
+            &add_witness(),
+            V_NEXT_UNEXPANDED_PC,
+            Fr::from_u64(0x8000_0010 + 8),
+        );
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+    }
+
+    #[test]
+    fn compressed_add_execution_witness_satisfies_constraints() {
+        // C.ADD occupies 2 bytes, so the unexpanded PC advances by 2.
+        let mut w = add_witness();
+        w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0010 + 2);
+        assert_eq!(check(&w), Ok(()));
+    }
+
+    #[test]
+    fn compressed_add_rejects_full_width_pc_increment() {
+        let mut w = add_witness();
+        w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
+        // +4 is only correct for uncompressed instructions.
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+    }
+
+    #[test]
+    fn sltu_write_back_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&sltu_witness()), Ok(()));
+    }
+
+    #[test]
+    fn sltu_rejects_wrong_rd_write_value() {
+        // rd must receive the comparison result 1 (7 <u 9), not 0.
+        let w = with_cell(&sltu_witness(), V_RD_WRITE_VALUE, Fr::from_u64(0));
+        assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
+    }
+
+    #[test]
+    fn sltu_rejects_left_lookup_operand_mismatch() {
+        // Without an operand-combination flag the left lookup operand must
+        // pass through the left instruction input unchanged.
+        let w = with_cell(&sltu_witness(), V_LEFT_LOOKUP_OPERAND, Fr::from_u64(8));
+        assert_eq!(check(&w), Err(LEFT_LOOKUP_EQ_LEFT_INPUT_OTHERWISE));
+    }
+
+    #[test]
+    fn ld_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&ld_witness()), Ok(()));
+    }
+
+    #[test]
+    fn ld_rejects_wrong_rd_write_value() {
+        let w = with_cell(
+            &ld_witness(),
+            V_RD_WRITE_VALUE,
+            Fr::from_u64(0xDEAD_BEEF_CAFE_F00D + 1),
+        );
+        assert_eq!(check(&w), Err(RAM_READ_EQ_RD_WRITE_IF_LOAD));
+    }
+
+    #[test]
+    fn ld_rejects_ram_write_differing_from_read() {
+        // A load must leave memory unchanged (write back the read value).
+        let w = with_cell(&ld_witness(), V_RAM_WRITE_VALUE, Fr::from_u64(0));
+        assert_eq!(check(&w), Err(RAM_READ_EQ_RAM_WRITE_IF_LOAD));
+    }
+
+    #[test]
+    fn ld_rejects_wrong_ram_address() {
+        // Address must be rs1 + imm = 0x8000_1008, not the bare base.
+        let w = with_cell(&ld_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_1000));
+        assert_eq!(check(&w), Err(RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE));
+    }
+
+    #[test]
+    fn sd_negative_offset_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&sd_witness()), Ok(()));
+    }
+
+    #[test]
+    fn sd_rejects_dropped_store_value() {
+        // Writing back the old memory value instead of rs2 drops the store.
+        let w = with_cell(
+            &sd_witness(),
+            V_RAM_WRITE_VALUE,
+            Fr::from_u64(0x0F0F_0F0F_0F0F_0F0F),
+        );
+        assert_eq!(check(&w), Err(RS2_EQ_RAM_WRITE_IF_STORE));
+    }
+
+    #[test]
+    fn sd_rejects_sign_error_in_address() {
+        // imm = −8 must subtract: base + 8 is the sign-flipped address.
+        let w = with_cell(&sd_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_2008));
+        assert_eq!(check(&w), Err(RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE));
+    }
+
+    #[test]
+    fn beq_taken_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&beq_taken_witness()), Ok(()));
+    }
+
+    #[test]
+    fn beq_taken_rejects_fall_through_next_pc() {
+        let w = with_cell(
+            &beq_taken_witness(),
+            V_NEXT_UNEXPANDED_PC,
+            Fr::from_u64(0x8000_0044),
+        );
+        assert_eq!(
+            check(&w),
+            Err(NEXT_UNEXP_PC_EQ_PC_PLUS_IMM_IF_SHOULD_BRANCH)
+        );
+    }
+
+    #[test]
+    fn beq_taken_rejects_denied_should_branch() {
+        // Zeroing ShouldBranch shifts the PC obligation to the fall-through
+        // constraint, which the branch-target next PC then violates.
+        let w = with_cell(&beq_taken_witness(), V_SHOULD_BRANCH, Fr::from_u64(0));
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+    }
+
+    #[test]
+    fn beq_taken_rejects_zero_lookup_output() {
+        // ShouldBranch = 1 requires the Equal lookup to have returned 1.
+        let w = with_cell(&beq_taken_witness(), V_LOOKUP_OUTPUT, Fr::from_u64(0));
+        assert_eq!(check(&w), Err(SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH));
+    }
+
+    #[test]
+    fn beq_not_taken_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&beq_not_taken_witness()), Ok(()));
+    }
+
+    #[test]
+    fn beq_not_taken_rejects_branch_target_next_pc() {
+        let w = with_cell(
+            &beq_not_taken_witness(),
+            V_NEXT_UNEXPANDED_PC,
+            Fr::from_u64(0x8000_0030),
+        );
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
+    }
+
+    #[test]
+    fn beq_not_taken_rejects_forced_branch() {
+        // Forcing ShouldBranch = 1 with a consistent branch-target next PC
+        // still fails: the lookup output is 0, so 0·Branch ≠ ShouldBranch.
+        let mut w = beq_not_taken_witness();
+        w[V_SHOULD_BRANCH] = Fr::from_u64(1);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0030);
+        assert_eq!(check(&w), Err(SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH));
+    }
+
+    #[test]
+    fn jal_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&jal_witness()), Ok(()));
+    }
+
+    #[test]
+    fn jal_rejects_wrong_link_value() {
+        // The link register must hold PC + 4, not PC.
+        let w = with_cell(&jal_witness(), V_RD_WRITE_VALUE, Fr::from_u64(0x8000_0100));
+        assert_eq!(check(&w), Err(RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP));
+    }
+
+    #[test]
+    fn jal_rejects_fall_through_next_pc() {
+        let w = with_cell(
+            &jal_witness(),
+            V_NEXT_UNEXPANDED_PC,
+            Fr::from_u64(0x8000_0104),
+        );
+        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP));
+    }
+
+    #[test]
+    fn jal_rejects_denied_should_jump() {
+        // With Jump = 1 and a real (non-noop) successor, ShouldJump must be 1.
+        let w = with_cell(&jal_witness(), V_SHOULD_JUMP, Fr::from_u64(0));
+        assert_eq!(check(&w), Err(SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP));
+    }
+
+    #[test]
+    fn mul_high_bit_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&mul_witness()), Ok(()));
+    }
+
+    #[test]
+    fn mul_rejects_truncated_right_lookup_operand() {
+        // The lookup operand must carry the full 65-bit product, not the
+        // RV64-truncated low 64 bits.
+        let w = with_cell(
+            &mul_witness(),
+            V_RIGHT_LOOKUP_OPERAND,
+            Fr::from_u64(0x8000_0000_0000_0003),
+        );
+        assert_eq!(check(&w), Err(RIGHT_LOOKUP_EQ_PRODUCT_IF_MUL));
+    }
+
+    #[test]
+    fn mul_rejects_truncated_product() {
+        // Truncating both Product and the lookup operand keeps them mutually
+        // consistent but breaks Product = Left·Right over the field.
+        let mut w = mul_witness();
+        w[V_PRODUCT] = Fr::from_u64(0x8000_0000_0000_0003);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(0x8000_0000_0000_0003);
+        assert_eq!(check(&w), Err(PRODUCT_EQ_LEFT_TIMES_RIGHT));
+    }
+
+    #[test]
+    fn mul_rejects_wrong_rd_write_value() {
+        // rd must receive the truncated product 2^63 + 3, not 2^63 + 1.
+        let w = with_cell(
+            &mul_witness(),
+            V_RD_WRITE_VALUE,
+            Fr::from_u64(0x8000_0000_0000_0001),
+        );
+        assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
+    }
+
+    #[test]
+    fn virtual_inline_step_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&virtual_inline_step_witness()), Ok(()));
+    }
+
+    #[test]
+    fn virtual_inline_step_rejects_skipped_expanded_pc() {
+        // A non-terminal virtual step must advance the expanded PC by
+        // exactly 1.
+        let w = with_cell(&virtual_inline_step_witness(), V_NEXT_PC, Fr::from_u64(22));
+        assert_eq!(check(&w), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
+    }
+
+    #[test]
+    fn virtual_inline_step_rejects_entering_sequence_mid_way() {
+        // Pretending the expansion ended (normal +4 advance) while the next
+        // row is a non-first virtual step means control would enter the
+        // middle of a virtual sequence.
+        let mut w = virtual_inline_step_witness();
+        w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(0);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0050 + 4);
+        assert_eq!(check(&w), Err(MUST_START_SEQUENCE_FROM_BEGINNING));
+    }
+}
