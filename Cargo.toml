@@ -286,14 +286,14 @@ dory = { package = "dory-pcs", version = "0.4.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
+akita-config = { path = "/Users/mgeorghiades/akita/crates/akita-config", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-field = { path = "/Users/mgeorghiades/akita/crates/akita-field", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-pcs = { path = "/Users/mgeorghiades/akita/crates/akita-pcs", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-prover = { path = "/Users/mgeorghiades/akita/crates/akita-prover", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-planner = { path = "/Users/mgeorghiades/akita/crates/akita-planner", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-challenges = { path = "/Users/mgeorghiades/akita/crates/akita-challenges", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-transcript = { path = "/Users/mgeorghiades/akita/crates/akita-transcript", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-types = { path = "/Users/mgeorghiades/akita/crates/akita-types", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -443,3 +443,4 @@ jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
 jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+
