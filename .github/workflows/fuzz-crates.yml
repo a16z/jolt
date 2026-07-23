@@ -71,7 +71,9 @@ jobs:
     name: Fuzz ${{ matrix.workspace }}
     needs: discover
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    # The weekly jolt-eval profile alone is 130 minutes of mutation before
+    # build, replay, cmin, and coverage; the spec requires at least 180.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -106,9 +108,7 @@ jobs:
           fi
 
           case "$profile" in
-            pr) seconds=30 ;;
-            daily) seconds=600 ;;
-            weekly) seconds=900 ;;
+            pr|daily|weekly) ;;
             *)
               echo "Unknown fuzz profile: $profile" >&2
               exit 1
@@ -116,7 +116,6 @@ jobs:
           esac
 
           echo "name=$profile" >> "$GITHUB_OUTPUT"
-          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly-2026-07-20
@@ -147,7 +146,7 @@ jobs:
           set -o pipefail
           python3 scripts/fuzz.py \
             --workspace "${{ matrix.workspace }}" \
-            run --seconds "${{ steps.profile.outputs.seconds }}" \
+            run --profile "${{ steps.profile.outputs.name }}" \
             2>&1 | tee "fuzz-${{ matrix.workspace }}.log"
       - name: Minimize weekly corpus
         if: success() && steps.profile.outputs.name == 'weekly'
