@@ -1,0 +1,68 @@
+[workspace]
+
+# The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
+# jolt-verifier's dependency graph builds against the patched arkworks fork.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
+[package]
+name = "jolt-verifier-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# The system's must-reject surface: highest budget.
+[package.metadata.jolt-fuzz.targets.proof_tamper_must_reject]
+focus = "soundness"
+pr-seconds = 45
+daily-seconds = 1800
+weekly-seconds = 3600
+
+[package.metadata.jolt-fuzz.targets.proof_deserialize_no_panic]
+focus = "defensive"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.validate_inputs_no_panic]
+focus = "defensive"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-verifier = { path = ".." }
+jolt-crypto = { path = "../../jolt-crypto" }
+jolt-dory = { path = "../../jolt-dory" }
+jolt-field = { path = "../../jolt-field", features = ["bn254"] }
+jolt-transcript = { path = "../../jolt-transcript" }
+common = { path = "../../../common" }
+bincode = { version = "2", features = ["serde"] }
+
+[[bin]]
+name = "proof_tamper_must_reject"
+path = "fuzz_targets/proof_tamper_must_reject.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proof_deserialize_no_panic"
+path = "fuzz_targets/proof_deserialize_no_panic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "validate_inputs_no_panic"
+path = "fuzz_targets/validate_inputs_no_panic.rs"
+test = false
+doc = false
+bench = false
