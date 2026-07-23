@@ -1025,8 +1025,8 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
         prover_witness::VirtualPolynomial::LookupTableFlag(index) => {
             JoltVirtualPolynomial::LookupTableFlag(index)
         }
-        prover_witness::VirtualPolynomial::BytecodeValStage(stage) => {
-            JoltVirtualPolynomial::BytecodeValStage(stage)
+        prover_witness::VirtualPolynomial::BytecodeValClaim(stage) => {
+            JoltVirtualPolynomial::BytecodeValClaim(stage)
         }
         prover_witness::VirtualPolynomial::BytecodeReadRafAddrClaim => {
             JoltVirtualPolynomial::BytecodeReadRafAddrClaim

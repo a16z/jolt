@@ -481,7 +481,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             }
             Self::BytecodeReadRafAddrClaim => 39u8.serialize_with_mode(&mut writer, compress),
             Self::BooleanityAddrClaim => 40u8.serialize_with_mode(&mut writer, compress),
-            Self::BytecodeValStage(i) => {
+            Self::BytecodeValClaim(i) => {
                 41u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
             }
@@ -539,7 +539,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
             | Self::LookupTableFlag(_)
-            | Self::BytecodeValStage(_) => 2,
+            | Self::BytecodeValClaim(_) => 2,
         }
     }
 }
@@ -617,7 +617,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 40 => Self::BooleanityAddrClaim,
                 41 => {
                     let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-                    Self::BytecodeValStage(i as usize)
+                    Self::BytecodeValClaim(i as usize)
                 }
                 42 => Self::BytecodeClaimReductionIntermediate,
                 43 => Self::ProgramImageInitContributionRw,
@@ -749,7 +749,7 @@ mod tests {
                 | VirtualPolynomial::LookupTableFlag(_)
                 | VirtualPolynomial::BytecodeReadRafAddrClaim
                 | VirtualPolynomial::BooleanityAddrClaim
-                | VirtualPolynomial::BytecodeValStage(_)
+                | VirtualPolynomial::BytecodeValClaim(_)
                 | VirtualPolynomial::BytecodeClaimReductionIntermediate
                 | VirtualPolynomial::ProgramImageInitContributionRw
                 | VirtualPolynomial::FusedInc => {}
@@ -797,7 +797,7 @@ mod tests {
             VirtualPolynomial::LookupTableFlag(7),
             VirtualPolynomial::BytecodeReadRafAddrClaim,
             VirtualPolynomial::BooleanityAddrClaim,
-            VirtualPolynomial::BytecodeValStage(1),
+            VirtualPolynomial::BytecodeValClaim(1),
             VirtualPolynomial::BytecodeClaimReductionIntermediate,
             VirtualPolynomial::ProgramImageInitContributionRw,
             VirtualPolynomial::FusedInc,

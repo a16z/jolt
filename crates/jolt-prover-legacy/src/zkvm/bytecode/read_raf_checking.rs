@@ -69,7 +69,7 @@ pub const BASE_N_STAGES: usize = 5;
 /// and `FusedInc·(1−Store) = RdInc` per-cycle).
 #[cfg(feature = "akita")]
 pub const LATTICE_N_STAGES: usize = 9;
-/// Staged `BytecodeValStage` wires in lattice committed mode: the five base
+/// Staged `BytecodeValClaim` wires in lattice committed mode: the five base
 /// columns plus the store column (the four fused stages resolve through the
 /// store wire and its complement, so no extra wires exist).
 #[cfg(feature = "akita")]
@@ -594,7 +594,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 .expect("bound Val claims must be present in committed mode");
             for stage in 0..self.params.num_staged_vals() {
                 accumulator.append_virtual(
-                    VirtualPolynomial::BytecodeValStage(stage),
+                    VirtualPolynomial::BytecodeValClaim(stage),
                     SumcheckId::BytecodeReadRafAddressPhase,
                     opening_point.clone(),
                     bound_val_polys[stage],
@@ -1067,7 +1067,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         if self.params.program_mode == ProgramMode::Committed {
             for stage in 0..self.params.num_staged_vals() {
                 accumulator.append_virtual(
-                    VirtualPolynomial::BytecodeValStage(stage),
+                    VirtualPolynomial::BytecodeValClaim(stage),
                     SumcheckId::BytecodeReadRafAddressPhase,
                     opening_point.clone(),
                 );
@@ -1140,7 +1140,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
             if self.params.program_mode == ProgramMode::Committed {
                 accumulator
                     .get_virtual_polynomial_opening(
-                        VirtualPolynomial::BytecodeValStage(stage),
+                        VirtualPolynomial::BytecodeValClaim(stage),
                         SumcheckId::BytecodeReadRafAddressPhase,
                     )
                     .1
@@ -1307,7 +1307,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafCyclePhaseParams
             for stage in 0..self.num_val_stages {
                 let mut factors = ra_factors.clone();
                 factors.push(ValueSource::Opening(OpeningId::virt(
-                    VirtualPolynomial::BytecodeValStage(stage),
+                    VirtualPolynomial::BytecodeValClaim(stage),
                     SumcheckId::BytecodeReadRafAddressPhase,
                 )));
                 terms.push(ProductTerm::scaled(ValueSource::Challenge(stage), factors));
@@ -1835,7 +1835,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         gammas
     }
 
-    /// Staged `BytecodeValStage` wire count in committed mode: one per val
+    /// Staged `BytecodeValClaim` wire count in committed mode: one per val
     /// stage in base mode; the lattice fused stages dedup through the store
     /// wire, so only the first `LATTICE_N_STAGED_VALS` stage.
     pub fn num_staged_vals(&self) -> usize {

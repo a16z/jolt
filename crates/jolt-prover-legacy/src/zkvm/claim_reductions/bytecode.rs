@@ -134,7 +134,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
             PrecommittedPhase::CycleVariables => (0..self.eta_powers.len())
                 .map(|stage| {
                     let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
-                        VirtualPolynomial::BytecodeValStage(stage),
+                        VirtualPolynomial::BytecodeValClaim(stage),
                         SumcheckId::BytecodeReadRafAddressPhase,
                     );
                     self.eta_powers[stage] * val_claim
@@ -170,7 +170,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
                 let openings: Vec<OpeningId> = (0..self.eta_powers.len())
                     .map(|stage| {
                         OpeningId::virt(
-                            VirtualPolynomial::BytecodeValStage(stage),
+                            VirtualPolynomial::BytecodeValClaim(stage),
                             SumcheckId::BytecodeReadRafAddressPhase,
                         )
                     })

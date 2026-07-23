@@ -5,7 +5,7 @@
 //! the two PC claims), wired by
 //! [`bytecode_read_raf_address_phase_input_values_from_upstream`]. Its output is
 //! the staged `BytecodeReadRafAddrClaim` intermediate (consumed by the stage-6b
-//! cycle phase) followed, in committed mode, by the `BytecodeValStage` openings.
+//! cycle phase) followed, in committed mode, by the `BytecodeValClaim` openings.
 //!
 //! Under the `akita` feature the symbolic swaps to the lattice address phase,
 //! whose input fold additionally consumes the four reduced `Inc` claims
@@ -99,7 +99,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     symbolic: AddressPhaseSymbolic,
-    /// Committed-program mode stages the `BytecodeValStage` wire claims.
+    /// Committed-program mode stages the `BytecodeValClaim` wire claims.
     committed_program: bool,
     _field: core::marker::PhantomData<F>,
 }
@@ -113,7 +113,7 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
         }
     }
 
-    /// The staged `BytecodeValStage` wire-claim count: all
+    /// The staged `BytecodeValClaim` wire-claim count: all
     /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, none in full mode.
     fn num_val_stages(&self) -> usize {
         if self.committed_program {
@@ -132,7 +132,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     }
 
     fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
-        // Committed-program mode absorbs the staged `BytecodeValStage` columns
+        // Committed-program mode absorbs the staged `BytecodeValClaim` columns
         // beyond the output-`Expr` set (the address-phase intermediate); their
         // constraining fold happens in stage 6b's bytecode claim reduction.
         let mut openings = self.symbolic().expected_output_openings::<F>();

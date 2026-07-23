@@ -161,7 +161,7 @@ pub const LATTICE_FUSED_INC_STAGES: usize = 4;
 /// The read-raf relation's val-stage count (one cycle point / cycle-eq public
 /// per stage): the five base flag stages, plus (akita) the four fused-inc
 /// consumer stages. Distinct from [`NUM_BYTECODE_VAL_STAGES`], the staged
-/// `BytecodeValStage` *wire* count — the fused stages resolve through the
+/// `BytecodeValClaim` *wire* count — the fused stages resolve through the
 /// store wire and its complement, adding no wires.
 #[cfg(not(feature = "akita"))]
 pub const READ_RAF_CYCLE_STAGES: usize = BYTECODE_STAGE_GAMMA_COUNTS.len();
@@ -209,7 +209,7 @@ where
 }
 
 /// Lattice committed-mode cycle output: the base five stages fold their staged
-/// `BytecodeValStage` openings; the four fused stages reuse the staged *store*
+/// `BytecodeValClaim` openings; the four fused stages reuse the staged *store*
 /// val (index [`BYTECODE_STAGE_GAMMA_COUNTS`]`.len()`) — directly for the two
 /// RAM legs, complemented (`1 − store`) for the two register legs — so the
 /// staged-val wire set is unchanged from the store-claim design.

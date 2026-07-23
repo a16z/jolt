@@ -356,7 +356,7 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
-    BytecodeValStage(usize),
+    BytecodeValClaim(usize),
     BytecodeReadRafAddrClaim,
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,

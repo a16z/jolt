@@ -334,7 +334,7 @@ where
         sumchecks.begin_batch(&inputs, &cycle_challenges, &mut recorder, transcript)?;
 
     // The address-only stage-value fold, once, for the bytecode kernel's
-    // constant `BytecodeValStage` tables (the recipe's relation instance
+    // constant `BytecodeValClaim` tables (the recipe's relation instance
     // recomputes the same fold internally for `expected_final_claim`). In
     // committed mode the constants ARE the stage-6a staged raw values — the
     // same quantities the fold computes.

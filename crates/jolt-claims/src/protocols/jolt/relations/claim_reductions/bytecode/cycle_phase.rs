@@ -30,11 +30,11 @@ pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
     pub chunks: Vec<C>,
 }
 
-/// The consumed staged `BytecodeValStage` openings from the bytecode read-RAF
+/// The consumed staged `BytecodeValClaim` openings from the bytecode read-RAF
 /// address phase.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReductionCyclePhaseInputClaims<C> {
-    #[opening(BytecodeValStage, from = BytecodeReadRaf)]
+    #[opening(BytecodeValClaim, from = BytecodeReadRaf)]
     pub val_stages: Vec<C>,
 }
 
@@ -46,7 +46,7 @@ pub struct BytecodeReductionCyclePhaseChallenges<F> {
 }
 
 /// Cycle phase of the committed-bytecode reduction: batches the staged
-/// `BytecodeValStage(i)` openings by powers of `eta` and reduces them to either
+/// `BytecodeValClaim(i)` openings by powers of `eta` and reduces them to either
 /// the cycle-phase intermediate opening (when an address phase follows) or the
 /// committed `BytecodeChunk(i)` openings weighted by `ChunkOutputWeight`.
 pub struct CyclePhase {
