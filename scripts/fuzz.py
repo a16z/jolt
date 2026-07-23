@@ -279,6 +279,10 @@ def run_for_targets(
                     )
                 command = ["cargo", "fuzz", "run", target]
                 command.extend(str(path) for path in files)
+            elif args.command == "reproduce":
+                command = ["cargo", "fuzz", "run", target, str(args.input)]
+            elif args.command == "tmin":
+                command = ["cargo", "fuzz", "tmin", target, str(args.input)]
             elif args.command == "run":
                 corpus = workspace.directory / "corpus" / target
                 artifacts = workspace.directory / "artifacts" / target
@@ -322,6 +326,14 @@ def run_for_targets(
             status = run_command(command, cwd=workspace.directory)
             if status != 0:
                 failures.append(f"{workspace.name}/{target} (exit {status})")
+                if args.command in ("run", "replay"):
+                    artifacts = workspace.directory / "artifacts" / target
+                    print(
+                        f"replay a failing input with: python3 scripts/fuzz.py "
+                        f"--workspace {workspace.name} --target {target} "
+                        f"reproduce <input> (run artifacts land in {artifacts})",
+                        file=sys.stderr,
+                    )
 
     if failures:
         joined = "\n  - ".join(failures)
@@ -388,6 +400,10 @@ def create_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser("build", help="build every selected fuzz target")
     subparsers.add_parser("replay", help="replay checked-in seeds and regressions")
+    reproduce = subparsers.add_parser("reproduce", help="replay one artifact")
+    reproduce.add_argument("input", type=Path)
+    tmin = subparsers.add_parser("tmin", help="minimize one failing artifact in place")
+    tmin.add_argument("input", type=Path)
 
     run = subparsers.add_parser("run", help="run coverage-guided fuzzing")
     run.add_argument("--seconds", type=int, default=30)
@@ -418,6 +434,16 @@ def main(argv: Iterable[str] | None = None) -> int:
             raise FuzzConfigurationError(
                 f"--target is not supported by the {args.command} command"
             )
+        if args.command in ("reproduce", "tmin"):
+            if len(workspaces) != 1 or args.target is None:
+                raise FuzzConfigurationError(
+                    f"{args.command} requires --workspace and --target"
+                )
+            args.input = args.input.resolve()
+            if not args.input.is_file():
+                raise FuzzConfigurationError(
+                    f"reproducer does not exist or is not a file: {args.input}"
+                )
 
         if args.command == "inventory":
             print_inventory(root, workspaces, args.output_format)

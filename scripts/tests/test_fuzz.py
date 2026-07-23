@@ -3,9 +3,10 @@ import json
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).parents[1] / "fuzz.py"
@@ -207,6 +208,58 @@ class FuzzInventoryTests(unittest.TestCase):
                 FUZZ.FuzzConfigurationError, "has no checked-in seed"
             ):
                 FUZZ.check_workspace(root, workspace, resolve=False)
+
+    def test_reproduce_and_tmin_invoke_cargo_fuzz_on_the_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.make_validated_workspace(root, targets=("alpha",))
+            artifact = root / "crash-1"
+            artifact.write_text("input")
+            commands = []
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(FUZZ, "check_cargo_fuzz_version"),
+                mock.patch.object(FUZZ, "check_workspace"),
+                mock.patch.object(
+                    FUZZ,
+                    "run_command",
+                    side_effect=lambda command, **_: commands.append(command) or 0,
+                ),
+            ):
+                for command in ("reproduce", "tmin"):
+                    status = FUZZ.main(
+                        (
+                            "--workspace",
+                            "sample",
+                            "--target",
+                            "alpha",
+                            command,
+                            str(artifact),
+                        )
+                    )
+                    self.assertEqual(status, 0)
+
+            self.assertEqual(
+                commands,
+                [
+                    ["cargo", "fuzz", "run", "alpha", str(artifact)],
+                    ["cargo", "fuzz", "tmin", "alpha", str(artifact)],
+                ],
+            )
+
+    def test_reproducer_commands_require_workspace_and_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_workspace(root, targets=("alpha",))
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                redirect_stderr(StringIO()),
+            ):
+                status = FUZZ.main(("reproduce", "missing-artifact"))
+
+            self.assertEqual(status, 1)
 
 
 if __name__ == "__main__":
