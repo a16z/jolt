@@ -4,55 +4,178 @@ on:
   push:
     branches: [main]
     paths:
-      - "crates/*/fuzz/**"
-      - "crates/*/src/**"
+      - "crates/**"
+      - "jolt-eval/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/fuzz.py"
+      - "scripts/tests/test_fuzz.py"
       - ".github/workflows/fuzz-crates.yml"
   pull_request:
     branches: [main]
     paths:
-      - "crates/*/fuzz/**"
-      - "crates/*/src/**"
+      - "crates/**"
+      - "jolt-eval/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/fuzz.py"
+      - "scripts/tests/test_fuzz.py"
       - ".github/workflows/fuzz-crates.yml"
+  schedule:
+    - cron: "17 4 * * *"
+    - cron: "43 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Fuzzing time and post-processing profile
+        required: true
+        default: pr
+        type: choice
+        options:
+          - pr
+          - daily
+          - weekly
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  FUZZ_DURATION: 60
+  RUST_BACKTRACE: "1"
 
 jobs:
-  fuzz:
+  discover:
+    name: Validate fuzz configuration
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test repository fuzz runner
+        run: python3 -m unittest scripts.tests.test_fuzz -v
+      - name: Validate fuzz workspaces
+        run: python3 scripts/fuzz.py check
+      - name: Check generated jolt-eval targets
+        run: |
+          ./jolt-eval/sync_targets.sh
+          git diff --exit-code -- jolt-eval
+      - name: Generate workspace matrix
+        id: inventory
+        run: |
+          matrix="$(python3 scripts/fuzz.py inventory --format github)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: Fuzz ${{ matrix.workspace }}
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
     strategy:
       fail-fast: false
-      matrix:
-        crate:
-          - jolt-crypto
-          - jolt-field
-          - jolt-poly
-          - jolt-sumcheck
-          - jolt-transcript
-    name: Fuzz ${{ matrix.crate }}
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
     concurrency:
-      group: fuzz-crates-${{ github.head_ref || github.ref }}-${{ matrix.crate }}
+      group: fuzz-${{ github.event.schedule || github.head_ref || github.ref }}-${{ matrix.workspace }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@v7
         with:
-          toolchain: nightly
-      - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-      - name: Fuzz all targets
-        working-directory: crates/${{ matrix.crate }}
+          persist-credentials: false
+      - name: Select fuzz profile
+        id: profile
+        env:
+          DISPATCH_PROFILE: ${{ inputs.profile }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
-          targets=$(cargo +nightly fuzz list)
-          if [ -z "$targets" ]; then
-            echo "No fuzz targets found for ${{ matrix.crate }}"
-            exit 1
+          profile=pr
+          if [[ "$EVENT_NAME" == "schedule" ]]; then
+            case "$EVENT_SCHEDULE" in
+              "17 4 * * *") profile=daily ;;
+              "43 3 * * 0") profile=weekly ;;
+              *)
+                echo "Unknown fuzz schedule: $EVENT_SCHEDULE" >&2
+                exit 1
+                ;;
+            esac
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            profile="$DISPATCH_PROFILE"
           fi
-          for target in $targets; do
-            echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
-            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=$FUZZ_DURATION
-          done
+
+          case "$profile" in
+            pr) seconds=30 ;;
+            daily) seconds=600 ;;
+            weekly) seconds=900 ;;
+            *)
+              echo "Unknown fuzz profile: $profile" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "name=$profile" >> "$GITHUB_OUTPUT"
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly-2026-07-20
+          components: llvm-tools-preview,rust-src
+      - name: Install pinned cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@0.13.2
+      - name: Cache fuzz builds
+        uses: actions/cache@v6
+        with:
+          path: ${{ matrix.directory }}/target
+          key: fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ hashFiles(format('{0}/Cargo.lock', matrix.directory)) }}
+          restore-keys: |
+            fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
+      - name: Restore trusted corpus
+        id: corpus
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ matrix.directory }}/corpus
+          key: fuzz-corpus-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-v1-${{ runner.os }}-${{ matrix.workspace }}-
+      - name: Replay seeds and regressions
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" replay
+      - name: Run ${{ steps.profile.outputs.name }} fuzz profile
+        run: |
+          set -o pipefail
+          python3 scripts/fuzz.py \
+            --workspace "${{ matrix.workspace }}" \
+            run --seconds "${{ steps.profile.outputs.seconds }}" \
+            2>&1 | tee "fuzz-${{ matrix.workspace }}.log"
+      - name: Minimize weekly corpus
+        if: success() && steps.profile.outputs.name == 'weekly'
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" cmin
+      - name: Generate weekly coverage
+        if: success() && steps.profile.outputs.name == 'weekly'
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" coverage
+      - name: Save trusted corpus
+        if: success() && github.event_name == 'schedule' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ matrix.directory }}/corpus
+          key: fuzz-corpus-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ github.run_id }}
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-failure-${{ matrix.workspace }}-${{ github.run_id }}
+          path: |
+            ${{ matrix.directory }}/artifacts/
+            fuzz-${{ matrix.workspace }}.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload weekly coverage
+        if: success() && steps.profile.outputs.name == 'weekly'
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-coverage-${{ matrix.workspace }}-${{ github.run_id }}
+          path: ${{ matrix.directory }}/coverage/
+          if-no-files-found: error
+          retention-days: 14
