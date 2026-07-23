@@ -6,6 +6,7 @@ on:
     paths:
       - "crates/**"
       - "jolt-eval/**"
+      - "tracer/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "scripts/fuzz.py"
@@ -16,6 +17,7 @@ on:
     paths:
       - "crates/**"
       - "jolt-eval/**"
+      - "tracer/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "scripts/fuzz.py"

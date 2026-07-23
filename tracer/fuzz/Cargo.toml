@@ -1,0 +1,54 @@
+[workspace]
+
+# The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
+# tracer and jolt-program pull `ark-serialize` (and transitively `ark-ff`) which
+# must resolve to the a16z fork so serialized types match the rest of the tree.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
+[package]
+name = "tracer-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Microsecond-per-exec differential oracles that reach their coverage frontier
+# quickly; the budgets are priors to recalibrate, not a claim they need this
+# long.
+[package.metadata.jolt-fuzz.targets.decode_differential]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 1200
+weekly-seconds = 3600
+
+[package.metadata.jolt-fuzz.targets.uncompress_differential]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1800
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tracer = { path = ".." }
+jolt-program = { path = "../../crates/jolt-program", features = ["image", "serialization"] }
+jolt-riscv = { path = "../../crates/jolt-riscv", features = ["serialization"] }
+
+[[bin]]
+name = "decode_differential"
+path = "fuzz_targets/decode_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "uncompress_differential"
+path = "fuzz_targets/uncompress_differential.rs"
+test = false
+doc = false
+bench = false
