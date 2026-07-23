@@ -1,0 +1,75 @@
+name: Coverage Nightly
+
+# Nightly mutation-testing report over the soundness-critical modules listed
+# in ci/mutants-modules.toml (specs/test-quality-ci.md). Report-only: catches
+# "covered but not actually verified" code, but never gates merges.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    name: cargo-mutants (soundness modules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@cargo-mutants
+
+      - name: Run mutation testing per target
+        run: |
+          set -euo pipefail
+          mkdir -p mutants-report
+          python3 - <<'EOF' > targets.jsonl
+          import json, tomllib
+          for t in tomllib.load(open("ci/mutants-modules.toml", "rb"))["target"]:
+              print(json.dumps(t))
+          EOF
+          while read -r target; do
+            pkg=$(jq -r '.package' <<<"$target")
+            args=()
+            while read -r glob; do args+=(-f "$glob"); done < <(jq -r '.files[]' <<<"$target")
+            echo "::group::cargo mutants: $pkg"
+            # report-only: a nonzero exit (missed mutants) must not fail the job
+            cargo mutants -p "$pkg" "${args[@]}" \
+              --test-tool nextest --timeout-multiplier 3 \
+              --output "mutants-report/$pkg" || true
+            echo "::endgroup::"
+          done < targets.jsonl
+
+      - name: Summarize
+        run: |
+          set -euo pipefail
+          {
+            echo "## Mutation testing (report-only)"
+            echo
+            echo "| package | caught | missed | timeout | unviable |"
+            echo "|---|---|---|---|---|"
+            for dir in mutants-report/*/mutants.out; do
+              pkg=$(basename "$(dirname "$dir")")
+              caught=$(wc -l < "$dir/caught.txt" 2>/dev/null || echo 0)
+              missed=$(wc -l < "$dir/missed.txt" 2>/dev/null || echo 0)
+              timeout=$(wc -l < "$dir/timeout.txt" 2>/dev/null || echo 0)
+              unviable=$(wc -l < "$dir/unviable.txt" 2>/dev/null || echo 0)
+              echo "| $pkg | $caught | $missed | $timeout | $unviable |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-report
+          path: mutants-report
+          retention-days: 30

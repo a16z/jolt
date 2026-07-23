@@ -1,0 +1,22 @@
+# Modules covered by the nightly mutation-testing report
+# (.github/workflows/coverage-nightly.yml). Report-only, never a merge gate.
+#
+# Scope: soundness-critical verification code — modules where a surviving
+# mutant means "a check that accepts things it should reject and no test
+# notices". Sized to fit the nightly time budget; grow deliberately.
+
+[[target]]
+package = "jolt-sumcheck"
+files = ["src/**/*.rs"]
+
+[[target]]
+package = "jolt-openings"
+files = ["src/**/*.rs"]
+
+[[target]]
+package = "jolt-blindfold"
+files = ["src/verify.rs", "src/protocol.rs", "src/relaxed.rs", "src/r1cs.rs"]
+
+[[target]]
+package = "jolt-verifier"
+files = ["src/stages/**/*.rs", "src/verifier.rs"]
