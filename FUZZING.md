@@ -102,11 +102,15 @@ ignored test and committed under `fuzz/fixtures/` or `fuzz/seeds/`:
 
 ```bash
 # jolt-verifier tamper fixture (needs the host/prover build):
-cargo test -p jolt-verifier --features prover-fixtures \
-    --test generate_fuzz_fixture -- --ignored
+cargo nextest run -p jolt-verifier --features prover-fixtures \
+    --test generate_fuzz_fixture --run-ignored ignored-only --cargo-quiet
+cargo nextest run -p jolt-verifier --features prover-fixtures,zk \
+    --test generate_fuzz_fixture --run-ignored ignored-only --cargo-quiet
 # crypto/PCS real serialized seeds:
-cargo test --manifest-path crates/jolt-crypto/fuzz/Cargo.toml -- --ignored
-cargo test --manifest-path crates/jolt-dory/fuzz/Cargo.toml -- --ignored
+cargo nextest run --manifest-path crates/jolt-crypto/fuzz/Cargo.toml \
+    --run-ignored ignored-only --cargo-quiet
+cargo nextest run --manifest-path crates/jolt-dory/fuzz/Cargo.toml \
+    --run-ignored ignored-only --cargo-quiet
 ```
 
 `replay` runs every checked-in seed and regression exactly once, so a known
@@ -141,6 +145,11 @@ recorded at 5/10/30 minutes) and reallocate toward targets that still reach
 new high-value states. A plateaued soundness target keeps a baseline budget;
 a plateaued defensive target is a candidate for reduction.
 
+Targets that require non-default crate features declare them in the same policy
+block. For example, `jolt-verifier/zk_proof_tamper_must_reject` is compiled and
+run with `cargo-features = ["zk"]`, so the runner builds the ZK verifier path
+without forcing every verifier fuzz target into that feature mode.
+
 ## Interpreting fuzz output
 
 Each `run` invocation prints libFuzzer status lines, final statistics
@@ -174,9 +183,9 @@ budgets](#target-budgets)); the workflow passes only the profile name.
 
 | Profile | Trigger | Aggregate mutation time | Corpus cache | Extras |
 |---------|---------|-------------------------|--------------|--------|
-| `pr` | pull request / push to main | 13m 5s (longest workspace 3m 30s) | restore only | |
-| `daily` | cron `17 4 * * *` | 4h 35m (longest workspace 70m) | restore + save on success | |
-| `weekly` | cron `43 3 * * 0` | 10h 20m (longest workspace 130m) | restore + save on success | `cmin` + coverage upload |
+| `pr` | pull request / push to main | 23m 20s (longest workspace 3m 30s) | restore only | |
+| `daily` | cron `17 4 * * *` | 9h 5m (longest workspace 90m) | restore + save on success | |
+| `weekly` | cron `43 3 * * 0` | 23h (longest workspace 300m) | restore + save on success | `cmin` + coverage upload |
 | manual | `workflow_dispatch` | per chosen profile | per chosen profile | |
 
 All profiles validate the configuration and replay seeds and regressions

@@ -75,7 +75,6 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "rayon",
  "zeroize",
 ]
 
@@ -96,7 +95,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "paste",
- "rayon",
  "zeroize",
 ]
 
@@ -185,7 +183,6 @@ dependencies = [
  "arrayvec",
  "digest 0.10.7",
  "num-bigint",
- "rayon",
 ]
 
 [[package]]
@@ -229,7 +226,6 @@ checksum = "246a225cc6131e9ee4f24619af0f19d67761fff15d7ccc22e42b80846e69449a"
 dependencies = [
  "num-traits",
  "rand 0.8.7",
- "rayon",
 ]
 
 [[package]]
@@ -255,59 +251,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "bincode"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
-dependencies = [
- "bincode_derive",
- "serde",
- "unty",
-]
-
-[[package]]
-name = "bincode_derive"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf95709a440f45e986983918d0e8a1f30a9b1df04918fc828670606804ac3c09"
-dependencies = [
- "virtue",
-]
-
-[[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest 0.10.7",
-]
-
-[[package]]
 name = "blake2"
 version = "0.11.0-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "061f1a09225e328e1ffbb378d2d49923c0ca5fee19fb5ac1cc9c1e9d52b93690"
 dependencies = [
  "digest 0.11.3",
-]
-
-[[package]]
-name = "block-buffer"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
-dependencies = [
- "generic-array",
 ]
 
 [[package]]
@@ -342,16 +291,6 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
-
-[[package]]
-name = "common"
-version = "0.2.0"
-dependencies = [
- "allocative",
- "ark-serialize 0.5.0",
- "serde",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "const-oid"
@@ -467,9 +406,7 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
- "block-buffer 0.10.4",
  "crypto-common 0.1.7",
- "subtle",
 ]
 
 [[package]]
@@ -478,43 +415,10 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
- "block-buffer 0.12.1",
+ "block-buffer",
  "const-oid",
  "crypto-common 0.2.2",
  "ctutils",
-]
-
-[[package]]
-name = "dory-derive"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc9c63de9e3d87d5be179ce2ddde4f31d95c12c1f20ccdbc3a70b004813959ca"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "dory-pcs"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c6a5b6aa708db35ced06eeef3d2b4408004c76279091e0bc387f8fd42796555"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "bincode 1.3.3",
- "blake2 0.10.6",
- "digest 0.10.7",
- "dory-derive",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "thiserror 2.0.19",
- "tracing",
 ]
 
 [[package]]
@@ -652,27 +556,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-blindfold"
-version = "0.1.0"
-dependencies = [
- "jolt-claims",
- "jolt-crypto",
- "jolt-field",
- "jolt-poly",
- "jolt-r1cs",
- "jolt-sumcheck",
- "jolt-transcript",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.6",
+ "blake2",
  "derive_more",
  "jolt-claims-derive",
  "jolt-field",
@@ -711,24 +598,6 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
-]
-
-[[package]]
-name = "jolt-dory"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-serialize 0.5.0",
- "dory-pcs",
- "jolt-crypto",
- "jolt-field",
- "jolt-openings",
- "jolt-poly",
- "jolt-transcript",
- "rayon",
- "serde",
- "tracing",
 ]
 
 [[package]]
@@ -782,17 +651,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-program"
-version = "0.1.0"
-dependencies = [
- "ark-serialize 0.5.0",
- "common",
- "jolt-riscv",
- "serde",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
@@ -800,10 +658,19 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "num-traits",
- "rayon",
  "serde",
  "thiserror 2.0.19",
  "tracing",
+]
+
+[[package]]
+name = "jolt-r1cs-fuzz"
+version = "0.0.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-field",
+ "jolt-r1cs",
+ "libfuzzer-sys",
 ]
 
 [[package]]
@@ -817,84 +684,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-sumcheck"
-version = "0.1.0"
-dependencies = [
- "jolt-crypto",
- "jolt-field",
- "jolt-openings",
- "jolt-poly",
- "jolt-r1cs",
- "jolt-transcript",
- "rand_core 0.6.4",
- "serde",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
 name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
- "blake2 0.11.0-rc.6",
+ "blake2",
  "digest 0.11.3",
  "jolt-field",
  "light-poseidon",
  "rand 0.8.7",
  "spongefish",
-]
-
-[[package]]
-name = "jolt-verifier"
-version = "0.1.0"
-dependencies = [
- "ark-serialize 0.5.0",
- "common",
- "jolt-blindfold",
- "jolt-claims",
- "jolt-claims-derive",
- "jolt-crypto",
- "jolt-field",
- "jolt-lookup-tables",
- "jolt-openings",
- "jolt-poly",
- "jolt-program",
- "jolt-r1cs",
- "jolt-riscv",
- "jolt-sumcheck",
- "jolt-transcript",
- "jolt-verifier-derive",
- "num-traits",
- "serde",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "jolt-verifier-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "jolt-verifier-fuzz"
-version = "0.0.0"
-dependencies = [
- "bincode 2.0.1",
- "common",
- "jolt-claims",
- "jolt-crypto",
- "jolt-dory",
- "jolt-field",
- "jolt-poly",
- "jolt-sumcheck",
- "jolt-transcript",
- "jolt-verifier",
- "libfuzzer-sys",
 ]
 
 [[package]]
@@ -1368,7 +1168,7 @@ source = "git+https://github.com/arkworks-rs/spongefish?rev=d2d190b1329d35ac9577
 dependencies = [
  "ark-ff 0.6.0",
  "ark-serialize 0.6.0",
- "blake2 0.11.0-rc.6",
+ "blake2",
  "digest 0.11.3",
  "keccak 0.1.6",
  "p3-koala-bear",
@@ -1403,12 +1203,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
-
-[[package]]
-name = "subtle"
-version = "2.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
@@ -1499,9 +1293,6 @@ name = "tracing-core"
 version = "0.1.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
-dependencies = [
- "once_cell",
-]
 
 [[package]]
 name = "transpose"
@@ -1526,22 +1317,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
-name = "unty"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
-
-[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "virtue"
-version = "0.0.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
 name = "wasi"

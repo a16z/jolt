@@ -260,14 +260,21 @@ impl Invariant for TranscriptConsistencyInvariant {
     }
 
     fn seed_corpus(&self) -> Vec<SpongeInput> {
-        [SpongeKind::Blake2b, SpongeKind::Keccak, SpongeKind::Poseidon]
-            .into_iter()
-            .flat_map(|sponge| {
-                seed_corpus_shared()
-                    .into_iter()
-                    .map(move |input| SpongeInput { sponge, ops: input.ops })
-            })
-            .collect()
+        [
+            SpongeKind::Blake2b,
+            SpongeKind::Keccak,
+            SpongeKind::Poseidon,
+        ]
+        .into_iter()
+        .flat_map(|sponge| {
+            seed_corpus_shared()
+                .into_iter()
+                .map(move |input| SpongeInput {
+                    sponge,
+                    ops: input.ops,
+                })
+        })
+        .collect()
     }
 }
 

@@ -153,6 +153,51 @@ class FuzzInventoryTests(unittest.TestCase):
             self.assertEqual(target.profile_seconds("weekly"), 5400)
             self.assertEqual(workspace.profile_runtime("weekly"), 5400)
 
+    def test_parses_per_target_cargo_features(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_workspace(
+                root,
+                targets=("alpha",),
+                policies={
+                    "alpha": (
+                        'focus = "soundness"\n'
+                        'cargo-features = ["zk", "fuzzing"]\n'
+                        "pr-seconds = 30\n"
+                        "daily-seconds = 600\n"
+                        "weekly-seconds = 900\n"
+                    )
+                },
+            )
+
+            target = FUZZ.discover_workspaces(root)[0].targets[0]
+
+            self.assertEqual(target.cargo_features, ("zk", "fuzzing"))
+
+    def test_rejects_invalid_or_duplicate_cargo_features(self) -> None:
+        invalid_values = ('["zk", "zk"]', '[""]', '"zk"', '["zk", 7]')
+        for value in invalid_values:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_workspace(
+                    root,
+                    targets=("alpha",),
+                    policies={
+                        "alpha": (
+                            'focus = "soundness"\n'
+                            f"cargo-features = {value}\n"
+                            "pr-seconds = 30\n"
+                            "daily-seconds = 600\n"
+                            "weekly-seconds = 900\n"
+                        )
+                    },
+                )
+
+                with self.assertRaisesRegex(
+                    FUZZ.FuzzConfigurationError, "cargo-features"
+                ):
+                    FUZZ.discover_workspaces(root)
+
     def test_rejects_target_without_policy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -281,7 +326,10 @@ class FuzzInventoryTests(unittest.TestCase):
 
             self.assertEqual(
                 commands,
-                [["cargo", "check", "--locked", "--quiet"]] * 2,
+                [
+                    ["cargo", "check", "--locked", "--quiet", "--bin", "one"],
+                    ["cargo", "check", "--locked", "--quiet", "--bin", "two"],
+                ],
             )
 
     def test_check_compile_reports_every_failing_workspace(self) -> None:
@@ -300,8 +348,8 @@ class FuzzInventoryTests(unittest.TestCase):
                 status = FUZZ.main(("check", "--compile"))
 
             self.assertEqual(status, 1)
-            self.assertIn("alpha (exit 101)", errors.getvalue())
-            self.assertIn("beta (exit 101)", errors.getvalue())
+            self.assertIn("alpha/one (exit 101)", errors.getvalue())
+            self.assertIn("beta/two (exit 101)", errors.getvalue())
 
     def test_run_uses_manifest_budgets_and_seconds_override(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -325,6 +373,38 @@ class FuzzInventoryTests(unittest.TestCase):
 
             self.assertIn("-max_total_time=600", commands[0])
             self.assertIn("-max_total_time=7", commands[1])
+
+    def test_target_features_reach_check_build_and_run_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.make_validated_workspace(root, targets=("alpha",))
+            manifest = root / "crates" / "sample" / "fuzz" / "Cargo.toml"
+            manifest.write_text(
+                manifest.read_text().replace(
+                    'focus = "correctness"\n',
+                    'focus = "correctness"\ncargo-features = ["zk", "fuzzing"]\n',
+                )
+            )
+            commands = []
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(FUZZ, "check_cargo_fuzz_version"),
+                mock.patch.object(FUZZ, "check_workspace"),
+                mock.patch.object(
+                    FUZZ,
+                    "run_command",
+                    side_effect=lambda command, **_: commands.append(command) or 0,
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                self.assertEqual(FUZZ.main(("check", "--compile")), 0)
+                self.assertEqual(FUZZ.main(("build",)), 0)
+                self.assertEqual(FUZZ.main(("run", "--seconds", "1")), 0)
+
+            for command in commands:
+                self.assertIn("--features", command)
+                self.assertEqual(command[command.index("--features") + 1], "zk,fuzzing")
 
     def test_run_requires_exactly_one_of_profile_or_seconds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

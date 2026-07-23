@@ -20,8 +20,21 @@ cargo-fuzz = true
 # The system's must-reject surface: highest budget.
 [package.metadata.jolt-fuzz.targets.proof_tamper_must_reject]
 focus = "soundness"
-pr-seconds = 45
+pr-seconds = 60
 daily-seconds = 1800
+weekly-seconds = 7200
+
+[package.metadata.jolt-fuzz.targets.zk_proof_tamper_must_reject]
+focus = "soundness"
+cargo-features = ["zk"]
+pr-seconds = 90
+daily-seconds = 1800
+weekly-seconds = 5400
+
+[package.metadata.jolt-fuzz.targets.blindfold_expression_mapping_equivalence]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 1200
 weekly-seconds = 3600
 
 [package.metadata.jolt-fuzz.targets.proof_deserialize_no_panic]
@@ -36,12 +49,18 @@ pr-seconds = 15
 daily-seconds = 300
 weekly-seconds = 900
 
+[features]
+zk = ["jolt-verifier/zk"]
+
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-verifier = { path = ".." }
+jolt-verifier = { path = "..", features = ["fuzzing"] }
+jolt-claims = { path = "../../jolt-claims" }
 jolt-crypto = { path = "../../jolt-crypto" }
 jolt-dory = { path = "../../jolt-dory" }
 jolt-field = { path = "../../jolt-field", features = ["bn254"] }
+jolt-poly = { path = "../../jolt-poly" }
+jolt-sumcheck = { path = "../../jolt-sumcheck" }
 jolt-transcript = { path = "../../jolt-transcript" }
 common = { path = "../../../common" }
 bincode = { version = "2", features = ["serde"] }
@@ -63,6 +82,21 @@ bench = false
 [[bin]]
 name = "validate_inputs_no_panic"
 path = "fuzz_targets/validate_inputs_no_panic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zk_proof_tamper_must_reject"
+path = "fuzz_targets/zk_proof_tamper_must_reject.rs"
+test = false
+doc = false
+bench = false
+required-features = ["zk"]
+
+[[bin]]
+name = "blindfold_expression_mapping_equivalence"
+path = "fuzz_targets/blindfold_expression_mapping_equivalence.rs"
 test = false
 doc = false
 bench = false

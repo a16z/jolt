@@ -9,12 +9,10 @@
 
 ## Summary
 
-Jolt currently has eight independent `cargo-fuzz` workspaces containing 22 fuzz
-targets. The targets cover useful cryptographic and algebraic properties, but the
-infrastructure around them is incomplete: CI runs only a subset, toolchains and
-dependencies are not uniformly pinned, every run starts without durable corpus
-state, and there is no standard regression, minimization, coverage, or crash
-handling workflow.
+Jolt currently has 13 independent `cargo-fuzz` workspaces containing 38 fuzz
+targets. The targets cover cryptographic, algebraic, parser, verifier, R1CS,
+opening, and tracer properties through manifest-discovered workspaces with
+checked-in seeds, lockfiles, and per-profile budgets.
 
 This feature is delivered in two phases.
 
@@ -24,14 +22,13 @@ that discovers every fuzz workspace, reproducible builds, checked-in bootstrap
 inputs, durable coverage-guided corpora, and PR, daily, and weekly CI tiers.
 
 **Phase 2 (harness quality and coverage, this document's second half)** acts on
-the base. An audit of all 22 existing targets found that five do not compile,
-several fuzz upstream pass-through code or duplicate a sibling, and one ships a
-dead seed. Phase 2 repairs the broken targets, retires or merges the wasteful
-ones, sharpens weak oracles, and adds structure-aware targets — for existing
-workspaces and for currently uncovered crates — that exercise each crate through
-its real API rather than through black-box byte decoding of complex structures.
-The audit findings, verdicts, and new-target scope are in the
-[Coverage Program](#coverage-program) section.
+the base. The initial audit covered 22 targets, repaired broken builds, retired
+or merged wasteful targets, sharpened weak oracles, and added structure-aware
+targets for previously uncovered crates. The current suite now includes
+transparent and ZK verifier proof-tamper targets, BlindFold expression mapping
+coverage, symbolic claim lowering coverage in `jolt-r1cs`, and homomorphic Dory
+batch-opening coverage in `jolt-openings`. The audit findings, verdicts, and
+new-target scope are in the [Coverage Program](#coverage-program) section.
 
 ## Intent
 
@@ -100,8 +97,8 @@ duplicated target lists in sync.
 ### Acceptance Criteria
 
 - [ ] A repository command discovers all current fuzz workspaces and all targets
-      from their manifests. At the time of this spec, that is eight workspaces
-      and 22 targets.
+      from their manifests. At the time of this spec, that is 13 workspaces and
+      38 targets.
 - [ ] The inventory can be emitted as human-readable text, JSON, and a GitHub
       Actions matrix, including each target's focus and profile budgets.
 - [ ] Configuration validation fails for a missing target source, duplicate
@@ -148,7 +145,7 @@ The implementation is validated in increasing-cost layers:
 2. Resolve every fuzz workspace with its committed lockfile.
 3. Build and replay all `jolt-field` targets locally under the pinned nightly
    toolchain and AddressSanitizer.
-4. Let the workflow exercise the complete eight-workspace matrix in CI.
+4. Let the workflow exercise the complete 13-workspace matrix in CI.
 
 The primary Jolt `muldiv` checks are not required for infrastructure-only changes
 because no production crate source is modified. If implementation changes leak
@@ -168,48 +165,40 @@ construct proofs, or intentionally drive a verifier through several valid rounds
 before mutation begins. Soundness-affected paths also deserve a minimum budget
 even when their raw coverage growth is slower than a parser target.
 
-The initial policy therefore assigns time per target. These values are priors to
-be calibrated from CI results, not claims that the current harnesses are already
-optimal.
+The policy assigns time per target. These values are priors to be calibrated
+from CI results, not claims that the current harnesses are already optimal. The
+manifest inventory is the source of truth; this workspace-level snapshot records
+the cost of the current 38-target suite.
 
-| Workspace | Target | PR | Daily | Weekly | Focus |
-|-----------|--------|----|-------|--------|-------|
-| `jolt-crypto` | `deser_group` | 15s | 5m | 15m | Defensive parsing |
-| `jolt-crypto` | `group_arith` | 30s | 10m | 25m | Algebraic correctness |
-| `jolt-crypto` | `pedersen_commit` | 60s | 25m | 45m | Commitment correctness |
-| `jolt-dory` | `deser_commitment` | 15s | 5m | 15m | Defensive parsing |
-| `jolt-dory` | `verify_tampered` | 20s | 5m | 15m | Soundness; provisional pending a structured seed |
-| `jolt-eval` | `field_mul_scalar` | 30s | 10m | 25m | Optimized/reference equivalence |
-| `jolt-eval` | `split_eq_bind_high_low` | 45s | 15m | 30m | Optimized/reference equivalence |
-| `jolt-eval` | `split_eq_bind_low_high` | 45s | 15m | 30m | Optimized/reference equivalence |
-| `jolt-eval` | `transcript_consistency_blake2b` | 30s | 10m | 15m | Prover/verifier consistency |
-| `jolt-eval` | `transcript_consistency_keccak` | 30s | 10m | 15m | Prover/verifier consistency |
-| `jolt-eval` | `transcript_consistency_poseidon` | 30s | 10m | 15m | Prover/verifier consistency |
-| `jolt-field` | `from_bytes` | 15s | 5m | 15m | Canonical decoding |
-| `jolt-field` | `field_arith` | 30s | 10m | 25m | Algebraic correctness |
-| `jolt-field` | `wide_accumulator_fmadd` | 30s | 10m | 25m | Optimized/reference equivalence |
-| `jolt-field` | `wide_accumulator_merge` | 30s | 10m | 25m | Optimized/reference equivalence |
-| `jolt-hyperkzg` | `commit_open_verify` | 60s | 25m | 45m | Positive protocol correctness |
-| `jolt-hyperkzg` | `tampered_proof` | 60s | 25m | 45m | Soundness |
-| `jolt-hyperkzg` | `wrong_eval` | 30s | 10m | 20m | Soundness; fixed underlying proof |
-| `jolt-poly` | `dense_poly_ops` | 45s | 15m | 45m | Optimized/reference equivalence |
-| `jolt-sumcheck` | `sumcheck_verifier` | 30s | 10m | 25m | Defensive verification |
-| `jolt-sumcheck` | `valid_prefix_proof` | 90s | 30m | 90m | Deep soundness path |
-| `jolt-transcript` | `transcript_no_panic` | 15s | 5m | 15m | Defensive transcript handling |
+| Workspace | Targets | PR | Daily | Weekly |
+|-----------|---------|----|-------|--------|
+| `jolt-crypto` | 4 | 2m15s | 50m | 110m |
+| `jolt-dory` | 3 | 1m35s | 35m | 75m |
+| `jolt-eval` | 4 | 2m45s | 55m | 115m |
+| `jolt-field` | 6 | 2m30s | 50m | 130m |
+| `jolt-hyperkzg` | 2 | 2m30s | 60m | 110m |
+| `jolt-lookup-tables` | 1 | 30s | 15m | 30m |
+| `jolt-openings` | 1 | 30s | 20m | 60m |
+| `jolt-poly` | 3 | 1m45s | 35m | 95m |
+| `jolt-r1cs` | 1 | 30s | 20m | 60m |
+| `jolt-sumcheck` | 4 | 3m30s | 75m | 175m |
+| `jolt-transcript` | 2 | 30s | 10m | 30m |
+| `jolt-verifier` | 5 | 3m30s | 90m | 300m |
+| `tracer` | 2 | 1m | 30m | 90m |
 
-With all eight workspaces running in parallel and targets within each workspace
+With all 13 workspaces running in parallel and targets within each workspace
 running sequentially, the policy has the following expected mutation cost:
 
 | Profile | Aggregate target time | Longest workspace |
 |---------|-----------------------|-------------------|
-| PR and default-branch push | 13m 5s | 3m 30s (`jolt-eval`) |
-| Daily | 4h 35m | 70m (`jolt-eval`) |
-| Weekly | 10h 20m | 130m (`jolt-eval`) |
+| PR and default-branch push | 23m 20s | 3m 30s (`jolt-sumcheck`, `jolt-verifier`) |
+| Daily | 9h 5m | 90m (`jolt-verifier`) |
+| Weekly | 23h | 300m (`jolt-verifier`) |
 
-The weekly `jolt-eval` total leaves little headroom in a 150-minute job for a
-cold build, replay, corpus minimization, and coverage. The workflow must either
-use at least a 180-minute timeout or split that workspace's weekly targets across
-multiple jobs while retaining build-cache reuse.
+The weekly `jolt-verifier` total requires a timeout well above five hours for a
+cold build, replay, corpus minimization, and coverage. The workflow can instead
+split that workspace's weekly targets across multiple jobs while retaining
+build-cache reuse.
 
 Every target also has a per-input timeout, RSS limit, and maximum input length so
 one pathological input cannot consume its complete campaign. A target may
@@ -284,17 +273,23 @@ allocation must be revised.
 
 #### Soundness-focused target roadmap
 
-The following follow-up targets are outside the infrastructure-only scope of this
-feature, but they define where additional fuzzing capacity should go. For
-soundness, false acceptance takes priority over false rejection; panic resistance
-remains a separate availability and hardening objective.
+For soundness, false acceptance takes priority over false rejection; panic
+resistance remains a separate availability and hardening objective. The highest
+value verifier and dependency gaps now have checked-in targets:
+
+| Target | Daily | Weekly | Harness shape |
+|--------|-------|--------|---------------|
+| `jolt-verifier/proof_tamper_must_reject` | 30m | 2h | Transparent verifier fixtures; mutate one proof, public input, preprocessing, claim, or opening field at a time |
+| `jolt-verifier/zk_proof_tamper_must_reject` | 30m | 90m | ZK verifier fixtures; mutate committed-sumcheck, Dory ZK opening, and BlindFold proof components |
+| `jolt-verifier/blindfold_expression_mapping_equivalence` | 20m | 60m | Generate Jolt claim expressions and assert verifier-side BlindFold remapping preserves their value |
+| `jolt-r1cs/claim_lowering_equivalence` | 20m | 60m | Generate symbolic claim expressions, lower them to R1CS, assert the honest witness passes and a corrupted output fails |
+| `jolt-openings/dory_homomorphic_batch_must_reject` | 20m | 60m | Generate honest transparent/ZK homomorphic Dory batches, then mutate statements, source lists, commitments, and transcripts |
+
+Remaining follow-ups should focus on surfaces not covered by those targets:
 
 | Proposed target | Daily | Weekly | Required harness shape |
 |-----------------|-------|--------|------------------------|
-| Full verifier over structured mutations of a valid `JoltProof` | 30m | 2h | Construct fixtures once; mutate one proof field, opening, or transcript element at a time |
-| BlindFold input/output claim and constraint equivalence | 20m | 60m | Evaluate the cleartext claim and corresponding constraint against the same generated accumulator |
 | Standard/ZK claim reconstruction with trusted and untrusted advice | 20m | 60m | Compare full standard-mode claims with decomposed public and advice contributions |
-| Sumcheck prover/verifier round-trip plus targeted corruption | 30m | 90m | Generate small valid instances, then mutate claims, rounds, and transcript messages separately |
 | RISC-V tracer differential execution, sharded by ISA family | 30m per shard | 2h | Compare short bounded instruction sequences with an independent reference model |
 | RAM and register read-write relations over small traces | 30m | 2h | Compare optimized proof relations with direct state simulation |
 | Proof and transcript canonical serialization | 10m | 30m | Cover round-trip, truncation, trailing bytes, malformed lengths, and noncanonical encodings |
@@ -473,10 +468,11 @@ Keep the change reviewable with conventional commits:
 ## Coverage Program
 
 Phase 1 made the harnesses reproducible, discoverable, and scheduled. It did not
-judge whether they fuzz anything worthwhile. This phase does. An audit read all
-22 targets against the API of the crate each one tests and classified every
-target as keep, improve, merge, or delete, then scoped structure-aware targets
-for the gaps — including five crates that currently have no fuzzing at all.
+judge whether they fuzz anything worthwhile. This phase does. The initial audit
+read all 22 then-existing targets against the API of the crate each one tests
+and classified every target as keep, improve, merge, or delete, then scoped
+structure-aware targets for the gaps. The current manifest inventory contains 38
+targets across 13 workspaces.
 
 ### Structure-aware harness doctrine
 
@@ -609,14 +605,13 @@ Five uncovered crates warrant workspaces, ordered by soundness value per unit of
 engineering effort. Each entry names its best 1–2 targets; all use the
 fixture-once, mutate-structurally pattern.
 
-1. **jolt-verifier** — the system's must-reject surface. `proof_tamper_must_reject`:
-   generate one real `muldiv` proof into a `OnceLock` (the JVCF fixture cache and
-   the `MutationStrategy` taxonomy in `tests/support/tamper_manifest.rs` already
-   exist), apply one structured mutation per iteration, assert `verify` returns
-   `Err`. Add cheap `proof_deserialize_no_panic` (bincode decode) and
-   `validate_inputs_no_panic` (scalar config validation, no crypto). Cost:
-   seconds once, then mostly early-stage rejects. Fixtures need the
-   `prover-fixtures`/`host` build.
+1. **jolt-verifier** — the system's must-reject surface. Implemented targets:
+   `proof_tamper_must_reject` over transparent `muldiv`, advice, and committed
+   program fixtures; `zk_proof_tamper_must_reject` over ZK `muldiv` and
+   committed-program fixtures; `blindfold_expression_mapping_equivalence`;
+   `proof_deserialize_no_panic`; and `validate_inputs_no_panic`. Fixtures are
+   generated by the ignored `generate_fuzz_fixture` nextest target in both
+   transparent and ZK feature modes.
 2. **tracer (+ jolt-program)** — two independently maintained RISC-V decoders,
    `tracer::Instruction::decode` and `jolt_program::decode_instruction`, over the
    same ISA. `decode_differential`: fuzz a u32 word (and a compressed halfword via
@@ -639,15 +634,21 @@ fixture-once, mutate-structurally pattern.
    and `memory_layout_invariants` (`MemoryLayout::new` under `catch_unwind`,
    regions disjoint and ordered).
 5. **jolt-r1cs** — operationalizes the repo's most-emphasized invariant
-   (claim computation equals its R1CS constraint). `claim_lowering_equivalence`:
-   fuzz a small `Expr` plus source values, evaluate directly, lower via
-   `lower_claim_expr`, assign the witness, assert the lowered constraint
-   reproduces the value. Microseconds per iteration, no PCS.
+   (claim computation equals its R1CS constraint). Implemented
+   `claim_lowering_equivalence`: fuzz a small `Expr` plus source values,
+   evaluate directly, lower through `assert_claim_expr_eq`, assign the witness,
+   assert the lowered constraint accepts, then corrupt only the claimed output
+   and assert rejection. Microseconds per iteration, no PCS.
+6. **jolt-openings** — covers the verifier dependency that batches final Dory
+   openings. Implemented `dory_homomorphic_batch_must_reject`: construct honest
+   transparent and ZK same-point batches, then mutate claimed evaluations,
+   commitments, transcript labels, point agreement, witness dimensions, and
+   prover source counts.
 
 Deferred: **jolt-blindfold** (valuable, but its prover harness is trapped in
 `tests/support` and jolt-verifier ZK-mode tampering already exercises
-`BlindFoldProof` end-to-end) and **jolt-openings** (a prefix-packing layout
-target is worthwhile and can piggyback on jolt-r1cs or a small later workspace).
+`BlindFoldProof` end-to-end) and a **jolt-openings prefix-packing layout**
+target, which is worthwhile but distinct from homomorphic Dory batching.
 **jolt-witness**, **jolt-claims** (covered via jolt-r1cs), and
 **jolt-prover-legacy** (no standalone attacker surface; heaviest build) are out
 of scope. These realize the earlier
@@ -683,9 +684,9 @@ Phase 2 acceptance criteria:
       is folded into `tampered_proof`; `group_arith` is replaced by
       `glv_differential`/`batch_addition_differential`; `sumcheck_verifier`
       exercises `verify_compressed`.
-- [x] The top three ranked new workspaces (jolt-verifier, tracer,
-      jolt-lookup-tables) exist with their targets, seeds, budgets, and
-      lockfiles, and pass discovery and `check`.
+- [x] The top-ranked new workspaces (jolt-verifier, tracer,
+      jolt-lookup-tables, jolt-r1cs, and jolt-openings) exist with their targets,
+      seeds, budgets, and lockfiles, and pass discovery and `check`.
 
 Deferred to follow-up commits: the jolt-eval structure-aware trio
 (`compact_poly_bind_equivalence`, `transcript_narg_robustness`,
@@ -693,7 +694,7 @@ Deferred to follow-up commits: the jolt-eval structure-aware trio
 `prefix_suffix_combine_equivalence` target (needs the phased sparse-dense
 binding machinery exposed via a `test-utils` feature), the tracer
 `single_instruction_execute_no_panic` target (needs a bounded CPU execution
-sandbox), and the jolt-program and jolt-r1cs workspaces.
+sandbox), and the jolt-program workspace.
 
 Commit structure (independently reviewable, on top of the Phase 1 commits):
 
@@ -708,11 +709,13 @@ Commit structure (independently reviewable, on top of the Phase 1 commits):
 5. `test(fuzz): add jolt-verifier fuzz workspace` — ranked new workspace 1.
 6. `test(fuzz): add tracer decode-differential workspace` — ranked 2.
 7. `test(fuzz): add jolt-lookup-tables fuzz workspace` — ranked 3.
+8. `test(fuzz): add jolt-r1cs and jolt-openings fuzz workspaces` — claim
+   lowering and homomorphic-batch dependency coverage.
 
 Commits 3 and 4 landed together (`test(fuzz): consolidate targets and add
 structure-aware coverage`) because the consolidation and net-new targets share
-per-workspace manifests. Later workspaces (jolt-program, jolt-r1cs) and the
-jolt-eval trio follow the same one-change-per-commit pattern.
+per-workspace manifests. Later workspaces (`jolt-program`) and the jolt-eval
+trio follow the same one-change-per-commit pattern.
 
 ## References
 

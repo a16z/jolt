@@ -359,6 +359,36 @@ fn map_jolt_expr<F: Field>(expr: JoltExpr<F>) -> VerifierExpr<F> {
     }
 }
 
+/// Evaluates the BlindFold form of a Jolt claim expression with the same
+/// source values used by the clear verifier.
+///
+/// This is exposed only for differential fuzzing of the expression boundary.
+#[cfg(feature = "fuzzing")]
+pub fn evaluate_mapped_expression<F, Opening, Challenge, Derived>(
+    expr: JoltExpr<F>,
+    mut opening: Opening,
+    mut challenge: Challenge,
+    mut derived: Derived,
+) -> F
+where
+    F: Field,
+    Opening: FnMut(&JoltOpeningId) -> F,
+    Challenge: FnMut(&JoltChallengeId) -> F,
+    Derived: FnMut(&JoltDerivedId) -> F,
+{
+    map_jolt_expr(expr).evaluate(
+        |id| opening(id),
+        |_| unreachable!("Jolt challenges map to BlindFold public inputs"),
+        |id| match id {
+            VerifierPublicId::Jolt(id) => derived(id),
+            VerifierPublicId::Challenge(id) => challenge(id),
+            VerifierPublicId::SpartanOuter(_) => {
+                unreachable!("generic Jolt expressions do not contain Spartan outer publics")
+            }
+        },
+    )
+}
+
 fn require_expr_sources<F: Field>(
     stage: &'static str,
     expression: &'static str,
