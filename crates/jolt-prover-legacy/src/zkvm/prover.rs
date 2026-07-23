@@ -2,7 +2,7 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "akita")))]
 use std::time::Instant;
 use std::{
     collections::HashMap,
@@ -12,18 +12,17 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(not(feature = "zk"))]
+#[cfg(not(any(feature = "zk", feature = "akita")))]
 use crate::poly::commitment::dory::bind_opening_inputs;
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::zkvm::config::{ProgramMode, ReadWriteConfig};
+use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::preprocessing::JoltSharedPreprocessing;
 use crate::zkvm::program::{
-    build_program_image_words_padded, CommittedProgramProverData, FullProgramPreprocessing,
-    ProgramPreprocessing,
+    CommittedProgramProverData, FullProgramPreprocessing, ProgramPreprocessing,
 };
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::Serializable;
@@ -41,18 +40,10 @@ use crate::{
             dory::{DoryGlobals, DoryLayout},
         },
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{
-            compute_lagrange_factor, DoryOpeningState, OpeningAccumulator,
-            ProverOpeningAccumulator, SumcheckId,
-        },
-        rlc_polynomial::{RLCStreamingData, TraceSource},
+        opening_proof::ProverOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{
-            BooleanityAddressSumcheckProver, BooleanityCycleInput, BooleanityCycleSumcheckProver,
-            BooleanitySumcheckParams,
-        },
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
@@ -61,31 +52,18 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
-        bytecode::{
-            chunks::{build_committed_bytecode_chunk_coeffs, committed_bytecode_chunk_cycle_len},
-            read_raf_checking::BytecodeReadRafSumcheckParams,
-        },
         claim_reductions::{
-            AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
-            BytecodeClaimReductionParams, BytecodeClaimReductionProver,
-            HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
-            IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
+            AdviceClaimReductionProver, BytecodeClaimReductionProver,
             InstructionLookupsClaimReductionSumcheckParams,
-            InstructionLookupsClaimReductionSumcheckProver, PrecommittedClaimReduction,
-            PrecommittedPolynomial, ProgramImageClaimReductionParams,
-            ProgramImageClaimReductionProver, RaReductionParams, RamRaClaimReductionSumcheckProver,
+            InstructionLookupsClaimReductionSumcheckProver, ProgramImageClaimReductionProver,
+            RaReductionParams, RamRaClaimReductionSumcheckProver,
             RegistersClaimReductionSumcheckParams, RegistersClaimReductionSumcheckProver,
         },
         config::OneHotParams,
-        instruction_lookups::{
-            ra_virtual::InstructionRaSumcheckParams,
-            read_raf_checking::InstructionReadRafSumcheckParams,
-        },
+        instruction_lookups::read_raf_checking::InstructionReadRafSumcheckParams,
         ram::{
-            hamming_booleanity::HammingBooleanitySumcheckParams,
             output_check::OutputSumcheckParams,
             populate_memory_states, prover_accumulate_program_image,
-            ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams,
             val_check::{RamValCheckSumcheckParams, RamValCheckSumcheckProver},
@@ -109,20 +87,10 @@ use crate::{
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     zkvm::{
-        bytecode::read_raf_checking::{
-            BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
-        },
-        compute_final_opening_point, fiat_shamir_preamble,
-        instruction_lookups::{
-            ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
-            read_raf_checking::InstructionReadRafSumcheckProver,
-        },
-        proof_parts::JoltProofParts,
+        instruction_lookups::read_raf_checking::InstructionReadRafSumcheckProver,
         r1cs::key::UniformSpartanKey,
         ram::{
-            gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
-            output_check::OutputSumcheckProver, prover_accumulate_advice,
-            ra_virtual::RamRaVirtualSumcheckProver,
+            gen_ram_memory_states, output_check::OutputSumcheckProver, prover_accumulate_advice,
             raf_evaluation::RafEvaluationSumcheckProver as RamRafEvaluationSumcheckProver,
             read_write_checking::RamReadWriteCheckingProver,
         },
@@ -137,6 +105,52 @@ use crate::{
             shift::ShiftSumcheckProver,
         },
         witness::CommittedPolynomial,
+    },
+};
+
+// Consumed only by the base stage-6a..8 pipeline; the akita build proves
+// through the packed path (packed.rs) instead.
+#[cfg(not(feature = "akita"))]
+use crate::{
+    poly::{
+        opening_proof::{
+            compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
+            SumcheckId, BIG_ENDIAN,
+        },
+        rlc_polynomial::{RLCStreamingData, TraceSource},
+    },
+    subprotocols::booleanity::{
+        BooleanityAddressSumcheckProver, BooleanityCycleInput, BooleanityCycleSumcheckProver,
+        BooleanitySumcheckParams,
+    },
+    utils::errors::ProofVerifyError,
+    zkvm::{
+        bytecode::{
+            chunks::{build_committed_bytecode_chunk_coeffs, committed_bytecode_chunk_cycle_len},
+            read_raf_checking::{
+                BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
+                BytecodeReadRafSumcheckParams,
+            },
+        },
+        claim_reductions::{
+            AdviceClaimReductionParams, AdviceKind, BytecodeClaimReductionParams,
+            HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
+            IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
+            PrecommittedClaimReduction, PrecommittedPolynomial, ProgramImageClaimReductionParams,
+        },
+        config::ProgramMode,
+        fiat_shamir_preamble,
+        instruction_lookups::ra_virtual::{
+            InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
+        },
+        program::build_program_image_words_padded,
+        proof_parts::JoltProofParts,
+        ram::{
+            hamming_booleanity::{
+                HammingBooleanitySumcheckParams, HammingBooleanitySumcheckProver,
+            },
+            ra_virtual::{RamRaVirtualParams, RamRaVirtualSumcheckProver},
+        },
         ProverDebugInfo,
     },
 };
@@ -426,6 +440,7 @@ impl<
         }
     }
 
+    #[cfg(not(feature = "akita"))]
     #[expect(
         clippy::type_complexity,
         reason = "internal proof assembly returns prover-native parts plus debug payload"
@@ -1234,6 +1249,11 @@ impl<
         (sumcheck_proof, r_stage5)
     }
 
+    // The stage-6a..8 assemblies below are the base pipeline only: the akita
+    // build proves through the packed path (`prove_stage6a_lattice` and
+    // friends in packed.rs), which supplies the fused-inc deltas the lattice
+    // read-raf stages require.
+    #[cfg(not(feature = "akita"))]
     #[tracing::instrument(skip_all)]
     fn prove_stage6a(
         &mut self,
@@ -1304,6 +1324,7 @@ impl<
         )
     }
 
+    #[cfg(not(feature = "akita"))]
     #[tracing::instrument(skip_all)]
     fn prove_stage6b(
         &mut self,
@@ -1974,6 +1995,7 @@ impl<
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
+    #[cfg(not(feature = "akita"))]
     #[tracing::instrument(skip_all)]
     fn prove_stage7(
         &mut self,
@@ -2070,6 +2092,7 @@ impl<
 
     /// Stage 8: Dory batch opening proof.
     /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
+    #[cfg(not(feature = "akita"))]
     #[tracing::instrument(skip_all)]
     fn prove_stage8(
         &mut self,
@@ -2347,6 +2370,107 @@ impl<
         }
 
         proof
+    }
+}
+
+// Derives the canonical stage-8 opening point for the base pipeline's Dory
+// batch opening; the akita build derives its point inside the packed path.
+#[cfg(not(feature = "akita"))]
+fn compute_final_opening_point<F: JoltField>(
+    opening_accumulator: &impl OpeningAccumulator<F>,
+    native_main_vars: usize,
+    log_k_chunk: usize,
+    layout: DoryLayout,
+    program_mode: ProgramMode,
+    bytecode_chunk_count: usize,
+) -> Result<OpeningPoint<BIG_ENDIAN, F>, ProofVerifyError> {
+    let mut opening_candidates: Vec<(String, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
+    if let Some((point, _)) = opening_accumulator
+        .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
+    {
+        opening_candidates.push(("trusted_advice".to_string(), point));
+    }
+    if let Some((point, _)) = opening_accumulator
+        .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
+    {
+        opening_candidates.push(("untrusted_advice".to_string(), point));
+    }
+    if program_mode == ProgramMode::Committed {
+        for chunk_idx in 0..bytecode_chunk_count {
+            let (point, _) = opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeChunk(chunk_idx),
+                SumcheckId::BytecodeClaimReduction,
+            );
+            opening_candidates.push((format!("bytecode_chunk[{chunk_idx}]"), point));
+        }
+    }
+    if program_mode == ProgramMode::Committed {
+        let (program_image_point, _) = opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::ProgramImageInit,
+            SumcheckId::ProgramImageClaimReduction,
+        );
+        opening_candidates.push(("program_image".to_string(), program_image_point));
+    }
+
+    let (hamming_point, _) = opening_accumulator.get_committed_polynomial_opening(
+        CommittedPolynomial::InstructionRa(0),
+        SumcheckId::HammingWeightClaimReduction,
+    );
+    let (r_cycle_stage6, _) = opening_accumulator.get_committed_polynomial_opening(
+        CommittedPolynomial::RamInc,
+        SumcheckId::IncClaimReduction,
+    );
+
+    let max_len = opening_candidates
+        .iter()
+        .map(|(_, point)| point.r.len())
+        .max()
+        .unwrap_or(0);
+    if max_len > native_main_vars {
+        let dominant = opening_candidates
+            .iter()
+            .find(|(_, point)| point.r.len() == max_len)
+            .expect("at least one dominant precommitted candidate expected");
+        for (name, point) in opening_candidates
+            .iter()
+            .filter(|(_, point)| point.r.len() == max_len)
+        {
+            if point.r != dominant.1.r {
+                return Err(ProofVerifyError::DoryError(format!(
+                    "incompatible dominant precommitted anchors: {} and {} have equal dimensionality {} but different opening points",
+                    dominant.0, name, max_len
+                )));
+            }
+        }
+        Ok(OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone()))
+    } else {
+        let r_address_stage7 = hamming_point.r[..log_k_chunk].to_vec();
+
+        match layout {
+            DoryLayout::AddressMajor => Ok(OpeningPoint::<BIG_ENDIAN, F>::new(
+                [r_cycle_stage6.r.as_slice(), r_address_stage7.as_slice()].concat(),
+            )),
+            DoryLayout::CycleMajor => {
+                let native_cycle = &hamming_point.r[log_k_chunk..];
+                if r_cycle_stage6.r.len() < native_cycle.len() {
+                    return Err(ProofVerifyError::DoryError(
+                        "stage6 cycle challenges shorter than native cycle vars".to_string(),
+                    ));
+                }
+                if r_cycle_stage6.r[..native_cycle.len()] != *native_cycle {
+                    return Err(ProofVerifyError::DoryError(format!(
+                        "cycle-major Stage-8 expects stage6 cycle prefix to equal native cycle vars \
+                         (cycle_full_len={}, native_len={})",
+                        r_cycle_stage6.r.len(),
+                        native_cycle.len()
+                    )));
+                }
+                let cycle_extra = &r_cycle_stage6.r[native_cycle.len()..];
+                let cycle_extra_and_anchor =
+                    [cycle_extra, r_address_stage7.as_slice(), native_cycle].concat();
+                Ok(OpeningPoint::<BIG_ENDIAN, F>::new(cycle_extra_and_anchor))
+            }
+        }
     }
 }
 

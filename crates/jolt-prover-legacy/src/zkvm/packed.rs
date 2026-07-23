@@ -58,7 +58,7 @@ use crate::transcripts::Transcript as LegacyTranscript;
 use crate::utils::math::Math;
 use crate::zkvm::bytecode::read_raf_checking::{
     BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
-    BytecodeReadRafSumcheckParams, LATTICE_N_STAGES,
+    BytecodeReadRafSumcheckParams,
 };
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionParams, AdviceClaimReductionProver, BytecodeReconstructionSumcheckParams,
@@ -804,14 +804,13 @@ impl AkitaPackedProver<'_> {
         BytecodeReadRafSumcheckParams<AkitaFp128>,
         crate::subprotocols::booleanity::LatticeBooleanityCycleInput<AkitaFp128>,
     ) {
-        let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen_with_stages(
+        let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
             &self.preprocessing.shared.program,
             Some(self.preprocessing.materialized_program()),
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-            LATTICE_N_STAGES,
         );
         let booleanity_params = lattice_booleanity_params(
             self.trace.len().log_2(),
@@ -819,7 +818,7 @@ impl AkitaPackedProver<'_> {
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize_lattice(
+        let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
             self.preprocessing.bytecode(),
@@ -874,7 +873,7 @@ impl AkitaPackedProver<'_> {
             .iter()
             .map(|gammas| gammas.to_vec())
             .collect();
-        let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize_lattice(
+        let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
             self.preprocessing.bytecode(),
@@ -953,7 +952,7 @@ impl AkitaPackedProver<'_> {
                     // base stages plus the store wire (the fused stages dedup
                     // through it and carry no staged val of their own).
                     &bytecode_stage_gammas
-                        [..crate::zkvm::bytecode::read_raf_checking::LATTICE_N_STAGED_VALS]
+                        [..crate::zkvm::bytecode::read_raf_checking::NUM_VAL_CLAIMS]
                         .iter()
                         .map(Vec::as_slice)
                         .collect::<Vec<_>>(),
