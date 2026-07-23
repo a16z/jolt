@@ -131,7 +131,7 @@ where
     let claims = &proof.clear_claims()?.stage6a;
     // Rejects val-stage claims whose presence or count disagrees with the
     // committed-program mode (the bytecode member's wire set carries the staged
-    // `BytecodeValStage` ids exactly when the program is committed).
+    // `BytecodeValClaim` ids exactly when the program is committed).
     address_sumchecks.validate_output_claims(claims)?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every

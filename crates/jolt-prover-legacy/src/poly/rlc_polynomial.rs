@@ -208,6 +208,18 @@ impl<F: JoltField> RLCPolynomial<F> {
                             .push((*coeff, precommitted_poly_map.remove(poly_id).unwrap()));
                     }
                 }
+                CommittedPolynomial::BytecodeRegisterSelector(..)
+                | CommittedPolynomial::BytecodeCircuitFlag(..)
+                | CommittedPolynomial::BytecodeInstructionFlag(..)
+                | CommittedPolynomial::BytecodeLookupSelector(_)
+                | CommittedPolynomial::BytecodeRafFlag(_)
+                | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
+                | CommittedPolynomial::BytecodeImmBytes(_)
+                | CommittedPolynomial::ProgramImageBytes
+                | CommittedPolynomial::UnsignedIncChunk(_)
+                | CommittedPolynomial::UnsignedIncMsb => {
+                    panic!("Lattice columns never enter the homomorphic RLC opening")
+                }
             }
         }
 

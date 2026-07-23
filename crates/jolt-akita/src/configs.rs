@@ -9,75 +9,12 @@
 //! policy on every lookup, so a policy/table drift hard-errors instead of
 //! silently planning a different schedule.
 
-use akita_config::{setup_level_params_from_schedule, CommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_pcs::AkitaError;
 use akita_planner::GeneratedScheduleTable;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, SetupMatrixEnvelope, Step};
-
-fn include_matrix(
-    max_setup_len: &mut usize,
-    rows: usize,
-    columns: usize,
-    role: &str,
-) -> Result<(), AkitaError> {
-    let len = rows
-        .checked_mul(columns)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} setup envelope overflow")))?;
-    *max_setup_len = (*max_setup_len).max(len);
-    Ok(())
-}
-
-fn include_level(params: &LevelParams, max_setup_len: &mut usize) -> Result<(), AkitaError> {
-    if !params.precommitted_groups.is_empty() || params.setup_prefix.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "Jolt's scalar schedule catalog contains multi-group setup metadata".to_string(),
-        ));
-    }
-    include_matrix(
-        max_setup_len,
-        params.a_key.row_len(),
-        params.inner_width(),
-        "A",
-    )?;
-    include_matrix(
-        max_setup_len,
-        params.b_key.row_len(),
-        params.outer_width(),
-        "B",
-    )?;
-    include_matrix(
-        max_setup_len,
-        params.d_key.row_len(),
-        params.d_matrix_width(),
-        "D",
-    )
-}
-
-fn include_scalar_root(
-    params: &LevelParams,
-    num_polynomials: usize,
-    max_setup_len: &mut usize,
-) -> Result<(), AkitaError> {
-    let d_width = num_polynomials
-        .checked_mul(params.num_blocks)
-        .and_then(|width| width.checked_mul(params.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("root D setup width overflow".to_string()))?;
-    let b_width = params
-        .a_key
-        .row_len()
-        .checked_mul(params.num_digits_open)
-        .and_then(|width| width.checked_mul(params.num_blocks))
-        .and_then(|width| width.checked_mul(num_polynomials))
-        .ok_or_else(|| AkitaError::InvalidSetup("root B setup width overflow".to_string()))?;
-    include_matrix(
-        max_setup_len,
-        params.a_key.row_len(),
-        params.inner_width(),
-        "root A",
-    )?;
-    include_matrix(max_setup_len, params.b_key.row_len(), b_width, "root B")?;
-    include_matrix(max_setup_len, params.d_key.row_len(), d_width, "root D")
-}
+use akita_types::{
+    setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, SetupMatrixEnvelope,
+};
 
 /// Sizes a production OneHotTrace setup directly from the checked-in Jolt catalog.
 ///
@@ -90,40 +27,25 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
     max_num_batched_polys: usize,
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
     let requested_shape_is_catalogued = table.entries.iter().any(|entry| {
-        entry.precommitteds.is_empty()
-            && entry.final_group.num_vars() == max_num_vars
-            && entry.final_group.num_polynomials() == max_num_batched_polys
+        entry.root.precommitted_groups.is_empty()
+            && entry.root.final_group.layout.num_vars() == max_num_vars
+            && entry.root.final_group.layout.num_polynomials() == max_num_batched_polys
     });
     if !requested_shape_is_catalogued {
         return Ok(None);
     }
 
-    let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+    let mut envelope = SetupMatrixEnvelope::minimum();
     for entry in table.entries.iter().filter(|entry| {
-        entry.precommitteds.is_empty()
-            && entry.final_group.num_vars() <= max_num_vars
-            && entry.final_group.num_polynomials() <= max_num_batched_polys
+        entry.root.precommitted_groups.is_empty()
+            && entry.root.final_group.layout.num_vars() <= max_num_vars
+            && entry.root.final_group.layout.num_polynomials() <= max_num_batched_polys
     }) {
-        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(entry.final_group))?;
-        for params in setup_level_params_from_schedule(&schedule) {
-            include_level(&params, &mut envelope.max_setup_len)?;
-        }
-        let root_params = match schedule.steps.first() {
-            Some(Step::Fold(step)) => Some(&step.params),
-            Some(Step::Direct(step)) => step.params.as_ref(),
-            None => {
-                return Err(AkitaError::InvalidSetup(
-                    "Jolt catalog schedule has no steps".to_string(),
-                ));
-            }
-        };
-        if let Some(params) = root_params {
-            include_scalar_root(
-                params,
-                entry.final_group.num_polynomials(),
-                &mut envelope.max_setup_len,
-            )?;
-        }
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            entry.root.final_group.layout,
+        ))?;
+        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+        envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
     Ok(Some(envelope))
 }
@@ -165,6 +87,10 @@ macro_rules! delegate_preset {
                 <$base>::sis_modulus_profile()
             }
 
+            fn ring_subfield_embedding_norm_bound() -> u32 {
+                <$base>::ring_subfield_embedding_norm_bound()
+            }
+
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
@@ -194,13 +120,25 @@ macro_rules! delegate_preset {
                 <$base>::onehot_chunk_size()
             }
 
+            fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+                <$base>::chunked_witness_cfg()
+            }
+
+            fn recursive_setup_planning() -> bool {
+                <$base>::recursive_setup_planning()
+            }
+
+            fn supports_multi_group_final_commit() -> bool {
+                <$base>::supports_multi_group_final_commit()
+            }
+
             fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
                 $catalog
             }
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_pcs::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
                 if layout.num_groups() == 1 {
                     layout.check()?;
                     Self::runtime_schedule(akita_types::AkitaScheduleLookupKey::single(
