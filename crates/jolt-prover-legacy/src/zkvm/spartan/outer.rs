@@ -211,16 +211,18 @@ impl<F: JoltField> OuterUniSkipProver<F> {
         );
         let outer_scale = split_eq.get_current_scalar(); // = R^2 at this stage
 
-        let num_x_in_bits = split_eq.E_in_current_len().log_2();
-        let num_x_in_prime_bits = num_x_in_bits.saturating_sub(1); // ignore last bit (group index)
+        let e_out = split_eq.E_out_current();
+        let e_in = split_eq.E_in_current();
+        let in_len = e_in.len();
+        let num_x_in_prime_bits = in_len.log_2().saturating_sub(1); // ignore last bit (group index)
 
-        split_eq
-            .par_fold_out_in(
-                || [FullAccumS::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
-                |inner, g, x_in, e_in| {
-                    // Decode (x_out, x_in') from g and choose group by the last x_in bit
-                    let x_out = g >> num_x_in_bits;
-                    let x_in_prime = x_in >> 1;
+        // Even/odd x_in share the same trace step (the low x_in bit only selects the
+        // constraint group), so decode each step once and accumulate both groups.
+        (0..e_out.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let mut inner = [FullAccumS::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                for x_in_prime in 0..(in_len / 2).max(1) {
                     let base_step_idx = (x_out << num_x_in_prime_bits) | x_in_prime;
 
                     let row_inputs = R1CSCycleInputs::from_trace::<F>(
@@ -230,24 +232,29 @@ impl<F: JoltField> OuterUniSkipProver<F> {
                     );
                     let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
 
-                    let is_group1 = (x_in & 1) == 1;
+                    let e_in_group0 = e_in[2 * x_in_prime];
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                        let prod_s192 = if !is_group1 {
-                            eval.extended_azbz_product_first_group(j)
-                        } else {
-                            eval.extended_azbz_product_second_group(j)
-                        };
-                        inner[j].fmadd(&e_in, &prod_s192);
+                        let prod_s192 = eval.extended_azbz_product_first_group(j);
+                        inner[j].fmadd(&e_in_group0, &prod_s192);
                     }
-                },
-                |_x_out, e_out, inner| {
-                    let mut out = [F::UnreducedProductAccum::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
-                    for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner[j].montgomery_reduce();
-                        out[j] = e_out.mul_to_product_accum(reduced);
+                    if in_len > 1 {
+                        let e_in_group1 = e_in[2 * x_in_prime + 1];
+                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
+                            let prod_s192 = eval.extended_azbz_product_second_group(j);
+                            inner[j].fmadd(&e_in_group1, &prod_s192);
+                        }
                     }
-                    out
-                },
+                }
+
+                let mut out = [F::UnreducedProductAccum::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
+                    let reduced = inner[j].montgomery_reduce();
+                    out[j] = e_out[x_out].mul_to_product_accum(reduced);
+                }
+                out
+            })
+            .reduce(
+                || [F::UnreducedProductAccum::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
                 |mut a, b| {
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                         a[j] += b[j];
