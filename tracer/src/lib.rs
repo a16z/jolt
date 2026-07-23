@@ -801,6 +801,17 @@ mod tests {
                 "guest",
             ])
             .env("JOLT_FUNC_NAME", func)
+            // The riscv guest must not inherit host coverage instrumentation:
+            // cargo-llvm-cov injects `-C instrument-coverage` via RUSTC_WRAPPER
+            // (and older versions via RUSTFLAGS), which fails the cross-compile
+            // (no profiler_builtins for the guest target).
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .env_remove("LLVM_PROFILE_FILE")
+            .env_remove("RUSTC_WRAPPER")
+            .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER")
+            .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS")
+            .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES")
             .output()
             .expect("failed to run jolt CLI — install with: cargo install --path .");
 
