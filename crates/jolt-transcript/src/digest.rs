@@ -194,3 +194,39 @@ where
         self.test_state.expected_state_history = Some(other.test_state.state_history.clone());
     }
 }
+
+#[cfg(all(test, feature = "transcript-blake2b"))]
+mod tests {
+    use super::*;
+    use jolt_field::Fr;
+
+    type TestTranscript = DigestTranscript<blake2::Blake2b<digest::consts::U32>, Fr>;
+
+    /// `compare_to` arms the replaying transcript with the reference state
+    /// history; an identical operation sequence must replay clean.
+    #[test]
+    fn compare_to_accepts_an_identical_replay() {
+        let mut reference = TestTranscript::new(b"compare");
+        reference.append_bytes(b"round-1");
+        let _ = reference.challenge();
+        reference.append_bytes(b"round-2");
+
+        let mut replay = TestTranscript::new(b"compare");
+        replay.compare_to(&reference);
+        replay.append_bytes(b"round-1");
+        let _ = replay.challenge();
+        replay.append_bytes(b"round-2");
+        assert_eq!(replay.state(), reference.state());
+    }
+
+    #[test]
+    #[should_panic(expected = "Fiat-Shamir transcript mismatch at round 1")]
+    fn compare_to_panics_at_the_first_divergent_round() {
+        let mut reference = TestTranscript::new(b"compare");
+        reference.append_bytes(b"expected payload");
+
+        let mut replay = TestTranscript::new(b"compare");
+        replay.compare_to(&reference);
+        replay.append_bytes(b"divergent payload");
+    }
+}
