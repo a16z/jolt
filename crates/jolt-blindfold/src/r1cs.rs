@@ -319,7 +319,7 @@ where
     rows
 }
 
-pub(crate) fn insert_output_claim_sources<F, O, P, Ch, C>(
+fn insert_output_claim_sources<F, O, P, Ch, C>(
     statement: &BlindFoldStatement<F, O, C, P, Ch>,
     layout: &Layout,
     claim_sources: &mut ClaimSourceTable<F, O, P, Ch>,

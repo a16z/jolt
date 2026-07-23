@@ -1,7 +1,7 @@
 //! Generic BlindFold claim, protocol, layout, and verifier-equation types.
 
+mod assignment;
 mod builder;
-mod construction;
 mod error;
 mod proof;
 pub mod protocol;
@@ -11,8 +11,8 @@ mod relaxed;
 mod statements;
 mod verify;
 
+pub use assignment::AssignedBlindFoldWitness;
 pub use builder::{BlindFoldProtocolBuilder, BlindFoldStageBuilder};
-pub use construction::{AssignedBlindFoldWitness, BlindFoldConstruction};
 pub use error::{Error, LayoutError, ProverError, RelaxedError, VerificationError};
 pub use proof::BlindFoldProof;
 pub use protocol::{
