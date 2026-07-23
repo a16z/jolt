@@ -60,7 +60,7 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// order is curated by [`stage6b_opening_values`](super::verify::stage6b_opening_values)
 /// which threads the dedup points (the verifier absorbs its output; the
 /// prover's recorder absorbs the same sequence). `no_output_shape`: shape methods are inapplicable — the committed
-/// bytecode output `Expr` consumes the 6a-produced `BytecodeValStage` openings
+/// bytecode output `Expr` consumes the 6a-produced `BytecodeValClaim` openings
 /// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(no_opening_values, no_draw_challenges, no_output_shape)]
