@@ -36,6 +36,7 @@ weekly-seconds = 1500
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-field = { path = ".." }
+num-bigint = "0.4"
 num-traits = "0.2"
 
 [[bin]]

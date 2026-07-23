@@ -23,12 +23,13 @@ fuzz_target!(|data: &[u8]| {
     // a * 0 == 0
     assert!((a * Fr::zero()).is_zero());
 
+    // a·(a+b) == a² + a·b ties the otherwise-unchecked product and square
+    // into a distributivity identity.
+    assert_eq!(a * sum, sq + prod, "distributivity violated");
+
     // inverse must not panic
     if !a.is_zero() {
         let inv = a.inverse().expect("nonzero element must have inverse");
         assert_eq!(a * inv, Fr::from_u64(1));
     }
-
-    // Prevent optimizing away
-    let _ = (prod, sq);
 });
