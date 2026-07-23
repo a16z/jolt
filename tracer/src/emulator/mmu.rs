@@ -1223,4 +1223,355 @@ mod test_mmu {
 
         assert_eq!(result, Ok(v_address));
     }
+
+    #[test]
+    fn loads_and_stores_round_trip_through_ram_and_report_word_state() {
+        let mut mmu = setup_mmu();
+        let addr = DRAM_BASE + 0x100;
+
+        // store_word reports the pre/post state of the containing region
+        let write = mmu.store_word(addr, 0xdead_beef).unwrap();
+        assert_eq!(write.address, addr);
+        assert_eq!(write.pre_value, 0);
+        assert_eq!(write.post_value, 0xdead_beef);
+
+        let (value, read) = mmu.load_word(addr).unwrap();
+        assert_eq!(value, 0xdead_beef);
+        assert_eq!(read.address, addr);
+        assert_eq!(read.value, 0xdead_beef);
+
+        let write = mmu
+            .store_doubleword(addr + 8, 0x0102_0304_0506_0708)
+            .unwrap();
+        assert_eq!(write.post_value, 0x0102_0304_0506_0708);
+        assert_eq!(
+            mmu.load_doubleword(addr + 8).unwrap().0,
+            0x0102_0304_0506_0708
+        );
+
+        let write = mmu.store_halfword(addr + 16, 0xbeef).unwrap();
+        assert_eq!(write.post_value, 0xbeef);
+        assert_eq!(mmu.load_halfword(addr + 16).unwrap().0, 0xbeef);
+
+        let _ = mmu.store(addr + 24, 0xab).unwrap();
+        assert_eq!(mmu.load(addr + 24).unwrap().0, 0xab);
+    }
+
+    #[test]
+    fn trace_store_byte_masks_the_byte_into_its_word_by_offset() {
+        let mut mmu = setup_mmu();
+        let word_addr = DRAM_BASE + 0x40;
+        mmu.store_word(word_addr, 0x8877_6655).unwrap();
+
+        for (offset, expected) in [
+            (0, 0x8877_66AA_u64),
+            (1, 0x8877_AA55),
+            (2, 0x88AA_6655),
+            (3, 0xAA77_6655),
+        ] {
+            let write = mmu.trace_store_byte(word_addr + offset, 0xAA);
+            assert_eq!(write.address, word_addr, "offset {offset}");
+            assert_eq!(write.pre_value, 0x8877_6655, "offset {offset}");
+            assert_eq!(write.post_value, expected, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn trace_store_halfword_covers_both_word_halves() {
+        let mut mmu = setup_mmu();
+        let word_addr = DRAM_BASE + 0x48;
+        mmu.store_word(word_addr, 0x8877_6655).unwrap();
+
+        let low = mmu.trace_store_halfword(word_addr, 0xBBBB);
+        assert_eq!(low.post_value, 0x8877_BBBB);
+        let high = mmu.trace_store_halfword(word_addr + 2, 0xCCCC);
+        assert_eq!(high.post_value, 0xCCCC_6655);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned store")]
+    fn trace_store_halfword_rejects_odd_offsets() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.trace_store_halfword(DRAM_BASE + 1, 0xBBBB);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned load_word")]
+    fn load_word_rejects_misaligned_addresses() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.load_word(DRAM_BASE + 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned load_halfword")]
+    fn load_halfword_rejects_misaligned_addresses() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.load_halfword(DRAM_BASE + 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned load_doubleword")]
+    fn load_doubleword_rejects_misaligned_addresses() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.load_doubleword(DRAM_BASE + 4);
+    }
+
+    #[test]
+    fn fetch_word_crosses_page_boundaries_byte_by_byte() {
+        let mut mmu = setup_mmu();
+        // Instruction word straddling the page boundary at +0xffe
+        let addr = DRAM_BASE + 0xffe;
+        mmu.store_raw(addr, 0x13);
+        mmu.store_raw(addr + 1, 0x05);
+        mmu.store_raw(addr + 2, 0xc5);
+        mmu.store_raw(addr + 3, 0x00);
+        assert_eq!(mmu.fetch_word(addr).unwrap(), 0x00c5_0513);
+        // Fast path within one page must agree
+        mmu.store_word(DRAM_BASE + 0x10, 0x00c5_0513).unwrap();
+        assert_eq!(mmu.fetch_word(DRAM_BASE + 0x10).unwrap(), 0x00c5_0513);
+    }
+
+    #[test]
+    fn page_crossing_load_and_store_bytes_agree_with_the_fast_path() {
+        let mut mmu = setup_mmu();
+        let boundary = DRAM_BASE + 0x1000;
+        // A doubleword written across the boundary reads back identically
+        mmu.store_bytes(boundary - 4, 0x1122_3344_5566_7788, 8)
+            .unwrap();
+        assert_eq!(
+            mmu.load_bytes(boundary - 4, 8).unwrap(),
+            0x1122_3344_5566_7788
+        );
+        // Bytes land on both sides of the boundary
+        assert_eq!(mmu.load_bytes(boundary - 4, 4).unwrap(), 0x5566_7788);
+        assert_eq!(mmu.load_bytes(boundary, 4).unwrap(), 0x1122_3344);
+    }
+
+    #[test]
+    fn device_region_loads_read_the_jolt_device() {
+        let mut mmu = setup_mmu();
+        mmu.jolt_device.as_mut().unwrap().inputs =
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let input_start = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start;
+
+        // Raw single-byte and multi-byte loads below DRAM_BASE hit the device
+        assert_eq!(mmu.load_raw(input_start), 0x11);
+        assert_eq!(mmu.load_halfword_raw(input_start), 0x2211);
+        assert_eq!(mmu.load_word_raw(input_start), 0x4433_2211);
+        assert_eq!(mmu.load_doubleword_raw(input_start), 0x8877_6655_4433_2211);
+
+        // The traced load reports the containing word's value
+        let (byte, read) = mmu.load(input_start).unwrap();
+        assert_eq!(byte, 0x11);
+        assert_eq!(read.address, input_start & !3);
+        assert_eq!(read.value & 0xff, 0x11);
+    }
+
+    #[test]
+    fn device_region_stores_write_the_output_buffer() {
+        let mut mmu = setup_mmu();
+        let output_start = mmu.jolt_device.as_ref().unwrap().memory_layout.output_start;
+
+        mmu.store_raw(output_start, 0xAA);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[0], 0xAA);
+
+        // Wider raw stores decompose into device byte stores
+        mmu.store_halfword_raw(output_start + 2, 0xBBCC);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[2], 0xCC);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[3], 0xBB);
+
+        mmu.store_word_raw(output_start + 4, 0x0102_0304);
+        assert_eq!(
+            mmu.jolt_device.as_ref().unwrap().outputs[4..8],
+            [4, 3, 2, 1]
+        );
+
+        mmu.store_doubleword_raw(output_start + 8, 0x1112_1314_1516_1718);
+        assert_eq!(
+            mmu.jolt_device.as_ref().unwrap().outputs[8..16],
+            [0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11]
+        );
+
+        // Traced store through the translated path also lands in outputs
+        let write = mmu.store(output_start + 16, 0x5A).unwrap();
+        assert_eq!(write.address, (output_start + 16) & !3);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[16], 0x5A);
+    }
+
+    #[test]
+    fn setup_bytecode_writes_directly_to_ram() {
+        let mut mmu = setup_mmu();
+        mmu.setup_bytecode(DRAM_BASE + 8, 0x77);
+        assert_eq!(mmu.load_raw(DRAM_BASE + 8), 0x77);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be >= DRAM_BASE")]
+    fn setup_bytecode_rejects_device_addresses() {
+        let mut mmu = setup_mmu();
+        mmu.setup_bytecode(DRAM_BASE - 1, 0x77);
+    }
+
+    #[test]
+    fn validate_address_reflects_configured_capacity() {
+        let mmu = setup_mmu();
+        let capacity = mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .get_total_memory_size();
+        assert!(mmu.memory.validate_address(DRAM_BASE));
+        assert!(mmu.memory.validate_address(DRAM_BASE + capacity - 8));
+        assert!(!mmu.memory.validate_address(DRAM_BASE + capacity + 8));
+    }
+
+    #[test]
+    fn save_state_with_empty_memory_keeps_config_but_not_ram() {
+        let mut mmu = setup_mmu();
+        mmu.store_raw(DRAM_BASE, 0x42);
+        let saved = mmu.save_state_with_empty_memory();
+        assert_eq!(saved.memory.memory.data.get_num_doublewords(), 0);
+        assert!(saved.jolt_device.is_some(), "device config is preserved");
+    }
+
+    /// Build an SV39 page-table hierarchy in RAM (no JoltDevice, so raw
+    /// accesses skip the device asserts) and return the MMU in supervisor mode.
+    ///
+    /// Layout: root table at 0x80010000, level-1 at 0x80011000, level-0 at
+    /// 0x80012000. VA 0x0020_1000 (vpn2=0, vpn1=1, vpn0=1) maps to the 4K page
+    /// at 0x80013000 with the given leaf flags.
+    fn setup_sv39_mmu(leaf_flags: u64) -> Mmu {
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(0x20000);
+        let root = 0x8001_0000_u64;
+        let level1 = 0x8001_1000_u64;
+        let level0 = 0x8001_2000_u64;
+        let target = 0x8001_3000_u64;
+
+        // Non-leaf PTEs: only V set, ppn points at the next table
+        mmu.store_doubleword_raw(root, (level1 >> 12) << 10 | 1);
+        mmu.store_doubleword_raw(level1 + 8, (level0 >> 12) << 10 | 1);
+        // Leaf PTE for vpn0 = 1
+        mmu.store_doubleword_raw(level0 + 8, (target >> 12) << 10 | leaf_flags);
+
+        mmu.update_addressing_mode(AddressingMode::SV39);
+        mmu.update_privilege_mode(PrivilegeMode::Supervisor);
+        mmu.update_ppn(root >> 12);
+        mmu
+    }
+
+    const SV39_VA: u64 = 0x0020_1000;
+    const SV39_PA: u64 = 0x8001_3000;
+    const PTE_V: u64 = 1;
+    const PTE_R: u64 = 1 << 1;
+    const PTE_W: u64 = 1 << 2;
+    const PTE_X: u64 = 1 << 3;
+    const PTE_A: u64 = 1 << 6;
+    const PTE_D: u64 = 1 << 7;
+
+    #[test]
+    fn sv39_walk_translates_a_three_level_mapping_and_sets_accessed() {
+        let mut mmu = setup_sv39_mmu(PTE_V | PTE_R | PTE_W | PTE_X);
+        mmu.store_doubleword_raw(SV39_PA + 0x10, 0xfeed_face_cafe_beef);
+
+        assert_eq!(
+            mmu.load_bytes(SV39_VA + 0x10, 8).unwrap(),
+            0xfeed_face_cafe_beef
+        );
+        // The walk must set the A bit on the leaf PTE
+        let leaf = mmu.load_doubleword_raw(0x8001_2008);
+        assert_ne!(leaf & PTE_A, 0, "accessed bit must be set by the walk");
+        assert_eq!(leaf & PTE_D, 0, "a read must not set the dirty bit");
+
+        // A write through the mapping sets D as well
+        mmu.store_bytes(SV39_VA + 0x20, 0xAB, 1).unwrap();
+        let leaf = mmu.load_doubleword_raw(0x8001_2008);
+        assert_ne!(leaf & PTE_D, 0, "dirty bit must be set by the write");
+        assert_eq!(mmu.load_bytes(SV39_VA + 0x20, 1).unwrap(), 0xAB);
+
+        // Instruction fetch through the same mapping
+        mmu.store_word_raw(SV39_PA + 0x40, 0x00c5_0513);
+        assert_eq!(mmu.fetch_word(SV39_VA + 0x40).unwrap(), 0x00c5_0513);
+    }
+
+    #[test]
+    fn sv39_permission_bits_gate_each_access_type() {
+        // Execute-only leaf: loads fault, fetches succeed
+        let mut mmu = setup_sv39_mmu(PTE_V | PTE_X);
+        assert!(mmu.load_bytes(SV39_VA, 8).is_err());
+        assert!(mmu.fetch_word(SV39_VA).is_ok());
+
+        // Read-only leaf: writes fault with a StorePageFault
+        let mut mmu = setup_sv39_mmu(PTE_V | PTE_R);
+        let trap = mmu.store_bytes(SV39_VA, 1, 1).unwrap_err();
+        assert!(matches!(trap.trap_type, TrapType::StorePageFault));
+        // and fetches fault since X is clear
+        let trap = mmu.fetch_word(SV39_VA).unwrap_err();
+        assert!(matches!(trap.trap_type, TrapType::InstructionPageFault));
+
+        // Invalid leaf (V=0) faults every access
+        let mut mmu = setup_sv39_mmu(0);
+        let trap = mmu.load_bytes(SV39_VA, 1).unwrap_err();
+        assert!(matches!(trap.trap_type, TrapType::LoadPageFault));
+
+        // W without R is a reserved encoding and must fault
+        let mut mmu = setup_sv39_mmu(PTE_V | PTE_W);
+        assert!(mmu.load_bytes(SV39_VA, 1).is_err());
+    }
+
+    #[test]
+    fn sv39_superpage_leaves_must_be_aligned() {
+        // Level-2 leaf with non-zero low PPN fields is misaligned -> fault
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(0x20000);
+        let root = 0x8001_0000_u64;
+        mmu.store_doubleword_raw(root, (0x8001_3000_u64 >> 12) << 10 | PTE_V | PTE_R | PTE_X);
+        mmu.update_addressing_mode(AddressingMode::SV39);
+        mmu.update_privilege_mode(PrivilegeMode::Supervisor);
+        mmu.update_ppn(root >> 12);
+        assert!(mmu.load_bytes(0x1000, 1).is_err());
+
+        // An aligned level-1 leaf (megapage) translates
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(0x20000);
+        let root = 0x8001_0000_u64;
+        let level1 = 0x8001_1000_u64;
+        mmu.store_doubleword_raw(root, (level1 >> 12) << 10 | PTE_V);
+        // Megapage at 0x80000000: ppn = 0x80000 (ppn2=2, ppn1=0, ppn0=0), vpn1 = 1
+        mmu.store_doubleword_raw(level1 + 8, (0x80000_u64 << 10) | PTE_V | PTE_R | PTE_A);
+        mmu.update_addressing_mode(AddressingMode::SV39);
+        mmu.update_privilege_mode(PrivilegeMode::Supervisor);
+        mmu.update_ppn(root >> 12);
+
+        mmu.store_word_raw(0x8001_4000, 0x1234_5678);
+        // VA vpn2=0, vpn1=1, vpn0=0x14 -> PA 0x80000000 + 0x14 pages
+        let va = (1 << 21) | (0x14 << 12);
+        assert_eq!(mmu.load_bytes(va, 4).unwrap(), 0x1234_5678);
+    }
+
+    #[test]
+    fn sv39_mprv_in_machine_mode_translates_data_accesses() {
+        let mut mmu = setup_sv39_mmu(PTE_V | PTE_R | PTE_W | PTE_A | PTE_D);
+        // Back to machine mode; MPRV=1 with MPP=Supervisor forces translation
+        mmu.update_privilege_mode(PrivilegeMode::Machine);
+        mmu.update_mstatus((1 << 17) | (1 << 11));
+
+        mmu.store_doubleword_raw(SV39_PA, 0x5555_6666_7777_8888);
+        assert_eq!(mmu.load_bytes(SV39_VA, 8).unwrap(), 0x5555_6666_7777_8888);
+        // Execute accesses in machine mode bypass translation
+        assert_eq!(
+            mmu.translate_address(DRAM_BASE, &MemoryAccessType::Execute),
+            Ok(DRAM_BASE)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "SV48 is not supported")]
+    fn sv48_translation_is_unsupported() {
+        let mut mmu = Mmu::new(Box::new(DummyTerminal::default()));
+        mmu.init_memory(0x1000);
+        mmu.update_addressing_mode(AddressingMode::SV48);
+        let _ = mmu.translate_address(0x1000, &MemoryAccessType::Read);
+    }
 }

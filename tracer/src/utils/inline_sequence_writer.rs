@@ -189,3 +189,73 @@ fn format_instruction_with_placeholders(
 
     formatted
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test-only assertions")]
+mod tests {
+    use super::*;
+
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("jolt-inline-writer-{}-{tag}", std::process::id()))
+    }
+
+    /// add x7, x10, x11 at the default trace address: rs1/rs2 match the
+    /// default sequence inputs, so both must be replaced by placeholders.
+    fn add_instruction() -> Instruction {
+        let word = (11 << 20) | (10 << 15) | (7 << 7) | 0x33;
+        Instruction::decode(word, DEFAULT_RAM_START_ADDRESS, false).unwrap()
+    }
+
+    #[test]
+    fn written_trace_substitutes_placeholders_for_address_and_registers() {
+        let path = temp_path("overwrite");
+        let descriptor = InlineDescriptor::new("test_inline".to_string(), 0x2b, 6, 126);
+        let inputs = SequenceInputs::default();
+
+        write_inline_trace(
+            &path,
+            &descriptor,
+            &inputs,
+            &[add_instruction()],
+            AppendMode::Overwrite,
+        )
+        .unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        let mut lines = contents.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            "name: test_inline, opcode: 0x2b, funct3: 6, funct7: 126"
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            "address: $ADDR, is_compressed: false, xlen: 64, rs1: $RS1, rs2: $RS2, rs3: $RS3"
+        );
+        let instruction_line = lines.next().unwrap();
+        assert!(instruction_line.contains("rs1: $RS1"), "{instruction_line}");
+        assert!(instruction_line.contains("rs2: $RS2"), "{instruction_line}");
+        // rd = 7 is not a sequence input and must keep its literal value
+        assert!(instruction_line.contains("rd: 7"), "{instruction_line}");
+    }
+
+    #[test]
+    fn append_mode_preserves_earlier_records() {
+        let path = temp_path("append");
+        let descriptor = InlineDescriptor::new("first".to_string(), 0x2b, 1, 2);
+        let inputs = SequenceInputs::new(DEFAULT_RAM_START_ADDRESS, false, 10, 11, 12);
+
+        write_inline_trace(&path, &descriptor, &inputs, &[], AppendMode::Overwrite).unwrap();
+        let second = InlineDescriptor::new("second".to_string(), 0x2b, 3, 4);
+        write_inline_trace(&path, &second, &inputs, &[], AppendMode::Append).unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(contents.contains("name: first"));
+        assert!(contents.contains("name: second"));
+        assert!(
+            contents.contains("\n\n"),
+            "appended records are separated by an empty line"
+        );
+    }
+}

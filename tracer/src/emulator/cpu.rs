@@ -1543,4 +1543,434 @@ mod test_cpu {
         // No effect to PC
         assert_eq!(DRAM_BASE, cpu.read_pc());
     }
+
+    #[test]
+    fn disassemble_reports_unknown_words() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(4);
+        cpu.update_pc(DRAM_BASE);
+        // 0x0000007f is not a valid RV64IMAC opcode
+        cpu.get_mut_mmu().store_word(DRAM_BASE, 0x0000007f).unwrap();
+        let disassembled = cpu.disassemble_next_instruction();
+        assert!(
+            disassembled.starts_with("Unknown instruction"),
+            "got: {disassembled}"
+        );
+    }
+
+    #[test]
+    fn advice_tape_reads_back_little_endian_in_fifo_order() {
+        let mut tape = AdviceTape::new();
+        assert!(tape.is_empty());
+        assert_eq!(tape.read(1), None, "reading an empty tape yields None");
+
+        tape.write(&[0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(tape.len(), 4);
+        assert_eq!(tape.remaining(), 4);
+
+        assert_eq!(tape.read(2), Some(0x0201), "bytes assemble little-endian");
+        assert_eq!(tape.remaining(), 2);
+        // A read past the remaining bytes fails without consuming anything
+        assert_eq!(tape.read(4), None);
+        assert_eq!(tape.remaining(), 2);
+        assert_eq!(tape.read(2), Some(0x0403));
+        assert_eq!(tape.remaining(), 0);
+
+        tape.reset_read_position();
+        assert_eq!(tape.read(4), Some(0x0403_0201));
+    }
+
+    #[test]
+    fn cpu_advice_tape_helpers_share_the_cpu_tape() {
+        let mut cpu = create_cpu();
+        advice_tape_write(&mut cpu, &[9, 8, 7]);
+        assert_eq!(advice_tape_remaining(&cpu), 3);
+        assert_eq!(advice_tape_read(&mut cpu, 3), Some(0x070809));
+        assert_eq!(advice_tape_remaining(&cpu), 0);
+    }
+
+    #[test]
+    fn handle_advice_write_copies_guest_memory_onto_the_tape() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        for (i, byte) in [0xde_u8, 0xad, 0xbe, 0xef].iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
+        assert_eq!(advice_tape_remaining(&cpu), 4);
+        assert_eq!(advice_tape_read(&mut cpu, 4), Some(0xefbe_adde));
+    }
+
+    #[test]
+    fn reservation_covers_follows_the_lr_sc_width_rules() {
+        let mut cpu = create_cpu();
+        let addr = DRAM_BASE + 64;
+        assert!(!cpu.is_reservation_set());
+
+        // LR.W + SC.W succeeds; LR.W + SC.D fails (set too narrow)
+        cpu.set_reservation(addr, ReservationWidth::Word);
+        assert!(cpu.is_reservation_set());
+        assert!(cpu.reservation_covers(addr, ReservationWidth::Word));
+        assert!(!cpu.reservation_covers(addr, ReservationWidth::Doubleword));
+
+        // LR.D covers both widths
+        cpu.set_reservation(addr, ReservationWidth::Doubleword);
+        assert!(cpu.reservation_covers(addr, ReservationWidth::Word));
+        assert!(cpu.reservation_covers(addr, ReservationWidth::Doubleword));
+
+        // Different address or a cleared reservation never covers
+        assert!(!cpu.reservation_covers(addr + 8, ReservationWidth::Word));
+        cpu.clear_reservation();
+        assert!(!cpu.reservation_covers(addr, ReservationWidth::Word));
+    }
+
+    #[test]
+    fn fcsr_field_aliases_share_backing_bits() {
+        let mut cpu = create_cpu();
+        // Writes through fflags/frm land in the right fcsr fields
+        cpu.write_csr_raw(CSR_FFLAGS_ADDRESS, 0xff);
+        assert_eq!(cpu.read_csr_raw(CSR_FFLAGS_ADDRESS), 0x1f);
+        assert_eq!(cpu.read_csr_raw(CSR_FCSR_ADDRESS), 0x1f);
+        cpu.write_csr_raw(CSR_FRM_ADDRESS, 0x7);
+        assert_eq!(cpu.read_csr_raw(CSR_FRM_ADDRESS), 0x7);
+        assert_eq!(cpu.read_csr_raw(CSR_FCSR_ADDRESS), 0xff);
+        // Writing fcsr updates both subfields
+        cpu.write_csr_raw(CSR_FCSR_ADDRESS, 0x25);
+        assert_eq!(cpu.read_csr_raw(CSR_FFLAGS_ADDRESS), 0x05);
+        assert_eq!(cpu.read_csr_raw(CSR_FRM_ADDRESS), 0x1);
+    }
+
+    #[test]
+    fn supervisor_csrs_are_masked_views_of_machine_csrs() {
+        let mut cpu = create_cpu();
+        const SSTATUS_MASK: u64 = 0x80000003000de162;
+
+        cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, u64::MAX);
+        assert_eq!(cpu.read_csr_raw(CSR_SSTATUS_ADDRESS), SSTATUS_MASK);
+        // Writing sstatus only touches the masked bits
+        cpu.write_csr_raw(CSR_SSTATUS_ADDRESS, 0);
+        assert_eq!(cpu.read_csr_raw(CSR_MSTATUS_ADDRESS), !SSTATUS_MASK);
+
+        cpu.write_csr_raw(CSR_MIE_ADDRESS, 0);
+        cpu.write_csr_raw(CSR_SIE_ADDRESS, u64::MAX);
+        assert_eq!(cpu.read_csr_raw(CSR_MIE_ADDRESS), 0x222);
+        assert_eq!(cpu.read_csr_raw(CSR_SIE_ADDRESS), 0x222);
+
+        cpu.write_csr_raw(CSR_MIP_ADDRESS, 0);
+        cpu.write_csr_raw(CSR_SIP_ADDRESS, u64::MAX);
+        assert_eq!(cpu.read_csr_raw(CSR_MIP_ADDRESS), 0x222);
+        assert_eq!(cpu.read_csr_raw(CSR_SIP_ADDRESS), 0x222);
+
+        // mideleg is masked to the delegatable supervisor interrupts
+        cpu.write_csr_raw(CSR_MIDELEG_ADDRESS, u64::MAX);
+        assert_eq!(cpu.read_csr_raw(CSR_MIDELEG_ADDRESS), 0x666);
+    }
+
+    #[test]
+    #[should_panic(expected = "CLINT is unsupported")]
+    fn reading_time_csr_is_unsupported() {
+        let cpu = create_cpu();
+        let _ = cpu.read_csr_raw(CSR_TIME_ADDRESS);
+    }
+
+    #[test]
+    #[should_panic(expected = "CLINT is unsupported")]
+    fn writing_time_csr_is_unsupported() {
+        let mut cpu = create_cpu();
+        cpu.write_csr_raw(CSR_TIME_ADDRESS, 1);
+    }
+
+    #[test]
+    fn csr_access_respects_privilege_levels() {
+        let mut cpu = create_cpu();
+        // Machine mode can read and write machine CSRs
+        cpu.write_csr(CSR_MSCRATCH_ADDRESS_FOR_TEST, 0x1234)
+            .unwrap();
+        assert_eq!(cpu.read_csr(CSR_MSCRATCH_ADDRESS_FOR_TEST).unwrap(), 0x1234);
+
+        // User mode may not touch machine CSRs
+        cpu.privilege_mode = PrivilegeMode::User;
+        let err = cpu.read_csr(CSR_MSCRATCH_ADDRESS_FOR_TEST).unwrap_err();
+        assert!(matches!(err.trap_type, TrapType::IllegalInstruction));
+        let err = cpu.write_csr(CSR_MSCRATCH_ADDRESS_FOR_TEST, 1).unwrap_err();
+        assert!(matches!(err.trap_type, TrapType::IllegalInstruction));
+    }
+
+    const CSR_MSCRATCH_ADDRESS_FOR_TEST: u16 = 0x340;
+
+    #[test]
+    fn writing_satp_switches_the_addressing_mode() {
+        let mut cpu = create_cpu();
+        // Bare (mode 0) and SV39 (mode 8) are accepted
+        cpu.write_csr(CSR_SATP_ADDRESS, 0).unwrap();
+        cpu.write_csr(CSR_SATP_ADDRESS, 8_u64 << 60).unwrap();
+        assert_eq!(cpu.read_csr_raw(CSR_SATP_ADDRESS), 8_u64 << 60);
+    }
+
+    #[test]
+    #[should_panic]
+    fn unknown_satp_mode_panics() {
+        let mut cpu = create_cpu();
+        cpu.write_csr(CSR_SATP_ADDRESS, 5_u64 << 60).unwrap();
+    }
+
+    #[test]
+    fn exceptions_can_be_delegated_to_supervisor_mode() {
+        let mut cpu = create_cpu();
+        let stvec = 0x2000_0000_u64;
+        // Delegate EnvironmentCallFromUMode (cause 8) to S-mode
+        cpu.write_csr_raw(CSR_MEDELEG_ADDRESS, 1 << 8);
+        cpu.write_csr_raw(CSR_STVEC_ADDRESS, stvec);
+        cpu.privilege_mode = PrivilegeMode::User;
+
+        cpu.raise_trap(
+            Trap {
+                trap_type: TrapType::EnvironmentCallFromUMode,
+                value: 0xabcd,
+            },
+            0x8000_0040,
+        );
+
+        assert_eq!(cpu.read_pc(), stvec);
+        assert_eq!(cpu.read_csr_raw(CSR_SEPC_ADDRESS), 0x8000_0040);
+        assert_eq!(cpu.read_csr_raw(CSR_SCAUSE_ADDRESS), 8);
+        assert_eq!(cpu.read_csr_raw(CSR_STVAL_ADDRESS), 0xabcd);
+        // SPP records the previous privilege (User = 0)
+        assert_eq!((cpu.read_csr_raw(CSR_SSTATUS_ADDRESS) >> 8) & 1, 0);
+        assert!(matches!(cpu.privilege_mode, PrivilegeMode::Supervisor));
+    }
+
+    #[test]
+    fn vectored_tvec_offsets_the_handler_by_the_cause() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013).unwrap();
+        cpu.update_pc(DRAM_BASE);
+
+        // Machine timer interrupt (cause 7) with vectored mtvec (low bits 01)
+        cpu.write_csr_raw(CSR_MIE_ADDRESS, MIP_MTIP);
+        cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_MTIP);
+        cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
+        cpu.write_csr_raw(CSR_MTVEC_ADDRESS, 0x1000_0001);
+
+        cpu.tick(None);
+
+        assert_eq!(cpu.read_pc(), 0x1000_0000 + 4 * 7);
+    }
+
+    #[test]
+    fn machine_software_and_external_interrupts_clear_their_pending_bit() {
+        for (mip_bit, cause) in [(MIP_MSIP, 3), (MIP_MEIP, 11)] {
+            let mut cpu = create_cpu();
+            cpu.get_mut_mmu().init_memory(4);
+            cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013).unwrap();
+            cpu.update_pc(DRAM_BASE);
+            cpu.write_csr_raw(CSR_MIE_ADDRESS, mip_bit);
+            cpu.write_csr_raw(CSR_MIP_ADDRESS, mip_bit);
+            cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
+            cpu.write_csr_raw(CSR_MTVEC_ADDRESS, 0x1000_0000);
+
+            cpu.tick(None);
+
+            assert_eq!(cpu.read_pc(), 0x1000_0000, "cause {cause} not handled");
+            assert_eq!(
+                cpu.read_csr_raw(CSR_MCAUSE_ADDRESS),
+                0x8000000000000000 + cause
+            );
+            assert_eq!(
+                cpu.read_csr_raw(CSR_MIP_ADDRESS) & mip_bit,
+                0,
+                "pending bit for cause {cause} must be cleared"
+            );
+        }
+    }
+
+    #[test]
+    fn delegated_supervisor_interrupts_trap_into_supervisor_mode() {
+        // (MIP bit, mideleg bit position, cause)
+        for (mip_bit, cause) in [(MIP_SSIP, 1_u64), (MIP_STIP, 5), (MIP_SEIP, 9)] {
+            let mut cpu = create_cpu();
+            cpu.get_mut_mmu().init_memory(4);
+            cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013).unwrap();
+            cpu.update_pc(DRAM_BASE);
+
+            cpu.privilege_mode = PrivilegeMode::Supervisor;
+            cpu.write_csr_raw(CSR_MIDELEG_ADDRESS, 1 << cause);
+            cpu.write_csr_raw(CSR_MIE_ADDRESS, mip_bit);
+            cpu.write_csr_raw(CSR_MIP_ADDRESS, mip_bit);
+            // SIE bit in sstatus enables interrupts at supervisor level
+            cpu.write_csr_raw(CSR_SSTATUS_ADDRESS, 0x2);
+            cpu.write_csr_raw(CSR_STVEC_ADDRESS, 0x3000_0000);
+
+            cpu.tick(None);
+
+            assert_eq!(cpu.read_pc(), 0x3000_0000, "cause {cause} not delegated");
+            assert_eq!(
+                cpu.read_csr_raw(CSR_SCAUSE_ADDRESS),
+                0x8000000000000000 + cause
+            );
+        }
+    }
+
+    #[test]
+    fn interrupts_delegated_below_the_current_privilege_are_ignored() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(4);
+        cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013).unwrap();
+        cpu.update_pc(DRAM_BASE);
+
+        // Delegate the timer interrupt to S-mode while running in M-mode:
+        // taking it would drop privilege, so it must stay pending.
+        cpu.write_csr_raw(CSR_MIDELEG_ADDRESS, 1 << 5);
+        cpu.write_csr_raw(CSR_MIE_ADDRESS, MIP_STIP);
+        cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_STIP);
+        cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
+        cpu.write_csr_raw(CSR_MTVEC_ADDRESS, 0x1000_0000);
+
+        cpu.tick(None);
+
+        assert_eq!(cpu.read_pc(), DRAM_BASE + 4, "interrupt must not be taken");
+        assert_ne!(cpu.read_csr_raw(CSR_MIP_ADDRESS) & MIP_STIP, 0);
+    }
+
+    #[test]
+    fn failed_fetch_raises_an_instruction_page_fault() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        // SV39 with an all-zero page table: every PTE has V=0
+        cpu.get_mut_mmu()
+            .update_addressing_mode(AddressingMode::SV39);
+        cpu.get_mut_mmu().update_ppn((DRAM_BASE >> 12) + 1);
+        cpu.privilege_mode = PrivilegeMode::Supervisor;
+        cpu.get_mut_mmu()
+            .update_privilege_mode(PrivilegeMode::Supervisor);
+        cpu.write_csr_raw(CSR_MTVEC_ADDRESS, 0x4000_0000);
+        cpu.update_pc(0x1000);
+
+        cpu.tick(None);
+
+        // Not delegated, so machine mode takes the trap
+        assert_eq!(cpu.read_pc(), 0x4000_0000);
+        assert_eq!(cpu.read_csr_raw(CSR_MCAUSE_ADDRESS), 12);
+        assert_eq!(cpu.read_csr_raw(CSR_MEPC_ADDRESS), 0x1000);
+        assert!(matches!(cpu.privilege_mode, PrivilegeMode::Machine));
+    }
+
+    #[test]
+    fn cycle_markers_track_real_and_virtual_instruction_counts() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        let label = b"my_marker";
+        for (i, byte) in label.iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        let ptr = DRAM_BASE as u32;
+
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+            .unwrap();
+        assert_eq!(cpu.active_markers.len(), 1);
+        assert_eq!(cpu.active_markers[&ptr].label, "my_marker");
+
+        // A second start with the same label logs a warning but replaces nothing
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+            .unwrap();
+        assert_eq!(cpu.active_markers.len(), 1);
+
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_END)
+            .unwrap();
+        assert!(cpu.active_markers.is_empty());
+
+        // Ending a marker that was never started is tolerated
+        cpu.handle_jolt_cycle_marker(ptr + 64, 0, JOLT_CYCLE_MARKER_END)
+            .unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Unexpected event")]
+    fn unknown_marker_event_panics() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        cpu.handle_jolt_cycle_marker(DRAM_BASE as u32, 0, 0xdead)
+            .unwrap();
+    }
+
+    #[test]
+    fn jolt_print_reads_the_guest_string() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        for (i, byte) in b"hi".iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        cpu.handle_jolt_print(DRAM_BASE as u32, 2, JOLT_PRINT_STRING)
+            .unwrap();
+        cpu.handle_jolt_print(DRAM_BASE as u32, 2, JOLT_PRINT_LINE)
+            .unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Unexpected event type")]
+    fn unknown_print_event_panics() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        cpu.handle_jolt_print(DRAM_BASE as u32, 0, 0xdead).unwrap();
+    }
+
+    #[test]
+    fn call_stack_is_a_bounded_ring_buffer() {
+        let mut cpu = create_cpu();
+        let operands = NormalizedOperands::default();
+        for i in 0..(MAX_CALL_STACK_DEPTH as u64 + 2) {
+            cpu.track_call(0x8000_0000 + 4 * i, operands);
+        }
+        let stack = cpu.get_call_stack();
+        assert_eq!(stack.len(), MAX_CALL_STACK_DEPTH);
+        // The two oldest frames were evicted
+        assert_eq!(stack.front().unwrap().call_site, 0x8000_0008);
+        assert_eq!(
+            stack.back().unwrap().call_site,
+            0x8000_0000 + 4 * (MAX_CALL_STACK_DEPTH as u64 + 1)
+        );
+    }
+
+    #[test]
+    fn save_state_with_empty_memory_preserves_registers_but_drops_ram() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        cpu.write_register(7, -42);
+        cpu.update_pc(0x8000_1234);
+        cpu.write_csr_raw(CSR_MSCRATCH_ADDRESS_FOR_TEST, 99);
+        cpu.get_mut_mmu().store_raw(DRAM_BASE, 0xAA);
+
+        let saved = cpu.save_state_with_empty_memory();
+        assert_eq!(saved.x[7], -42);
+        assert_eq!(saved.read_pc(), 0x8000_1234);
+        assert_eq!(saved.read_csr_raw(CSR_MSCRATCH_ADDRESS_FOR_TEST), 99);
+        assert_eq!(
+            saved.mmu.memory.memory.data.get_num_doublewords(),
+            0,
+            "saved state must not carry memory"
+        );
+    }
+
+    #[test]
+    fn register_abi_names_match_the_riscv_convention() {
+        let expected = [
+            "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3",
+            "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+            "t3", "t4", "t5", "t6",
+        ];
+        for (i, name) in expected.iter().enumerate() {
+            assert_eq!(get_register_name(i), *name);
+        }
+        assert!(std::panic::catch_unwind(|| get_register_name(32)).is_err());
+    }
+
+    #[test]
+    fn privilege_mode_encodings_round_trip() {
+        for encoding in [0_u64, 1, 3] {
+            let mode = get_privilege_mode(encoding);
+            assert_eq!(get_privilege_encoding(&mode) as u64, encoding);
+        }
+        assert!(std::panic::catch_unwind(|| get_privilege_mode(2)).is_err());
+    }
 }

@@ -2055,4 +2055,913 @@ mod tests {
             "Cycle size should be {expected} bytes, but is {size} bytes"
         );
     }
+
+    use crate::emulator::cpu::Cpu;
+    use crate::emulator::mmu::DRAM_BASE;
+    use crate::emulator::terminal::DummyTerminal;
+
+    const ADDR: u64 = 0x8000_1000;
+
+    // Independent RV64 encoders (assembled per the RISC-V ISA manual encoding
+    // tables) — the decoder under test must invert these exactly.
+    fn r_type(funct7: u32, rs2: u32, rs1: u32, funct3: u32, rd: u32, opcode: u32) -> u32 {
+        (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
+    }
+
+    fn i_type(imm: i32, rs1: u32, funct3: u32, rd: u32, opcode: u32) -> u32 {
+        (((imm as u32) & 0xfff) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
+    }
+
+    fn s_type(imm: i32, rs2: u32, rs1: u32, funct3: u32, opcode: u32) -> u32 {
+        let imm = (imm as u32) & 0xfff;
+        ((imm >> 5) << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (funct3 << 12)
+            | ((imm & 0x1f) << 7)
+            | opcode
+    }
+
+    fn b_type(offset: i32, rs2: u32, rs1: u32, funct3: u32) -> u32 {
+        let imm = (offset as u32) & 0x1fff;
+        (((imm >> 12) & 1) << 31)
+            | (((imm >> 5) & 0x3f) << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (funct3 << 12)
+            | (((imm >> 1) & 0xf) << 8)
+            | (((imm >> 11) & 1) << 7)
+            | 0x63
+    }
+
+    fn u_type(imm20: u32, rd: u32, opcode: u32) -> u32 {
+        (imm20 << 12) | (rd << 7) | opcode
+    }
+
+    fn j_type(offset: i32, rd: u32) -> u32 {
+        let imm = (offset as u32) & 0x1f_ffff;
+        (((imm >> 20) & 1) << 31)
+            | (((imm >> 1) & 0x3ff) << 21)
+            | (((imm >> 11) & 1) << 20)
+            | (((imm >> 12) & 0xff) << 12)
+            | (rd << 7)
+            | 0x6f
+    }
+
+    fn amo(funct5: u32, funct3: u32, rs2: u32, rs1: u32, rd: u32) -> u32 {
+        (funct5 << 27) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x2f
+    }
+
+    fn decode_name(word: u32) -> &'static str {
+        let instr = Instruction::decode(word, ADDR, false)
+            .unwrap_or_else(|e| panic!("word {word:#010x} failed to decode: {e}"));
+        instr.into()
+    }
+
+    #[test]
+    fn decode_maps_every_rv64imac_encoding_to_its_instruction() {
+        let cases: &[(u32, &str)] = &[
+            (u_type(0x12345, 1, 0x37), "LUI"),
+            (u_type(0x12345, 1, 0x17), "AUIPC"),
+            (j_type(2048, 1), "JAL"),
+            (i_type(4, 1, 0b000, 2, 0x67), "JALR"),
+            (b_type(16, 2, 1, 0b000), "BEQ"),
+            (b_type(16, 2, 1, 0b001), "BNE"),
+            (b_type(16, 2, 1, 0b100), "BLT"),
+            (b_type(16, 2, 1, 0b101), "BGE"),
+            (b_type(16, 2, 1, 0b110), "BLTU"),
+            (b_type(16, 2, 1, 0b111), "BGEU"),
+            (i_type(-4, 1, 0b000, 2, 0x03), "LB"),
+            (i_type(-4, 1, 0b001, 2, 0x03), "LH"),
+            (i_type(-4, 1, 0b010, 2, 0x03), "LW"),
+            (i_type(-4, 1, 0b011, 2, 0x03), "LD"),
+            (i_type(-4, 1, 0b100, 2, 0x03), "LBU"),
+            (i_type(-4, 1, 0b101, 2, 0x03), "LHU"),
+            (i_type(-4, 1, 0b110, 2, 0x03), "LWU"),
+            (s_type(-4, 2, 1, 0b000, 0x23), "SB"),
+            (s_type(-4, 2, 1, 0b001, 0x23), "SH"),
+            (s_type(-4, 2, 1, 0b010, 0x23), "SW"),
+            (s_type(-4, 2, 1, 0b011, 0x23), "SD"),
+            (i_type(5, 1, 0b000, 2, 0x13), "ADDI"),
+            (i_type(5, 1, 0b010, 2, 0x13), "SLTI"),
+            (i_type(5, 1, 0b011, 2, 0x13), "SLTIU"),
+            (i_type(5, 1, 0b100, 2, 0x13), "XORI"),
+            (i_type(5, 1, 0b110, 2, 0x13), "ORI"),
+            (i_type(5, 1, 0b111, 2, 0x13), "ANDI"),
+            (i_type(63, 1, 0b001, 2, 0x13), "SLLI"),
+            (i_type(63, 1, 0b101, 2, 0x13), "SRLI"),
+            (i_type(0x400 | 63, 1, 0b101, 2, 0x13), "SRAI"),
+            (i_type(5, 1, 0b000, 2, 0x1b), "ADDIW"),
+            (i_type(31, 1, 0b001, 2, 0x1b), "SLLIW"),
+            (i_type(31, 1, 0b101, 2, 0x1b), "SRLIW"),
+            (i_type(0x400 | 31, 1, 0b101, 2, 0x1b), "SRAIW"),
+            (r_type(0x00, 2, 1, 0b000, 3, 0x33), "ADD"),
+            (r_type(0x20, 2, 1, 0b000, 3, 0x33), "SUB"),
+            (r_type(0x00, 2, 1, 0b001, 3, 0x33), "SLL"),
+            (r_type(0x00, 2, 1, 0b010, 3, 0x33), "SLT"),
+            (r_type(0x00, 2, 1, 0b011, 3, 0x33), "SLTU"),
+            (r_type(0x00, 2, 1, 0b100, 3, 0x33), "XOR"),
+            (r_type(0x00, 2, 1, 0b101, 3, 0x33), "SRL"),
+            (r_type(0x20, 2, 1, 0b101, 3, 0x33), "SRA"),
+            (r_type(0x00, 2, 1, 0b110, 3, 0x33), "OR"),
+            (r_type(0x00, 2, 1, 0b111, 3, 0x33), "AND"),
+            (r_type(0x01, 2, 1, 0b000, 3, 0x33), "MUL"),
+            (r_type(0x01, 2, 1, 0b001, 3, 0x33), "MULH"),
+            (r_type(0x01, 2, 1, 0b010, 3, 0x33), "MULHSU"),
+            (r_type(0x01, 2, 1, 0b011, 3, 0x33), "MULHU"),
+            (r_type(0x01, 2, 1, 0b100, 3, 0x33), "DIV"),
+            (r_type(0x01, 2, 1, 0b101, 3, 0x33), "DIVU"),
+            (r_type(0x01, 2, 1, 0b110, 3, 0x33), "REM"),
+            (r_type(0x01, 2, 1, 0b111, 3, 0x33), "REMU"),
+            (r_type(0x00, 2, 1, 0b000, 3, 0x3b), "ADDW"),
+            (r_type(0x20, 2, 1, 0b000, 3, 0x3b), "SUBW"),
+            (r_type(0x00, 2, 1, 0b001, 3, 0x3b), "SLLW"),
+            (r_type(0x00, 2, 1, 0b101, 3, 0x3b), "SRLW"),
+            (r_type(0x20, 2, 1, 0b101, 3, 0x3b), "SRAW"),
+            (r_type(0x01, 2, 1, 0b000, 3, 0x3b), "MULW"),
+            (r_type(0x01, 2, 1, 0b100, 3, 0x3b), "DIVW"),
+            (r_type(0x01, 2, 1, 0b101, 3, 0x3b), "DIVUW"),
+            (r_type(0x01, 2, 1, 0b110, 3, 0x3b), "REMW"),
+            (r_type(0x01, 2, 1, 0b111, 3, 0x3b), "REMUW"),
+            (i_type(0, 0, 0b000, 0, 0x0f), "FENCE"),
+            (amo(0b00010, 0b010, 0, 1, 2), "LRW"),
+            (amo(0b00010, 0b011, 0, 1, 2), "LRD"),
+            (amo(0b00011, 0b010, 3, 1, 2), "SCW"),
+            (amo(0b00011, 0b011, 3, 1, 2), "SCD"),
+            (amo(0b00001, 0b010, 3, 1, 2), "AMOSWAPW"),
+            (amo(0b00001, 0b011, 3, 1, 2), "AMOSWAPD"),
+            (amo(0b00000, 0b010, 3, 1, 2), "AMOADDW"),
+            (amo(0b00000, 0b011, 3, 1, 2), "AMOADDD"),
+            (amo(0b01100, 0b010, 3, 1, 2), "AMOANDW"),
+            (amo(0b01100, 0b011, 3, 1, 2), "AMOANDD"),
+            (amo(0b01000, 0b010, 3, 1, 2), "AMOORW"),
+            (amo(0b01000, 0b011, 3, 1, 2), "AMOORD"),
+            (amo(0b00100, 0b010, 3, 1, 2), "AMOXORW"),
+            (amo(0b00100, 0b011, 3, 1, 2), "AMOXORD"),
+            (amo(0b10000, 0b010, 3, 1, 2), "AMOMINW"),
+            (amo(0b10000, 0b011, 3, 1, 2), "AMOMIND"),
+            (amo(0b10100, 0b010, 3, 1, 2), "AMOMAXW"),
+            (amo(0b10100, 0b011, 3, 1, 2), "AMOMAXD"),
+            (amo(0b11000, 0b010, 3, 1, 2), "AMOMINUW"),
+            (amo(0b11000, 0b011, 3, 1, 2), "AMOMINUD"),
+            (amo(0b11100, 0b010, 3, 1, 2), "AMOMAXUW"),
+            (amo(0b11100, 0b011, 3, 1, 2), "AMOMAXUD"),
+            // aq/rl bits (26:25) must not affect decoding
+            (amo(0b00000, 0b010, 3, 1, 2) | (0b11 << 25), "AMOADDW"),
+            (0x0000_0073, "ECALL"),
+            (0x0010_0073, "EBREAK"),
+            (0x3020_0073, "MRET"),
+            // CSRRW/CSRRS on a supported CSR (mtvec = 0x305)
+            (i_type(0x305, 1, 0b001, 2, 0x73), "CSRRW"),
+            (i_type(0x305, 1, 0b010, 2, 0x73), "CSRRS"),
+            // Reserved inline opcodes decode as INLINE without validation
+            (0x0000_000b, "INLINE"),
+            (0x0000_002b, "INLINE"),
+            // Custom opcode 0x5B: virtual/advice instructions
+            (r_type(FUNCT7_ADVICE_LB, 0, 1, 0, 2, 0x5b), "AdviceLB"),
+            (r_type(FUNCT7_ADVICE_LH, 0, 1, 0, 2, 0x5b), "AdviceLH"),
+            (r_type(FUNCT7_ADVICE_LW, 0, 1, 0, 2, 0x5b), "AdviceLW"),
+            (r_type(FUNCT7_ADVICE_LD, 0, 1, 0, 2, 0x5b), "AdviceLD"),
+            (
+                r_type(FUNCT7_ADVICE_LEN, 0, 1, 0, 2, 0x5b),
+                "VirtualAdviceLen",
+            ),
+            (
+                r_type(FUNCT7_VIRTUAL_REV8W, 0, 1, 0, 2, 0x5b),
+                "VirtualRev8W",
+            ),
+            (r_type(0, 2, 1, 0b001, 0, 0x5b), "VirtualAssertEQ"),
+            (r_type(0, 2, 1, 0b010, 0, 0x5b), "VirtualHostIO"),
+        ];
+
+        for (word, expected) in cases {
+            assert_eq!(
+                decode_name(*word),
+                *expected,
+                "word {word:#010x} decoded to the wrong instruction"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_rejects_malformed_encodings_with_a_specific_reason() {
+        let cases: &[(u32, &str)] = &[
+            (i_type(0, 1, 0b001, 2, 0x67), "Invalid funct3 for JALR"),
+            (b_type(16, 2, 1, 0b010), "Invalid branch funct3"),
+            (i_type(0, 1, 0b111, 2, 0x03), "Invalid load funct3"),
+            (s_type(0, 2, 1, 0b100, 0x23), "Invalid store funct3"),
+            // funct6 = (word >> 26) & 0x3f must be zero for SLLI/SRLI
+            (
+                r_type(0x02, 63, 1, 0b001, 2, 0x13),
+                "Invalid funct7 for SLLI",
+            ),
+            (
+                r_type(0x02, 63, 1, 0b101, 2, 0x13),
+                "Invalid ALU shift funct7",
+            ),
+            (
+                i_type(0, 1, 0b010, 2, 0x1b),
+                "Invalid RV64I I-type arithmetic instruction",
+            ),
+            (
+                r_type(0x02, 2, 1, 0b000, 3, 0x33),
+                "Invalid R-type arithmetic instruction",
+            ),
+            (
+                r_type(0x01, 2, 1, 0b001, 3, 0x3b),
+                "Invalid RV64I R-type arithmetic instruction",
+            ),
+            (
+                amo(0b00101, 0b010, 3, 1, 2),
+                "Invalid atomic memory operation",
+            ),
+            (
+                i_type(0, 1, 0b101, 2, 0x73),
+                "Unsupported SYSTEM instruction",
+            ),
+            // cycle CSR (0xc00) is not modelled; rejected at decode time
+            (i_type(0xc00, 1, 0b001, 2, 0x73), "Unsupported CSR in CSRRW"),
+            (i_type(0xc00, 1, 0b010, 2, 0x73), "Unsupported CSR in CSRRS"),
+            (
+                r_type(0x7f, 0, 1, 0, 2, 0x5b),
+                "Invalid funct7 for virtual R-type instruction",
+            ),
+            (
+                r_type(0, 2, 1, 0b011, 0, 0x5b),
+                "Invalid custom/virtual instruction",
+            ),
+            (0x0000_007f, "Unknown opcode"),
+        ];
+
+        for (word, expected) in cases {
+            let error = Instruction::decode(*word, ADDR, false)
+                .map(|instr| -> &'static str { instr.into() })
+                .expect_err(&format!("word {word:#010x} should be rejected"));
+            assert_eq!(error, *expected, "word {word:#010x}");
+        }
+    }
+
+    fn exec_cpu() -> Cpu {
+        let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        cpu.get_mut_mmu().init_memory(1 << 20);
+        cpu
+    }
+
+    /// Decode `word` at `ADDR`, set the PC as `tick_operate` would after the
+    /// fetch (instruction address + 4), and execute.
+    fn exec(cpu: &mut Cpu, word: u32) {
+        let instr = Instruction::decode(word, ADDR, false).unwrap();
+        cpu.update_pc(ADDR.wrapping_add(4));
+        instr.execute(cpu);
+    }
+
+    fn exec_binary_op(word: u32, rs1_val: i64, rs2_val: i64) -> i64 {
+        // convention: rs1 = x1, rs2 = x2, rd = x3
+        let mut cpu = exec_cpu();
+        cpu.write_register(1, rs1_val);
+        cpu.write_register(2, rs2_val);
+        exec(&mut cpu, word);
+        cpu.x[3]
+    }
+
+    fn exec_imm_op(word: u32, rs1_val: i64) -> i64 {
+        // convention: rs1 = x1, rd = x2
+        let mut cpu = exec_cpu();
+        cpu.write_register(1, rs1_val);
+        exec(&mut cpu, word);
+        cpu.x[2]
+    }
+
+    #[test]
+    fn immediate_alu_semantics_match_the_riscv_spec() {
+        // ADDI wraps on overflow
+        assert_eq!(
+            exec_imm_op(i_type(1, 1, 0b000, 2, 0x13), i64::MAX),
+            i64::MIN
+        );
+        // SLTI compares signed; SLTIU compares the sign-extended imm unsigned
+        assert_eq!(exec_imm_op(i_type(-4, 1, 0b010, 2, 0x13), -5), 1);
+        assert_eq!(exec_imm_op(i_type(-6, 1, 0b010, 2, 0x13), -5), 0);
+        assert_eq!(exec_imm_op(i_type(-1, 1, 0b011, 2, 0x13), 5), 1);
+        assert_eq!(exec_imm_op(i_type(1, 1, 0b011, 2, 0x13), 0), 1); // seqz idiom
+                                                                     // XORI/ORI/ANDI sign-extend the immediate
+        assert_eq!(exec_imm_op(i_type(-1, 1, 0b100, 2, 0x13), 0x55), !0x55);
+        assert_eq!(exec_imm_op(i_type(-16, 1, 0b110, 2, 0x13), 0x0f), -1);
+        assert_eq!(exec_imm_op(i_type(-16, 1, 0b111, 2, 0x13), 0x7f), 0x70);
+        // 64-bit shifts with shamt 63
+        assert_eq!(exec_imm_op(i_type(63, 1, 0b001, 2, 0x13), 1), i64::MIN);
+        assert_eq!(exec_imm_op(i_type(63, 1, 0b101, 2, 0x13), -1), 1);
+        assert_eq!(
+            exec_imm_op(i_type(0x400 | 63, 1, 0b101, 2, 0x13), i64::MIN),
+            -1
+        );
+    }
+
+    #[test]
+    fn word_sized_immediate_alu_truncates_then_sign_extends() {
+        // ADDIW: 0x7fffffff + 1 wraps to i32::MIN, sign-extended
+        assert_eq!(
+            exec_imm_op(i_type(1, 1, 0b000, 2, 0x1b), 0x7fff_ffff),
+            i32::MIN as i64
+        );
+        // SLLIW: 1 << 31 is negative as a word
+        assert_eq!(
+            exec_imm_op(i_type(31, 1, 0b001, 2, 0x1b), 1),
+            i32::MIN as i64
+        );
+        // SRLIW is a logical shift on the low word
+        assert_eq!(exec_imm_op(i_type(31, 1, 0b101, 2, 0x1b), 0x8000_0000), 1);
+        // SRAIW is arithmetic on the low word
+        assert_eq!(
+            exec_imm_op(i_type(0x400 | 31, 1, 0b101, 2, 0x1b), 0x8000_0000),
+            -1
+        );
+    }
+
+    #[test]
+    fn register_alu_semantics_match_the_riscv_spec() {
+        // ADD wraps; SUB wraps the other way
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b000, 3, 0x33), i64::MAX, 1),
+            i64::MIN
+        );
+        assert_eq!(
+            exec_binary_op(r_type(0x20, 2, 1, 0b000, 3, 0x33), i64::MIN, 1),
+            i64::MAX
+        );
+        // Shift amounts use only the low 6 bits of rs2
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b001, 3, 0x33), 1, 64 + 4),
+            16
+        );
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b101, 3, 0x33), -1, 64 + 63),
+            1
+        );
+        assert_eq!(
+            exec_binary_op(r_type(0x20, 2, 1, 0b101, 3, 0x33), i64::MIN, 63),
+            -1
+        );
+        // SLT is signed, SLTU is unsigned: -1 <s 1 but (u64)-1 >u 1
+        assert_eq!(exec_binary_op(r_type(0x00, 2, 1, 0b010, 3, 0x33), -1, 1), 1);
+        assert_eq!(exec_binary_op(r_type(0x00, 2, 1, 0b011, 3, 0x33), -1, 1), 0);
+        // Bitwise ops
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b100, 3, 0x33), 0b1100, 0b1010),
+            0b0110
+        );
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b110, 3, 0x33), 0b1100, 0b1010),
+            0b1110
+        );
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b111, 3, 0x33), 0b1100, 0b1010),
+            0b1000
+        );
+        // Word variants sign-extend their 32-bit result
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b000, 3, 0x3b), 0x7fff_ffff, 1),
+            i32::MIN as i64
+        );
+        assert_eq!(exec_binary_op(r_type(0x20, 2, 1, 0b000, 3, 0x3b), 0, 1), -1);
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b001, 3, 0x3b), 1, 32 + 31),
+            i32::MIN as i64
+        );
+        assert_eq!(
+            exec_binary_op(r_type(0x00, 2, 1, 0b101, 3, 0x3b), 0x8000_0000, 31),
+            1
+        );
+        assert_eq!(
+            exec_binary_op(r_type(0x20, 2, 1, 0b101, 3, 0x3b), 0x8000_0000, 31),
+            -1
+        );
+    }
+
+    #[test]
+    fn multiply_high_halves_match_wide_arithmetic() {
+        let mulh = |a: i64, b: i64| ((a as i128 * b as i128) >> 64) as i64;
+        let mulhu = |a: u64, b: u64| ((a as u128 * b as u128) >> 64) as u64 as i64;
+        let mulhsu = |a: i64, b: u64| ((a as i128 * b as i128 as u128 as i128) >> 64) as i64;
+
+        let mul_w = r_type(0x01, 2, 1, 0b000, 3, 0x33);
+        let mulh_w = r_type(0x01, 2, 1, 0b001, 3, 0x33);
+        let mulhsu_w = r_type(0x01, 2, 1, 0b010, 3, 0x33);
+        let mulhu_w = r_type(0x01, 2, 1, 0b011, 3, 0x33);
+
+        // MUL keeps the low 64 bits
+        assert_eq!(
+            exec_binary_op(mul_w, 0x1_2345_6789, 0x1_0000_0000),
+            0x2345_6789_0000_0000_u64 as i64
+        );
+        assert_eq!(exec_binary_op(mulh_w, -3, 5), mulh(-3, 5));
+        assert_eq!(
+            exec_binary_op(mulh_w, i64::MIN, i64::MIN),
+            mulh(i64::MIN, i64::MIN)
+        );
+        assert_eq!(exec_binary_op(mulhu_w, -1, -1), mulhu(u64::MAX, u64::MAX));
+        assert_eq!(exec_binary_op(mulhsu_w, -1, -1), mulhsu(-1, u64::MAX));
+        assert_eq!(
+            exec_binary_op(r_type(0x01, 2, 1, 0b000, 3, 0x3b), 0x10_0001, 0x10_0001),
+            (0x10_0001_i64.wrapping_mul(0x10_0001) as i32) as i64
+        );
+    }
+
+    #[test]
+    fn division_special_cases_follow_the_spec() {
+        let div_w = r_type(0x01, 2, 1, 0b100, 3, 0x33);
+        let divu_w = r_type(0x01, 2, 1, 0b101, 3, 0x33);
+        let rem_w = r_type(0x01, 2, 1, 0b110, 3, 0x33);
+        let remu_w = r_type(0x01, 2, 1, 0b111, 3, 0x33);
+
+        // Truncating signed division
+        assert_eq!(exec_binary_op(div_w, 7, -2), -3);
+        assert_eq!(exec_binary_op(rem_w, 7, -2), 1);
+        assert_eq!(exec_binary_op(rem_w, -7, 2), -1);
+        // Division by zero: DIV -> -1, DIVU -> all ones, REM(U) -> dividend
+        assert_eq!(exec_binary_op(div_w, 42, 0), -1);
+        assert_eq!(exec_binary_op(divu_w, 42, 0), u64::MAX as i64);
+        assert_eq!(exec_binary_op(rem_w, 42, 0), 42);
+        assert_eq!(exec_binary_op(remu_w, 42, 0), 42);
+        // Signed overflow: MIN / -1 -> MIN, remainder 0
+        assert_eq!(exec_binary_op(div_w, i64::MIN, -1), i64::MIN);
+        assert_eq!(exec_binary_op(rem_w, i64::MIN, -1), 0);
+
+        // Word-sized variants
+        let divw = r_type(0x01, 2, 1, 0b100, 3, 0x3b);
+        let divuw = r_type(0x01, 2, 1, 0b101, 3, 0x3b);
+        let remw = r_type(0x01, 2, 1, 0b110, 3, 0x3b);
+        let remuw = r_type(0x01, 2, 1, 0b111, 3, 0x3b);
+        assert_eq!(exec_binary_op(divw, i32::MIN as i64, -1), i32::MIN as i64);
+        assert_eq!(exec_binary_op(divw, 42, 0), -1);
+        assert_eq!(exec_binary_op(divuw, 0x8000_0000, 2), 0x4000_0000);
+        assert_eq!(exec_binary_op(remw, -7, 2), -1);
+        assert_eq!(exec_binary_op(remuw, 7, 0), 7);
+    }
+
+    #[test]
+    fn branch_targets_are_relative_to_the_branch_address() {
+        // (word, rs1, rs2, taken)
+        let cases: &[(u32, i64, i64, bool)] = &[
+            (b_type(16, 2, 1, 0b000), 5, 5, true), // BEQ
+            (b_type(16, 2, 1, 0b000), 5, 6, false),
+            (b_type(16, 2, 1, 0b001), 5, 6, true), // BNE
+            (b_type(16, 2, 1, 0b001), 5, 5, false),
+            (b_type(16, 2, 1, 0b100), -1, 1, true), // BLT is signed
+            (b_type(16, 2, 1, 0b110), -1, 1, false), // BLTU is unsigned
+            (b_type(16, 2, 1, 0b101), 1, -1, true), // BGE
+            (b_type(16, 2, 1, 0b111), 1, -1, false), // BGEU: 1 < (u64)-1
+            (b_type(-16, 2, 1, 0b000), 7, 7, true), // negative offset
+        ];
+        for (word, rs1, rs2, taken) in cases {
+            let mut cpu = exec_cpu();
+            cpu.write_register(1, *rs1);
+            cpu.write_register(2, *rs2);
+            exec(&mut cpu, *word);
+            let offset = if *word & 0x8000_0000 != 0 {
+                -16_i64
+            } else {
+                16
+            };
+            let expected = if *taken {
+                ADDR.wrapping_add(offset as u64)
+            } else {
+                ADDR + 4
+            };
+            assert_eq!(
+                cpu.read_pc(),
+                expected,
+                "word {word:#010x} rs1={rs1} rs2={rs2}"
+            );
+        }
+    }
+
+    #[test]
+    fn jumps_link_past_the_jump_and_mask_jalr_bit_zero() {
+        // JAL x5, +2048
+        let mut cpu = exec_cpu();
+        exec(&mut cpu, j_type(2048, 5));
+        assert_eq!(cpu.read_pc(), ADDR + 2048);
+        assert_eq!(cpu.x[5], (ADDR + 4) as i64);
+
+        // JAL x5, -2048
+        let mut cpu = exec_cpu();
+        exec(&mut cpu, j_type(-2048, 5));
+        assert_eq!(cpu.read_pc(), ADDR - 2048);
+
+        // JALR x5, 3(x1): target has bit 0 cleared
+        let mut cpu = exec_cpu();
+        cpu.write_register(1, (DRAM_BASE + 0x100) as i64);
+        exec(&mut cpu, i_type(3, 1, 0b000, 5, 0x67));
+        assert_eq!(cpu.read_pc(), DRAM_BASE + 0x102);
+        assert_eq!(cpu.x[5], (ADDR + 4) as i64);
+
+        // LUI sign-extends imm20 = 0x80000; AUIPC adds to the instruction address
+        let mut cpu = exec_cpu();
+        exec(&mut cpu, u_type(0x80000, 5, 0x37));
+        assert_eq!(cpu.x[5], 0xffff_ffff_8000_0000_u64 as i64);
+        let mut cpu = exec_cpu();
+        exec(&mut cpu, u_type(1, 5, 0x17));
+        assert_eq!(cpu.x[5], (ADDR + 0x1000) as i64);
+    }
+
+    #[test]
+    fn loads_extend_and_stores_merge_bytes_as_specified() {
+        let mut cpu = exec_cpu();
+        let base = DRAM_BASE + 0x100;
+        cpu.write_register(1, base as i64); // base register
+        cpu.write_register(2, 0xffee_ddcc_bbaa_9988_u64 as i64);
+
+        // SD x2, 0(x1)
+        exec(&mut cpu, s_type(0, 2, 1, 0b011, 0x23));
+
+        let load = |cpu: &mut Cpu, funct3: u32, offset: i32| -> i64 {
+            exec(cpu, i_type(offset, 1, funct3, 3, 0x03));
+            cpu.x[3]
+        };
+        assert_eq!(load(&mut cpu, 0b000, 0), 0xffff_ffff_ffff_ff88_u64 as i64); // LB
+        assert_eq!(load(&mut cpu, 0b100, 0), 0x88); // LBU
+        assert_eq!(load(&mut cpu, 0b001, 0), 0xffff_ffff_ffff_9988_u64 as i64); // LH
+        assert_eq!(load(&mut cpu, 0b101, 0), 0x9988); // LHU
+        assert_eq!(load(&mut cpu, 0b010, 0), 0xffff_ffff_bbaa_9988_u64 as i64); // LW
+        assert_eq!(load(&mut cpu, 0b110, 0), 0xbbaa_9988); // LWU
+        assert_eq!(load(&mut cpu, 0b011, 0), 0xffee_ddcc_bbaa_9988_u64 as i64); // LD
+
+        // SB merges a single byte; SH a halfword; SW the low word
+        cpu.write_register(2, 0x11);
+        exec(&mut cpu, s_type(1, 2, 1, 0b000, 0x23));
+        assert_eq!(load(&mut cpu, 0b011, 0), 0xffee_ddcc_bbaa_1188_u64 as i64);
+        cpu.write_register(2, 0x2222);
+        exec(&mut cpu, s_type(2, 2, 1, 0b001, 0x23));
+        assert_eq!(load(&mut cpu, 0b011, 0), 0xffee_ddcc_2222_1188_u64 as i64);
+        cpu.write_register(2, 0x3333_3333);
+        exec(&mut cpu, s_type(4, 2, 1, 0b010, 0x23));
+        assert_eq!(load(&mut cpu, 0b011, 0), 0x3333_3333_2222_1188_u64 as i64);
+
+        // Negative offset addressing
+        cpu.write_register(1, (base + 8) as i64);
+        assert_eq!(load(&mut cpu, 0b011, -8), 0x3333_3333_2222_1188_u64 as i64);
+    }
+
+    #[test]
+    fn amo_ops_return_the_old_value_and_apply_their_operator() {
+        let addr = DRAM_BASE + 0x200;
+        let run_amo = |word: u32, initial: u64| -> (i64, u64) {
+            let mut cpu = exec_cpu();
+            cpu.write_register(1, addr as i64);
+            cpu.mmu.store_doubleword(addr, initial).unwrap();
+            cpu.write_register(3, 0); // rd
+            exec(&mut cpu, word);
+            let memory = cpu.mmu.load_doubleword(addr).unwrap().0;
+            (cpu.x[3], memory)
+        };
+
+        // AMOADD.W: old word is sign-extended into rd; memory gets the sum word
+        let amoaddw = amo(0b00000, 0b010, 2, 1, 3);
+        let mut cpu = exec_cpu();
+        cpu.write_register(1, addr as i64);
+        cpu.write_register(2, 1);
+        cpu.mmu.store_word(addr, 0x8000_0000).unwrap();
+        exec(&mut cpu, amoaddw);
+        assert_eq!(cpu.x[3], 0xffff_ffff_8000_0000_u64 as i64);
+        assert_eq!(cpu.mmu.load_word(addr).unwrap().0, 0x8000_0001);
+
+        // rs2 = x0 keeps memory unchanged for ADD; swap stores zero
+        let (old, mem) = run_amo(amo(0b00000, 0b011, 0, 1, 3), 77);
+        assert_eq!((old, mem), (77, 77)); // AMOADD.D + x0
+        let (old, mem) = run_amo(amo(0b00001, 0b011, 0, 1, 3), 77);
+        assert_eq!((old, mem), (77, 0)); // AMOSWAP.D with x0
+
+        // Signed vs unsigned min/max on doublewords
+        let neg1 = u64::MAX;
+        let run_amo_with = |word: u32, initial: u64, rs2: i64| -> (i64, u64) {
+            let mut cpu = exec_cpu();
+            cpu.write_register(1, addr as i64);
+            cpu.write_register(2, rs2);
+            cpu.mmu.store_doubleword(addr, initial).unwrap();
+            exec(&mut cpu, word);
+            (cpu.x[3], cpu.mmu.load_doubleword(addr).unwrap().0)
+        };
+        let (old, mem) = run_amo_with(amo(0b10100, 0b011, 2, 1, 3), neg1, 1);
+        assert_eq!((old, mem), (-1, 1)); // AMOMAX.D: max(-1, 1) = 1
+        let (old, mem) = run_amo_with(amo(0b11100, 0b011, 2, 1, 3), neg1, 1);
+        assert_eq!((old, mem), (-1, neg1)); // AMOMAXU.D: max(2^64-1, 1)
+        let (old, mem) = run_amo_with(amo(0b10000, 0b011, 2, 1, 3), neg1, 1);
+        assert_eq!((old, mem), (-1, neg1)); // AMOMIN.D: min(-1, 1) = -1
+        let (old, mem) = run_amo_with(amo(0b11000, 0b011, 2, 1, 3), neg1, 1);
+        assert_eq!((old, mem), (-1, 1)); // AMOMINU.D
+        let (old, mem) = run_amo_with(amo(0b01100, 0b011, 2, 1, 3), 0b1100, 0b1010);
+        assert_eq!((old, mem), (0b1100, 0b1000)); // AMOAND.D
+        let (old, mem) = run_amo_with(amo(0b01000, 0b011, 2, 1, 3), 0b1100, 0b1010);
+        assert_eq!((old, mem), (0b1100, 0b1110)); // AMOOR.D
+        let (old, mem) = run_amo_with(amo(0b00100, 0b011, 2, 1, 3), 0b1100, 0b1010);
+        assert_eq!((old, mem), (0b1100, 0b0110)); // AMOXOR.D
+    }
+
+    #[test]
+    fn cycle_accessors_expose_register_and_ram_state() {
+        // ADD x3, x1, x2 traced as a single cycle
+        let mut cpu = exec_cpu();
+        cpu.write_register(1, 20);
+        cpu.write_register(2, 22);
+        cpu.write_register(3, 9);
+        let instr = Instruction::decode(r_type(0, 2, 1, 0b000, 3, 0x33), ADDR, false).unwrap();
+        let mut trace = Vec::new();
+        instr.trace(&mut cpu, Some(&mut trace));
+        assert_eq!(trace.len(), 1);
+        let cycle = trace[0];
+        assert_eq!(cycle.rs1_read(), Some((1, 20)));
+        assert_eq!(cycle.rs2_read(), Some((2, 22)));
+        assert_eq!(cycle.rd_write(), Some((3, 9, 42)));
+        assert!(matches!(cycle.ram_access(), RAMAccess::NoOp));
+        assert_eq!(cycle.ram_access().address(), 0);
+        let name: &'static str = cycle.instruction().into();
+        assert_eq!(name, "ADD");
+
+        // A store cycle carries the pre/post memory word
+        let mut cpu = exec_cpu();
+        let base = DRAM_BASE + 0x300;
+        cpu.write_register(1, base as i64);
+        cpu.write_register(2, 0xdead_beef_u32 as i64);
+        let sw = Instruction::decode(s_type(0, 2, 1, 0b010, 0x23), ADDR, false).unwrap();
+        let mut trace = Vec::new();
+        sw.trace(&mut cpu, Some(&mut trace));
+        let last = trace.last().unwrap();
+        match last.ram_access() {
+            RAMAccess::Write(write) => {
+                assert_eq!(write.address, base);
+                assert_eq!(write.pre_value, 0);
+                assert_eq!(write.post_value, 0xdead_beef);
+            }
+            other => panic!("expected a RAM write, got {:?}", other.address()),
+        }
+
+        // RAMAccess conversions
+        assert_eq!(
+            RAMAccess::from(RAMRead {
+                address: 5,
+                value: 0
+            })
+            .address(),
+            5
+        );
+        assert_eq!(
+            RAMAccess::from(RAMWrite {
+                address: 7,
+                pre_value: 0,
+                post_value: 0
+            })
+            .address(),
+            7
+        );
+        assert_eq!(RAMAccess::from(()).address(), 0);
+    }
+
+    #[test]
+    fn canonical_serialization_round_trips_instructions() {
+        let original = Instruction::decode(i_type(-4, 1, 0b010, 2, 0x03), ADDR, false).unwrap();
+        let mut bytes = Vec::new();
+        original
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .unwrap();
+        assert_eq!(bytes.len(), original.serialized_size(Compress::Yes));
+
+        let decoded =
+            Instruction::deserialize_with_mode(bytes.as_slice(), Compress::Yes, Validate::Yes)
+                .unwrap();
+        assert_eq!(format!("{decoded:?}"), format!("{original:?}"));
+        assert!(decoded.check().is_ok());
+    }
+
+    #[test]
+    fn div_expands_to_a_virtual_sequence_with_advice_slots() {
+        let cpu = exec_cpu();
+        let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
+
+        // DIV has no final Jolt row; it must be expanded
+        assert!(div.try_jolt_instruction_row().is_err());
+
+        let mut sequence = div.inline_sequence(&cpu.vr_allocator);
+        assert!(
+            sequence.len() > 1,
+            "DIV must expand to multiple instructions"
+        );
+        let advice_count = sequence
+            .iter()
+            .filter(|instr| matches!(instr, Instruction::VirtualAdvice(_)))
+            .count();
+        assert_eq!(advice_count, 2, "DIV advises quotient and remainder");
+
+        fill_virtual_advice(&mut sequence, &[123, 45]);
+        let filled: Vec<u64> = sequence
+            .iter()
+            .filter_map(|instr| match instr {
+                Instruction::VirtualAdvice(advice) => Some(advice.advice),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(filled, vec![123, 45]);
+    }
+
+    #[test]
+    #[should_panic(expected = "did not contain enough virtual advice")]
+    fn fill_virtual_advice_panics_when_values_outnumber_slots() {
+        let cpu = exec_cpu();
+        let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
+        let mut sequence = div.inline_sequence(&cpu.vr_allocator);
+        // 3 values for 2 advice slots
+        fill_virtual_advice(&mut sequence, &[1, 2, 3]);
+    }
+
+    #[test]
+    #[should_panic(expected = "did not contain enough virtual advice")]
+    fn fill_virtual_advice_panics_when_slots_outnumber_values() {
+        let cpu = exec_cpu();
+        let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
+        let mut sequence = div.inline_sequence(&cpu.vr_allocator);
+        fill_virtual_advice(&mut sequence, &[1]);
+    }
+
+    #[test]
+    fn virtual_sequence_metadata_flags_control_is_real() {
+        let mut instr = Instruction::decode(r_type(0, 2, 1, 0b000, 3, 0x33), ADDR, false).unwrap();
+        assert!(instr.is_real(), "plain instruction is real");
+        assert_eq!(instr.virtual_sequence_remaining(), None);
+
+        instr.set_virtual_sequence_remaining(Some(2));
+        assert_eq!(instr.virtual_sequence_remaining(), Some(2));
+        assert!(!instr.is_real(), "helper within a sequence is not real");
+
+        instr.set_virtual_sequence_remaining(Some(0));
+        assert!(instr.is_real(), "sequence anchor is real");
+
+        instr.set_is_first_in_sequence(true);
+        instr.set_is_compressed(true);
+        let row = instr.try_jolt_instruction_row().unwrap();
+        assert!(row.is_first_in_sequence);
+        assert!(row.is_compressed);
+        assert_eq!(row.virtual_sequence_remaining, Some(0));
+        assert_eq!(row.address, ADDR as usize);
+
+        assert!(!Instruction::NoOp.is_real());
+        assert!(Instruction::NoOp.try_jolt_instruction_row().is_ok());
+        assert_eq!(
+            Instruction::UNIMPL.try_jolt_instruction_row(),
+            Err(SourceInstructionKind::Unimpl)
+        );
+    }
+
+    #[test]
+    fn inline_instructions_round_trip_through_source_instructions() {
+        let inline = Instruction::decode(0x0000_002b, ADDR, false).unwrap();
+        assert!(matches!(inline, Instruction::INLINE(_)));
+        assert_eq!(
+            inline.try_jolt_instruction_row(),
+            Err(SourceInstructionKind::Inline)
+        );
+
+        let source = inline.source_instruction();
+        assert_eq!(source.kind(), SourceInstructionKind::Inline);
+        let round_tripped = Instruction::try_from_source_instruction(source).unwrap();
+        let Instruction::INLINE(restored) = round_tripped else {
+            panic!("expected INLINE after round trip");
+        };
+        assert_eq!(restored.address, ADDR);
+        assert_eq!(restored.opcode, 0x2b);
+    }
+
+    /// The jolt-prover fuzz harness randomizes cycles via `Cycle::random` and
+    /// relies on the register-state invariants asserted here: x0 always reads
+    /// zero, and aliased source registers report one consistent value.
+    #[test]
+    fn randomized_cycles_respect_hardwired_zero_and_register_aliasing() {
+        use rand::{rngs::StdRng, SeedableRng};
+        use strum::IntoEnumIterator;
+
+        let mut rng = StdRng::from_seed([7u8; 32]);
+        for template in Cycle::iter() {
+            if matches!(template, Cycle::NoOp) {
+                let random = template.random(&mut rng);
+                assert!(matches!(random, Cycle::NoOp));
+                continue;
+            }
+            for _ in 0..16 {
+                let random = template.random(&mut rng);
+                let rs1 = random.rs1_read();
+                let rs2 = random.rs2_read();
+                if let Some((register, value)) = rs1 {
+                    if register == 0 {
+                        assert_eq!(value, 0, "x0 must read 0 in {template:?}");
+                    }
+                }
+                if let Some((register, value)) = rs2 {
+                    if register == 0 {
+                        assert_eq!(value, 0, "x0 must read 0 in {template:?}");
+                    }
+                }
+                if let (Some((reg1, val1)), Some((reg2, val2))) = (rs1, rs2) {
+                    if reg1 == reg2 {
+                        assert_eq!(val1, val2, "aliased rs1/rs2 must agree in {template:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    // Compressed halfwords are hand-assembled per the RVC encoding tables;
+    // expected expansions are assembled with the independent encoders above.
+    #[test]
+    fn uncompress_expands_rvc_encodings_per_the_spec() {
+        const INVALID: u32 = 0xffff_ffff;
+        let cases: &[(u32, u32, &str)] = &[
+            // Quadrant 0
+            (0x0024, i_type(8, 2, 0b000, 9, 0x13), "c.addi4spn x9, 8"),
+            (0x0000, INVALID, "c.addi4spn nzuimm=0 is reserved"),
+            (0x2404, i_type(8, 8, 0b011, 9, 0x07), "c.fld f9, 8(x8)"),
+            (0x4044, i_type(4, 8, 0b010, 9, 0x03), "c.lw x9, 4(x8)"),
+            (0x690c, i_type(16, 10, 0b011, 11, 0x03), "c.ld x11, 16(x10)"),
+            (0x8000, INVALID, "q0 funct3=100 is reserved"),
+            (0xa488, s_type(8, 10, 9, 0b011, 0x27), "c.fsd f10, 8(x9)"),
+            (0xc0c8, s_type(4, 10, 9, 0b010, 0x23), "c.sw x10, 4(x9)"),
+            (0xe488, s_type(8, 10, 9, 0b011, 0x23), "c.sd x10, 8(x9)"),
+            // Quadrant 1
+            (0x0001, 0x13, "c.nop"),
+            (0x12fd, i_type(-1, 5, 0b000, 5, 0x13), "c.addi x5, -1"),
+            (0x0005, 0x13, "c.addi hint (rd=0)"),
+            (0x0281, 0x13, "c.addi hint (imm=0)"),
+            (0x31f1, i_type(-4, 3, 0b000, 3, 0x1b), "c.addiw x3, -4"),
+            (0x2201, i_type(0, 4, 0b000, 4, 0x1b), "sext.w x4"),
+            (0x2001, INVALID, "c.addiw rd=0 is reserved"),
+            (0x5381, i_type(-32, 0, 0b000, 7, 0x13), "c.li x7, -32"),
+            (0x5001, 0x13, "c.li rd=0 hint"),
+            (0x6141, i_type(16, 2, 0b000, 2, 0x13), "c.addi16sp 16"),
+            (0x7101, i_type(-512, 2, 0b000, 2, 0x13), "c.addi16sp -512"),
+            (0x6101, INVALID, "c.addi16sp imm=0 is reserved"),
+            (0x6285, u_type(1, 5, 0x37), "c.lui x5, 1"),
+            (0x7281, u_type(0xfffe0, 5, 0x37), "c.lui x5, 0xfffe0"),
+            (0x6281, INVALID, "c.lui nzimm=0 is reserved"),
+            (0x6005, 0x13, "c.lui rd=0 is a nop"),
+            (0x9085, i_type(33, 9, 0b101, 9, 0x13), "c.srli x9, 33"),
+            (0x8485, i_type(0x400 | 1, 9, 0b101, 9, 0x13), "c.srai x9, 1"),
+            (0x996d, i_type(-5, 10, 0b111, 10, 0x13), "c.andi x10, -5"),
+            (0x8c89, r_type(0x20, 10, 9, 0b000, 9, 0x33), "c.sub x9, x10"),
+            (0x8ca9, r_type(0x00, 10, 9, 0b100, 9, 0x33), "c.xor x9, x10"),
+            (0x8cc9, r_type(0x00, 10, 9, 0b110, 9, 0x33), "c.or x9, x10"),
+            (0x8ce9, r_type(0x00, 10, 9, 0b111, 9, 0x33), "c.and x9, x10"),
+            (
+                0x9c89,
+                r_type(0x20, 10, 9, 0b000, 9, 0x3b),
+                "c.subw x9, x10",
+            ),
+            (
+                0x9ca9,
+                r_type(0x00, 10, 9, 0b000, 9, 0x3b),
+                "c.addw x9, x10",
+            ),
+            (0x9cc9, INVALID, "q1 funct1=1 funct2=10 is reserved"),
+            (0xa801, j_type(16, 0), "c.j +16"),
+            (0xbfc5, j_type(-16, 0), "c.j -16"),
+            (0xc481, b_type(8, 9, 0, 0b000), "c.beqz x9, +8"),
+            (0xfce5, b_type(-8, 9, 0, 0b001), "c.bnez x9, -8"),
+            // Quadrant 2
+            (0x12a2, i_type(40, 5, 0b001, 5, 0x13), "c.slli x5, 40"),
+            (0x23e2, i_type(24, 2, 0b011, 7, 0x07), "c.fldsp f7, 24"),
+            (0x2062, INVALID, "c.fldsp rd=0 is reserved"),
+            (0x4412, i_type(4, 2, 0b010, 8, 0x03), "c.lwsp x8, 4"),
+            (0x4012, INVALID, "c.lwsp rd=0 is reserved"),
+            (0x64a2, i_type(8, 2, 0b011, 9, 0x03), "c.ldsp x9, 8"),
+            (0x6022, INVALID, "c.ldsp rd=0 is reserved"),
+            (0x8082, i_type(0, 1, 0b000, 0, 0x67), "c.jr x1"),
+            (0x8192, r_type(0, 4, 0, 0b000, 3, 0x33), "c.mv x3, x4"),
+            (0x8012, 0x13, "c.mv rd=0 hint"),
+            (0x8002, INVALID, "c.mv (0,0) is reserved"),
+            (0x9002, 0x0010_0073, "c.ebreak"),
+            (0x9282, i_type(0, 5, 0b000, 1, 0x67), "c.jalr x5"),
+            (0x9192, r_type(0, 4, 3, 0b000, 3, 0x33), "c.add x3, x4"),
+            (0x9012, 0x13, "c.add rd=0 hint"),
+            (0xa822, s_type(16, 8, 2, 0b011, 0x27), "c.fsdsp f8, 16"),
+            (0xc426, s_type(8, 9, 2, 0b010, 0x23), "c.swsp x9, 8"),
+            (0xe826, s_type(16, 9, 2, 0b011, 0x23), "c.sdsp x9, 16"),
+            // op = 11 is not a compressed instruction
+            (0x0003, INVALID, "op=3 is not compressed"),
+        ];
+
+        for (halfword, expected, asm) in cases {
+            assert_eq!(
+                uncompress_instruction(*halfword),
+                *expected,
+                "{asm}: halfword {halfword:#06x}"
+            );
+            // Every valid non-FP expansion must decode.
+            if *expected != INVALID {
+                let opcode = *expected & 0x7f;
+                if opcode != 0x07 && opcode != 0x27 {
+                    assert!(
+                        Instruction::decode(*expected, ADDR, true).is_ok(),
+                        "{asm}: expansion {expected:#010x} should decode"
+                    );
+                }
+            }
+        }
+    }
 }

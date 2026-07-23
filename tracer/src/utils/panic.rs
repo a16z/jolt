@@ -228,3 +228,128 @@ fn print_extended_frame_info(frame: &CallFrame) {
     println!("                   cycle: {}", frame.cycle_count);
     println!();
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test-only assertions"
+)]
+mod tests {
+    use super::*;
+    use crate::emulator::default_terminal::DefaultTerminal;
+    use crate::emulator::elf_analyzer::test_elf::{build_elf64, TestSymbol};
+
+    #[test]
+    fn fmt_short_includes_only_the_known_position_parts() {
+        let with_both = SourceLocation {
+            file: "src/lib.rs".to_string(),
+            line: Some(10),
+            column: Some(4),
+        };
+        assert_eq!(with_both.fmt_short(), "src/lib.rs:10:4");
+
+        let line_only = SourceLocation {
+            file: "src/lib.rs".to_string(),
+            line: Some(10),
+            column: None,
+        };
+        assert_eq!(line_only.fmt_short(), "src/lib.rs:10");
+
+        let file_only = SourceLocation {
+            file: "src/lib.rs".to_string(),
+            line: None,
+            column: None,
+        };
+        assert_eq!(file_only.fmt_short(), "src/lib.rs");
+    }
+
+    #[test]
+    fn shorten_path_keeps_trailing_components_within_the_budget() {
+        // Short paths pass through untouched
+        assert_eq!(shorten_path("src/lib.rs"), "src/lib.rs");
+
+        // 57 chars: the head component no longer fits the 46-char budget
+        let long = "aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd/eeeeeeeeee.rs";
+        assert_eq!(
+            shorten_path(long),
+            ".../bbbbbbbbbb/cccccccccc/dddddddddd/eeeeeeeeee.rs"
+        );
+    }
+
+    fn write_test_elf() -> std::path::PathBuf {
+        let elf = build_elf64(
+            &[0x0010_0093, 0x0000_006f],
+            &[TestSymbol {
+                name: "_start",
+                value: 0x8000_0000,
+                info: 0x12, // GLOBAL | FUNC
+                size: 8,
+            }],
+        );
+        let path =
+            std::env::temp_dir().join(format!("jolt-panic-test-{}-guest.elf", std::process::id()));
+        std::fs::write(&path, elf).unwrap();
+        path
+    }
+
+    #[test]
+    fn resolve_frame_falls_back_to_the_symbol_table_without_debug_info() {
+        let path = write_test_elf();
+        let loader = addr2line::Loader::new(&path).expect("loader parses the ELF");
+        let frame = CallFrame {
+            call_site: 0x8000_0004, // inside _start (size 8)
+            x: [0; REGISTER_COUNT as usize],
+            operands: NormalizedOperands::default(),
+            cycle_count: 3,
+        };
+        let resolved = resolve_frame(&loader, &frame).expect("symbol found");
+        assert_eq!(resolved.function_name, "_start");
+        assert!(resolved.location.is_none(), "fixture has no debug info");
+        assert!(resolved.inlined_frames.is_empty());
+
+        // An address outside every symbol resolves to nothing
+        let stray = CallFrame {
+            call_site: 0x9000_0000,
+            ..frame
+        };
+        assert!(resolve_frame(&loader, &stray).is_none());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn display_panic_backtrace_handles_all_loader_outcomes() {
+        use crate::emulator::Emulator;
+
+        // 1. No call stack and no ELF path: prints the "<no backtrace>" note.
+        let emulator = Emulator::new(Box::new(DefaultTerminal::default()));
+        display_panic_backtrace(&emulator);
+
+        // 2. An ELF path that is not a valid ELF: loader fails gracefully.
+        let garbage = std::env::temp_dir().join(format!(
+            "jolt-panic-test-{}-garbage.elf",
+            std::process::id()
+        ));
+        std::fs::write(&garbage, b"not an elf").unwrap();
+        let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
+        emulator.set_elf_path(&garbage);
+        emulator
+            .get_mut_cpu()
+            .track_call(0x8000_0004, NormalizedOperands::default());
+        display_panic_backtrace(&emulator);
+        std::fs::remove_file(&garbage).ok();
+
+        // 3. A valid ELF with a symbolizable frame walks the full print path.
+        let path = write_test_elf();
+        let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
+        emulator.set_elf_path(&path);
+        emulator
+            .get_mut_cpu()
+            .track_call(0x8000_0004, NormalizedOperands::default());
+        emulator
+            .get_mut_cpu()
+            .track_call(0x9000_0000, NormalizedOperands::default());
+        display_panic_backtrace(&emulator);
+        std::fs::remove_file(&path).ok();
+    }
+}
