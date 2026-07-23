@@ -9,37 +9,43 @@
 //! address-bound slice of the `(K × T)` RAM `ra` grid:
 //! `ra(j) = Σ_k eq(r_address, k) · RamRa(k, j)` — an opening-side fold the
 //! kernel performs, including READ accesses (their `inc` is zero but their
-//! `ra` weight is not).
+//! `ra` weight is not). The staged advice / program-image wire claims (the
+//! relation's dual-role openings) ride the naive prover's generic
+//! input/output shared-id inference — nothing here re-states them.
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::geometry::ram::{
-    ram_inc_val_check, ram_ra_val_check, RamValCheckInit,
-};
-use jolt_claims::protocols::jolt::relations::ram::RamValCheckChallenges;
-use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic, TraceDimensions};
+use crate::ProverInputs;
+use jolt_claims::protocols::jolt::geometry::ram::{ram_inc_val_check, ram_ra_val_check};
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial};
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::{address_fold, dense_view};
-use crate::ram_val_check::RamValCheckProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RamValCheckProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RamValCheck<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        ram_log_k: usize,
-        init: RamValCheckInit<F>,
-        r_address: &[F],
-        r_cycle: &[F],
-        challenges: &RamValCheckChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamValCheck<F>>>, KernelError<F>> {
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamValCheck<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let trace_dimensions = relation.trace_dimensions();
+        // The consumed `ram_val` point is stage 2's RAM read-write opening
+        // point: `r_address` (log_k vars) followed by `r_cycle` (log_t vars).
+        let ram_val_point: &[F] = &inputs.points.ram_val;
+        if ram_val_point.len() != relation.ram_log_k() + trace_dimensions.log_t() {
+            return Err(KernelError::InvariantViolation {
+                reason: "RAM value-check input point has the wrong variable count",
+            });
+        }
+        let (r_address, r_cycle) = ram_val_point.split_at(relation.ram_log_k());
         // The address-bound `ra` slice, folded from the full `(K × T)` grid.
         let ra_folded = address_fold(
             witness,
@@ -50,7 +56,7 @@ impl<F: Field> RamValCheckProver<F> for ReferenceBackend {
 
         let lt_plus_gamma: Vec<F> = LtPolynomial::evaluations(r_cycle)
             .into_iter()
-            .map(|lt| lt + challenges.gamma)
+            .map(|lt| lt + inputs.challenges.gamma)
             .collect();
 
         let opening_tables = BTreeMap::from([
@@ -65,10 +71,8 @@ impl<F: Field> RamValCheckProver<F> for ReferenceBackend {
             Polynomial::new(lt_plus_gamma),
         )]);
 
-        let relation = RamValCheck::new(trace_dimensions, ram_log_k, init);
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

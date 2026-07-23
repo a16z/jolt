@@ -42,6 +42,7 @@ pub type BooleanityCycleDimensions = BooleanityDimensions;
 #[cfg(feature = "akita")]
 pub type BooleanityCycleDimensions = lattice_booleanity::LatticeBooleanityDimensions;
 
+#[derive(Clone)]
 pub struct Booleanity<F: Field> {
     symbolic: CyclePhaseSymbolic,
     dimensions: BooleanityCycleDimensions,
@@ -77,6 +78,22 @@ impl<F: Field> Booleanity<F> {
         {
             &self.dimensions.base
         }
+    }
+
+    pub fn dimensions(&self) -> BooleanityDimensions {
+        *self.base_dimensions()
+    }
+
+    pub fn r_address(&self) -> &[F] {
+        &self.r_address
+    }
+
+    pub fn reference_address(&self) -> &[F] {
+        &self.reference_address
+    }
+
+    pub fn reference_cycle(&self) -> &[F] {
+        &self.reference_cycle
     }
 }
 

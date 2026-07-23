@@ -9,31 +9,31 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::registers::{
     rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced,
 };
-use jolt_claims::protocols::jolt::relations::claim_reductions::registers::RegistersClaimReductionChallenges;
-use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic, TraceDimensions};
+use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::{dense_view, eq_table};
-use crate::registers_claim_reduction::RegistersClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RegistersClaimReductionProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        product_uniskip_tau_low: &[F],
-        challenges: &RegistersClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RegistersClaimReduction<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let product_uniskip_tau_low = relation.product_uniskip_tau_low();
         let ids = [
             rd_write_value_reduced(),
             rs1_value_reduced(),
@@ -48,11 +48,8 @@ impl<F: Field> RegistersClaimReductionProver<F> for ReferenceBackend {
             Polynomial::new(eq_table(product_uniskip_tau_low)),
         )]);
 
-        let relation =
-            RegistersClaimReduction::new(trace_dimensions, product_uniskip_tau_low.to_vec());
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

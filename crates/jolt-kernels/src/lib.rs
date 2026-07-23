@@ -6,10 +6,20 @@
 //!
 //! Kernel APIs consume witness oracles, field elements, and PCS setups —
 //! never a transcript, never Fiat-Shamir — and return canonical values.
-//! Sumcheck kernels implement `jolt_sumcheck::ProveRounds` and are added per
-//! relation as stages demand them: each per-relation module at the crate
-//! root defines the slot's object-safe factory/instance traits (the seam),
-//! and its sibling under [`reference`] holds the reference implementation.
+//! Sumcheck kernels implement the fused `jolt_sumcheck::ProveRounds` round
+//! contract and are minted per relation through ONE universal trait,
+//! [`PrepareKernel`]: its typed request is the relation instance itself
+//! (inside a `ProverInputs` bundle), so kernels read geometry off relation
+//! accessors instead of restated constructor arguments. Non-oracle data
+//! reaches a kernel through the two other channels `prepare` receives:
+//! typed witness rows off the [`JoltVmWitnessPlane`](jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane)
+//! accessors, and [`ProofSession`] carries (prover-retained program data,
+//! parked at proof start; cross-stage kernel state, parked by
+//! `SumcheckKernel::park_residue` after extraction — the two-batch
+//! precommitted reduction family in [`precommitted_reduction`] is the
+//! carrier). Only the bespoke slots keep hand-shaped trait modules at the
+//! crate root: the uni-skip fronts ([`uniskip`]), commitment streaming, and
+//! the joint opening. Reference implementations live under [`reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness
@@ -24,42 +34,20 @@
 //! The commitment kernel streams PCS commitments of the committed witness
 //! polynomials over the proof's shared embedding grid.
 
-pub mod advice_claim_reduction;
 mod backend;
-pub mod booleanity;
-pub mod bytecode_claim_reduction;
-pub mod bytecode_read_raf;
 mod commitment;
 pub mod committed_program;
 mod error;
-pub mod hamming_weight_claim_reduction;
-pub mod inc_claim_reduction;
-pub mod instruction_claim_reduction;
-pub mod instruction_input;
-pub mod instruction_ra_virtualization;
-pub mod instruction_read_raf;
+mod kernel;
 pub mod opening;
 pub mod precommitted_reduction;
-pub mod program_image_claim_reduction;
-pub mod ram_hamming_booleanity;
-pub mod ram_output_check;
-pub mod ram_ra_claim_reduction;
-pub mod ram_ra_virtualization;
-pub mod ram_raf_evaluation;
-pub mod ram_read_write;
-pub mod ram_val_check;
 pub mod reference;
-pub mod registers_claim_reduction;
-pub mod registers_read_write;
-pub mod registers_val_evaluation;
-pub mod spartan_outer;
-pub mod spartan_product;
-pub mod spartan_shift;
-mod sumcheck;
+pub mod uniskip;
 
-pub use backend::{JoltBackend, ProofSession};
+pub use backend::{HasKernel, JoltBackend, PrepareKernel, ProofSession, RetainedProgram};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
+pub use jolt_kernels_derive::KernelSlots;
+pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};
 pub use reference::naive::NaiveSumcheckProver;
 pub use reference::ReferenceBackend;
-pub use sumcheck::ProveSumcheck;

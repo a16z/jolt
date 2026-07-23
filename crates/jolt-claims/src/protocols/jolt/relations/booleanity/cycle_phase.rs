@@ -22,6 +22,7 @@ pub struct BooleanityCyclePhaseChallenges<F> {
 /// The cycle-phase split of the booleanity sumcheck: takes the
 /// `BooleanityAddrClaim` opening as input and reduces to the boolean-constraint
 /// output over the cycle variables.
+#[derive(Clone)]
 pub struct BooleanityCyclePhase {
     shape: BooleanityDimensions,
 }

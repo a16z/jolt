@@ -157,7 +157,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let output_publics = ram_output_publics(
         input,
-        &input.stage2.output_address_challenges,
+        &input.stage2.challenges.ram_output_check.output_address,
         &ram_output_address,
     )?;
     values.public(

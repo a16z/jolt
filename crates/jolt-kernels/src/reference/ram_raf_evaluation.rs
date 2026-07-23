@@ -13,32 +13,31 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::geometry::ram::{
-    ram_ra_raf_evaluation, RamRafEvaluationDimensions,
-};
-use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic, ReadWriteDimensions};
-use jolt_claims::NoChallenges;
+use crate::ProverInputs;
+use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::cycle_fold;
-use crate::ram_raf_evaluation::RamRafEvaluationProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RamRafEvaluationProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: ReadWriteDimensions,
-        raf_dimensions: RamRafEvaluationDimensions,
-        ram_log_k: usize,
-        lowest_address: u64,
-        tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let dimensions = relation.read_write_dimensions();
+        let ram_log_k = relation.ram_log_k();
+        let lowest_address = relation.lowest_address();
+        let tau_low = relation.tau_low();
         if dimensions.raf_evaluation_rounds() != ram_log_k {
             return Err(KernelError::Unsupported {
                 reason: "reference RAM RAF evaluation supports only the default read-write config \
@@ -59,16 +58,8 @@ impl<F: Field> RamRafEvaluationProver<F> for ReferenceBackend {
             Polynomial::new(unmap),
         )]);
 
-        let relation = RamRafEvaluation::new(
-            dimensions,
-            raf_dimensions,
-            ram_log_k,
-            lowest_address,
-            tau_low.to_vec(),
-        );
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            &NoChallenges::default(),
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

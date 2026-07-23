@@ -55,6 +55,7 @@ pub fn inc_claim_reduction_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct IncClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::increments::ClaimReduction,
     ram_read_write_cycle: Vec<F>,
@@ -80,6 +81,17 @@ impl<F: Field> IncClaimReduction<F> {
             registers_read_write_cycle,
             registers_val_evaluation_cycle,
         }
+    }
+
+    /// The four upstream cycle points in relation order: RAM read-write, RAM
+    /// val-check, registers read-write, registers val-evaluation.
+    pub fn cycle_points(&self) -> [&[F]; 4] {
+        [
+            &self.ram_read_write_cycle,
+            &self.ram_val_check_cycle,
+            &self.registers_read_write_cycle,
+            &self.registers_val_evaluation_cycle,
+        ]
     }
 }
 

@@ -72,6 +72,19 @@ pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
     Ok(UntrustedAdviceCyclePhaseInputClaims { untrusted })
 }
 
+/// Wire the staged RAM value-check advice RAM-address *point* off the RAM
+/// value-check initial evaluation — the clear-only reference the advice
+/// `FinalScale` terms read. `None` when the RAM value-check produced no
+/// contribution of this kind.
+pub fn advice_reference_point_from_upstream<F: Field>(
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
+    kind: JoltAdviceKind,
+) -> Option<Vec<F>> {
+    ram_val_check_init
+        .advice_contribution(kind)
+        .map(|contribution| contribution.opening_point.clone())
+}
+
 fn advice_public_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::AdviceClaimReductionCyclePhase,
@@ -79,6 +92,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+#[derive(Clone)]
 pub struct TrustedAdviceCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::advice::TrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
@@ -100,6 +114,16 @@ impl<F: Field> TrustedAdviceCyclePhase<F> {
             layout: layout.clone(),
             reference_opening_point,
         }
+    }
+
+    pub fn layout(&self) -> &AdviceClaimReductionLayout {
+        &self.layout
+    }
+
+    /// The staged RAM value-check advice point the kernel's eq table binds
+    /// against (`None` in ZK, where no clear kernel runs).
+    pub fn reference_opening_point(&self) -> Option<&[F]> {
+        self.reference_opening_point.as_deref()
     }
 }
 
@@ -157,6 +181,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct UntrustedAdviceCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::advice::UntrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
@@ -178,6 +203,16 @@ impl<F: Field> UntrustedAdviceCyclePhase<F> {
             layout: layout.clone(),
             reference_opening_point,
         }
+    }
+
+    pub fn layout(&self) -> &AdviceClaimReductionLayout {
+        &self.layout
+    }
+
+    /// The staged RAM value-check advice point the kernel's eq table binds
+    /// against (`None` in ZK, where no clear kernel runs).
+    pub fn reference_opening_point(&self) -> Option<&[F]> {
+        self.reference_opening_point.as_deref()
     }
 }
 
@@ -249,6 +284,7 @@ pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
     })
 }
 
+#[derive(Clone)]
 pub struct ProgramImageReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::program_image::CyclePhase,
     layout: ProgramImageClaimReductionLayout,
@@ -267,6 +303,16 @@ impl<F: Field> ProgramImageReductionCyclePhase<F> {
             layout: layout.clone(),
             r_addr_rw,
         }
+    }
+
+    pub fn layout(&self) -> &ProgramImageClaimReductionLayout {
+        &self.layout
+    }
+
+    /// The RAM address component of the stage-2 `RamVal` opening the kernel's
+    /// shifted eq slice binds against.
+    pub fn r_addr_rw(&self) -> &[F] {
+        &self.r_addr_rw
     }
 }
 
@@ -324,6 +370,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct BytecodeReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::CyclePhase,
     layout: BytecodeClaimReductionLayout,
@@ -347,11 +394,18 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
         }
     }
 
-    /// The public bytecode claim-reduction weights this member was built with.
+    /// The public bytecode claim-reduction weights this member was built
+    /// with. Pub: the prove-side recipe reads them back off the
+    /// `build_from_parts` batch (they also feed the bytecode reduction kernel
+    /// and ride the clear carrier), so the weight fold is single-sourced.
     /// Stage 7's bytecode address phase reads them off the stage-6b clear output
     /// rather than recomputing them.
-    pub(super) fn weights(&self) -> &BytecodeReductionWeights<F> {
+    pub fn weights(&self) -> &BytecodeReductionWeights<F> {
         &self.weights
+    }
+
+    pub fn layout(&self) -> &BytecodeClaimReductionLayout {
+        &self.layout
     }
 }
 

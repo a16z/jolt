@@ -47,12 +47,14 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// invariant on that impl); the aggregates project through the anchor, which both
 /// variants share cell-for-cell.
 ///
-/// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
-/// members' challenges have stage-level provenance (the bytecode gamma shares
-/// stage 6a's squeeze and the booleanity gamma is drawn pre-6a where the
-/// prover's booleanity subprotocol samples it), so `verify` hand-assembles
-/// `Stage6bChallenges` from the stage-level draws — a generated per-member draw
-/// would squeeze at the wrong transcript position if it existed to be called.
+/// The generated `draw_challenges` is suppressed (`no_draw_challenges` — this
+/// batch is its only production user): the members' challenges have
+/// stage-level provenance (the bytecode gamma shares stage 6a's squeeze and
+/// the booleanity gamma is drawn by stage 6a's aggregate, via its booleanity
+/// member's `draw_challenges` override), so `verify` hand-assembles
+/// `Stage6bChallenges` from the stage-6a carried draws — a generated
+/// per-member draw would squeeze at the wrong transcript position if it
+/// existed to be called.
 ///
 /// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
 /// absorb methods: booleanity's `bytecode_ra` openings
@@ -63,7 +65,12 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// bytecode output `Expr` consumes the 6a-produced `BytecodeValStage` openings
 /// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(no_opening_values, no_draw_challenges, no_output_shape)]
+#[sumcheck_batch(
+    no_opening_values,
+    no_draw_challenges,
+    no_output_shape,
+    crate = "crate"
+)]
 pub struct Stage6bSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
@@ -74,6 +81,10 @@ pub struct Stage6bSumchecks<F: Field> {
     /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
+    /// On the prove side the four precommitted reduction kernels span the
+    /// 6b→7 batch boundary as `ProofSession` carries: each cycle kernel parks
+    /// the shared two-phase state at prepare, and stage 7's address-phase
+    /// members reclaim it.
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
     pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,

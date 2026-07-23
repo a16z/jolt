@@ -49,6 +49,7 @@ pub struct BytecodeReductionCyclePhaseChallenges<F> {
 /// `BytecodeValStage(i)` openings by powers of `eta` and reduces them to either
 /// the cycle-phase intermediate opening (when an address phase follows) or the
 /// committed `BytecodeChunk(i)` openings weighted by `ChunkOutputWeight`.
+#[derive(Clone)]
 pub struct CyclePhase {
     shape: BytecodeReductionShape,
 }

@@ -40,22 +40,34 @@ use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
 /// never learns the batch's challenges outside it (its opening point is the
 /// length-`rounds` slice of the batch point starting at its offset —
 /// the suffix for tail-aligned members, the prefix for head-aligned ones).
+///
+/// The round API is **fused**: [`prove_round`](Self::prove_round) delivers the
+/// previous active round's challenge together with the current round's message
+/// request, so a backend can bind and evaluate in a single pass over its
+/// tables instead of a bind-write pass followed by an eval-read pass. The
+/// engine threads the challenge bookkeeping: `bind` is `None` exactly on the
+/// member's first active round, and the final active round's challenge arrives
+/// through the terminal [`finish_rounds`](Self::finish_rounds).
 pub trait ProveRounds<F: Field> {
     /// The number of rounds/variables in this member's sumcheck.
     fn num_rounds(&self) -> usize;
 
-    /// Compute this member's round polynomial for member-local `round`.
-    /// `previous_claim` is the member's own running claim; the returned
-    /// polynomial must satisfy `s(0) + s(1) == previous_claim`.
-    fn compute_message(
+    /// Bind `bind` — the member's previous active round's challenge (`None`
+    /// on its first active round) — then compute the round polynomial for
+    /// member-local `round`. `previous_claim` is the member's own running
+    /// claim; the returned polynomial must satisfy
+    /// `s(0) + s(1) == previous_claim`.
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
 
-    /// Bind this member's state to the round challenge for member-local
-    /// `round`.
-    fn ingest_challenge(&mut self, challenge: F, round: usize) -> Result<(), SumcheckError<F>>;
+    /// Bind the member's final active round's challenge. Called once by the
+    /// engine after the batch's round loop, for every member that was ever
+    /// active; the member is fully bound afterwards.
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
 }
 
 /// A proved batch: the round challenges (the batch opening point), the final
@@ -85,8 +97,10 @@ fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F
 /// their batching coefficients (an inactive member contributes the constant
 /// `claim / 2`, halving its front-loaded padding scale), self-check
 /// `s(0) + s(1)` against the running claim, record the round through the
-/// recorder (clear: compressed append; committed: Pedersen), and bind every
-/// active member to the squeezed challenge.
+/// recorder (clear: compressed append; committed: Pedersen), and stash the
+/// squeezed challenge as each active member's pending bind — delivered with
+/// its next `prove_round` (the fused contract) or, after the loop, through
+/// the terminal `finish_rounds`.
 ///
 /// The caller finishes the proof afterwards — typed output-claim extraction is
 /// stage-side, so the stage computes its canonical opening values and calls
@@ -157,6 +171,10 @@ where
         .collect();
     let mut running_claim = prelude.claimed_sum;
     let mut challenges = Vec::with_capacity(max_num_vars);
+    // Each active member's not-yet-delivered previous-round challenge: filled
+    // when the round challenge is squeezed, consumed by the member's next
+    // `prove_round` (or, after the loop, by `finish_rounds`).
+    let mut pending_binds: Vec<Option<F>> = vec![None; members.len()];
 
     for round in 0..max_num_vars {
         let mut batched_coefficients = vec![F::zero(); prelude.max_degree + 1];
@@ -173,7 +191,11 @@ where
                 round_polys.push(None);
                 continue;
             }
-            let poly = member.compute_message(round - described.offset, member_claims[index])?;
+            let poly = member.prove_round(
+                pending_binds[index].take(),
+                round - described.offset,
+                member_claims[index],
+            )?;
             let poly_degree = poly.degree();
             if poly_degree > prelude.max_degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
@@ -201,14 +223,22 @@ where
         running_claim = batched_poly.evaluate(challenge);
         challenges.push(challenge);
 
-        for (index, (member, poly)) in members.iter_mut().zip(round_polys).enumerate() {
+        for (index, poly) in round_polys.into_iter().enumerate() {
             match poly {
                 Some(poly) => {
                     member_claims[index] = poly.evaluate(challenge);
-                    member.ingest_challenge(challenge, round - prelude.members[index].offset)?;
+                    pending_binds[index] = Some(challenge);
                 }
                 None => member_claims[index] *= two_inv,
             }
+        }
+    }
+
+    // Deliver each ever-active member's final round challenge; a member with
+    // no rounds never activated and has nothing pending.
+    for (member, pending) in members.iter_mut().zip(pending_binds) {
+        if let Some(bind) = pending {
+            member.finish_rounds(bind)?;
         }
     }
 

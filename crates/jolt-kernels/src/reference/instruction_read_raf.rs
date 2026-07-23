@@ -33,10 +33,9 @@
 //! optimizations of the same true polynomials; byte parity needs only
 //! exactness, so this kernel always uses 8-variable phases.)
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-use jolt_claims::protocols::jolt::relations::instruction::{
-    InstructionReadRafChallenges, InstructionReadRafOutputClaims,
-};
+use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
 use jolt_field::Field;
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::SuffixEval;
@@ -44,11 +43,12 @@ use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::protocols::jolt_vm::Stage5InstructionReadRafRow;
+use jolt_witness::protocols::jolt_vm::{JoltVmWitnessPlane, Stage5InstructionReadRafRow};
 
 use super::views::eq_table;
-use crate::instruction_read_raf::InstructionReadRafProver;
-use crate::{KernelError, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel, SumcheckKernelError,
+};
 
 /// Address variables bound per phase. Fixed at 8 (the legacy prover picks 8
 /// or 16 by trace size, but the emitted polynomials are identical — see the
@@ -56,20 +56,23 @@ use crate::{KernelError, ProofSession, ProveSumcheck, ReferenceBackend};
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-impl<F: Field> InstructionReadRafProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: InstructionReadRafDimensions,
-        r_reduction: &[F],
-        rows: Vec<Stage5InstructionReadRafRow>,
-        challenges: &InstructionReadRafChallenges<F>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
+        let dimensions = inputs.relation.dimensions();
+        // The per-cycle lookup rows (index bits, table selection, operand
+        // interleaving) — data no field-element oracle view carries
+        // losslessly, fetched off the witness plane's typed accessor.
+        let rows = witness.stage5_instruction_read_raf_rows(dimensions.log_t())?;
         Ok(Box::new(InstructionReadRafKernel::new(
             dimensions,
-            r_reduction,
+            &inputs.points.lookup_output,
             rows,
-            challenges.gamma,
+            inputs.challenges.gamma,
         )?))
     }
 }
@@ -133,7 +136,6 @@ struct CycleTables<F: Field> {
 }
 
 pub struct InstructionReadRafKernel<F: Field> {
-    relation: InstructionReadRaf<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
@@ -215,7 +217,6 @@ impl<F: Field> InstructionReadRafKernel<F> {
         }
 
         let mut kernel = Self {
-            relation: InstructionReadRaf::new(dimensions),
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
@@ -536,11 +537,15 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
         self.dimensions.sumcheck_rounds()
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
         let evals = if self.rounds_bound < self.address_bits() {
             self.address_message().to_vec()
         } else {
@@ -557,7 +562,13 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> InstructionReadRafKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if self.rounds_bound < self.address_bits() {
             for table in &mut self.prefix_tables {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -611,23 +622,21 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> ProveSumcheck<F> for InstructionReadRafKernel<F> {
+impl<F: Field> SumcheckKernel<F> for InstructionReadRafKernel<F> {
     type Relation = InstructionReadRaf<F>;
 
-    fn relation(&self) -> &InstructionReadRaf<F> {
-        &self.relation
-    }
-
-    fn output_claims(&mut self) -> Result<InstructionReadRafOutputClaims<F>, KernelError<F>> {
+    fn output_claims(
+        &mut self,
+    ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
-            return Err(KernelError::NotFullyBound {
+            return Err(SumcheckKernelError::NotFullyBound {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
         let tables = self
             .cycle_tables
             .as_ref()
-            .ok_or(KernelError::InvariantViolation {
+            .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "cycle tables absent after full binding",
             })?;
 

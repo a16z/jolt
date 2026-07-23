@@ -23,7 +23,6 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
-use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
@@ -34,18 +33,56 @@ use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::WitnessProvider;
 
 use super::views::{dense_view, replicate_stream_lsb, stream_pair_lsb};
-use crate::spartan_outer::{SpartanOuterInstance, SpartanOuterProver};
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::uniskip::UniskipKernel;
+use crate::ProverInputs;
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
-impl<F: Field> SpartanOuterProver<F> for ReferenceBackend {
+impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
         witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn SpartanOuterInstance<F>>, KernelError<F>> {
-        Ok(Box::new(SpartanOuterKernel::prepare(log_t, tau, witness)?))
+    ) -> Result<(), KernelError<F>> {
+        session.park(SpartanOuterKernel::prepare(log_t, tau, witness)?);
+        Ok(())
+    }
+
+    fn first_round_poly(
+        &self,
+        session: &mut ProofSession,
+        _late_tau: &[F],
+    ) -> Result<UnivariatePoly<F>, KernelError<F>> {
+        session
+            .state::<SpartanOuterKernel<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "the outer uni-skip slot parked no kernel for the first-round polynomial",
+            })?
+            .uniskip_first_round_poly()
+    }
+}
+
+/// The stage-1 remainder slot server: reclaims the [`SpartanOuterKernel`] the
+/// uni-skip slot parked and binds it into the batch member.
+pub struct ReferenceOuterRemainder;
+
+impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemainder {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        _witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, OuterRemainder<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
+        session
+            .take::<SpartanOuterKernel<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "the outer uni-skip slot parked no kernel for the remainder member",
+            })?
+            .into_remainder(&inputs)
     }
 }
 
@@ -93,9 +130,7 @@ impl<F: Field> SpartanOuterKernel<F> {
             eq_table,
         })
     }
-}
 
-impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
     /// Brute-force the uni-skip first-round polynomial. The summand's
     /// row-node polynomial
     /// `t1(Y) = Σ_(s,t) eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)` vanishes on
@@ -164,17 +199,17 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
     /// linear in the stream variable, so every derived leaf materializes as
     /// one multilinear table.
     fn into_remainder(
-        self: Box<Self>,
-        uniskip_challenge: F,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
-        let this = *self;
+        self,
+        inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
+        let uniskip_challenge = inputs.relation.uniskip_challenge();
         let kernel = centered_lagrange_kernel::<F>(
             OUTER_UNISKIP_DOMAIN_SIZE,
-            this.tau[this.log_t + 1],
+            self.tau[self.log_t + 1],
             uniskip_challenge,
         )?;
 
-        let variable_count = this.input_tables.len();
+        let variable_count = self.input_tables.len();
         let columns: Vec<usize> = (1..=variable_count).collect();
         let mut az_columns: [Vec<F>; 2] = [Vec::new(), Vec::new()];
         let mut bz_columns: [Vec<F>; 2] = [Vec::new(), Vec::new()];
@@ -182,22 +217,22 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
         let mut bz_constant = [F::zero(); 2];
         for (index, stream) in [F::zero(), F::one()].into_iter().enumerate() {
             let weights = spartan_outer_row_weights(uniskip_challenge, stream)?;
-            let weighted = this.matrices.weighted_columns(&weights, &columns)?;
+            let weighted = self.matrices.weighted_columns(&weights, &columns)?;
             az_columns[index] = weighted.a;
             bz_columns[index] = weighted.b;
-            let constants = this
+            let constants = self
                 .matrices
                 .public_column_contributions(&weights, 0, F::one())?;
             az_constant[index] = constants.a;
             bz_constant[index] = constants.b;
         }
 
-        let cycles = 1usize << this.log_t;
+        let cycles = 1usize << self.log_t;
         let mut derived_tables = BTreeMap::new();
         let _ = derived_tables.insert(
             JoltDerivedId::from(SpartanOuterPublic::TauKernel),
             Polynomial::new(
-                this.eq_table
+                self.eq_table
                     .iter()
                     .map(|&eq| eq * kernel)
                     .collect::<Vec<F>>(),
@@ -228,11 +263,11 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
             Polynomial::new(stream_pair_lsb(bz_constant, cycles)),
         );
 
-        let dimensions = SpartanOuterDimensions::rv64(this.log_t);
+        let dimensions = SpartanOuterDimensions::rv64(self.log_t);
         let opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>> = dimensions
             .variables()
             .iter()
-            .zip(&this.input_tables)
+            .zip(&self.input_tables)
             .map(|(&variable, table)| {
                 (
                     outer_opening(variable),
@@ -241,10 +276,8 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
             })
             .collect();
 
-        let relation = OuterRemainder::new(dimensions, this.tau, uniskip_challenge);
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            &NoChallenges::default(),
+            inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

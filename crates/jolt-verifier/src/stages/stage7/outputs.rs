@@ -32,10 +32,13 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 /// `trusted_advice` / `untrusted_advice` idiom. Each member is its own per-kind
 /// relation type whose produced claims carry a single non-`Option` slot.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage7Sumchecks<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
     /// Final `TrustedAdvice` claim from the trusted advice reduction's address
-    /// phase; present only when that phase runs.
+    /// phase; present only when that phase runs. On the prove side the kernel
+    /// is the stage-6b cycle-phase object, reclaimed from its `ProofSession`
+    /// carry and phase-transitioned inside `prepare`.
     pub trusted_advice: Option<TrustedAdviceAddressPhase<F>>,
     /// Final `UntrustedAdvice` claim from the untrusted advice reduction's address
     /// phase; present only when that phase runs.

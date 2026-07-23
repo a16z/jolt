@@ -121,7 +121,7 @@ where
             gamma: bytecode_gamma,
         },
         booleanity: BooleanityCyclePhaseChallenges {
-            gamma: carried.booleanity_gamma,
+            gamma: carried.booleanity.gamma,
         },
         ram_hamming_booleanity: NoChallenges::default(),
         ram_ra_virtualization: NoChallenges::default(),

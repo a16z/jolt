@@ -85,6 +85,7 @@ fn fused_inc_stage_claims<F: RingCore>() -> Vec<JoltExpr<F>> {
 
 /// The address phase with the four inc claims as stages `γ^5..8` and the
 /// pc/shift/entry terms shifted to `γ^9..11`.
+#[derive(Clone)]
 pub struct LatticeReadRafAddressPhase {
     shape: BytecodeReadRafDimensions,
 }
@@ -141,6 +142,7 @@ pub struct LatticeBytecodeReadRafOutputClaims<C> {
 
 /// Lattice full-program cycle phase: nine verifier-evaluated stage values, the
 /// last four carrying the `FusedInc` opening as a cycle factor.
+#[derive(Clone)]
 pub struct LatticeReadRafCyclePhase {
     shape: BytecodeReadRafDimensions,
 }
@@ -182,6 +184,7 @@ impl SymbolicSumcheck for LatticeReadRafCyclePhase {
 
 /// Lattice committed-program cycle phase: the base staged vals plus the four
 /// fused stages resolving through the staged *store* val and its complement.
+#[derive(Clone)]
 pub struct LatticeReadRafCyclePhaseCommitted {
     shape: BytecodeReadRafDimensions,
 }

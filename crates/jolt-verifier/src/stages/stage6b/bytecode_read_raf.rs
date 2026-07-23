@@ -110,6 +110,7 @@ fn cycle_symbolic_committed(dimensions: BytecodeReadRafDimensions) -> CycleSymbo
 /// once at construction (clear mode only) and the cycle-dependent factors are
 /// attached in [`ConcreteSumcheck::expected_output`], which it OVERRIDES to
 /// evaluate the publics once and reuse the [`expected_output_from_publics`] helper.
+#[derive(Clone)]
 pub struct BytecodeReadRaf<F: Field> {
     symbolic: CycleSymbolic,
     dimensions: BytecodeReadRafDimensions,
@@ -411,6 +412,7 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 /// table. Like the full-mode relation it OVERRIDES
 /// [`ConcreteSumcheck::expected_output`]: the staged Val openings are inputs mixed
 /// into the output, and the committed public values are evaluated once.
+#[derive(Clone)]
 pub struct BytecodeReadRafCommitted<F: Field> {
     symbolic: CycleSymbolicCommitted,
     dimensions: BytecodeReadRafDimensions,
@@ -510,6 +512,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
     }
 }
 
+#[derive(Clone)]
 enum BytecodeReadRafCycleVariant<F: Field> {
     Full(BytecodeReadRaf<F>),
     Committed(BytecodeReadRafCommitted<F>),
@@ -519,6 +522,7 @@ enum BytecodeReadRafCycleVariant<F: Field> {
 /// full-program mode ([`BytecodeReadRaf`]) and committed-program mode
 /// ([`BytecodeReadRafCommitted`]). Lifetime-free so it can be a
 /// `Stage6bSumchecks` member directly.
+#[derive(Clone)]
 pub struct BytecodeReadRafCycle<F: Field> {
     /// The `ConcreteSumcheck` anchor symbolic (see the invariant on the impl).
     anchor: CycleSymbolicCommitted,
@@ -537,6 +541,67 @@ impl<F: Field> BytecodeReadRafCycle<F> {
         Self {
             anchor: cycle_symbolic_committed(inputs.dimensions),
             variant: BytecodeReadRafCycleVariant::Committed(BytecodeReadRafCommitted::new(inputs)),
+        }
+    }
+}
+
+impl<F: Field> BytecodeReadRafCycle<F> {
+    pub fn dimensions(&self) -> BytecodeReadRafDimensions {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation.dimensions,
+            BytecodeReadRafCycleVariant::Committed(relation) => relation.dimensions,
+        }
+    }
+
+    pub fn r_address(&self) -> &[F] {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => &relation.r_address,
+            BytecodeReadRafCycleVariant::Committed(relation) => &relation.r_address,
+        }
+    }
+
+    pub fn stage_cycle_points(&self) -> &[Vec<F>; READ_RAF_CYCLE_STAGES] {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => &relation.stage_cycle_points,
+            BytecodeReadRafCycleVariant::Committed(relation) => &relation.stage_cycle_points,
+        }
+    }
+
+    pub fn entry_bytecode_index(&self) -> usize {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation.entry_bytecode_index,
+            BytecodeReadRafCycleVariant::Committed(relation) => relation.entry_bytecode_index,
+        }
+    }
+
+    pub fn committed_chunk_bits(&self) -> usize {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation.committed_chunk_bits,
+            BytecodeReadRafCycleVariant::Committed(relation) => relation.committed_chunk_bits,
+        }
+    }
+
+    /// The address-only bytecode-table fold at `r_address` — the constant
+    /// `BytecodeValStage` values the cycle kernel's tables carry. Full mode
+    /// computes the fold at construction (clear only); committed mode's
+    /// constants ARE the stage-6a staged raw values.
+    pub fn stage_values_at_r_address(&self) -> Result<[F; NUM_BYTECODE_VAL_STAGES], VerifierError> {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation
+                .stage_values_at_r_address
+                .ok_or_else(|| public_input_failed("bytecode table fold is unavailable")),
+            BytecodeReadRafCycleVariant::Committed(relation) => {
+                let staged: &[F] = &relation.val_stages;
+                let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
+                if staged.len() != stage_values.len() {
+                    return Err(public_input_failed(format!(
+                        "expected {NUM_BYTECODE_VAL_STAGES} staged bytecode val stages, got {}",
+                        staged.len()
+                    )));
+                }
+                stage_values.copy_from_slice(staged);
+                Ok(stage_values)
+            }
         }
     }
 }

@@ -51,6 +51,7 @@ pub struct IncClaimReductionChallenges<F> {
 /// Batches the RAM/register increment openings (`RamInc` read-write and
 /// val-check, `RdInc` read-write and val-evaluation) by `gamma` and reduces
 /// them to the increment-claim-reduction openings weighted by the eq publics.
+#[derive(Clone)]
 pub struct ClaimReduction {
     shape: TraceDimensions,
 }

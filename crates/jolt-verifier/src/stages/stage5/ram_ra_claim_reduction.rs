@@ -48,6 +48,7 @@ pub fn ram_ra_claim_reduction_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamRaClaimReduction<F: Field> {
     symbolic: relations::ram::RaClaimReduction,
     trace_dimensions: TraceDimensions,
@@ -70,6 +71,16 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::RamRaClaimReduction,
         reason: reason.to_string(),
+    }
+}
+
+impl<F: Field> RamRaClaimReduction<F> {
+    pub fn trace_dimensions(&self) -> TraceDimensions {
+        self.trace_dimensions
+    }
+
+    pub fn ram_log_k(&self) -> usize {
+        self.ram_log_k
     }
 }
 

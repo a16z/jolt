@@ -9,7 +9,14 @@
 //! polynomials materialized from the witness, `Challenge` leaves to the drawn
 //! scalars, and `Derived` leaves to the polynomial forms of what the
 //! verifier's `derive_output_term` evaluates at a point (eq/LT/selector
-//! tables, materialized over the domain by the caller). Each round message is
+//! tables, materialized over the domain by the caller). A relation's
+//! dual-role openings — ids appearing on both its typed `InputClaims` and
+//! `OutputClaims` structs — are inferred, not declared: an opening id names
+//! exactly one claim cell system-wide, so a shared id *is* the same cell and
+//! the wire output value is forced to equal the consumed input claim. The
+//! consumed claims are snapshotted at construction and re-attached at typed
+//! extraction (they are never `Expr` leaves, so no table produces them). Each
+//! round message is
 //! `Expr::try_evaluate` run pointwise over the remaining hypercube — cost
 //! `O((degree+1) · 2^rounds · |Expr|)` per round, a **test oracle at harness
 //! scale, never a performance path**. It is the reference implementation
@@ -17,7 +24,7 @@
 //!
 //! Two self-checks pin it: the engine's running-claim check
 //! (`s(0) + s(1) == previous_claim`, re-checked per member here), and
-//! [`validate_derived_tables`](crate::ProveSumcheck::validate_derived_tables)
+//! [`validate_derived_tables`](crate::SumcheckKernel::validate_derived_tables)
 //! — each bound `Derived` table's final value must equal `derive_output_term`
 //! at the bound point, tying the hand-materialized tables to the verifier's
 //! scalar path. The stage recipes run it on every member after the round
@@ -38,7 +45,7 @@ use jolt_verifier::VerifierError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{KernelError, ProveSumcheck};
+use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
 /// See the module docs. Construct with every leaf table the relation's output
 /// expression references; [`new`](Self::new) validates coverage and sizes so
@@ -51,14 +58,23 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
+    /// The kernel's own clone of the stage's relation, taken from
+    /// [`ProverInputs`] at prepare time; geometry (`rounds`/`degree`) and the
+    /// output expression are read off it directly.
     relation: R,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
     /// construction, so the round loop reads plain `Sync` data (the typed
-    /// `Challenges` struct carries no `Sync` bound and stays with the
+    /// `Challenges` struct is borrowed with a lifetime and stays with the
     /// caller that drew it).
     challenge_values: BTreeMap<JoltChallengeId, F>,
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
+    /// The member's consumed input claims, snapshotted by id at construction.
+    /// Typed extraction consults this map only for output-struct ids no
+    /// opening table serves — realizing the dual-role inference (see the
+    /// module docs): the effective carried set is the intersection of the
+    /// output struct's ids and the input struct's ids.
+    carried_input_claims: BTreeMap<JoltOpeningId, F>,
     binding_order: BindingOrder,
     rounds_bound: usize,
 }
@@ -74,19 +90,23 @@ where
     /// Validate that every leaf of the relation's output expression is
     /// resolvable — each `Opening`/`Derived` factor has a table of exactly
     /// `2^rounds` evaluations, each `Challenge` factor a drawn scalar — and
-    /// assemble the prover.
+    /// assemble the prover. The member's consumed input claims are
+    /// snapshotted off `inputs.claims` here, so extraction can re-attach the
+    /// dual-role openings (input/output id intersection) without any
+    /// relation-specific kernel code.
     ///
     /// `binding_order` is part of each relation's fixed convention — the
     /// produced round polynomials depend on it, so byte parity with the
     /// legacy prover requires matching its choice (e.g. the Spartan outer
     /// remainder binds `LowToHigh`).
     pub fn new(
-        relation: R,
-        challenges: &ConcreteSumcheckChallenges<F, R>,
+        inputs: &ProverInputs<'_, F, R>,
         opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
         derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
         binding_order: BindingOrder,
     ) -> Result<Self, KernelError<F>> {
+        let relation = inputs.relation;
+        let challenges = inputs.challenges;
         let expected_len = 1usize << relation.rounds();
         let check_len = |table: &Polynomial<F>, id: &dyn core::fmt::Debug| {
             if table.len() == expected_len {
@@ -99,8 +119,9 @@ where
                 })
             }
         };
+        let expression = relation.symbolic().output_expression::<F>();
         let mut challenge_values = BTreeMap::new();
-        for term in &relation.symbolic().output_expression::<F>().terms {
+        for term in &expression.terms {
             for factor in &term.factors {
                 match factor {
                     Source::Opening(id) => {
@@ -125,11 +146,23 @@ where
             }
         }
 
+        // Every present consumed claim, by id (`filter_map`, so absent
+        // `Option` cells drop out). The output-side half of the dual-role
+        // intersection is enforced at extraction: `from_opening_values`
+        // queries exactly the output struct's ids.
+        let carried_input_claims = inputs
+            .claims
+            .canonical_order()
+            .into_iter()
+            .filter_map(|id| inputs.claims.resolve_input(&id).map(|value| (id, value)))
+            .collect();
+
         Ok(Self {
-            relation,
+            relation: relation.clone(),
             challenge_values,
             opening_tables,
             derived_tables,
+            carried_input_claims,
             binding_order,
             rounds_bound: 0,
         })
@@ -139,10 +172,20 @@ where
         self.relation.rounds() - self.rounds_bound
     }
 
-    fn require_fully_bound(&self) -> Result<(), KernelError<F>> {
+    fn bind_tables(&mut self, challenge: F) {
+        for table in self.opening_tables.values_mut() {
+            table.bind_with_order(challenge, self.binding_order);
+        }
+        for table in self.derived_tables.values_mut() {
+            table.bind_with_order(challenge, self.binding_order);
+        }
+        self.rounds_bound += 1;
+    }
+
+    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         match self.remaining_rounds() {
             0 => Ok(()),
-            remaining => Err(KernelError::NotFullyBound { remaining }),
+            remaining => Err(SumcheckKernelError::NotFullyBound { remaining }),
         }
     }
 }
@@ -159,11 +202,15 @@ where
         self.relation.rounds()
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind_tables(challenge);
+        }
         let half = (1usize << self.remaining_rounds()) / 2;
         let degree = self.relation.degree();
         let expression = self.relation.symbolic().output_expression::<F>();
@@ -226,19 +273,13 @@ where
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
-        for table in self.opening_tables.values_mut() {
-            table.bind_with_order(challenge, self.binding_order);
-        }
-        for table in self.derived_tables.values_mut() {
-            table.bind_with_order(challenge, self.binding_order);
-        }
-        self.rounds_bound += 1;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind_tables(bind);
         Ok(())
     }
 }
 
-impl<F, R> ProveSumcheck<F> for NaiveSumcheckProver<F, R>
+impl<F, R> SumcheckKernel<F> for NaiveSumcheckProver<F, R>
 where
     F: Field,
     R: ConcreteSumcheck<F>,
@@ -248,17 +289,17 @@ where
 {
     type Relation = R;
 
-    fn relation(&self) -> &R {
-        &self.relation
-    }
-
-    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, KernelError<F>> {
+    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         let opening_tables = &self.opening_tables;
+        let carried_input_claims = &self.carried_input_claims;
         SumcheckOutputClaims::<F, R>::from_opening_values(|id| {
-            opening_tables.get(id).map(|table| table.evals()[0])
+            opening_tables
+                .get(id)
+                .map(|table| table.evals()[0])
+                .or_else(|| carried_input_claims.get(id).copied())
         })
-        .map_err(KernelError::from)
+        .map_err(SumcheckKernelError::from)
     }
 
     /// The `Derived`-leaf cross-check: each bound table's final value must
@@ -273,7 +314,7 @@ where
         input_points: &SumcheckInputPoints<F, R>,
         output_points: &SumcheckOutputPoints<F, R>,
         challenges: &ConcreteSumcheckChallenges<F, R>,
-    ) -> Result<(), KernelError<F>> {
+    ) -> Result<(), SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         for (id, table) in &self.derived_tables {
             let expected =
@@ -284,7 +325,7 @@ where
                 };
             let got = table.evals()[0];
             if got != expected {
-                return Err(KernelError::DerivedTableDrift {
+                return Err(SumcheckKernelError::DerivedTableDrift {
                     id: *id,
                     expected,
                     got,
@@ -323,7 +364,7 @@ mod tests {
     use jolt_verifier::VerifierError;
 
     use super::NaiveSumcheckProver;
-    use crate::{KernelError, ProveSumcheck};
+    use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
     const TOY_RELATION: JoltRelationId = JoltRelationId::RegistersValEvaluation;
 
@@ -341,6 +382,10 @@ mod tests {
     struct ToyInputs<C> {
         #[opening(UnexpandedPC, from = RegistersValEvaluation)]
         total: C,
+        // The dual-role cell: consumed here and re-staged on
+        // `ToyOutputs::untrusted` via the shared-id inference.
+        #[opening(untrusted_advice, from = RegistersValEvaluation)]
+        untrusted: Option<C>,
     }
 
     #[derive(jolt_claims::OutputClaims)]
@@ -358,6 +403,7 @@ mod tests {
         untrusted: Option<C>,
     }
 
+    #[derive(Clone)]
     struct ToySymbolic {
         rounds: usize,
     }
@@ -403,6 +449,7 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct ToyRelation<F: Field> {
         symbolic: ToySymbolic,
         reference_point: Vec<F>,
@@ -512,7 +559,17 @@ mod tests {
         let claimed_sum = brute_force_sum(&opening_tables, &derived_tables, gamma);
 
         // The one-member batch head (what the generated begin_batch performs).
-        let inputs = ToyInputs { total: claimed_sum };
+        // `untrusted` is the dual-role cell: consumed here, expected back on
+        // the typed output claims through the shared-id inference.
+        let untrusted_value = Fr::from_u64(4242);
+        let inputs = ToyInputs {
+            total: claimed_sum,
+            untrusted: Some(untrusted_value),
+        };
+        let input_points = ToyInputs {
+            total: vec![Fr::from_u64(9); ROUNDS],
+            untrusted: None,
+        };
         let input_claim = relation.input_claim(&inputs, &challenges).unwrap();
         assert_eq!(input_claim, claimed_sum);
         let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
@@ -530,8 +587,12 @@ mod tests {
         );
 
         let mut naive = NaiveSumcheckProver::new(
-            relation,
-            &challenges,
+            &ProverInputs {
+                relation: &relation,
+                claims: &inputs,
+                points: &input_points,
+                challenges: &challenges,
+            },
             opening_tables,
             derived_tables,
             BindingOrder::HighToLow,
@@ -547,20 +608,18 @@ mod tests {
         .unwrap();
 
         // Typed extraction; the verifier's own algebra is the correctness check.
-        let input_points = ToyInputs {
-            total: vec![Fr::from_u64(9); ROUNDS],
-        };
-        let output_points = naive
-            .relation()
+        let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
         let output_claims = naive.output_claims().unwrap();
         naive
-            .validate_derived_tables(naive.relation(), &input_points, &output_points, &challenges)
+            .validate_derived_tables(&relation, &input_points, &output_points, &challenges)
             .unwrap();
 
-        // The assembled claims cover exactly the expression's openings (the
-        // absent Option contributes nothing).
+        // The assembled claims cover the expression's openings plus the
+        // dual-role cell, whose value rode in from the consumed claims (no
+        // table exists for it).
+        assert_eq!(output_claims.untrusted, Some(untrusted_value));
         assert_eq!(
             output_claims.canonical_order(),
             vec![
@@ -569,11 +628,11 @@ mod tests {
                 virt(JoltVirtualPolynomial::InstructionRa(0)),
                 virt(JoltVirtualPolynomial::InstructionRa(1)),
                 virt(JoltVirtualPolynomial::RightLookupOperand),
+                JoltOpeningId::untrusted_advice(TOY_RELATION),
             ],
         );
 
-        let expected = naive
-            .relation()
+        let expected = relation
             .expected_output(&input_points, &output_claims, &output_points, &challenges)
             .unwrap();
         assert_eq!(coefficient * expected, proved.final_claim);
@@ -646,9 +705,21 @@ mod tests {
             relation.degree(),
         );
         let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+        let inputs = ToyInputs {
+            total: claimed_sum,
+            untrusted: None,
+        };
+        let input_points = ToyInputs {
+            total: vec![Fr::from_u64(9); ROUNDS],
+            untrusted: None,
+        };
         let mut naive = NaiveSumcheckProver::new(
-            relation,
-            &challenges,
+            &ProverInputs {
+                relation: &relation,
+                claims: &inputs,
+                points: &input_points,
+                challenges: &challenges,
+            },
             opening_tables,
             derived_tables,
             BindingOrder::HighToLow,
@@ -657,21 +728,12 @@ mod tests {
         let mut members: Vec<&mut dyn ProveRounds<Fr>> = vec![&mut naive];
         let proved = prove_batch(&prelude, &mut members, &mut recorder, &mut transcript).unwrap();
 
-        let input_points = ToyInputs {
-            total: vec![Fr::from_u64(9); ROUNDS],
-        };
-        let output_points = naive
-            .relation()
+        let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
         assert!(matches!(
-            naive.validate_derived_tables(
-                naive.relation(),
-                &input_points,
-                &output_points,
-                &challenges
-            ),
-            Err(KernelError::DerivedTableDrift {
+            naive.validate_derived_tables(&relation, &input_points, &output_points, &challenges),
+            Err(SumcheckKernelError::DerivedTableDrift {
                 id: JoltDerivedId::Test,
                 ..
             }),
@@ -680,7 +742,16 @@ mod tests {
 
     #[test]
     fn construction_validates_leaf_coverage_and_sizes() {
-        let challenges = || ToyChallenges::from_transcript_values([Fr::from_u64(5)].into_iter());
+        let challenges =
+            ToyChallenges::from_transcript_values([Fr::from_u64(5)].into_iter()).unwrap();
+        let claims = ToyInputs {
+            total: Fr::from_u64(0),
+            untrusted: None,
+        };
+        let points = ToyInputs {
+            total: vec![Fr::from_u64(9); ROUNDS],
+            untrusted: None,
+        };
         let c_id = virt(JoltVirtualPolynomial::RightLookupOperand);
 
         // A missing opening table is rejected with its id.
@@ -692,8 +763,12 @@ mod tests {
         };
         assert!(matches!(
             NaiveSumcheckProver::new(
-                relation,
-                &challenges().unwrap(),
+                &ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
                 incomplete,
                 derived_tables(&reference_point()),
                 BindingOrder::HighToLow,
@@ -704,14 +779,14 @@ mod tests {
         // A mis-sized table is rejected.
         let mut mis_sized = opening_tables();
         let _ = mis_sized.insert(c_id, Polynomial::new(vec![Fr::from_u64(1); SIZE / 2]));
-        let relation = ToyRelation {
-            symbolic: ToySymbolic::new(ROUNDS),
-            reference_point: reference_point(),
-        };
         assert!(matches!(
             NaiveSumcheckProver::new(
-                relation,
-                &challenges().unwrap(),
+                &ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
                 mis_sized,
                 derived_tables(&reference_point()),
                 BindingOrder::HighToLow,

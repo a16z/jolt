@@ -51,6 +51,14 @@
 //!   (clear appends, committed no-ops), never by a runtime flag. Returns the
 //!   engine-form `jolt_sumcheck::BatchPrelude` paired with the stage's named
 //!   `BatchingCoefficients`.
+//! - `<snake_case_struct>_members` — an inert, `#[macro_export]`ed callback
+//!   macro carrying the batch declaration as a structured token list (member
+//!   names, generics-stripped relation paths, presence, aggregate type names,
+//!   output-shape flag), forwarded to a caller-chosen macro. The derive's
+//!   ONLY prover-facing emission — the single-sourcing handoff from which
+//!   `jolt-prover`'s `impl_stage_prover` expands the prove-side stage-driver
+//!   impls (`StageProver`/`KernelSource`), so no stage's member list, order,
+//!   or presence is ever restated. See `specs/prover-stage-drivers.md`.
 //! - `verify_clear` — the composed clear-path driver: `begin_batch` with a clear
 //!   recorder, reduce the combined claim through the single-instance
 //!   `SumcheckProof::verify_compressed_boolean`, `derive_opening_points` at the
@@ -89,6 +97,14 @@
 //! rather than overridden so they cannot be miscalled. A flagless stage gets
 //! the full method suite.
 //!
+//! The one non-flag entry is the serde-style crate-path override
+//! `#[sumcheck_batch(crate = "...")]`: the path the generated code names
+//! `jolt-verifier` by. Defaults to the absolute `::jolt_verifier`, so external
+//! users need nothing; `jolt-verifier` itself passes `crate = "crate"`. The
+//! emitted member-list callback macro is NOT affected — its tokens resolve at
+//! the consumer's invocation site (cross-crate, in `jolt-prover`), never
+//! against this override.
+//!
 //! The `verify_*` drivers never name `SumcheckClaim` / `SumcheckStatement`; those
 //! stay internal to `jolt-sumcheck`.
 //!
@@ -111,6 +127,9 @@ use syn::{
 /// suppressing generated methods that would be wrong to call on the flagged
 /// stage, which supplies its own replacement where one is needed. The
 /// aggregate structs and their derives are emitted unchanged.
+/// `#[sumcheck_batch(crate = "...")]` overrides the `::jolt_verifier` path
+/// the generated code names this crate by (the defining crate passes
+/// `"crate"`).
 #[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -184,6 +203,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let batching_coefficients_name = format_ident!("{base}BatchingCoefficients");
 
     let options = StageOptions::parse(&input.attrs)?;
+    // The path the generated code names `jolt-verifier` by: the absolute
+    // default serves external deriving crates; `jolt-verifier` itself passes
+    // `crate = "crate"` (no `extern crate self` alias).
+    let krate = options
+        .krate
+        .clone()
+        .unwrap_or_else(|| syn::parse_quote!(::jolt_verifier));
 
     let f = validated_field_param(&input.generics)?;
     let fields = named_fields(&input.data, name.span())?;
@@ -198,7 +224,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    let relations = quote!(crate::stages::relations);
+    let relations = quote!(#krate::stages::relations);
 
     let project = |alias: &TokenStream2, plan: &InstanceField| {
         let instance = &plan.instance;
@@ -287,6 +313,34 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: self.#id.draw_challenges(transcript)?)
         }
     });
+    // The representative relation id used in a batch-level sumcheck error: the first
+    // non-`Option` member (the batch's leading instance), matching the hand-written
+    // stages' choice. An all-optional batch has no instance to read at runtime, so
+    // it falls back to the first member's type-level id (the default
+    // `ConcreteSumcheck::id` body, which no impl overrides).
+    let stage_id_body = plans.iter().find(|plan| !plan.is_option).map_or_else(
+        || {
+            let instance = &plans[0].instance;
+            quote! {
+                <<#instance as #relations::ConcreteSumcheck<#f>>::Symbolic
+                    as ::jolt_claims::SymbolicSumcheck>::id()
+            }
+        },
+        |plan| {
+            let id = &plan.ident;
+            quote!(#relations::ConcreteSumcheck::id(&self.#id))
+        },
+    );
+    let stage_relation_id_method = quote! {
+        /// The batch's representative relation id for batch-level error
+        /// attribution: the first non-`Option` member's relation id. The single
+        /// source read by the generated verify drivers and by `jolt-prover`'s
+        /// `impl_stage_prover!` expansion.
+        pub fn stage_relation_id(&self) -> ::jolt_claims::protocols::jolt::JoltRelationId {
+            #stage_id_body
+        }
+    };
+
     // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
     // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
     // by both the clear and ZK drivers, so it is a closure re-invoked per block (a
@@ -342,7 +396,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::None, _, _) => ::core::option::Option::None,
                         (::core::option::Option::Some(__member), __inputs, _) => {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
+                                #krate::VerifierError::StageClaimSumcheckFailed {
                                     stage: #base_lit.to_string(),
                                     reason: if __inputs.is_none() {
                                         "present instance is missing its input values"
@@ -454,7 +508,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
             ) -> ::core::result::Result<
                 (::jolt_sumcheck::BatchPrelude<#f>, #batching_coefficients_name<#f>),
-                crate::VerifierError,
+                #krate::VerifierError,
             >
             where
                 __R: ::jolt_sumcheck::SumcheckRecorder<#f>,
@@ -515,7 +569,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
             transcript: &mut __T,
             stage: usize,
-        ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError>
+        ) -> ::core::result::Result<#output_points_name<#f>, #krate::VerifierError>
         where
             __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
             __T: ::jolt_transcript::Transcript<Challenge = #f>,
@@ -533,7 +587,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     __batch.claimed_sum,
                     transcript,
                 )
-                .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
+                .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
                     stage: #base_lit.to_string(),
                     reason: error.to_string(),
                 })?;
@@ -549,7 +603,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             )?;
             if __reduction.value != __expected_final_claim {
                 return ::core::result::Result::Err(
-                    crate::VerifierError::StageClaimOutputMismatch { stage },
+                    #krate::VerifierError::StageClaimOutputMismatch { stage },
                 );
             }
             ::core::result::Result::Ok(__output_points)
@@ -592,7 +646,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
             ) -> ::core::result::Result<
                 ::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
-                crate::VerifierError,
+                #krate::VerifierError,
             >
             where
                 __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
@@ -609,7 +663,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
                 let __consistency = proof
                     .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
-                    .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
+                    .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
                         stage: #base_lit.to_string(),
                         reason: error.to_string(),
                     })?;
@@ -648,7 +702,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::None, _) => ::core::option::Option::None,
                         (::core::option::Option::Some(__member), ::core::option::Option::None) => {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
+                                #krate::VerifierError::StageClaimSumcheckFailed {
                                     stage: #base_lit.to_string(),
                                     reason: "present instance is missing its input opening points"
                                         .to_string(),
@@ -677,7 +731,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 &self,
                 batch_point: &[#f],
                 input_points: &#input_points_name<#f>,
-            ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError> {
+            ) -> ::core::result::Result<#output_points_name<#f>, #krate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
 
                 #(#point_bindings)*
@@ -740,7 +794,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn validate_aliases(
                 &self,
                 output_values: &#output_claims_name<#f>,
-            ) -> ::core::result::Result<(), crate::VerifierError> {
+            ) -> ::core::result::Result<(), #krate::VerifierError> {
                 use ::jolt_claims::OutputClaims as _;
                 let __resolve = |__id: &::jolt_claims::protocols::jolt::JoltOpeningId| {
                     ::core::option::Option::<#f>::None
@@ -776,7 +830,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                             challenges.#id.as_ref(),
                         ) else {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
+                                #krate::VerifierError::StageClaimSumcheckFailed {
                                     stage: #base_lit.to_string(),
                                     reason: "present instance is missing a coefficient, claim, \
                                              point, or challenge cell for the final-claim fold"
@@ -811,7 +865,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 output_values: &#output_claims_name<#f>,
                 output_points: &#output_points_name<#f>,
                 challenges: &#challenges_name<#f>,
-            ) -> ::core::result::Result<#f, crate::VerifierError> {
+            ) -> ::core::result::Result<#f, #krate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 // The fold consumes the aliased wire copies, so their equality
                 // with the canonical sources is enforced here, unskippably.
@@ -913,7 +967,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn validate_output_claims(
                 &self,
                 claims: &#output_claims_name<#f>,
-            ) -> ::core::result::Result<(), crate::VerifierError> {
+            ) -> ::core::result::Result<(), #krate::VerifierError> {
                 #(#validate_checks)*
                 ::core::result::Result::Ok(())
             }
@@ -937,7 +991,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn draw_challenges<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
                 &self,
                 transcript: &mut __T,
-            ) -> ::core::result::Result<#challenges_name<#f>, crate::VerifierError> {
+            ) -> ::core::result::Result<#challenges_name<#f>, #krate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 ::core::result::Result::Ok(#challenges_name {
                     #(#draw_fields,)*
@@ -982,8 +1036,72 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    // The prover-facing single-sourcing handoff: an inert, exported callback
+    // macro carrying this batch's declaration — member names, relation paths
+    // (generics stripped; the consumer re-applies its own field parameter),
+    // presence, the aggregate type names, and the output-shape flag — as a
+    // structured token list forwarded to a caller-chosen macro. `jolt-prover`'s
+    // `impl_stage_prover` expands its `StageProver`/`KernelSource` impls from
+    // it, so no stage's member list, order, or presence is ever restated.
+    // Tokens resolve at the consumer's invocation site (which imports the
+    // batch's relation and aggregate names); extra invocation tokens (e.g. a
+    // curation override) are forwarded ahead of the list.
+    let members_macro = {
+        let macro_name = format_ident!("{}_members", snake_case(&name.to_string()));
+        let macro_doc = format!(
+            "The member-list callback macro for [`{name}`], emitted by \
+             `#[derive(SumcheckBatch)]`: forwards the batch's declaration (member names, \
+             relation paths, presence, aggregate names, output-shape flag) to a caller-chosen \
+             macro. See `specs/prover-stage-drivers.md`."
+        );
+        let shape = if options.no_output_shape {
+            format_ident!("unchecked")
+        } else {
+            format_ident!("checked")
+        };
+        let member_entries = plans
+            .iter()
+            .map(|plan| {
+                let id = &plan.ident;
+                let relation = relation_path(&plan.instance)?;
+                let presence = if plan.is_option {
+                    format_ident!("optional")
+                } else {
+                    format_ident!("required")
+                };
+                Ok(quote! {
+                    { name: #id, relation: #relation, presence: #presence },
+                })
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        quote! {
+            #[doc = #macro_doc]
+            #[macro_export]
+            macro_rules! #macro_name {
+                ($cb:ident $($extra:tt)*) => {
+                    $cb! {
+                        $($extra)*
+                        batch = #name,
+                        aggregates = {
+                            input_claims = #input_claims_name,
+                            input_points = #input_points_name,
+                            output_claims = #output_claims_name,
+                            output_points = #output_points_name,
+                            challenges = #challenges_name,
+                        },
+                        shape = #shape,
+                        members = [
+                            #(#member_entries)*
+                        ]
+                    }
+                };
+            }
+        }
+    };
+
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
+            #stage_relation_id_method
             #draw_challenges_method
 
             #begin_batch_method
@@ -1040,6 +1158,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #(#batching_coefficient_fields,)*
         }
 
+        #members_macro
+
         #driver_impl
     })
 }
@@ -1065,6 +1185,12 @@ struct StageOptions {
     /// per-member draw there would squeeze at the wrong transcript position, so
     /// the method must not exist to be miscalled.
     no_draw_challenges: bool,
+    /// `#[sumcheck_batch(crate = "...")]`: the path the generated code names
+    /// `jolt-verifier` by (serde's `crate` attribute shape). `None` means the
+    /// absolute `::jolt_verifier` default; the defining crate passes
+    /// `"crate"`. Never applied to the emitted member-list callback macro,
+    /// whose tokens resolve at the (cross-crate) invocation site.
+    krate: Option<syn::Path>,
 }
 
 impl StageOptions {
@@ -1074,17 +1200,25 @@ impl StageOptions {
             if !attr.path().is_ident("sumcheck_batch") {
                 continue;
             }
-            // `#[sumcheck_batch(flag, flag, ...)]` — a comma-separated list of
-            // bare-word flags (`Meta::Path`). Reject any other form or unknown
+            // `#[sumcheck_batch(flag, ..., crate = "path")]` — a
+            // comma-separated list of bare-word flags (`Meta::Path`) plus the
+            // optional crate-path override. Reject any other form or unknown
             // flag with a span-pointed error.
             let flags = attr.parse_args_with(
                 syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated,
             )?;
             for flag in flags {
+                if let Meta::NameValue(name_value) = &flag {
+                    if name_value.path.is_ident("crate") {
+                        options.krate = Some(parse_crate_path(name_value)?);
+                        continue;
+                    }
+                }
                 let Meta::Path(path) = &flag else {
                     return Err(syn::Error::new_spanned(
                         &flag,
-                        "expected a bare `sumcheck_batch` flag (e.g. `no_opening_values`)",
+                        "expected a bare `sumcheck_batch` flag (e.g. `no_opening_values`) or \
+                         `crate = \"...\"`",
                     ));
                 };
                 if path.is_ident("no_opening_values") {
@@ -1097,13 +1231,30 @@ impl StageOptions {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `no_opening_values`, \
-                         `no_output_shape`, `no_draw_challenges`)",
+                         `no_output_shape`, `no_draw_challenges`, `crate = \"...\"`)",
                     ));
                 }
             }
         }
         Ok(options)
     }
+}
+
+/// Parse the serde-style `crate = "..."` value: a string literal holding the
+/// path the generated code names the defining crate by (`"crate"` in
+/// `jolt-verifier` itself, a re-export path in a wrapping crate).
+fn parse_crate_path(name_value: &syn::MetaNameValue) -> syn::Result<syn::Path> {
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(lit),
+        ..
+    }) = &name_value.value
+    else {
+        return Err(syn::Error::new_spanned(
+            &name_value.value,
+            "expected a string literal path, e.g. `crate = \"crate\"`",
+        ));
+    };
+    lit.parse()
 }
 
 /// The macro supports exactly one generic type parameter (the field `F`,
@@ -1157,6 +1308,41 @@ fn plan_field(field: &syn::Field) -> syn::Result<InstanceField> {
         instance,
         is_option,
     })
+}
+
+/// `CamelCase` → `snake_case` for the emitted member-list macro's name
+/// (`Stage1BatchSumchecks` → `stage1_batch_sumchecks`).
+fn snake_case(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index != 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The relation path of a member field with its generic arguments stripped
+/// (`SpartanShift<F>` → `SpartanShift`): the consumer macro re-applies its own
+/// field-type parameter, so the emitted token needs no hygiene agreement on
+/// the parameter name.
+fn relation_path(instance: &Type) -> syn::Result<syn::Path> {
+    let Type::Path(path) = instance else {
+        return Err(syn::Error::new_spanned(
+            instance,
+            "SumcheckBatch member types must be paths",
+        ));
+    };
+    let mut path = path.path.clone();
+    if let Some(segment) = path.segments.last_mut() {
+        segment.arguments = PathArguments::None;
+    }
+    Ok(path)
 }
 
 /// If `ty` is syntactically `Option<Inner>`, return `Inner`.

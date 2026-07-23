@@ -67,6 +67,7 @@ where
         + JoltVmStage6Rows,
 {
     let mut session = backend.begin_proof();
+    preprocessing.park_program(&mut session);
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -116,7 +117,7 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T, W>(
+    let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
         &checked,
@@ -127,7 +128,7 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage6a = prove_stage6a::<F, PCS, VC, VC::Output, T, W>(
+    let stage6a = prove_stage6a::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
         &checked,
@@ -164,10 +165,6 @@ where
         preprocessing,
         &stage4.clear_output,
         &stage6b.clear_output,
-        stage6b.trusted_advice_member,
-        stage6b.untrusted_advice_member,
-        stage6b.bytecode_reduction_member,
-        stage6b.program_image_member,
         witness,
         &mut transcript,
     )?;

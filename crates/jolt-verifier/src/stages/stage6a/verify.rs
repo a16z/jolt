@@ -1,22 +1,19 @@
-use jolt_claims::protocols::jolt::{
-    geometry::{booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions},
-    JoltRelationId,
-};
+use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
 use super::{
-    booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseInputClaims},
-    bytecode_read_raf::{
-        bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
-    },
+    batch::Stage6aBuildParts,
+    booleanity::BooleanityAddressPhaseInputClaims,
+    bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream,
     outputs::{
         Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutput,
         Stage6aSumchecks, Stage6aZkOutput,
     },
 };
 use crate::{
+    preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
         stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
@@ -32,6 +29,7 @@ use crate::{
 )]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
@@ -46,63 +44,38 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = formula_dimensions.trace.log_t();
+    // The upstream cycle/register points and entry index ride on the relation
+    // (full geometry at construction) for the prover's address-phase kernel;
+    // the verifier itself never evaluates them here.
+    let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
+    let entry_bytecode_index = preprocessing
+        .program
+        .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
+    let address_sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
+        formula_dimensions,
+        committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+        committed_program: checked.precommitted.bytecode.is_some(),
+        entry_bytecode_index,
+        stage1_cycle_binding: &stage1_cycle_binding,
+        stage2_points: stage2.batch_output_points(),
+        stage3_points: stage3.output_points(),
+        stage4_points: stage4.output_points(),
+        stage5_points: stage5.output_points(),
+    })?;
 
-    let committed_program = checked.precommitted.bytecode.is_some();
-
-    let booleanity_dimensions = BooleanityDimensions::new(
-        formula_dimensions.ra_layout,
-        log_t,
-        proof.one_hot_config.committed_chunk_bits(),
-    );
-    let address_sumchecks = Stage6aSumchecks {
-        bytecode_read_raf: BytecodeReadRafAddressPhase::new(
-            formula_dimensions.bytecode_read_raf,
-            committed_program,
-        ),
-        booleanity: BooleanityAddressPhase::new(booleanity_dimensions),
-    };
-
-    // Six squeezes: the bytecode fold gamma plus the five per-stage folding
-    // gammas, each formerly an inline `challenge_scalar_powers(..)` whose single
-    // squeeze's degree-1 power equals the squeezed scalar. Byte- and value-equal
-    // (test-locked in `bytecode_read_raf.rs`); the drawn scalars ride downstream
-    // verbatim, and stage 6b's folds expand the power vectors they consume via
-    // `stage_gamma_powers` (the same recurrence `challenge_scalar_powers` uses;
-    // test-locked below).
+    // The generated per-member draw: the bytecode member's six squeezes (the
+    // fold gamma plus the five per-stage folding gammas, each formerly an
+    // inline `challenge_scalar_powers(..)` whose single squeeze's degree-1
+    // power equals the squeezed scalar; byte- and value-equal, test-locked in
+    // `bytecode_read_raf.rs` — stage 6b's folds expand the power vectors via
+    // `stage_gamma_powers`, test-locked below), then the booleanity member's
+    // override (the reference-address pad draw and the gamma; schedule-locked
+    // in the tests below). The booleanity draws feed 6b too: the prover's
+    // booleanity subprotocol samples them before the 6a batch runs, so the
+    // transcript schedule fixes them here and they ride downstream as typed
+    // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
-
-    // WHY these draws live in stage 6a but feed only stage 6b: the prover's
-    // booleanity subprotocol samples its gamma — and pads the reference address
-    // with a fresh `challenge_vector` draw — before the 6a batch runs, so the
-    // transcript schedule fixes them here. Stage 6b's booleanity member is their
-    // only consumer, so they ride downstream as typed upstream values (the same
-    // idiom as `Stage2ZkOutput`'s `product_tau_high`).
-    let stage5_points = stage5.output_points();
-    let stage5_instruction_address = stage5.instruction_r_address();
-    let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
-
-    let mut booleanity_reference_address = stage5_instruction_address.to_vec();
-    booleanity_reference_address.reverse();
-    if booleanity_reference_address.len() < proof.one_hot_config.committed_chunk_bits() {
-        let missing =
-            proof.one_hot_config.committed_chunk_bits() - booleanity_reference_address.len();
-        booleanity_reference_address.extend(transcript.challenge_vector(missing));
-    } else {
-        booleanity_reference_address = booleanity_reference_address
-            [booleanity_reference_address.len() - proof.one_hot_config.committed_chunk_bits()..]
-            .to_vec();
-    }
-    let mut booleanity_reference_cycle = stage5_instruction_cycle.to_vec();
-    booleanity_reference_cycle.reverse();
-    let booleanity_gamma = transcript.challenge();
-
-    let carried = Stage6aCarriedChallenges {
-        bytecode_read_raf: address_challenges.bytecode_read_raf,
-        booleanity_reference_address,
-        booleanity_reference_cycle,
-        booleanity_gamma,
-    };
+    let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
     // Every member's input points are empty (the address phase reads only
     // opening values; produced points derive from its own sumcheck point).
@@ -186,15 +159,49 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::booleanity::BooleanityAddressPhaseOutputClaims;
-    use super::super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
+    use super::super::booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims};
+    use super::super::bytecode_read_raf::{
+        BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
+    };
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
     use crate::stages::relations::append_recording::RecordingTranscript;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::BytecodeStagePoints;
+    use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+    use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
+    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
+    }
+
+    /// A stage-6a batch whose booleanity member has committed chunk width 2, so
+    /// the reference-address draw pads a 1-variable stage-5 instruction address
+    /// and truncates a 3-variable one.
+    #[expect(clippy::unwrap_used)]
+    fn sumchecks(
+        instruction_r_address: Vec<Fr>,
+        instruction_r_cycle: Vec<Fr>,
+    ) -> Stage6aSumchecks<Fr> {
+        Stage6aSumchecks::<Fr> {
+            bytecode_read_raf: BytecodeReadRafAddressPhase::new(
+                BytecodeReadRafDimensions::new(3, 4, 2),
+                true,
+                BytecodeStagePoints {
+                    stage_cycle_points: Default::default(),
+                    register_read_write_point: Vec::new(),
+                    register_val_evaluation_point: Vec::new(),
+                },
+                0,
+            ),
+            booleanity: BooleanityAddressPhase::new(
+                BooleanityDimensions::new(JoltRaPolynomialLayout::new(2, 1, 1).unwrap(), 4, 2),
+                instruction_r_address,
+                instruction_r_cycle,
+            ),
+        }
     }
 
     fn sample_claims() -> Stage6aOutputClaims<Fr> {
@@ -209,27 +216,83 @@ mod tests {
         }
     }
 
+    /// Pins the batch's `draw_challenges` to the retired hand pre-batch draw:
+    /// the bytecode member's six gammas, then the booleanity member's override —
+    /// the reference-address pad draw (the reversed stage-5 instruction address
+    /// is narrower than the committed chunk width here) and the booleanity
+    /// gamma. The reference vectors are pure computation (reversal, pad slot)
+    /// off the stage-5 point the relation carries.
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn draw_challenges_matches_inline_draw_sequence() {
+        let address = vec![fr(11)];
+        let cycle = vec![fr(21), fr(22), fr(23), fr(24)];
+        let sumchecks = sumchecks(address.clone(), cycle.clone());
+
+        let (inline_events, (inline_gammas, inline_reference_address, inline_gamma)) =
+            record(|t| {
+                let gammas: Vec<Fr> = (0..6).map(|_| t.challenge_scalar()).collect();
+                let mut reference_address: Vec<Fr> = address.iter().rev().copied().collect();
+                reference_address.extend(t.challenge_vector(1));
+                (gammas, reference_address, t.challenge())
+            });
+        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(
+            draw_events,
+            (1..=8u64).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            vec![
+                challenges.bytecode_read_raf.gamma,
+                challenges.bytecode_read_raf.stage1_gamma,
+                challenges.bytecode_read_raf.stage2_gamma,
+                challenges.bytecode_read_raf.stage3_gamma,
+                challenges.bytecode_read_raf.stage4_gamma,
+                challenges.bytecode_read_raf.stage5_gamma,
+            ],
+            inline_gammas,
+        );
+        assert_eq!(
+            challenges.booleanity.reference_address,
+            inline_reference_address
+        );
+        assert_eq!(
+            challenges.booleanity.reference_cycle,
+            cycle.iter().rev().copied().collect::<Vec<_>>()
+        );
+        assert_eq!(challenges.booleanity.gamma, inline_gamma);
+    }
+
+    /// The truncate branch: a stage-5 instruction address wider than the
+    /// committed chunk width keeps its reversed tail and draws no pad — only
+    /// the booleanity gamma squeeze follows the bytecode member's six.
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn draw_challenges_truncates_wide_reference_address_without_pad_draws() {
+        let address = vec![fr(11), fr(12), fr(13)];
+        let sumchecks = sumchecks(address.clone(), vec![fr(21)]);
+
+        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
+
+        assert_eq!(
+            draw_events,
+            (1..=7u64).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+        );
+        let reversed: Vec<Fr> = address.iter().rev().copied().collect();
+        assert_eq!(challenges.booleanity.reference_address, reversed[1..]);
+        assert_eq!(challenges.booleanity.reference_cycle, vec![fr(21)]);
+        assert_eq!(challenges.booleanity.gamma, fr(7));
+    }
+
     /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
     /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
     /// booleanity `intermediate`. Single-sourced from the generated
     /// `append_output_claims`.
     #[test]
-    #[expect(clippy::unwrap_used)]
     fn stage6a_output_claims_append_follows_canonical_order() {
-        use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-        use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-
-        let sumchecks = Stage6aSumchecks::<Fr> {
-            bytecode_read_raf: BytecodeReadRafAddressPhase::new(
-                BytecodeReadRafDimensions::new(3, 4, 2),
-                true,
-            ),
-            booleanity: BooleanityAddressPhase::new(BooleanityDimensions::new(
-                JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
-                4,
-                2,
-            )),
-        };
+        let sumchecks = sumchecks(Vec::new(), Vec::new());
         let mut claims = sample_claims();
         claims.bytecode_read_raf.val_stages = (903..908).map(fr).collect();
 

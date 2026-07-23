@@ -25,6 +25,7 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints};
+use crate::stages::BytecodeStagePoints;
 use crate::stages::{
     stage1::Stage1BatchOutputClaims, stage2::Stage2BatchOutputClaims, stage3::Stage3OutputClaims,
     stage4::Stage4OutputClaims, stage5::Stage5OutputClaims,
@@ -97,20 +98,64 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     symbolic: AddressPhaseSymbolic,
+    dimensions: BytecodeReadRafDimensions,
     /// Committed-program mode stages the `BytecodeValStage` wire claims.
     committed_program: bool,
-    _field: core::marker::PhantomData<F>,
+    /// The upstream cycle points and register opening points the address-phase
+    /// kernel's PC pushforwards and stage-value folds bind against (the same
+    /// [`BytecodeStagePoints`] wiring the stage-6b cycle phase carries). The
+    /// verifier constructs the relation with full geometry; only the prover's
+    /// kernel reads these.
+    stage_points: BytecodeStagePoints<F>,
+    entry_bytecode_index: usize,
 }
 
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
-    pub fn new(dimensions: BytecodeReadRafDimensions, committed_program: bool) -> Self {
+    pub fn new(
+        dimensions: BytecodeReadRafDimensions,
+        committed_program: bool,
+        stage_points: BytecodeStagePoints<F>,
+        entry_bytecode_index: usize,
+    ) -> Self {
         Self {
             symbolic: AddressPhaseSymbolic::new(dimensions),
+            dimensions,
             committed_program,
-            _field: core::marker::PhantomData,
+            stage_points,
+            entry_bytecode_index,
         }
+    }
+
+    pub fn committed_program(&self) -> bool {
+        self.committed_program
+    }
+
+    pub fn dimensions(&self) -> BytecodeReadRafDimensions {
+        self.dimensions
+    }
+
+    pub fn stage_cycle_points(&self) -> &[Vec<F>; 5] {
+        &self.stage_points.stage_cycle_points
+    }
+
+    /// The full stage-4 register read-write opening point (address prefix ‖
+    /// cycle); the stage-value fold reads its `REGISTER_ADDRESS_BITS` prefix.
+    pub fn register_read_write_point(&self) -> &[F] {
+        &self.stage_points.register_read_write_point
+    }
+
+    /// The full stage-5 register value-evaluation opening point (address
+    /// prefix ‖ cycle); the stage-value fold reads its
+    /// `REGISTER_ADDRESS_BITS` prefix.
+    pub fn register_val_evaluation_point(&self) -> &[F] {
+        &self.stage_points.register_val_evaluation_point
+    }
+
+    pub fn entry_bytecode_index(&self) -> usize {
+        self.entry_bytecode_index
     }
 
     /// The staged `BytecodeValStage` wire-claim count: all
@@ -175,8 +220,16 @@ mod tests {
     // single-field and use the same default path.
     #[test]
     fn default_draw_challenges_matches_inline_bytecode_address_gammas() {
-        let relation =
-            BytecodeReadRafAddressPhase::<Fr>::new(BytecodeReadRafDimensions::new(3, 4, 2), false);
+        let relation = BytecodeReadRafAddressPhase::<Fr>::new(
+            BytecodeReadRafDimensions::new(3, 4, 2),
+            false,
+            BytecodeStagePoints {
+                stage_cycle_points: Default::default(),
+                register_read_write_point: Vec::new(),
+                register_val_evaluation_point: Vec::new(),
+            },
+            0,
+        );
 
         // Inline: six `challenge_scalar_powers(..)`, each contributing its
         // degree-1 power.

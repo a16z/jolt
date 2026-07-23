@@ -1,3 +1,4 @@
+use crate::SumcheckKernelError;
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::MissingOpeningValue;
 use jolt_field::FieldCore;
@@ -25,6 +26,11 @@ pub enum KernelError<F: FieldCore> {
 
     #[error(transparent)]
     MissingOpeningValue(#[from] MissingOpeningValue<JoltOpeningId>),
+
+    /// Extraction/self-check failures from the typed kernel seam
+    /// (`SumcheckKernel::{output_claims, validate_derived_tables}`).
+    #[error(transparent)]
+    SumcheckKernel(#[from] SumcheckKernelError<F>),
 
     #[error(transparent)]
     CenteredDomain(#[from] jolt_poly::lagrange::CenteredIntegerDomainError),
@@ -60,20 +66,6 @@ pub enum KernelError<F: FieldCore> {
         table: String,
         expected: usize,
         got: usize,
-    },
-
-    /// Final values were requested before every round was bound.
-    #[error("final table values requested with {remaining} unbound rounds")]
-    NotFullyBound { remaining: usize },
-
-    /// A bound derived table's final value disagrees with the verifier's
-    /// `derive_output_term` at the bound point — the hand-written table
-    /// resolver drifted from the relation's scalar path.
-    #[error("derived table {id:?} bound to {got}, but derive_output_term gives {expected}")]
-    DerivedTableDrift {
-        id: JoltDerivedId,
-        expected: F,
-        got: F,
     },
 
     /// A capability the kernel does not implement yet. Recoverable in

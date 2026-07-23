@@ -40,6 +40,7 @@ pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RegistersClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::registers::ClaimReduction,
     product_uniskip_tau_low: Vec<F>,
@@ -51,6 +52,10 @@ impl<F: Field> RegistersClaimReduction<F> {
             symbolic: relations::claim_reductions::registers::ClaimReduction::new(trace_dimensions),
             product_uniskip_tau_low,
         }
+    }
+
+    pub fn product_uniskip_tau_low(&self) -> &[F] {
+        &self.product_uniskip_tau_low
     }
 }
 

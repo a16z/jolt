@@ -23,7 +23,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
@@ -46,4 +46,20 @@ pub trait JointOpeningPolynomials<F: Field> {
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>>;
+}
+
+/// The stage-4 advice opening-evaluation slot: evaluate the trusted/untrusted
+/// advice polynomial at `point` (big-endian) — the value the RAM value-check
+/// stages under `@RamValCheck` for the kind. A non-sumcheck slot (a single
+/// opening evaluation), so it keeps a hand-shaped trait; the advice
+/// polynomial's REDUCTION duties are ordinary `PrepareKernel` members
+/// (`precommitted_reduction`).
+pub trait AdviceOpeningEvaluation<F: Field> {
+    fn evaluate(
+        &self,
+        session: &mut ProofSession,
+        kind: JoltAdviceKind,
+        point: &[F],
+        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    ) -> Result<F, KernelError<F>>;
 }

@@ -22,10 +22,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhaseChallenges;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
-use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -35,35 +34,38 @@ use jolt_verifier::stages::stage6a::booleanity::{
 };
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use jolt_witness::WitnessProvider;
 
 use super::views::{address_fold, dense_view, eq_table};
-use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend,
+    SumcheckKernel, SumcheckKernelError,
+};
 
-impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: BooleanityDimensions,
-        reference_address: &[F],
-        reference_cycle: &[F],
-        gamma: F,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let challenges = inputs.challenges;
         Ok(Box::new(BooleanityAddressKernel::new(
-            dimensions,
-            reference_address,
-            reference_cycle,
-            gamma,
+            relation,
+            relation.dimensions(),
+            &challenges.reference_address,
+            &challenges.reference_cycle,
+            challenges.gamma,
             witness,
         )?))
     }
 }
 
 pub struct BooleanityAddressKernel<F: Field> {
-    relation: BooleanityAddressPhase<F>,
+    rounds: usize,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
     gamma_weights: Vec<F>,
@@ -78,6 +80,7 @@ pub struct BooleanityAddressKernel<F: Field> {
 
 impl<F: Field> BooleanityAddressKernel<F> {
     pub fn new(
+        relation: &BooleanityAddressPhase<F>,
         dimensions: BooleanityDimensions,
         reference_address: &[F],
         reference_cycle: &[F],
@@ -133,7 +136,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
         }
 
         Ok(Self {
-            relation: BooleanityAddressPhase::new(dimensions),
+            rounds: relation.rounds(),
             gamma_weights,
             linear,
             squared,
@@ -143,16 +146,40 @@ impl<F: Field> BooleanityAddressKernel<F> {
     }
 }
 
+impl<F: Field> BooleanityAddressKernel<F> {
+    fn bind(&mut self, challenge: F) {
+        let one_minus_sqr = (F::one() - challenge) * (F::one() - challenge);
+        let challenge_sqr = challenge * challenge;
+        for table in &mut self.linear {
+            table.bind_with_order(challenge, BindingOrder::LowToHigh);
+        }
+        for table in &mut self.squared {
+            let half = table.len() / 2;
+            for k in 0..half {
+                table[k] = one_minus_sqr * table[2 * k] + challenge_sqr * table[2 * k + 1];
+            }
+            table.truncate(half);
+        }
+        self.eq_address
+            .bind_with_order(challenge, BindingOrder::LowToHigh);
+        self.rounds_bound += 1;
+    }
+}
+
 impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.relation.symbolic().rounds()
+        self.rounds
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
         let half = self.eq_address.evals().len() / 2;
         let mut evals = [F::zero(); 4];
         for (c, eval) in evals.iter_mut().enumerate() {
@@ -194,36 +221,20 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
-        let one_minus_sqr = (F::one() - challenge) * (F::one() - challenge);
-        let challenge_sqr = challenge * challenge;
-        for table in &mut self.linear {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
-        for table in &mut self.squared {
-            let half = table.len() / 2;
-            for k in 0..half {
-                table[k] = one_minus_sqr * table[2 * k] + challenge_sqr * table[2 * k + 1];
-            }
-            table.truncate(half);
-        }
-        self.eq_address
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.rounds_bound += 1;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind);
         Ok(())
     }
 }
 
-impl<F: Field> ProveSumcheck<F> for BooleanityAddressKernel<F> {
+impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     type Relation = BooleanityAddressPhase<F>;
 
-    fn relation(&self) -> &BooleanityAddressPhase<F> {
-        &self.relation
-    }
-
-    fn output_claims(&mut self) -> Result<BooleanityAddressPhaseOutputClaims<F>, KernelError<F>> {
+    fn output_claims(
+        &mut self,
+    ) -> Result<BooleanityAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
-            return Err(KernelError::NotFullyBound {
+            return Err(SumcheckKernelError::NotFullyBound {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
@@ -242,23 +253,18 @@ impl<F: Field> ProveSumcheck<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: BooleanityDimensions,
-        r_address: &[F],
-        reference_address: &[F],
-        reference_cycle: &[F],
-        challenges: &BooleanityCyclePhaseChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = Booleanity<F>>>, KernelError<F>> {
-        let relation = Booleanity::new(
-            dimensions,
-            r_address.to_vec(),
-            reference_address.to_vec(),
-            reference_cycle.to_vec(),
-        );
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, Booleanity<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let r_address = relation.r_address();
+        let reference_address = relation.reference_address();
+        let reference_cycle = relation.reference_cycle();
 
         let mut opening_tables = BTreeMap::new();
         for opening in dimensions.layout.openings(JoltRelationId::Booleanity) {
@@ -287,8 +293,7 @@ impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
         )]);
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

@@ -9,31 +9,31 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::instruction::{
     imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
     rs1_value, rs2_value, unexpanded_pc,
 };
-use jolt_claims::protocols::jolt::relations::instruction::InstructionInputChallenges;
-use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceDimensions};
+use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::{dense_view, eq_table};
-use crate::instruction_input::InstructionInputProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> InstructionInputProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, InstructionInput<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        product_remainder_point: &[F],
-        challenges: &InstructionInputChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionInput<F>>>, KernelError<F>> {
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionInput<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let product_remainder_point = relation.product_remainder_opening_point();
         let ids = [
             left_operand_is_rs1(),
             rs1_value(),
@@ -53,10 +53,8 @@ impl<F: Field> InstructionInputProver<F> for ReferenceBackend {
             Polynomial::new(eq_table(product_remainder_point)),
         )]);
 
-        let relation = InstructionInput::new(trace_dimensions, product_remainder_point.to_vec());
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

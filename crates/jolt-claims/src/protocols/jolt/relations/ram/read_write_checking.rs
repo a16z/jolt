@@ -52,6 +52,7 @@ pub struct RamReadWriteChallenges<F> {
 /// The RAM read/write-checking sumcheck: folds the read and write values by
 /// `gamma` on the input side, and reconstructs them from `ra`, `val`, and `inc`
 /// weighted by the cycle-`eq` public on the output side.
+#[derive(Clone)]
 pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
 }

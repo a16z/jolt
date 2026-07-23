@@ -37,6 +37,7 @@ pub fn spartan_shift_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct SpartanShift<F: Field> {
     symbolic: relations::spartan::Shift,
     product_uniskip_tau_low: Vec<F>,
@@ -54,6 +55,14 @@ impl<F: Field> SpartanShift<F> {
             product_uniskip_tau_low,
             product_remainder_opening_point,
         }
+    }
+
+    pub fn product_uniskip_tau_low(&self) -> &[F] {
+        &self.product_uniskip_tau_low
+    }
+
+    pub fn product_remainder_opening_point(&self) -> &[F] {
+        &self.product_remainder_opening_point
     }
 }
 

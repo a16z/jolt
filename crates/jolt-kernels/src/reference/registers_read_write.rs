@@ -11,32 +11,33 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::registers::{
     rd_inc_read_write, rd_wa_read_write, registers_val_read_write, rs1_ra_read_write,
     rs2_ra_read_write,
 };
-use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteChallenges;
-use jolt_claims::protocols::jolt::{JoltDerivedId, ReadWriteDimensions, RegistersReadWritePublic};
+use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::{dense_view, eq_table, tile};
-use crate::registers_read_write::RegistersReadWriteProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> RegistersReadWriteProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: ReadWriteDimensions,
-        r_cycle: &[F],
-        challenges: &RegistersReadWriteChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
+        let relation = inputs.relation;
+        let dimensions = relation.register_dimensions();
+        let r_cycle: &[F] = &inputs.points.rd_write_value;
         if dimensions.phase1_num_rounds() != dimensions.log_t() {
             return Err(KernelError::Unsupported {
                 reason: "reference registers read-write checking supports only the default \
@@ -72,10 +73,8 @@ impl<F: Field> RegistersReadWriteProver<F> for ReferenceBackend {
             Polynomial::new(tile(&eq_table(r_cycle), copies)),
         )]);
 
-        let relation = RegistersReadWriteChecking::new(dimensions);
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

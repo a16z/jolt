@@ -22,6 +22,7 @@ pub struct BytecodeReadRafCyclePhaseChallenges<F> {
 
 /// The cycle phase of the bytecode read-RAF sumcheck: starts from the staged
 /// address-phase opening and reduces to the bytecode-table cycle output.
+#[derive(Clone)]
 pub struct ReadRafCyclePhase {
     shape: BytecodeReadRafCycleShape,
 }

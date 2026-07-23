@@ -10,46 +10,38 @@
 
 use std::collections::BTreeMap;
 
+use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
-use jolt_claims::protocols::jolt::relations::claim_reductions::increments::IncClaimReductionChallenges;
-use jolt_claims::protocols::jolt::{IncClaimReductionPublic, JoltDerivedId, TraceDimensions};
+use jolt_claims::protocols::jolt::{IncClaimReductionPublic, JoltDerivedId};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use super::views::{dense_view, eq_table};
-use crate::inc_claim_reduction::IncClaimReductionProver;
-use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
 
-impl<F: Field> IncClaimReductionProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        trace_dimensions: TraceDimensions,
-        cycle_points: &[Vec<F>; 4],
-        challenges: &IncClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
+        witness: &dyn JoltVmWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let cycle_points = relation.cycle_points();
         for point in cycle_points {
-            if point.len() != trace_dimensions.log_t() {
+            if point.len() != relation.rounds() {
                 return Err(KernelError::InvariantViolation {
                     reason: "increment reduction cycle point has the wrong variable count",
                 });
             }
         }
-        let [ram_read_write, ram_val_check, registers_read_write, registers_val_evaluation] =
-            cycle_points.clone();
-        let relation = IncClaimReduction::new(
-            trace_dimensions,
-            ram_read_write,
-            ram_val_check,
-            registers_read_write,
-            registers_val_evaluation,
-        );
 
         let opening_tables = BTreeMap::from([
             (
@@ -79,8 +71,7 @@ impl<F: Field> IncClaimReductionProver<F> for ReferenceBackend {
             .collect();
 
         Ok(Box::new(NaiveSumcheckProver::new(
-            relation,
-            challenges,
+            &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,

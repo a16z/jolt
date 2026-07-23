@@ -1,5 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 1 verification.
 
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::Field;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
@@ -34,7 +35,11 @@ pub struct Stage1OutputClaims<F: Field> {
 /// bound point, so it completes itself lazily: `derive_opening_points` captures
 /// the point and the first `derive_output_term` call builds the table.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage1BatchSumchecks<F: Field> {
+    /// On the prove side the remainder kernel is minted from the state the
+    /// uni-skip slot parked in the proof session, through its regular
+    /// universal backend slot.
     pub outer_remainder: OuterRemainder<F>,
 }
 
@@ -64,6 +69,46 @@ pub struct Stage1ClearOutput<F: Field> {
     /// `output_values`. All 35 openings share the single remainder point; the raw
     /// reduction point is exposed by [`Stage1Output::remainder_point`].
     pub output_points: Stage1BatchOutputPoints<F>,
+}
+
+impl<F: Field> Stage1ClearOutput<F> {
+    /// The raw (un-reversed) Spartan outer remainder reduction point: the
+    /// clear path stores the openings at the REVERSED point
+    /// (`derive_opening_points`), so this reverses it back. All 35 stage-1
+    /// openings share the point; `left_instruction_input` is a representative
+    /// accessor. Promoted so the prove-side recipes stop hand-copying the
+    /// derivation (see [`Stage1Output::remainder_point`]).
+    pub fn remainder_point(&self) -> Vec<F> {
+        self.output_points
+            .outer_remainder
+            .left_instruction_input()
+            .iter()
+            .rev()
+            .copied()
+            .collect()
+    }
+
+    /// The stage-1 Spartan-outer cycle binding: the tail (`[1..]`) of the raw
+    /// [`remainder_point`](Self::remainder_point), or `None` when that point
+    /// is empty.
+    pub fn cycle_binding(&self) -> Option<Vec<F>> {
+        let raw_point = self.remainder_point();
+        let (_, cycle) = raw_point.split_first()?;
+        Some(cycle.to_vec())
+    }
+
+    /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
+    /// point to the consuming `stage`.
+    pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
+        self.cycle_binding().ok_or(empty_remainder_point(stage))
+    }
+}
+
+fn empty_remainder_point(stage: JoltRelationId) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage,
+        reason: "Stage 1 remainder point is empty".to_string(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,14 +143,7 @@ impl<F: Field, C> Stage1Output<F, C> {
     /// is a representative field accessor for it.
     pub fn remainder_point(&self) -> Vec<F> {
         match self {
-            Self::Clear(output) => output
-                .output_points
-                .outer_remainder
-                .left_instruction_input()
-                .iter()
-                .rev()
-                .copied()
-                .collect(),
+            Self::Clear(output) => output.remainder_point(),
             Self::Zk(output) => output.remainder_consistency.challenges(),
         }
     }
@@ -118,6 +156,12 @@ impl<F: Field, C> Stage1Output<F, C> {
         let raw_point = self.remainder_point();
         let (_, cycle) = raw_point.split_first()?;
         Some(cycle.to_vec())
+    }
+
+    /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
+    /// point to the consuming `stage`.
+    pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
+        self.cycle_binding().ok_or(empty_remainder_point(stage))
     }
 
     pub fn clear(&self) -> Result<&Stage1ClearOutput<F>, VerifierError> {

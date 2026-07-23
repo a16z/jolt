@@ -90,6 +90,7 @@ fn byte_decode_leg<F: Field>(
 
 /// The untrusted advice reconstruction: booleanity + hamming + decode legs
 /// over the full `(byte ‖ place ‖ word)` cell domain.
+#[derive(Clone)]
 pub struct UntrustedAdviceReconstructionInstance<F: Field> {
     symbolic: UntrustedSymbolic,
     /// The fresh reference point the booleanity/hamming kernels compare
@@ -159,6 +160,7 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> 
 
 /// The trusted advice reconstruction: the decode leg alone over the
 /// `(byte ‖ place)` variables, the word point fixed by the incoming claim.
+#[derive(Clone)]
 pub struct TrustedAdviceReconstructionInstance<F: Field> {
     symbolic: TrustedSymbolic,
     _field: core::marker::PhantomData<F>,
@@ -214,6 +216,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceReconstructionInstance<F> {
 /// zero-extended, so its bound value factors as
 /// `Π_missing (1 − v_i) · column(v_own ‖ r_row)`, with the `Π` folded into
 /// the derived and the claim landing at the column's own packed-slot point.
+#[derive(Clone)]
 pub struct BytecodeChunkReconstructionInstance<F: Field> {
     symbolic: BytecodeSymbolic,
     dimensions: BytecodeReconstructionDimensions,
@@ -357,6 +360,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeChunkReconstructionInstance<F> {
 
 /// The program-image reconstruction: the trusted-advice decode shape over the
 /// program image byte column.
+#[derive(Clone)]
 pub struct ProgramImageReconstructionInstance<F: Field> {
     symbolic: ProgramImageSymbolic,
     _field: core::marker::PhantomData<F>,
@@ -403,6 +407,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReconstructionInstance<F> {
 /// The reconstruction batch, members in canonical commitment-object order.
 /// Each is present exactly when its object exists in the public shape.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct ReconstructionSumchecks<F: Field> {
     pub untrusted_advice: Option<UntrustedAdviceReconstructionInstance<F>>,
     pub trusted_advice: Option<TrustedAdviceReconstructionInstance<F>>,
