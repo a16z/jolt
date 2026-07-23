@@ -93,7 +93,7 @@ fn resolve_schedule(
     backend_point: &[AkitaField],
 ) -> Result<Schedule, OpeningsError> {
     let schedule = match commitment.backend_flavor {
-        AkitaBackendFlavor::Full => {
+        AkitaBackendFlavor::Dense => {
             effective_batched_schedule::<AkitaConfig>(layout, backend_point)
         }
         AkitaBackendFlavor::OneHot => match commitment.one_hot_k {
@@ -390,9 +390,9 @@ mod tests {
     use super::*;
     use crate::adapters::serialize_akita;
 
-    fn full_commitment(num_vars: usize, poly_count: usize) -> AkitaCommitment {
+    fn dense_commitment(num_vars: usize, poly_count: usize) -> AkitaCommitment {
         AkitaCommitment {
-            backend_flavor: AkitaBackendFlavor::Full,
+            backend_flavor: AkitaBackendFlavor::Dense,
             layout_digest: [7; 32],
             num_vars,
             poly_count,
@@ -410,7 +410,7 @@ mod tests {
     fn forged_commitment_coeff_len_rejects_before_deserialization() {
         let num_vars = 4;
         let point = point(num_vars);
-        let mut commitment = full_commitment(num_vars, 2);
+        let mut commitment = dense_commitment(num_vars, 2);
         // A honest-shape claim would be a few thousand coefficients; forge the
         // upstream 2^25 cap with an empty byte buffer.
         commitment.backend_coeff_len = 1 << 25;
@@ -432,7 +432,7 @@ mod tests {
         let num_vars = 4;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
-        let mut commitment = full_commitment(num_vars, 2);
+        let mut commitment = dense_commitment(num_vars, 2);
         let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
         let expected = expected_commitment_coeff_len(&schedule, &layout).expect("coeff len");
         commitment.backend_coeff_len = expected;
@@ -454,7 +454,7 @@ mod tests {
         let num_vars = 4;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
-        let mut commitment = full_commitment(num_vars, 2);
+        let mut commitment = dense_commitment(num_vars, 2);
         let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
         let coeff_len = expected_commitment_coeff_len(&schedule, &layout).expect("coeff len");
         commitment.backend_coeff_len = coeff_len;
@@ -477,7 +477,7 @@ mod tests {
         let num_vars = 4;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
-        let mut commitment = full_commitment(num_vars, 2);
+        let mut commitment = dense_commitment(num_vars, 2);
         let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
         let coeff_len = expected_commitment_coeff_len(&schedule, &layout).expect("coeff len");
         commitment.backend_coeff_len = coeff_len;

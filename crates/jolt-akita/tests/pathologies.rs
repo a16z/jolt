@@ -71,7 +71,7 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
     let (dense_commitment, _) = AkitaScheme::commit(&dense, &prover_setup).unwrap();
     assert_eq!(
         one_hot_commitment.backend_flavor(),
-        AkitaBackendFlavor::Full
+        AkitaBackendFlavor::Dense
     );
     assert_eq!(
         one_hot_commitment, dense_commitment,
@@ -128,10 +128,10 @@ fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
         one_hot_commitment.backend_flavor(),
         AkitaBackendFlavor::OneHot
     );
-    assert_eq!(dense_commitment.backend_flavor(), AkitaBackendFlavor::Full);
+    assert_eq!(dense_commitment.backend_flavor(), AkitaBackendFlavor::Dense);
     assert_ne!(
         one_hot_commitment, dense_commitment,
-        "native Akita one-hot uses a separate backend setup from full dense commitments"
+        "native Akita one-hot uses a separate backend setup from dense commitments"
     );
 
     let point = (0..num_vars)

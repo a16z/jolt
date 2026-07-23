@@ -231,7 +231,7 @@ impl AkitaScheme {
             num_vars,
             poly_count: polynomials.len(),
             one_hot_k: match polynomials.backend_flavor() {
-                crate::adapters::AkitaBackendFlavor::Full => 0,
+                crate::adapters::AkitaBackendFlavor::Dense => 0,
                 crate::adapters::AkitaBackendFlavor::OneHot => {
                     polynomials.one_hot_k().ok_or_else(|| {
                         invalid_batch("Akita one-hot commitment group must not be empty")
@@ -257,7 +257,7 @@ impl AkitaScheme {
         num_vars: usize,
         dense: Vec<AkitaBackendDensePoly>,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let (backend_prover_setup, prepared_backend_setup) = setup.full_backend()?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let (backend_commitment, backend_hint) =
             AkitaBackendScheme::commit(backend_prover_setup, dense.as_slice(), &stack)
@@ -312,7 +312,7 @@ impl CommitmentScheme for AkitaScheme {
         let invalid_setup =
             |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
         debug_assert!(
-            !(params.one_hot_only && params.full_only),
+            !(params.one_hot_only && params.dense_only),
             "a setup cannot skip both backend flavors"
         );
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
@@ -341,7 +341,7 @@ impl CommitmentScheme for AkitaScheme {
             one_hot_backend_prover_setup,
             prepared_one_hot_backend_setup,
             one_hot_backend_verifier_setup,
-        ) = if params.max_num_vars >= one_hot_log_k && !params.full_only {
+        ) = if params.max_num_vars >= one_hot_log_k && !params.dense_only {
             let backend_prover_setup = crate::adapters::one_hot_setup_prover(
                 params.one_hot_k,
                 params.max_num_vars,
@@ -421,7 +421,7 @@ impl CommitmentScheme for AkitaScheme {
             let sparse = sparse_unit_polynomial(poly.num_vars(), indices)?;
             let num_vars = sparse.num_vars();
             Self::validate_commit_shape(setup, num_vars, 1)?;
-            let (backend_prover_setup, prepared_backend_setup) = setup.full_backend()?;
+            let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
             let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
             let (backend_commitment, backend_hint) = AkitaBackendScheme::commit(
                 backend_prover_setup,
@@ -638,11 +638,11 @@ mod tests {
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         let initial_state = baseline.state();
 
-        append_verifier_setup(&mut baseline, &setup, AkitaBackendFlavor::Full);
+        append_verifier_setup(&mut baseline, &setup, AkitaBackendFlavor::Dense);
         assert_ne!(baseline.state(), initial_state);
 
         let mut same = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(&mut same, &setup, AkitaBackendFlavor::Full);
+        append_verifier_setup(&mut same, &setup, AkitaBackendFlavor::Dense);
         assert_eq!(baseline.state(), same.state());
 
         let mut flavor_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -655,7 +655,7 @@ mod tests {
         append_verifier_setup(
             &mut shape_transcript,
             &changed_shape,
-            AkitaBackendFlavor::Full,
+            AkitaBackendFlavor::Dense,
         );
         assert_ne!(baseline.state(), shape_transcript.state());
 
@@ -665,14 +665,14 @@ mod tests {
         append_verifier_setup(
             &mut digest_transcript,
             &changed_digest,
-            AkitaBackendFlavor::Full,
+            AkitaBackendFlavor::Dense,
         );
         assert_ne!(baseline.state(), digest_transcript.state());
 
         let mut changed_k = changed_digest;
         changed_k.one_hot_k = AKITA_ONE_HOT_K16;
         let mut k_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(&mut k_transcript, &changed_k, AkitaBackendFlavor::Full);
+        append_verifier_setup(&mut k_transcript, &changed_k, AkitaBackendFlavor::Dense);
         assert_ne!(digest_transcript.state(), k_transcript.state());
     }
 
@@ -751,10 +751,10 @@ mod tests {
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
         assert_eq!(transported, verifier_setup);
         let rederived = transported
-            .backend_verifier(AkitaBackendFlavor::Full)
+            .backend_verifier(AkitaBackendFlavor::Dense)
             .expect("shape-only setup re-derives its backend key");
         let primed = verifier_setup
-            .backend_verifier(AkitaBackendFlavor::Full)
+            .backend_verifier(AkitaBackendFlavor::Dense)
             .expect("primed cache returns the built key");
         assert_eq!(
             serialize_akita(rederived).unwrap(),
@@ -970,9 +970,9 @@ mod flavor_bench {
             .and_then(|value| value.parse().ok())
             .unwrap_or(30);
         let start = Instant::now();
-        let full = AkitaBackendScheme::setup_prover(num_vars, polys).unwrap();
-        eprintln!("full setup ({num_vars},{polys}): {:.2?}", start.elapsed());
-        drop(full);
+        let dense = AkitaBackendScheme::setup_prover(num_vars, polys).unwrap();
+        eprintln!("dense setup ({num_vars},{polys}): {:.2?}", start.elapsed());
+        drop(dense);
         let start = Instant::now();
         let one_hot = AkitaOneHotK256BackendScheme::setup_prover(num_vars, polys).unwrap();
         eprintln!(

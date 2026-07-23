@@ -102,9 +102,9 @@ fn validate_statement(
         )));
     }
     match commitment.backend_flavor {
-        AkitaBackendFlavor::Full if commitment.one_hot_k != 0 => {
+        AkitaBackendFlavor::Dense if commitment.one_hot_k != 0 => {
             return Err(invalid_batch(
-                "Akita full commitment must not declare a one-hot chunk size",
+                "Akita dense commitment must not declare a one-hot chunk size",
             ));
         }
         AkitaBackendFlavor::OneHot if commitment.one_hot_k != one_hot_k => {
@@ -113,7 +113,7 @@ fn validate_statement(
                 commitment.one_hot_k
             )));
         }
-        AkitaBackendFlavor::Full | AkitaBackendFlavor::OneHot => {}
+        AkitaBackendFlavor::Dense | AkitaBackendFlavor::OneHot => {}
     }
     Ok(ValidatedStatement { commitment, point })
 }
@@ -207,13 +207,13 @@ fn single_group_batch<'a, P>(
     ProverOpeningData::new(claims, vec![backend_hint], vec![polynomials]).map_err(akita_error)
 }
 
-/// Full-flavor batched prove shared by the dense and sparse-unit paths —
+/// Dense-flavor batched prove shared by the dense and sparse-unit paths —
 /// they differ only in the backend polynomial type, whose opening-view trait
 /// chain is too deep to name generically, hence a macro.
-macro_rules! prove_full_backend {
+macro_rules! prove_dense_backend {
     ($setup:expr, $point:expr, $evaluations:expr, $polynomials:expr, $commitment:expr, $hint:expr, $transcript:expr) => {{
         let claims = single_group_batch($point, $evaluations, $polynomials, $commitment, $hint)?;
-        let (backend_prover_setup, prepared_backend_setup) = $setup.full_backend()?;
+        let (backend_prover_setup, prepared_backend_setup) = $setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
         AkitaBackendScheme::batched_prove(
@@ -324,7 +324,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         let backend_proof = match &hint.polynomials {
             AkitaHintPolynomials::Dense(dense) => {
                 let refs = dense.iter().collect::<Vec<_>>();
-                prove_full_backend!(
+                prove_dense_backend!(
                     setup,
                     point,
                     &evaluations,
@@ -348,7 +348,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             }
             AkitaHintPolynomials::SparseUnit(sparse) => {
                 let refs = sparse.iter().collect::<Vec<_>>();
-                prove_full_backend!(
+                prove_dense_backend!(
                     setup,
                     point,
                     &evaluations,
@@ -392,7 +392,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.one_hot_k,
         )?;
         let backend_point = match commitment.backend_flavor {
-            AkitaBackendFlavor::Full => point.to_vec(),
+            AkitaBackendFlavor::Dense => point.to_vec(),
             AkitaBackendFlavor::OneHot => reverse_point(point),
         };
         // Deserializes the proof-controlled backend payloads only after their
@@ -427,7 +427,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         .map_err(akita_error)?;
         let claims = OpeningClaims::from_groups(backend_point, vec![group]).map_err(akita_error)?;
         match commitment.backend_flavor {
-            AkitaBackendFlavor::Full => AkitaBackendScheme::batched_verify(
+            AkitaBackendFlavor::Dense => AkitaBackendScheme::batched_verify(
                 &backend_proof,
                 backend_verifier,
                 &mut akita_transcript,

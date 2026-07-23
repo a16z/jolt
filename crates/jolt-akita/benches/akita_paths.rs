@@ -120,8 +120,8 @@ impl DataPath {
 }
 
 struct AkitaProverBenchSetup {
-    full_prover: BackendSetup,
-    full_prepared: BackendPreparedSetup,
+    dense_prover: BackendSetup,
+    dense_prepared: BackendPreparedSetup,
     one_hot_prover: BackendSetup,
     one_hot_prepared: BackendPreparedSetup,
 }
@@ -338,8 +338,8 @@ fn akita_case(num_vars: usize) -> AkitaCase {
         sparse_eval,
         setup,
         akita_prover_setup: AkitaProverBenchSetup {
-            full_prover: backend_prover,
-            full_prepared: backend_prepared,
+            dense_prover: backend_prover,
+            dense_prepared: backend_prepared,
             one_hot_prover: one_hot_backend_prover,
             one_hot_prepared: one_hot_backend_prepared,
         },
@@ -561,12 +561,12 @@ fn akita_prover_commit_dense(
 ) -> (BackendCommitment, BackendHint) {
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend,
-        &setup.full_prepared,
-        setup.full_prover.expanded.as_ref(),
+        &setup.dense_prepared,
+        setup.dense_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
     BackendScheme::commit(
-        &setup.full_prover,
+        &setup.dense_prover,
         black_box(std::slice::from_ref(poly)),
         &stack,
     )
@@ -617,14 +617,14 @@ fn akita_prover_open_dense(
 ) -> akita_types::AkitaBatchedProof<AkitaField, AkitaField> {
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend,
-        &case.akita_prover_setup.full_prepared,
-        case.akita_prover_setup.full_prover.expanded.as_ref(),
+        &case.akita_prover_setup.dense_prepared,
+        case.akita_prover_setup.dense_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
     let poly_refs = [poly];
     let mut transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/native-bench");
     BackendScheme::batched_prove(
-        &case.akita_prover_setup.full_prover,
+        &case.akita_prover_setup.dense_prover,
         akita_prover_claims(&case.point, vec![evaluation], &poly_refs, &commitment, hint),
         &stack,
         &mut transcript,

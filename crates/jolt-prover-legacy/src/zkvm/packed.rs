@@ -396,10 +396,10 @@ fn transparent_object_setup(
     jolt_openings::OpeningsError,
 > {
     // Every auxiliary packed object (advice byte columns, the precommitted
-    // program) commits through the sparse-unit/full flavor, so the one-hot
+    // program) commits through the sparse-unit/dense flavor, so the one-hot
     // backend setup — which dominates the setup cost at these shapes — is
     // never built.
-    <AkitaScheme as VerifierCommitmentScheme>::setup(jolt_akita::AkitaSetupParams::full_only(
+    <AkitaScheme as VerifierCommitmentScheme>::setup(jolt_akita::AkitaSetupParams::dense_only(
         num_vars, 1, [0u8; 32],
     ))
 }
