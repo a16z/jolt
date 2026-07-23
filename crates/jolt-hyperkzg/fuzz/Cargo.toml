@@ -19,23 +19,19 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
-[package.metadata.jolt-fuzz.targets.commit_open_verify]
+[package.metadata.jolt-fuzz.targets.fuzzed_poly_completeness]
 focus = "correctness"
 pr-seconds = 60
 daily-seconds = 1500
 weekly-seconds = 2700
 
+# Absorbs the deleted wrong_eval target as one tamper class; its budget
+# folds in here.
 [package.metadata.jolt-fuzz.targets.tampered_proof]
 focus = "soundness"
-pr-seconds = 60
-daily-seconds = 1500
-weekly-seconds = 2700
-
-[package.metadata.jolt-fuzz.targets.wrong_eval]
-focus = "soundness"
-pr-seconds = 30
-daily-seconds = 600
-weekly-seconds = 1200
+pr-seconds = 90
+daily-seconds = 2100
+weekly-seconds = 3900
 
 [dependencies]
 libfuzzer-sys = "0.4"
@@ -49,16 +45,15 @@ rand_chacha = "0.3"
 rand_core = "0.6"
 
 [[bin]]
-name = "commit_open_verify"
-path = "fuzz_targets/commit_open_verify.rs"
+name = "fuzzed_poly_completeness"
+path = "fuzz_targets/fuzzed_poly_completeness.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "tampered_proof"
 path = "fuzz_targets/tampered_proof.rs"
+test = false
 doc = false
-
-[[bin]]
-name = "wrong_eval"
-path = "fuzz_targets/wrong_eval.rs"
-doc = false
+bench = false

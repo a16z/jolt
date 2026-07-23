@@ -31,8 +31,15 @@ pr-seconds = 20
 daily-seconds = 300
 weekly-seconds = 900
 
+[package.metadata.jolt-fuzz.targets.zk_mode_confusion]
+focus = "soundness"
+pr-seconds = 60
+daily-seconds = 1500
+weekly-seconds = 2700
+
 [dependencies]
 libfuzzer-sys = "0.4"
+dory = { package = "dory-pcs", version = "0.4.0" }
 jolt-dory = { path = ".." }
 jolt-field = { path = "../../jolt-field" }
 jolt-openings = { path = "../../jolt-openings" }
@@ -46,9 +53,20 @@ rand_chacha = "0.3"
 [[bin]]
 name = "deser_commitment"
 path = "fuzz_targets/deser_commitment.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "verify_tampered"
 path = "fuzz_targets/verify_tampered.rs"
+test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "zk_mode_confusion"
+path = "fuzz_targets/zk_mode_confusion.rs"
+test = false
+doc = false
+bench = false

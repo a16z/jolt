@@ -15,6 +15,18 @@ pr-seconds = 45
 daily-seconds = 900
 weekly-seconds = 2700
 
+[package.metadata.jolt-fuzz.targets.eq_poly_diff]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.compressed_roundtrip]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-poly = { path = ".." }
@@ -23,4 +35,20 @@ jolt-field = { path = "../../jolt-field" }
 [[bin]]
 name = "dense_poly_ops"
 path = "fuzz_targets/dense_poly_ops.rs"
+test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "eq_poly_diff"
+path = "fuzz_targets/eq_poly_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compressed_roundtrip"
+path = "fuzz_targets/compressed_roundtrip.rs"
+test = false
+doc = false
+bench = false

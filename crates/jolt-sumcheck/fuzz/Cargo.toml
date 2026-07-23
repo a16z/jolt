@@ -31,19 +31,52 @@ pr-seconds = 90
 daily-seconds = 1800
 weekly-seconds = 5400
 
+# Weekly budgets sized so the workspace total (with valid_prefix_proof's
+# 90m) plus build, replay, cmin, and coverage fits the 240-minute job.
+[package.metadata.jolt-fuzz.targets.honest_then_corrupt]
+focus = "soundness"
+pr-seconds = 60
+daily-seconds = 1500
+weekly-seconds = 2700
+
+[package.metadata.jolt-fuzz.targets.clear_vs_compressed_diff]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 900
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-field = { path = "../../jolt-field" }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-sumcheck = { path = ".." }
 jolt-transcript = { path = "../../jolt-transcript" }
+num-traits = "0.2"
 
 [[bin]]
 name = "sumcheck_verifier"
 path = "fuzz_targets/sumcheck_verifier.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "valid_prefix_proof"
 path = "fuzz_targets/valid_prefix_proof.rs"
+test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "honest_then_corrupt"
+path = "fuzz_targets/honest_then_corrupt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "clear_vs_compressed_diff"
+path = "fuzz_targets/clear_vs_compressed_diff.rs"
+test = false
+doc = false
+bench = false

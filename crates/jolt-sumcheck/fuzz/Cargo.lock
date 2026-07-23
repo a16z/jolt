@@ -612,6 +612,7 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "libfuzzer-sys",
+ "num-traits",
 ]
 
 [[package]]

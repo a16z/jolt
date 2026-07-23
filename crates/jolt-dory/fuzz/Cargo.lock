@@ -663,6 +663,7 @@ name = "jolt-dory-fuzz"
 version = "0.0.0"
 dependencies = [
  "bincode 2.0.1",
+ "dory-pcs",
  "jolt-dory",
  "jolt-field",
  "jolt-openings",

@@ -25,7 +25,15 @@ pr-seconds = 15
 daily-seconds = 300
 weekly-seconds = 900
 
-[package.metadata.jolt-fuzz.targets.group_arith]
+# glv_differential and batch_addition_differential replace group_arith,
+# which exercised only arkworks pass-throughs.
+[package.metadata.jolt-fuzz.targets.glv_differential]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.batch_addition_differential]
 focus = "correctness"
 pr-seconds = 30
 daily-seconds = 600
@@ -49,14 +57,27 @@ rand_core = "0.6"
 [[bin]]
 name = "deser_group"
 path = "fuzz_targets/deser_group.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
-name = "group_arith"
-path = "fuzz_targets/group_arith.rs"
+name = "glv_differential"
+path = "fuzz_targets/glv_differential.rs"
+test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "batch_addition_differential"
+path = "fuzz_targets/batch_addition_differential.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "pedersen_commit"
 path = "fuzz_targets/pedersen_commit.rs"
+test = false
 doc = false
+bench = false

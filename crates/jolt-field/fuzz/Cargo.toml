@@ -21,6 +21,18 @@ pr-seconds = 15
 daily-seconds = 300
 weekly-seconds = 900
 
+[package.metadata.jolt-fuzz.targets.signed_accumulator_diff]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.canonical_decode_boundary]
+focus = "defensive"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
 [package.metadata.jolt-fuzz.targets.wide_accumulator_fmadd]
 focus = "correctness"
 pr-seconds = 30
@@ -42,19 +54,41 @@ num-traits = "0.2"
 [[bin]]
 name = "from_bytes"
 path = "fuzz_targets/from_bytes.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "field_arith"
 path = "fuzz_targets/field_arith.rs"
+test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "signed_accumulator_diff"
+path = "fuzz_targets/signed_accumulator_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "canonical_decode_boundary"
+path = "fuzz_targets/canonical_decode_boundary.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "wide_accumulator_fmadd"
 path = "fuzz_targets/wide_accumulator_fmadd.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "wide_accumulator_merge"
 path = "fuzz_targets/wide_accumulator_merge.rs"
+test = false
 doc = false
+bench = false
