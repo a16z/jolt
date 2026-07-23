@@ -16,12 +16,22 @@ dependencies are not uniformly pinned, every run starts without durable corpus
 state, and there is no standard regression, minimization, coverage, or crash
 handling workflow.
 
-This feature establishes a reliable base for defensive fuzzing across the crates.
-It provides one repository-level interface that discovers every fuzz workspace,
-reproducible builds, checked-in bootstrap inputs, durable coverage-guided corpora,
-and PR, daily, and weekly CI tiers. It does not attempt to redesign individual
-fuzz targets. Target-specific improvements should be independently reviewable
-follow-up PRs built on this base.
+This feature is delivered in two phases.
+
+**Phase 1 (base infrastructure, complete)** establishes a reliable base for
+defensive fuzzing across the crates. It provides one repository-level interface
+that discovers every fuzz workspace, reproducible builds, checked-in bootstrap
+inputs, durable coverage-guided corpora, and PR, daily, and weekly CI tiers.
+
+**Phase 2 (harness quality and coverage, this document's second half)** acts on
+the base. An audit of all 22 existing targets found that five do not compile,
+several fuzz upstream pass-through code or duplicate a sibling, and one ships a
+dead seed. Phase 2 repairs the broken targets, retires or merges the wasteful
+ones, sharpens weak oracles, and adds structure-aware targets — for existing
+workspaces and for currently uncovered crates — that exercise each crate through
+its real API rather than through black-box byte decoding of complex structures.
+The audit findings, verdicts, and new-target scope are in the
+[Coverage Program](#coverage-program) section.
 
 ## Intent
 
@@ -67,9 +77,16 @@ duplicated target lists in sync.
 
 ### Non-Goals
 
-- Adding, deleting, or substantially redesigning individual fuzz harnesses.
+- For **Phase 1**: adding, deleting, or substantially redesigning individual
+  fuzz harnesses. Phase 2 lifts this restriction deliberately and scopes the
+  harness work below; it remains out of scope for the base-infrastructure
+  commits.
 - Claiming complete coverage of the verifier, prover, or cryptographic attack
-  surface.
+  surface, even after Phase 2. The audit prioritizes soundness-relevant surface
+  per unit of engineering effort, not exhaustiveness.
+- Rewriting the proving system to make objects cheaper to construct for
+  fuzzing. Phase 2 works with the existing constructors and test helpers, using
+  fixture-once patterns where honest construction is expensive.
 - Enrolling Jolt in OSS-Fuzz or deploying ClusterFuzzLite. Those remain useful
   follow-ups once this base is reliable.
 - Introducing a coverage percentage gate before a stable baseline exists.
@@ -452,6 +469,238 @@ Keep the change reviewable with conventional commits:
 3. `test(fuzz): add persistent seed and regression layout`
 4. `ci(fuzz): add pull request daily and weekly tiers`
 5. `docs(fuzz): document production fuzz operations`
+
+## Coverage Program
+
+Phase 1 made the harnesses reproducible, discoverable, and scheduled. It did not
+judge whether they fuzz anything worthwhile. This phase does. An audit read all
+22 targets against the API of the crate each one tests and classified every
+target as keep, improve, merge, or delete, then scoped structure-aware targets
+for the gaps — including five crates that currently have no fuzzing at all.
+
+### Structure-aware harness doctrine
+
+The recurring weakness across the existing targets is black-box byte
+manipulation: handing raw fuzzer bytes to a decoder for a complex structure and
+hoping mutation stumbles into a valid object. For a multilinear proof, a Dory
+proof, or a group element with a subgroup check, the probability that random or
+mutated bytes deserialize into a valid instance is effectively zero, so the
+fuzzer spends its entire budget in the decoder and never reaches the verifier or
+the arithmetic. Coverage-guided mutation also gets no useful signal when the
+whole input collapses to an RNG seed.
+
+Phase 2 targets follow these principles:
+
+- **Construct valid objects through the crate's API, then mutate one field.**
+  Build an honest commitment, proof, sumcheck transcript, or instruction with
+  the real constructors; let the fuzzer choose which single field to corrupt and
+  how. The interesting code (verify, fold, pairing check, discharge) is reached
+  on every iteration, and mutation feedback is meaningful.
+- **Prefer differential and must-reject oracles over no-panic.** A no-panic
+  oracle passes for any function without an assertion. Where a reference or a
+  second implementation exists (naive MLE, `num-bigint` reduction, the two RISC-V
+  decoders, materialize-vs-evaluate for lookup tables, cleartext-vs-compressed
+  sumcheck), assert equality. For soundness targets, assert the verifier rejects
+  the tampered object — and, where the verifier returns a claim, that the
+  returned claim is actually wrong (a discharge check), not merely that it did
+  not panic.
+- **Hoist expensive fixtures into `OnceLock`.** Setup that does not depend on
+  the fuzz input — SRS generation, an honest proof to be tampered, generator
+  vectors — must be built once per process, not per iteration. Several existing
+  targets re-prove or re-sample the same instance every execution, which is the
+  single largest throughput loss in the current suite.
+- **Keep the fuzzer in control of the semantically interesting dimension.**
+  Derive polynomials, points, scalars, and instruction words directly from fuzz
+  bytes (via width-exact windows or `arbitrary`), not from an RNG the fuzzer only
+  seeds. Bias field inputs toward algebraically special values (0, 1, r−1,
+  near-modulus) with a value-class selector byte.
+- **Seed from real objects.** Check in seeds that are genuine serialized valid
+  instances (and, for `jolt-eval`, exports of the invariants' existing
+  `seed_corpus()`), so mutation explores the neighborhood of valid structure
+  instead of pure garbage.
+
+### Audit summary and blocking repairs
+
+The audit found three issues that must be fixed before any coverage work,
+because they mean part of the current suite is inert:
+
+- **R1 — two workspaces do not compile.** `crates/jolt-dory/fuzz/Cargo.toml` and
+  `crates/jolt-hyperkzg/fuzz/Cargo.toml` lack the `[patch.crates-io]` block that
+  redirects `ark-*` to the `a16z/arkworks-algebra` fork (only
+  `crates/jolt-crypto/fuzz/Cargo.toml` has it). Their builds fail on
+  `jolt-transcript` because `light-poseidon` pulls unpatched `ark-ff`.
+- **R2 — API bitrot in five targets.** `CommitmentScheme::commit`/`open` now
+  return `Result` (`crates/jolt-openings/src/schemes.rs:60`,`65`) but
+  `verify_tampered`, `commit_open_verify`, `tampered_proof`, and `wrong_eval`
+  destructure the old tuple and pass the result straight into `verify`.
+  `Fr::from_bytes` was removed from `jolt-field`; `tampered_proof.rs:51,63,72`
+  and `wrong_eval.rs:38` still call it. These five targets cannot build even
+  once R1 is fixed.
+- **R3 — `check` does not detect R1/R2.** `scripts/fuzz.py check` validates
+  toolchain, lockfile, and seeds and runs `cargo metadata`, which never
+  compiles a target, so the fast discovery gate passed while five targets were
+  broken. `check` (or a dedicated CI step) must run `cargo fuzz build` — or at
+  least `cargo check` — for every selected target so this class of rot fails at
+  the gate rather than in the timed run.
+
+Repairing R1/R2 is mechanical and belongs in the first Phase 2 commit; R3 is the
+guard that keeps it from recurring.
+
+### Verdicts on existing targets
+
+Focus column uses the manifest categories. "Improve" keeps the target and
+strengthens it; "merge"/"delete" frees budget.
+
+| Workspace | Target | Verdict | Action |
+|-----------|--------|---------|--------|
+| jolt-field | `field_arith` | keep | Optionally verify the computed product via distributivity (currently computed, never asserted). |
+| jolt-field | `wide_accumulator_fmadd` | keep | Strong differential oracle against naive Σ aᵢ·bᵢ. No change. |
+| jolt-field | `wide_accumulator_merge` | keep | Strong consistency oracle. Optionally exercise `add` (covered by neither target). |
+| jolt-field | `from_bytes` | improve | Replace the tautological round-trip with a `num-bigint` reference reduction; assert canonical encoding (`< r`). |
+| jolt-poly | `dense_poly_ops` | improve | Fix `data[0] % 8` (never yields 8 vars; folds 0→1); replace the **dead 67-byte seed** (needs ≥96 B to reach `evaluate`); `num_vars=7` needs 4320 B > the 4096 cap — shrink scalar windows or lower the cap dependency; add a naive-MLE reference leg. |
+| jolt-sumcheck | `valid_prefix_proof` | keep | Best target in the suite: dual completeness/no-panic oracle at full Fiat-Shamir depth. Optionally add a `CenteredIntegerDomain` selector. |
+| jolt-sumcheck | `sumcheck_verifier` | improve | Largely subsumed by `valid_prefix_proof` at `valid_rounds=0`. Repoint at the unfuzzed production wire path `verify_compressed` (c₁-recovery, `CompressedPolynomialTooShort`). |
+| jolt-transcript | `transcript_no_panic` | improve | No-panic on a surface with no panic conditions. Rebuild as an op-sequence over twin instances asserting identical challenges/`state()` plus one-byte-perturbation divergence. |
+| jolt-eval | `field_mul_scalar` | keep | Strong optimized-vs-reference small-scalar Montgomery oracle, near-zero cost. |
+| jolt-eval | `split_eq_bind_low_high` | improve | Strong round-by-round oracle but O(2ⁿ)/round at `num_vars=16` starves the fuzzer. Cap vars at ~10–12 (keep one large case in `seed_corpus`) or check `merge` at first/last/one random round. |
+| jolt-eval | `split_eq_bind_high_low` | improve | Same cost fix; distinct code path justifies keeping separate (or merge the pair with a direction bit to free a slot). |
+| jolt-eval | `transcript_consistency_poseidon` | keep | The only jolt-owned sponge (Circom-compatible BN254); highest-risk of the three. |
+| jolt-eval | `transcript_consistency_blake2b` | merge | Blake2b512 is an upstream spongefish instantiation over the shared generic layer. Merge into one `transcript_consistency` target selecting the sponge from an input byte. |
+| jolt-eval | `transcript_consistency_keccak` | merge/delete | Duplicate of blake2b modulo an upstream permutation; ~1/3 of the transcript budget for near-zero marginal coverage. |
+| jolt-crypto | `deser_group` | improve | No-panic on decoders whose accept paths (G2 subgroup, GT r-torsion) are unreachable from random bytes. Add a decode→re-encode→decode canonical-form oracle and check in real serialized seeds. |
+| jolt-crypto | `group_arith` | improve | Fuzzes an arkworks pass-through (`scalar_mul`/`msm` delegate to arkworks); the hand-written GLV and batch-addition code has zero coverage. Repoint at a GLV-vs-`scalar_mul` differential (see new targets). |
+| jolt-crypto | `pedersen_commit` | improve | Rebuilds the generator setup every iteration (hoist to `OnceLock`); pins vector length to capacity (vary it to hit the prefix path); add homomorphism and single-position negative oracles. |
+| jolt-dory | `deser_commitment` | keep* | Correct defensive target for the `MAX_SERIALIZED_PROOF_ROUNDS` OOM guard, **after R1**. Add a real serialized proof/commitment seed. |
+| jolt-dory | `verify_tampered` | improve/rewrite | Byte-decodes a full `DoryProof`, so ~0% of inputs reach `verify` — degenerates into a slow `deser_commitment`. Rewrite: `OnceLock` honest proof, mutate structured `ArkDoryProof` fields, assert reject (plus R1/R2). |
+| jolt-hyperkzg | `tampered_proof` | improve | Strong must-reject oracle but re-proves a deterministic instance every iteration (hoist to `OnceLock`) and only single-field tampers. Extend the mutation menu and absorb `wrong_eval` (plus R1/R2). |
+| jolt-hyperkzg | `wrong_eval` | delete/merge | One-dimensional: every wrong scalar dies in the same branch; re-proves a deterministic instance to vary it. Fold into `tampered_proof` as one tamper class (plus R2). |
+| jolt-hyperkzg | `commit_open_verify` | delete/rebuild | Input collapses to (u64 seed, len mod 4); rebuilds the SRS every iteration; redundant with unit tests. Rebuild as `fuzzed_poly_completeness` (fuzzer-controlled evaluations over a `OnceLock` SRS) or delete (plus R1/R2). |
+
+Cross-cutting: the checked-in `jolt-eval/fuzz/seeds/*` files are placeholder
+ASCII, not exports of the rich `seed_corpus()` the invariants already define. An
+encoder from `seed_corpus()` to `Unstructured`-decodable bytes should replace
+them; the same real-seed principle applies to the crypto and PCS deserialization
+targets.
+
+### New targets in existing workspaces
+
+Net-new harnesses (the rewrites above are folded into their existing targets).
+All construct valid objects via the API and mutate structurally.
+
+| Workspace | Target | Harness shape | Oracle | Focus |
+|-----------|--------|---------------|--------|-------|
+| jolt-crypto | `glv_differential` | `OnceLock` base points; fuzzer scalars via `from_le_bytes_mod_order`; run `glv::fixed_base_vector_msm_g1` and `glv_four_scalar_mul` | equals plain `scalar_mul` | correctness |
+| jolt-crypto | `batch_addition_differential` | bounded index sets over a `OnceLock` base set; `batch_g1_additions_multi` vs naive fold-add; include duplicates/empty/repeats | equals reference | correctness |
+| jolt-field | `signed_accumulator_diff` | sequences of (small signed scalar, Fr) through `Fr{Signed,SmallScalar}Accumulator` and their `Naive*` counterparts | `reduce()` equality | correctness |
+| jolt-field | `canonical_decode_boundary` | 32-byte encodings biased around the modulus (`<r`, `=r`, `r+small`, `2²⁵⁶−1`); decode then re-encode | re-encoding canonical and equal to `num-bigint` `mod r` | defensive |
+| jolt-poly | `eq_poly_diff` | random point (≤10 vars); `EqPolynomial::evaluations` vs `eq_index_msb` per index vs split-eq reconstruction | entry-wise equality across implementations | correctness |
+| jolt-poly | `compressed_roundtrip` | random `UnivariatePoly` → `CompressedPoly` (drop c₁) → recover via hint and `evaluate_with_hint` | recovered eval equals uncompressed | soundness |
+| jolt-sumcheck | `honest_then_corrupt` | honest prove over a small MLE product, then one fuzzer corruption (flip coeff, perturb sum, drop/dup round, inflate degree) | verifier rejects, or returned claim differs from true evaluation (discharge) | soundness |
+| jolt-sumcheck | `clear_vs_compressed_diff` | same rounds fed to `verify` and `verify_compressed` with matching labels | identical accept/reject and `EvaluationClaim` | soundness |
+| jolt-transcript | `encoding_injectivity` | op sequences that concatenate to the same bytes with different boundaries (`append("ab")` vs `append("a"),append("bc")`; label/length-prefix variants) | `state()` differs whenever the structured ops differ | soundness |
+| jolt-dory | `zk_mode_confusion` | `OnceLock` SRS; fuzzer evals; `commit_zk`/`open_zk`/`verify_zk` accept, then assert non-ZK `verify` rejects the ZK proof and vice versa | completeness + mode-confusion must-reject | soundness |
+| jolt-eval | `compact_poly_bind_equivalence` | small-scalar coeff vectors + challenges; `CompactPolynomial::bind` (both orders) vs field-promoted `DensePolynomial` bind, per round | equals reference | correctness |
+| jolt-eval | `transcript_narg_robustness` | honest NARG + fuzzer (offset, xor) mutations replayed through `verifier_transcript` | no panic/unbounded alloc; a mutation to absorbed bytes changes a later challenge | soundness |
+| jolt-eval | `legacy_transcript_digest_compat` | shared op sequence through `LegacyBlake2bTranscript` and legacy `Blake2bTranscript` | identical challenge streams (proof-compat boundary) | correctness |
+
+### New fuzz workspaces (ranked)
+
+Five uncovered crates warrant workspaces, ordered by soundness value per unit of
+engineering effort. Each entry names its best 1–2 targets; all use the
+fixture-once, mutate-structurally pattern.
+
+1. **jolt-verifier** — the system's must-reject surface. `proof_tamper_must_reject`:
+   generate one real `muldiv` proof into a `OnceLock` (the JVCF fixture cache and
+   the `MutationStrategy` taxonomy in `tests/support/tamper_manifest.rs` already
+   exist), apply one structured mutation per iteration, assert `verify` returns
+   `Err`. Add cheap `proof_deserialize_no_panic` (bincode decode) and
+   `validate_inputs_no_panic` (scalar config validation, no crypto). Cost:
+   seconds once, then mostly early-stage rejects. Fixtures need the
+   `prover-fixtures`/`host` build.
+2. **tracer (+ jolt-program)** — two independently maintained RISC-V decoders,
+   `tracer::Instruction::decode` and `jolt_program::decode_instruction`, over the
+   same ISA. `decode_differential`: fuzz a u32 word (and a compressed halfword via
+   `uncompress_rv64_instruction`), decode with both, assert accept/reject parity
+   and matching kind/operands. A divergence means the emulator executes one
+   instruction while bytecode preprocessing proves another — direct soundness
+   impact, microsecond iterations. Add `single_instruction_execute_no_panic`
+   (x0 stays 0, registers canonically sign-extended).
+3. **jolt-lookup-tables** — the cheapest pure soundness oracle in the repo.
+   `mle_materialize_equivalence`: fuzz (table-kind byte, u128 index),
+   assert `F::from_u64(materialize_entry(i)) == evaluate_mle(bits(i))` across the
+   ~40 tables; `prefix_suffix_combine_equivalence`: assert `combine(prefixes,
+   suffixes) == materialize_entry(i)` — the decomposition the sumcheck uses.
+   ~128 field mults per iteration; the `pub(crate)` test helpers need a
+   `test-utils` feature or ~20 lines re-implemented.
+4. **jolt-program (+ common)** — the only genuine attacker-controlled byte parser
+   in the uncovered set. `decode_elf_no_panic`: raw bytes → `decode_elf`, seeded
+   with a minimal valid RV64 ELF, no panic/OOM and structural invariants on
+   success. Add `bytecode_preprocess_pc_mapping` (PC map injective/round-trips)
+   and `memory_layout_invariants` (`MemoryLayout::new` under `catch_unwind`,
+   regions disjoint and ordered).
+5. **jolt-r1cs** — operationalizes the repo's most-emphasized invariant
+   (claim computation equals its R1CS constraint). `claim_lowering_equivalence`:
+   fuzz a small `Expr` plus source values, evaluate directly, lower via
+   `lower_claim_expr`, assign the witness, assert the lowered constraint
+   reproduces the value. Microseconds per iteration, no PCS.
+
+Deferred: **jolt-blindfold** (valuable, but its prover harness is trapped in
+`tests/support` and jolt-verifier ZK-mode tampering already exercises
+`BlindFoldProof` end-to-end) and **jolt-openings** (a prefix-packing layout
+target is worthwhile and can piggyback on jolt-r1cs or a small later workspace).
+**jolt-witness**, **jolt-claims** (covered via jolt-r1cs), and
+**jolt-prover-legacy** (no standalone attacker surface; heaviest build) are out
+of scope. These realize the earlier
+[soundness-focused target roadmap](#soundness-focused-target-roadmap) with
+concrete harness shapes.
+
+### Budgets, evaluation, and commits for this phase
+
+Budgets follow the existing manifest policy: soundness targets get the largest
+tiers, differential/correctness targets a middle tier (they are cheap but their
+oracle is strong), and defensive/no-panic targets the smallest. New targets are
+added with conservative priors and recalibrated by the same procedure as Phase 1
+once the weekly runs produce data. Repurposed and merged targets return their
+freed budget to the pool; merging the three `transcript_consistency_*` targets
+into one, and folding `wrong_eval` into `tampered_proof`, roughly offsets the new
+targets' cost.
+
+Phase 2 acceptance criteria:
+
+- [ ] Every fuzz target builds under the pinned nightly and ASan; `check` (or a
+      CI step) runs `cargo fuzz build`/`cargo check` per target and fails on a
+      build error (closes R1/R2/R3).
+- [ ] No target's default seed early-returns before the code under test; a test
+      asserts each seed reaches past the harness's input gates.
+- [ ] Every soundness target uses a must-reject or discharge oracle, not
+      no-panic; every correctness target asserts equality against a reference or
+      second implementation.
+- [ ] Deterministic, input-independent fixtures are built once per process
+      (`OnceLock`), verified by the absence of per-iteration setup in the
+      throughput-sensitive targets.
+- [ ] The three `transcript_consistency_*` targets are one target; `wrong_eval`
+      is folded into `tampered_proof`; `group_arith` exercises GLV/batch-addition;
+      `sumcheck_verifier` exercises `verify_compressed`.
+- [ ] At least the top three ranked new workspaces (jolt-verifier, tracer,
+      jolt-lookup-tables) exist with their listed targets, seeds, budgets, and
+      lockfiles, and pass discovery and `check`.
+
+Commit structure (independently reviewable, on top of the Phase 1 commits):
+
+1. `fix(fuzz): repair crypto and PCS fuzz builds` — R1 patch blocks, R2 API
+   updates, and the `check` compile step (R3).
+2. `test(fuzz): strengthen field, poly, and sumcheck oracles` — the improve
+   verdicts and dead-seed fixes in the cheap workspaces.
+3. `test(fuzz): consolidate transcript and PCS targets` — the merges/deletions
+   and `OnceLock` fixture hoists.
+4. `test(fuzz): add structure-aware targets to existing workspaces` — the
+   net-new targets table.
+5. `test(fuzz): add jolt-verifier fuzz workspace` — ranked new workspace 1.
+6. `test(fuzz): add tracer decode-differential workspace` — ranked 2.
+7. `test(fuzz): add jolt-lookup-tables fuzz workspace` — ranked 3.
+
+Later workspaces (jolt-program, jolt-r1cs) follow the same one-workspace-per-
+commit pattern.
 
 ## References
 
