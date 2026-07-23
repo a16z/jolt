@@ -28,6 +28,9 @@ extras = ["jolt-dory", "jolt-akita", "jolt-hyperkzg", "tracer"]
 jolt-sumcheck = ["default", "r1cs"]
 jolt-claims = ["default", "field-inline"]
 jolt-r1cs = ["default", "field-inline"]
+# image gates the ELF loader + RV64 decoder; field-inline is additive
+jolt-program = ["default", "image,field-inline"]
+jolt-riscv = ["default", "field-inline"]
 jolt-verifier = [
     "default",
     { features = "prover-fixtures", release = true },
@@ -57,8 +60,9 @@ jolt-verifier-derive = 90
 tracer = 65
 
 [soundness]
-# 97/113 tamper targets active at baseline; must not regress.
-tamper_active_ratio_min = 0.85
+# 111/113 tamper targets active post-sweep (the two exceptions carry
+# documented justifications in the manifest); must not regress.
+tamper_active_ratio_min = 0.98
 
 # Per-crate error-variant coverage floors. Report-only until pinned:
 # crates absent from this table are printed but not enforced.

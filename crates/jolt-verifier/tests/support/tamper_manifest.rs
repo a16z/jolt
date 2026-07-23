@@ -654,8 +654,8 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         "claims.stage4.ram_val_check.program_image",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the staged program-image init contribution",
+        TamperCoverage::Active,
+        "committed fixture offsets the staged program-image init contribution",
     ),
 ];
 
@@ -884,16 +884,16 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "claims.stage6a.bytecode_read_raf.val_stages",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets each staged bytecode Val-stage claim",
+        TamperCoverage::Active,
+        "committed fixture offsets each staged bytecode Val-stage claim",
     ),
     checked_standard(
         "stage6.claims.bytecode_reduction.intermediate",
         "claims.stage6b.bytecode_reduction.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the bytecode reduction cycle-phase intermediate output claim",
+        TamperCoverage::Active,
+        "committed fixture offsets the bytecode reduction cycle-phase intermediate output claim",
     ),
     checked_standard(
         "stage6.claims.bytecode_reduction.chunks",
@@ -908,8 +908,8 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "claims.stage6b.program_image_reduction.program_image",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the program-image reduction cycle-phase output claim",
+        TamperCoverage::Active,
+        "committed fixture offsets the program-image reduction cycle-phase output claim",
     ),
 ];
 
@@ -983,16 +983,16 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         "claims.stage7.bytecode_address_phase.chunks",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets each final bytecode chunk claim",
+        TamperCoverage::Active,
+        "committed fixture offsets each final bytecode chunk claim",
     ),
     checked_standard(
         "stage7.claims.program_image_address_phase",
         "claims.stage7.program_image_address_phase.program_image",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the final program-image claim",
+        TamperCoverage::Active,
+        "committed fixture offsets the final program-image claim",
     ),
 ];
 
