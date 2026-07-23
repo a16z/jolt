@@ -591,7 +591,7 @@ impl ZkBatchOpeningScheme for AkitaNativeBatching {
         _hints: Self::Hints,
         _evaluations: Vec<Self::Field>,
         _transcript: &mut T,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    ) -> Result<jolt_openings::ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>,

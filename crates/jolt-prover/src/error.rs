@@ -34,6 +34,12 @@ pub enum ProverError<F: FieldCore> {
     /// retrying with different inputs or another backend.
     #[error("prover invariant violated: {reason}")]
     InvariantViolation { reason: &'static str },
+
+    /// The BlindFold tail failed: witness assembly or the folding proof
+    /// itself.
+    #[cfg(feature = "zk")]
+    #[error(transparent)]
+    BlindFold(#[from] jolt_blindfold::ProverError<F>),
 }
 
 /// Route the typed kernel seam's extraction/self-check failures through
