@@ -59,30 +59,30 @@ No existing `jolt-eval` invariant changes. The gates are CI tooling; their trust
 
 Infrastructure:
 
-- [ ] `coverage.yml` runs on every PR: computes the closure at runtime, validates config completeness (invariants 1–2), runs `cargo llvm-cov nextest` for each in-scope crate under each of its declared feature paths, merges profiles per crate, and fails if any crate's cumulative line coverage is below its floor (invariant 3).
-- [ ] `jolt-verifier`'s `prover-fixtures` path runs in the PR job with fixture caching keyed on the legacy-prover fingerprint (lockfile hash + `crates/jolt-prover-legacy` tree hash), so warm runs skip proof generation.
-- [ ] `coverage_gate.py` and `soundness_metrics.py` self-tests run at the start of the coverage job and gate it.
+- [x] `coverage.yml` runs on every PR: computes the closure at runtime, validates config completeness (invariants 1–2), runs `cargo llvm-cov nextest` for each in-scope crate under each of its declared feature paths, merges profiles per crate, and fails if any crate's cumulative line coverage is below its floor (invariant 3).
+- [x] `jolt-verifier`'s `prover-fixtures` path runs in the PR job with fixture caching keyed on the legacy-prover fingerprint (lockfile hash + `crates/jolt-prover-legacy` tree hash), so warm runs skip proof generation.
+- [x] `coverage_gate.py` and `soundness_metrics.py` self-tests run at the start of the coverage job and gate it.
 - [ ] `coverage-nightly.yml` runs `cargo mutants` over the module list in `ci/mutants-modules.toml` and publishes a report (step summary + artifact); it never gates merges.
 - [ ] `test-quality.yml` fires the hosted routine on PRs whose diff touches test code (paths filter: `**/tests/**` plus files with modified `#[cfg(test)]`/`#[test]` hunks); the routine posts a PR review with per-test scores, dimension breakdowns, and rework-or-delete suggestions for scores < 7; schema-validated (invariant 4); advisory at merge.
-- [ ] Soundness metrics are computed per closure crate and enforced against floors (invariant 5): error-variant coverage (fraction of error-enum variants whose `Err(...)` construction sites execute during tests, from llvm-cov region data) and tamper-manifest active ratio (from `jolt-verifier/tests/support/tamper_manifest.rs` dispositions).
+- [x] Soundness metrics are computed per closure crate and enforced against floors (invariant 5): error-variant coverage (fraction of error-enum variants whose `Err(...)` construction sites execute during tests, from llvm-cov region data) and tamper-manifest active ratio (from `jolt-verifier/tests/support/tamper_manifest.rs` dispositions).
 
 Sweep (same PR, after infra):
 
 - [ ] Every in-scope crate reaches ≥ 80% cumulative line coverage across its declared feature paths, or carries a documented exception comment in `coverage-floors.toml` explaining why the target is unreachable and what the achievable floor is.
 - [ ] Floors in `coverage-floors.toml` are pinned at post-sweep measured values (rounded down to the integer), and the coverage job passes on the final commit.
-- [ ] `jolt-blindfold`: the real `prove()` is exercised — prover↔verifier round-trip tests, a differential test against the harness prover in `tests/support/`, and a bad-witness-rejected test (`validate_witness` / `ensure_row_capacity`).
-- [ ] `jolt-verifier`: tamper tests assert the expected `VerifierError` variant/stage recorded in the manifest's `checked_at`, not bare `Err(_)`; the 16 `Deferred`/`IgnoredUntilFixture` tamper targets are activated or carry per-target justification.
-- [ ] `jolt-transcript`: pinned known-answer vectors for `LegacyBlake2bTranscript` (state chaining, `challenge_bytes` chunking, label packing) and for the `challenge_scalar` decode path.
-- [ ] `jolt-riscv`: RVC decode battery covering every `uncompress.rs` expansion arm plus the illegal-encoding fallthrough.
-- [ ] `jolt-program`: malformed/truncated-ELF and ELF32 rejection tests, `merge_ranges` unit tests, immediate sign-extension and B/J/S/U reassembly tests in `image/decode.rs`, and the RAM-domain error branches (`HeapBelowLowest`, `DomainTooLarge`).
-- [ ] `jolt-field`: randomized `x.square() == x * x` checks for the Fp128 squaring kernels, pseudo-Mersenne registry self-consistency (`modulus == 2^bits − offset`, alias agreement), `MontgomeryConstants` invariant check, and the `from_bytes` fuzz target compiles again.
-- [ ] `jolt-poly`: tests for `gruen_poly_deg_3`, `gruen_poly_from_evals`, `e_out_in_for_window`, `e_active_for_window`, and the `new_with_scaling` path in `split_eq.rs`.
-- [ ] `jolt-openings`: soundness-negative tests for the ZK batch path (tampered commitment, wrong point) — not just witness-count validation.
-- [ ] `jolt-r1cs`: rv64 constraint satisfaction tests with realistic (non-noop) instruction witnesses.
-- [ ] `jolt-crypto`: GLV decomposition reconstruction identity (`k0 + k1·λ (+ k2·λ² + k3·λ³) ≡ k mod r`) including near-boundary scalars.
-- [ ] `jolt-claims`: tests for `outer_uniskip.rs` / `product_uniskip.rs` relations and `symbolic.rs`; serde round-trips for the claim types crossing the proof boundary.
-- [ ] `jolt-sumcheck`: compressed-encoding tamper test; `BatchedCommittedSumcheckConsistency` offset/overflow error branches.
-- [ ] `jolt-dory` / `jolt-hyperkzg` / `jolt-akita`: transcript-adapter byte-layout golden test; `WrongEvaluationWidth` negative test; Jolt↔Akita basis-order index KAT.
+- [x] `jolt-blindfold`: the real `prove()` is exercised — prover↔verifier round-trip tests, a differential test against the harness prover in `tests/support/`, and a bad-witness-rejected test (`validate_witness` / `ensure_row_capacity`).
+- [x] `jolt-verifier`: tamper tests assert the expected `VerifierError` variant/stage recorded in the manifest's `checked_at`, not bare `Err(_)`; the 16 `Deferred`/`IgnoredUntilFixture` tamper targets are activated or carry per-target justification.
+- [x] `jolt-transcript`: pinned known-answer vectors for `LegacyBlake2bTranscript` (state chaining, `challenge_bytes` chunking, label packing) and for the `challenge_scalar` decode path.
+- [x] `jolt-riscv`: RVC decode battery covering every `uncompress.rs` expansion arm plus the illegal-encoding fallthrough.
+- [x] `jolt-program`: malformed/truncated-ELF and ELF32 rejection tests, `merge_ranges` unit tests, immediate sign-extension and B/J/S/U reassembly tests in `image/decode.rs`, and the RAM-domain error branches (`HeapBelowLowest`, `DomainTooLarge`).
+- [ ] *(deferred — the `solinas` feature is not on `main` yet; these land with the Solinas field stack branch)* `jolt-field`: randomized `x.square() == x * x` checks for the Fp128 squaring kernels, pseudo-Mersenne registry self-consistency (`modulus == 2^bits − offset`, alias agreement), `MontgomeryConstants` invariant check, and the `from_bytes` fuzz target compiles again.
+- [x] `jolt-poly`: tests for `gruen_poly_deg_3`, `gruen_poly_from_evals`, `e_out_in_for_window`, `e_active_for_window`, and the `new_with_scaling` path in `split_eq.rs`.
+- [x] `jolt-openings`: soundness-negative tests for the ZK batch path (tampered commitment, wrong point) — not just witness-count validation.
+- [x] `jolt-r1cs`: rv64 constraint satisfaction tests with realistic (non-noop) instruction witnesses.
+- [x] `jolt-crypto`: GLV decomposition reconstruction identity (`k0 + k1·λ (+ k2·λ² + k3·λ³) ≡ k mod r`) including near-boundary scalars.
+- [x] `jolt-claims`: tests for `outer_uniskip.rs` / `product_uniskip.rs` relations and `symbolic.rs`; serde round-trips for the claim types crossing the proof boundary.
+- [x] `jolt-sumcheck`: compressed-encoding tamper test; `BatchedCommittedSumcheckConsistency` offset/overflow error branches.
+- [x] `jolt-dory` / `jolt-hyperkzg` / `jolt-akita`: transcript-adapter byte-layout golden test; `WrongEvaluationWidth` negative test; Jolt↔Akita basis-order index KAT.
 - [ ] All new sweep tests score ≥ 7 under the rubric (the routine's first full workout is this PR's own sweep).
 - [ ] Full workspace `cargo nextest run --cargo-quiet` passes; `muldiv` e2e passes under `--features host` and `--features host,zk`; clippy is clean in both modes.
 

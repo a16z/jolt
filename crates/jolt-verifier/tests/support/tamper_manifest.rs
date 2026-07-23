@@ -901,7 +901,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the bytecode reduction cycle-phase per-chunk output claims",
+        "cycle-phase-only committed shapes emit final chunks at stage 6, but every current committed fixture has an address phase; needs a cycle-phase-only fixture",
     ),
     checked_standard(
         "stage6.claims.program_image_reduction.program_image",
