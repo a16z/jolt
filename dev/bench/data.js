@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784820802826,
+  "lastUpdate": 1784848966199,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -126130,6 +126130,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 871764,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "04d39d6028dac11e59e8633c7963b2d793afcd63",
+          "message": "feat: Akita lattice PCS integration — jolt-prover-legacy packed prover (#1676)\n\n* feat: Akita lattice PCS integration — verifier path and shared semantics\n\nBrings the verifier-side Akita integration onto main as one commit:\nthe fused increment claim pipeline (IncVirtualization as its own stage,\nthe stage-6b fused-inc reduction, the stage-7 lattice hamming\nmega-reduction with the decode identity), MSB as a uniform one-hot\nmember, the native W_jolt one-hot group opened directly at one common\npoint behind layout-digest/metadata validation, the shared K=16/K=256\ntrace-length toggle, jolt-owned schedule catalogs injected through\nakita's catalog hook, and the joint packed opening for auxiliary\nobjects. Includes the claims-level akita feature with the cfg'd\nNUM_BYTECODE_VAL_STAGES const and fixed-size stage arrays, the\nconsolidated derive verify_clear with String stage labels, and the\nappend_length_prefixed transcript absorber rename (review feedback,\nmoodlezoup). Protocol design of the fused pipeline and native opening\nby Quang Dao (quangvdao).\n\nakita deps pin markosg04/akita @ cb13b79f (upstream main through the\nquantum SIS cutover + the K16 preset now upstream as\nLayerZero-Labs/akita#308); re-pin to upstream on its merge.\n\nMinimal jolt-prover-legacy compat touches (full prover lands in the\nfollow-up PR): the three jolt_verifier::verify call sites drop the\nremoved zk argument. The akita fixture-driven tamper suite rides the\nprover PR (it generates fixtures through the akita prover), so the\nakita,prover-fixtures feature combo activates there.\n\nGates: workspace clippy strict (base, akita, prover-fixtures,\njolt-prover/kernels); muldiv e2e host + host,zk with main's prover;\nverifier suites 75 base / 77 akita; modular crates green; fmt; typos.\n\n* feat: Akita lattice PCS integration — jolt-prover-legacy packed prover\n\nThe prover half of the Akita integration, on top of the verifier PR:\nthe packed prove pipeline (W_jolt one-hot witness assembly and group\ncommit, IncVirtualization between stages 5 and 6a, the stage-6b\nfused-inc reduction, the stage-7 lattice hamming mega-reduction, the\nreconstruction phase, native W_jolt open_batch at the common point with\nauxiliary objects through the joint packed opening), the verifier-native\ntranscript facade, the Fp128 JoltField implementation, and the akita\ncargo feature following the shared K=16/K=256 trace-length toggle.\n\nRestores the verifier's akita fixture-driven tamper suite (it generates\nfixtures through this prover): the exhaustive typed claim-wire sweep,\nbyte-level commitment sweeps, and proof-shape tampers, with all akita\nmanifest entries Active; plus the akita,prover-fixtures feature forward\nand CI lanes (prover host,akita clippy + the test-prover-akita job).\n\ne2e coverage: muldiv / advice / committed-program / forced-K256 with\nlive claim-wire tampers. Perf at 2^20 sha2-chain, same machine\nback-to-back: prove 8.19s vs dory 13.64s (1.67x faster); verify 36.8ms\nvs 610ms; setup ~83s per shape (offline, cacheable — a quantum\nSIS-table cost, tracked with the remaining prover levers).\n\nProtocol design by Quang Dao (quangvdao, #1683).\n\nGates: full prover suites 443 host / 443 host,akita + muldiv host,zk;\nakita e2es x4; verifier fixture suite 84; clippy strict across modes;\nfmt; typos.\n\n* refactor(bytecode-read-raf): size staged values by NUM_BYTECODE_VAL_STAGES\n\nAddress review: replace the Vec-typed committed publics/inputs and the\n([F; 5], bool) / ([F; 5], F) store side-channels with\n[_; NUM_BYTECODE_VAL_STAGES] arrays (5 base, 6 akita). The lattice store\nstage is now read_raf_row_values' sixth staged value, folded uniformly by\nfold_stage_values; the stage-6b akita arm resolves StageValue(5) from the\nstaged array instead of a separate store fold.\n\nGates: clippy base/akita/zk+fixtures clean; jolt-claims+kernels+prover 191\ntests; jolt-verifier 118 base (prover-fixtures) / 77 akita; muldiv e2e\nhost and host,zk.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(akita): dissolve IncVirtualization into the bytecode read-raf\n\nThe standalone log_T-round IncVirtualization phase (between stages 5 and\n6a) and the stage-6b FusedIncClaimReduction member both disappear: the\nbytecode read-raf gains four fused-inc consumer val stages that discharge\nthe four reduced inc claims directly.\n\nSubstituting Store(j) = sum_k val_store(k) ra(k,j) (and its complement,\nvalid because bytecode ra is one-hot per cycle) into the fused-inc\nidentities FusedInc*Store = RamInc and FusedInc*(1-Store) = RdInc turns\neach inc claim into a read-raf-shaped stage: a bytecode val column\n(store/notstore), the producing relation's cycle point, and the shared RA\nproduct, with one shared FusedInc cycle factor (cycle-phase degree d+1 ->\nd+2). The four claims are all available before stage 6a, so the timing\npin that forced the standalone phase (its store-selector opening feeding\nthe read-raf input fold) is gone, and no store opening exists anywhere.\n\n- jolt-claims: LatticeReadRafAddressPhase folds the inc claims at\n  gamma^5..8 (pc/shift/entry shift to gamma^9..11); new lattice cycle\n  symbolics carry the FusedInc opening; committed mode resolves the fused\n  stages through the staged store val and 1 - store, so the staged-val\n  wires are unchanged; READ_RAF_CYCLE_STAGES (5 base / 9 akita) sizes the\n  cycle-point and cycle-eq arrays, distinct from the staged-val wire\n  count; the stage-7 hamming decode leg re-points to\n  FusedInc@BytecodeReadRaf (same 6b cycle point).\n- jolt-verifier: the inc-virtualization stage, its proof field and claims\n  block, and the fused 6b member are deleted; stage 6a wires the four inc\n  claims from stages 2/4/5; stage 6b builds nine cycle points and\n  resolves the fused stages from the staged store fold.\n\nProof shrinks by the standalone phase (log_T degree-3 round polys and two\nclaim cells) net of one extra coefficient per 6b round; one fewer\nFiat-Shamir stage. The prover half lands with the jolt-prover-legacy\nintegration (#1676).\n\n* refactor(bytecode-read-raf): size staged values by NUM_BYTECODE_VAL_STAGES\n\nAddress review: replace the Vec-typed committed publics/inputs and the\n([F; 5], bool) / ([F; 5], F) store side-channels with\n[_; NUM_BYTECODE_VAL_STAGES] arrays (5 base, 6 akita). The lattice store\nstage is now read_raf_row_values' sixth staged value, folded uniformly by\nfold_stage_values; the stage-6b akita arm resolves StageValue(5) from the\nstaged array instead of a separate store fold.\n\nGates: clippy base/akita/zk+fixtures clean; jolt-claims+kernels+prover 191\ntests; jolt-verifier 118 base (prover-fixtures) / 77 akita; muldiv e2e\nhost and host,zk.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* perf(akita): lazy chunk columns, parallel pushforwards, Gruen fused-inc\n\n- LatticeBooleanityCycle chunk/msb columns bind lazily via RaPolynomial\n  (index-form through rounds 0-2) instead of materializing 17 full T-sized\n  coefficient vectors up front\n- one_hot_pushforwards: shared split-eq scatter for the 6a chunk G tables\n  and the stage-7 increment pushforwards (one eq product per cycle, chunked\n  parallel with cache-resident accumulators; stage 7 was single-threaded\n  over a fully materialized eq table)\n- FusedIncClaimReduction: GruenSplitEqPolynomial + parallel fold-out-in\n  (compute_message was a serial 2^(log_T-1) loop over a dense eq table)\n- LatticeIncColumns carries Arc'd Option<u8> lanes end to end: no more\n  double lane clones into 6a and no fused-column clone into 6b\n\nAt 2^24 sha2-chain this takes the packed prove 156.6s -> 150.3s (stage 6b\n23.1s -> 14.4s) and drops ~4 GiB of peak memory.\n\n* feat(akita): dissolve IncVirtualization into the bytecode read-raf\n\nThe standalone log_T-round IncVirtualization phase (between stages 5 and\n6a) and the stage-6b FusedIncClaimReduction member both disappear: the\nbytecode read-raf gains four fused-inc consumer val stages that discharge\nthe four reduced inc claims directly.\n\nSubstituting Store(j) = sum_k val_store(k) ra(k,j) (and its complement,\nvalid because bytecode ra is one-hot per cycle) into the fused-inc\nidentities FusedInc*Store = RamInc and FusedInc*(1-Store) = RdInc turns\neach inc claim into a read-raf-shaped stage: a bytecode val column\n(store/notstore), the producing relation's cycle point, and the shared RA\nproduct, with one shared FusedInc cycle factor (cycle-phase degree d+1 ->\nd+2). The four claims are all available before stage 6a, so the timing\npin that forced the standalone phase (its store-selector opening feeding\nthe read-raf input fold) is gone, and no store opening exists anywhere.\n\n- jolt-claims: LatticeReadRafAddressPhase folds the inc claims at\n  gamma^5..8 (pc/shift/entry shift to gamma^9..11); new lattice cycle\n  symbolics carry the FusedInc opening; committed mode resolves the fused\n  stages through the staged store val and 1 - store, so the staged-val\n  wires are unchanged; READ_RAF_CYCLE_STAGES (5 base / 9 akita) sizes the\n  cycle-point and cycle-eq arrays, distinct from the staged-val wire\n  count; the stage-7 hamming decode leg re-points to\n  FusedInc@BytecodeReadRaf (same 6b cycle point).\n- jolt-verifier: the inc-virtualization stage, its proof field and claims\n  block, and the fused 6b member are deleted; stage 6a wires the four inc\n  claims from stages 2/4/5; stage 6b builds nine cycle points and\n  resolves the fused stages from the staged store fold; fixture tamper\n  coverage moves to the read-raf fused opening.\n- jolt-prover-legacy: LATTICE_N_STAGES = 9; the address-phase pushforwards\n  weight the fused stages by the per-cycle delta; the cycle prover binds\n  the fused stream alongside the RA chunks and opens it at the bound\n  cycle point; the committed bytecode reduction still folds six staged\n  vals.\n\nProof shrinks by the standalone phase (log_T degree-3 round polys and two\nclaim cells) net of one extra coefficient per 6b round; one fewer\nFiat-Shamir stage. Measured at 2^24 sha2-chain: sumcheck payload 1114 ->\n1066 field elements; prove time unchanged within noise.\n\n* nit\n\n* docs(lattice): update the claims spec for the read-raf inc dissolution\n\nspecs/lattice-claims.md still described the superseded protocol (the\nstandalone IncVirtualization phase and the stage-6b FusedIncClaimReduction\nmember). Rewritten per the review follow-up:\n\n- scope, module inventory, and typed ids drop the two deleted relations;\n  relations/read_raf.rs joins the module tree\n- the inc one-hotting chain's first section now specifies the four fused-inc\n  consumer val stages at gamma^5..8 with the Store substitution, and the\n  second (point-alignment) section is gone — the FusedInc opening is born at\n  the shared 6b cycle point\n- the store-binding section states the structural binding (no selector\n  opening; the raw Store column stays the sixth staged-value wire)\n- READ_RAF_CYCLE_STAGES = 9 vs NUM_BYTECODE_VAL_STAGES = 6 made explicit\n- stage-7 inputs and the verifier/prover schedule re-pointed\n\n* perf(akita): one-hot trace follow-ups — naming and catalog setup sizing\n\nVerifier-side half of the #1685 follow-ups, re-expressed over the read-raf\ninc dissolution and the staged-value array refactor:\n\n- rename: the native committed group W_jolt becomes OneHotTrace and its\n  members become columns (one_hot_trace_columns, OneHotTraceLayout/Plan/\n  SetupShape, ONE_HOT_TRACE_LAYOUT, OneHotTraceCommitmentMetadata/\n  SetupMetadata); prose sweeps in the lattice specs\n- streamlined commitments: the scheme gains commit_one_hot_group_owned and\n  open_one_hot_group_from_hint so the prover commits owned columns and\n  opens from the hint without retaining the witness\n- catalog setup sizing: production OneHotTrace setup envelopes computed\n  from the checked-in K=16/K=256 schedule catalogs (every catalogued\n  sub-shape plus exact root A/B/D footprints, with overflow and\n  scalar-layout guards), replacing planner-DP scans; upstream planner\n  fallback retained for non-production shapes; only the fp128 D64 full and\n  one-hot schedule families are enabled\n\nThe packed-prover half lands with #1676.\n\n* nit\n\n* docs(lattice): update the claims spec for the read-raf inc dissolution\n\nspecs/lattice-claims.md still described the superseded protocol (the\nstandalone IncVirtualization phase and the stage-6b FusedIncClaimReduction\nmember). Rewritten per the review follow-up:\n\n- scope, module inventory, and typed ids drop the two deleted relations;\n  relations/read_raf.rs joins the module tree\n- the inc one-hotting chain's first section now specifies the four fused-inc\n  consumer val stages at gamma^5..8 with the Store substitution, and the\n  second (point-alignment) section is gone — the FusedInc opening is born at\n  the shared 6b cycle point\n- the store-binding section states the structural binding (no selector\n  opening; the raw Store column stays the sixth staged-value wire)\n- READ_RAF_CYCLE_STAGES = 9 vs NUM_BYTECODE_VAL_STAGES = 6 made explicit\n- stage-7 inputs and the verifier/prover schedule re-pointed\n\n* perf(akita): one-hot trace follow-ups — naming, streamlined commits, catalog setup sizing\n\nPort of #1685 (quangvdao), re-expressed over the read-raf inc dissolution\nand the staged-value array refactor. Three parts:\n\n- rename: the native committed group W_jolt becomes OneHotTrace and its\n  members become columns (one_hot_trace_columns, OneHotTraceLayout/Plan/\n  SetupShape, ONE_HOT_TRACE_LAYOUT, OneHotTraceCommitmentMetadata/\n  SetupMetadata); LatticeIncColumns -> FusedIncColumns, FusedIncCycle ->\n  FusedIncValue; advice/program objects follow (commit_advice_one_hot,\n  commit_program_one_hot, program_one_hot_commitment label); prose sweeps\n  in the lattice specs\n- streamlined commitments: assemble_one_hot_trace feeds\n  commit_one_hot_group_owned, and stage 8 opens from the commit hint\n  (open_one_hot_group_from_hint) instead of retaining the full witness\n- catalog setup sizing: production OneHotTrace setup envelopes computed\n  from the checked-in K=16/K=256 schedule catalogs (every catalogued\n  sub-shape plus exact root A/B/D footprints, with overflow and\n  scalar-layout guards, ~28 ms), replacing planner-DP scans; upstream\n  planner fallback retained for non-production shapes; only the fp128 D64\n  full and one-hot schedule families are enabled\n- bench: the sha2-chain harness times verifier preprocessing separately\n\nReconciliation deltas vs the source branch: FusedIncColumns keeps the\nArc'd Option<u8> lane shape from the lazy-binding perf pass; the\nIncVirtualization phase and FusedIncClaimReduction member it still carried\ndo not return (dissolved into the read-raf); prove_stage6b takes the fused\ncolumn by mem::take.\n\n* review: shape-guard Akita deserialization, fix schedule drift oracle, CI lanes, cleanups\n\nAddresses quangvdao's pre-merge review on #1675:\n\n- jolt-akita: derive the expected backend commitment coefficient count and\n  batched proof shape from the trusted verifier setup / resolved schedule\n  (shape_guard module), rejecting mismatches before any shape-backed\n  allocation; require exact byte consumption on every backend\n  deserialization; add malformed-shape unit and wire-level tests.\n- schedules drift test: compare planner-regenerated catalogs by token\n  stream instead of byte-for-byte (the emitter output is unformatted while\n  checked-in modules are rustfmt-formatted outside the rustfmt::skip\n  tables); report the first mismatching token with context. Run it in a\n  dedicated CI lane.\n- CI: lint jolt-verifier under akita,prover-fixtures (the fixture suite\n  lands with the stacked prover PR); add the test-akita-schedules job.\n- Drop the six accidentally committed fuzz Cargo.lock files and revert\n  jolt-eval/fuzz/Cargo.lock to main (fuzz lanes regenerate lockfiles).\n- specs/lattice-claims.md: status in review, link PR #1675.\n\n* review: akita e2e + fixture CI lanes, dory proof-size readout\n\nFollow-ups to quangvdao's review on #1675/#1676:\n\n- CI: add the test-prover-akita job (release jolt-prover-legacy with the\n  akita feature — muldiv, forced-K256, advice, and committed-program packed\n  e2es) and the test-verifier-akita-fixtures job (release jolt-verifier with\n  akita,prover-fixtures — valid-fixture acceptance plus the typed\n  clear-claim, commitment-byte, proof-shape, and presence tamper sweeps),\n  plus a jolt-prover-legacy akita clippy lane. Both suites verified green\n  locally with the exact CI commands (442 and 84 tests respectively).\n- sha2_chain_dory_perf: print the postcard-serialized proof size (the akita\n  twin's verifier-native proof does not implement Serialize yet — the\n  lattice stage-claim types lack derives; follow-up).\n\n* fix(akita): drift-test failure via assert_eq, workspace clippy denies panic\n\n* ci: move akita,prover-fixtures clippy lane to the prover PR\n\nThe combo cannot compile on this branch: prover-fixtures pulls in\njolt-prover-legacy, whose dory-only stage structs mismatch the akita-shaped\nverifier until the packed prover lands (#1676, where the lane now lives).\n\n* refactor(akita): delete dead code around the packed witness\n\n- Drop assemble_one_hot_trace_columns and ColumnCells: production assembles\n  OneHotTrace columns in packed.rs, and the dead copy's padding semantics\n  (all-zero rows) had already diverged from the live lane-0/MSB-hot encoding.\n  The encoding tests it carried now pin FusedIncValue directly.\n- Drop the caller-less generate_witness arms for UnsignedIncChunk/Msb; the\n  Msb arm also materialized a dense column instead of the committed K-lane\n  one-hot grid. The variants now panic like their streaming twin.\n- Drop the caller-less BytecodeReadRafAddressSumcheckVerifier::new_with_stages.\n- Drop the zk assert in prove_packed: the module is cfg(not(zk)) and the\n  workspace compile_error! already rejects zk x akita.\n\nGates: clippy (host / host,zk / host,akita), muldiv e2e in all three modes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci: return the field-inline test step to test-crates\n\nInserting the test-akita-schedules job orphaned the step into the new job.\n\n* review: sort one_positions once in SparseUnitPolynomial::new\n\nConstructor establishes the ascending invariant; the per-call clone+sort in\nfor_each_row and both call-site pre-sorts drop. A unit test pins the sorted\nyield order and the no-dedup semantics.\n\n* review: gate the lattice read-raf machinery behind the akita feature\n\nThe dory build no longer carries the fused-inc field, the per-cycle\nfused-delta dispatch, or the lattice stage arms — cfg(feature = \"akita\")\nwraps them so the base hot loops compile branch-free. The akita build keeps\nits exact runtime dispatch (transcripts unchanged; packed muldiv e2es green\nin both modes).\n\n* review: stop rebuilding the advice object setup per prove\n\nTwo composing fixes for the ~0.5s of per-prove setup waste on any\nadvice-using guest:\n\n- jolt-akita: AkitaSetupParams::full_only (mirror of one_hot_only) skips the\n  one-hot backend setup — the dominant cost at advice shapes — for objects\n  that only commit through the sparse-unit/full flavor. transparent_object\n  setups (advice byte columns, the precommitted program) now use it.\n- jolt-prover-legacy: the untrusted-advice object setup is derived state of\n  max_untrusted_advice_size, so it now lives on JoltProverPreprocessing as a\n  lazily built OnceLock (skipped by serialization) and commit_advice_one_hot\n  takes the setup instead of rebuilding it; trusted advice builds its own at\n  preprocessing time as before.\n\n* review: factor the untrusted-advice reconstruction prover's representation\n\nThe dense cell-domain tables (bytes, k_bool, k_lin — ~4 GiB per kernel at\n1 MB advice, the memory cliff from review) are gone. The prover now exploits\nthe structure the relation already had: the column is a strict K=256 one-hot\nheld as per-row sparse lane weights (singleton at start, densifying only as\nrow rounds merge), eq(cell, r_ref) factors as eq_byte ⊗ eq_row with eq_row\ndoubling as the hamming kernel, and the decode kernel factors as\ngamma^2·value(byte) ⊗ place·eq_word. After the 3 + word_vars row rounds the\nstate collapses to three 256-entry lane tables.\n\nTranscript-identical: same challenges, rounds, degree, and opening — the\npre-existing closed-form test passes untouched, and a new dense-reference\ntest drives both implementations through every round comparing coefficients\nexactly (duplicate-lane, all-zero, and padding-row cases). Measured peak\nmemory for the instance: 79 MB -> 3 MB at the default 4 KB advice,\n8.4 GiB -> 176 MB at 1 MB, with prove time ~6x faster at the top size.\n\nAlso adds the advice-capacity boundary e2e (buffer filling\nmax_untrusted_advice_size exactly, non-degenerate lanes on every row) and\ndocuments the scaling in the module doc in place of a hard cap.\n\n* review: fuse the bytecode reconstruction leg passes into one parallel sweep\n\nLeg-table construction re-streamed each chunk's instruction rows once per\nleg (~40 serial passes: three register selectors, one per circuit and\ninstruction flag, raf, lookup, pc, imm). One fused sweep per chunk now fills\nevery leg's accumulator reading each row once, and chunks build in parallel.\nEvery destination sees the same addends in the same row order, so all sums\nare unchanged (closed-form test untouched, committed-program e2es green).\nThe byte-decode kernels hoist out of the chunk loop.\n\nAlso documents why the base tamper modules are cfg'd out under akita.\n\n* review: rename the Akita \"full\" flavor to \"dense\"\n\n\"full\" in the Akita context means the dense (full-field) encoding — the\ncounterpart to one-hot — and the rest of the Jolt code already says\n\"dense\". Renames the backend flavor variant, setup params\n(full_only → dense_only), setup accessor (full_backend → dense_backend),\nprover macro, verifier cache field, bench fields, and comments/messages,\nincluding the serde name and the Fiat-Shamir setup-key label (b\"full\" →\nb\"dense\"; prover and verifier share the label, and nothing outside this\nPR depends on the branch transcript). Mirrors the upstream rename in\nLayerZero-Labs/akita#324.\n\nThe D64Full type and schedules-fp128-d64-full cargo feature are upstream\nnames at the pinned akita rev and are untouched here.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat: bump akita to upstream LayerZero-Labs main (fc20716)\n\nMoves the akita dependency from the markosg04/akita fork pin (cb13b79f —\nold upstream plus the K16 one-hot preset, since merged upstream as #319)\nto upstream main at fc20716, and adapts jolt-akita to everything that\nlanded in between:\n\n- Folded-only proofs (#311) with typed fold schedules and direct\n  terminal responses (#317): AkitaBatchedProofShape is now {root,\n  recursive_folds, terminal}. The shape guard re-derives each level\n  the way the upstream verifier does — v coefficients from\n  open_rank * d_d, next-witness commitment from the successor\n  outer_rank * d_b, the stage-1 tree via DigitRangePlan::stage_shapes,\n  degree-3 stage-2 rounds, the terminal via the schedule\n  response_shape admits check — and the commitment length from the\n  suffix replay B-block rows at the B-role ring dimension.\n- Planner-selected setup offloading (#318): batched_prove/verify drop\n  the SetupContributionMode argument, setup_verifier returns Result,\n  the hand-rolled catalog setup envelope is replaced by upstream\n  setup_matrix_envelope_for_schedule, and delegate_preset! forwards\n  the new CommitmentConfig hooks (chunked_witness_cfg,\n  recursive_setup_planning, ring_subfield_embedding_norm_bound,\n  supports_multi_group_final_commit).\n- The upstream full-to-dense rename (#324): D64Full becomes D64Dense\n  and the schedules-fp128-d64-full cargo feature becomes\n  schedules-fp128-d64-dense.\n- Both schedule catalogs regenerated in the new emitter format\n  (GeneratedFoldScheduleEntry {root, recursive_folds, terminal}).\n\nThe folded-only cutover removed the zero-fold/direct-root proofs that\nsmall openings used, so shapes below the planner feasibility floor are\nno longer provable (measured at fc20716: dense x1-2 needs 13 vars,\ndense x56 needs 19, one-hot x56 needs 16). The K16 OneHotTrace group\nhas column arity 4 + log_T, so the packed pipeline now pads every\ntrace to T >= 2^12 through CommitmentScheme::MIN_PADDED_TRACE_LENGTH\n(default 256, unchanged for Dory; AkitaPackedScheme overrides to\n4096). Only guests shorter than 4096 cycles are affected. The K16 emit\ngrid narrows to 16..28 vars accordingly and the regenerated catalog\ncovers all 442 reachable keys. The floor also eliminates the\nplanner-DP recursion that overflowed the default thread stack on the\n32-byte advice e2e. jolt-akita test fixtures move from toy 1-6 var\nshapes to 13+ vars to sit above the dense floor.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix: run Akita backend compute on a dedicated large-stack rayon pool\n\nThe Akita backend kernels recurse inside rayon parallel iterators (the\nbridge splitter re-splits whenever a job migrates to a stealing worker)\nwith heavyweight frames — sampling a packed prove shows the deepest\nchains bottoming out in the setup XOF matrix expansion\n(akita_types::proof::setup::derive_public_matrix_flat). On rayon's\ndefault 2 MiB worker stacks this overflows nondeterministically: the\ndepth depends on work-stealing interleavings, so the same test can pass\nlocally and SIGABRT in CI (\"Test jolt-verifier (akita fixtures)\" hit it\nin akita_proof_shape_tampers_reject fixture generation). Upstream's own\ne2e suite compensates by installing a 256 MiB global rayon pool, which\nis why the bug never shows there.\n\nEvery jolt-akita backend entry (setup, prepare, commit, batched prove,\nbatched verify, verifier-key derivation) now funnels through a lazily\nbuilt pool with 64 MiB worker stacks (virtual-memory cost only) and\nnamed threads. The jolt→akita transcript bridge produces an owned\nconcrete AkitaTranscript before any backend compute, so the wrapped\nregions are Send without touching public trait bounds.\n\nValidated against the deterministic repro (padding floor reverted, where\nthe overflow reproduced in ~40% of runs): 10/10 clean with the pool.\njolt-verifier akita fixture suite 84/84, packed akita lane 442/442,\njolt-akita 38/38, clippy host and host,zk.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* review: rename BytecodeValStage to BytecodeValClaim\n\nThe staged wire is a claim about the bytecode val columns produced by the\nread-raf address phase, not a val stage of its own. Rename the virtual\npolynomial across jolt-claims, jolt-kernels, jolt-verifier, and the legacy\nprover. The CanonicalSerialize tag (41) is unchanged, so proof bytes and\nfixtures are unaffected.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* review: make the read-raf stage layout a compile-time constant\n\nThe runtime num_val_stages dispatch (5 base / 9 lattice) collapses into\ncfg(akita) constants: NUM_INPUT_CLAIMS (9 lattice / 5 base), NUM_VAL_CLAIMS\n(6 / 5), and a shared NUM_BASE_CLAIMS. The akita build is lattice-only, so\ninitialize()/gen() lose their _lattice/_with_stages twins and the fused-inc\nstream drops its Option; the base hot loops compile branch-free in both\nbuilds.\n\nThe base stage-6a..8 assemblies in prover.rs become cfg(not(akita)) — the\npacked path is the only akita prove pipeline — and\ncompute_final_opening_point moves next to its only caller (prove_stage8),\ncollapsing mod.rs's any(all(prover, not(akita)), zk) import cfgs to plain\ncfg(zk).\n\nTranscripts are unchanged in both modes: muldiv e2es green in host, host+zk,\nand akita (packed, incl. forced-K256 and committed-program).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Quang Dao <qvd@andrew.cmu.edu>",
+          "timestamp": "2026-07-23T18:17:09-04:00",
+          "tree_id": "a7823a31373ded60af0562485e00188a17aa938a",
+          "url": "https://github.com/a16z/jolt/commit/04d39d6028dac11e59e8633c7963b2d793afcd63"
+        },
+        "date": 1784848962230,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.0116,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 863136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4167,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 507328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 507164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7736,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 499180,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6232,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 511204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 6.3128,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.2084,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 199272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5159,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.605,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4879,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.8092,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.9109,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 507136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.7068,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1061572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.1422,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 623220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 110.6967,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2112824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.587,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 497636,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6188,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.6392,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 862612,
             "unit": "KB",
             "extra": ""
           }
