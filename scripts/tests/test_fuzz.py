@@ -259,6 +259,50 @@ class FuzzInventoryTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertIn("sample: pr 1m, daily 20m, weekly 30m", output.getvalue())
 
+    def test_check_compile_type_checks_every_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.make_validated_workspace(root, "alpha", targets=("one",))
+            self.make_validated_workspace(root, "beta", targets=("two",))
+            commands = []
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(
+                    FUZZ,
+                    "run_command",
+                    side_effect=lambda command, **_: commands.append(command) or 0,
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                self.assertEqual(FUZZ.main(("check",)), 0)
+                self.assertEqual(commands, [])
+                self.assertEqual(FUZZ.main(("check", "--compile")), 0)
+
+            self.assertEqual(
+                commands,
+                [["cargo", "check", "--locked", "--quiet"]] * 2,
+            )
+
+    def test_check_compile_reports_every_failing_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.make_validated_workspace(root, "alpha", targets=("one",))
+            self.make_validated_workspace(root, "beta", targets=("two",))
+            errors = StringIO()
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(FUZZ, "run_command", return_value=101),
+                redirect_stdout(StringIO()),
+                redirect_stderr(errors),
+            ):
+                status = FUZZ.main(("check", "--compile"))
+
+            self.assertEqual(status, 1)
+            self.assertIn("alpha (exit 101)", errors.getvalue())
+            self.assertIn("beta (exit 101)", errors.getvalue())
+
     def test_run_uses_manifest_budgets_and_seconds_override(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -457,10 +501,33 @@ class FuzzInventoryTests(unittest.TestCase):
             self.assertEqual(
                 commands,
                 [
-                    ["cargo", "fuzz", "run", "alpha", str(artifact)],
-                    ["cargo", "fuzz", "tmin", "alpha", str(artifact)],
+                    ["cargo", "fuzz", "run", "--sanitizer", "address", "alpha", str(artifact)],
+                    ["cargo", "fuzz", "tmin", "--sanitizer", "address", "alpha", str(artifact)],
                 ],
             )
+
+    def test_sanitizer_override_reaches_cargo_fuzz(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.make_validated_workspace(root, targets=("alpha",))
+            commands = []
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(FUZZ, "check_cargo_fuzz_version"),
+                mock.patch.object(FUZZ, "check_workspace"),
+                mock.patch.object(
+                    FUZZ,
+                    "run_command",
+                    side_effect=lambda command, **_: commands.append(command) or 0,
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                self.assertEqual(
+                    FUZZ.main(("--sanitizer", "none", "run", "--seconds", "5")), 0
+                )
+
+            self.assertEqual(commands[0][:5], ["cargo", "fuzz", "run", "--sanitizer", "none"])
 
     def test_reproducer_commands_require_workspace_and_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

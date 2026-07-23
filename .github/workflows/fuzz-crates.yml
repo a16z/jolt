@@ -139,6 +139,10 @@ jobs:
           key: fuzz-corpus-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-v1-${{ runner.os }}-${{ matrix.workspace }}-
+      # Configuration validation never compiles a target, so API bitrot in a
+      # target source must fail here, before the timed phases.
+      - name: Build fuzz targets
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" build
       - name: Replay seeds and regressions
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" replay
       - name: Run ${{ steps.profile.outputs.name }} fuzz profile

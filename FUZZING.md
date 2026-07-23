@@ -43,6 +43,7 @@ Every command operates on all workspaces by default, or is narrowed with
 ```bash
 python3 scripts/fuzz.py check                        # validate configuration + report profile runtimes
 python3 scripts/fuzz.py check --resolve              # + lockfiles resolve with --locked
+python3 scripts/fuzz.py check --compile              # + every target type-checks (catches API bitrot)
 python3 scripts/fuzz.py build                        # build fuzz targets
 python3 scripts/fuzz.py replay                       # run each seed/regression exactly once
 python3 scripts/fuzz.py run --profile pr             # fuzz with each target's manifest budget
@@ -60,6 +61,18 @@ crashes, timeouts, out-of-memory, sanitizer findings — land in the workspace's
 `fuzz/artifacts/<target>/` directory, and the failing workspace/target and
 exit status are listed at the end of the run. One broken target does not stop
 the remaining selected targets; the command still exits non-zero.
+
+Target builds use AddressSanitizer by default. On macOS the workspaces whose
+dependency tree includes the patched arkworks fork (`jolt-crypto`, `jolt-dory`,
+`jolt-hyperkzg`) fail to **link** under ASan: the fork's `ark-ff` enables its
+`allocative` feature by default, which pulls in `ctor`, and the macOS linker
+rejects `ctor`'s static initializer in sanitized builds (`ld: initializer
+pointer has no target`). CI fuzzes on Linux and is unaffected. For local work
+on macOS, pass `--sanitizer none`:
+
+```bash
+python3 scripts/fuzz.py --workspace jolt-dory --sanitizer none replay
+```
 
 Single-artifact triage commands (both require `--workspace` and `--target`):
 

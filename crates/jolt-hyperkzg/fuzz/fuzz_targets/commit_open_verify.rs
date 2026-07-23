@@ -3,7 +3,7 @@
 //! Fuzz: random polynomial + random point must always commit-open-verify successfully.
 
 use jolt_crypto::Bn254;
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, RandomSampling};
 use jolt_hyperkzg::HyperKZGScheme;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
@@ -33,11 +33,12 @@ fuzz_target!(|data: &[u8]| {
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
 
-    let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+    let (commitment, ()) =
+        TestScheme::commit(poly.evaluations(), &pk).expect("commit of a valid polynomial");
 
     let mut pt = Blake2bTranscript::new(b"fuzz");
-    let proof =
-        <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
+    let proof = <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt)
+        .expect("open of a valid polynomial");
 
     let mut vt = Blake2bTranscript::new(b"fuzz");
     <TestScheme as CommitmentScheme>::verify(&commitment, &point, eval, &proof, &vk, &mut vt)

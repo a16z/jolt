@@ -6,7 +6,7 @@
 //! an intermediate commitment, or a witness commitment using fuzzer-chosen bytes.
 
 use jolt_crypto::{Bn254, JoltGroup};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, RandomSampling};
 use jolt_hyperkzg::HyperKZGScheme;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
@@ -35,11 +35,12 @@ fuzz_target!(|data: &[u8]| {
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
 
-    let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+    let (commitment, ()) =
+        TestScheme::commit(poly.evaluations(), &pk).expect("commit of a valid polynomial");
 
     let mut pt = Blake2bTranscript::new(b"fuzz-tamper");
-    let proof =
-        <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
+    let proof = <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt)
+        .expect("open of a valid polynomial");
 
     let mut tampered = proof.clone();
 
@@ -48,7 +49,7 @@ fuzz_target!(|data: &[u8]| {
             // Tamper evaluation entries (exercises folding consistency checks)
             let tamper_row = (data[1] as usize) % tampered.v.len();
             let tamper_col = (data[2] as usize) % tampered.v[tamper_row].len();
-            let tamper_val = Fr::from_bytes(&data[3..]);
+            let tamper_val = Fr::from_le_bytes_mod_order(&data[3..]);
             if tamper_val == proof.v[tamper_row][tamper_col] {
                 return;
             }
@@ -60,7 +61,7 @@ fuzz_target!(|data: &[u8]| {
                 return;
             }
             let idx = (data[1] as usize) % tampered.com.len();
-            let scalar = Fr::from_bytes(&data[2..]);
+            let scalar = Fr::from_le_bytes_mod_order(&data[2..]);
             tampered.com[idx] = tampered.com[idx].scalar_mul(&scalar);
             if tampered.com[idx] == proof.com[idx] {
                 return;
@@ -69,7 +70,7 @@ fuzz_target!(|data: &[u8]| {
         _ => {
             // Tamper witness commitments (exercises pairing check)
             let idx = (data[1] as usize) % tampered.w.len();
-            let scalar = Fr::from_bytes(&data[2..]);
+            let scalar = Fr::from_le_bytes_mod_order(&data[2..]);
             tampered.w[idx] = tampered.w[idx].scalar_mul(&scalar);
             if tampered.w[idx] == proof.w[idx] {
                 return;

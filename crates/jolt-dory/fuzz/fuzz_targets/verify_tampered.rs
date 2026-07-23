@@ -6,7 +6,7 @@ use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Fr, RandomSampling};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::Blake2bTranscript;
+use jolt_transcript::{Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -28,7 +28,8 @@ fn fixture() -> &'static Fixture {
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
-        let (commitment, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, _) = DoryScheme::commit(poly.evaluations(), &prover_setup)
+            .expect("commit of a valid polynomial");
         Fixture {
             verifier_setup,
             commitment,

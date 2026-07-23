@@ -364,6 +364,7 @@ def run_for_targets(
     for workspace in workspaces:
         check_workspace(root, workspace, resolve=True)
         for target in selected_targets(workspace, args.target):
+            sanitizer = ["--sanitizer", args.sanitizer]
             seconds = None
             if args.command == "replay":
                 files = seed_and_regression_files(workspace, target.name)
@@ -371,12 +372,12 @@ def run_for_targets(
                     raise FuzzConfigurationError(
                         f"{workspace.name}/{target.name} has no seeds or regressions"
                     )
-                command = ["cargo", "fuzz", "run", target.name]
+                command = ["cargo", "fuzz", "run", *sanitizer, target.name]
                 command.extend(str(path) for path in files)
             elif args.command == "reproduce":
-                command = ["cargo", "fuzz", "run", target.name, str(args.input)]
+                command = ["cargo", "fuzz", "run", *sanitizer, target.name, str(args.input)]
             elif args.command == "tmin":
-                command = ["cargo", "fuzz", "tmin", target.name, str(args.input)]
+                command = ["cargo", "fuzz", "tmin", *sanitizer, target.name, str(args.input)]
             elif args.command == "run":
                 seconds = (
                     args.seconds
@@ -387,7 +388,7 @@ def run_for_targets(
                 artifacts = workspace.directory / "artifacts" / target.name
                 corpus.mkdir(parents=True, exist_ok=True)
                 artifacts.mkdir(parents=True, exist_ok=True)
-                command = ["cargo", "fuzz", "run", target.name, str(corpus)]
+                command = ["cargo", "fuzz", "run", *sanitizer, target.name, str(corpus)]
                 command.extend(
                     str(path)
                     for path in corpus_directories(workspace, target.name)
@@ -410,7 +411,7 @@ def run_for_targets(
                 if not corpus.is_dir() or not any(corpus.iterdir()):
                     print(f"Skipping empty corpus for {workspace.name}/{target.name}")
                     continue
-                command = ["cargo", "fuzz", "cmin", target.name, str(corpus)]
+                command = ["cargo", "fuzz", "cmin", *sanitizer, target.name, str(corpus)]
             elif args.command == "coverage":
                 directories = corpus_directories(workspace, target.name)
                 if not directories:
@@ -517,6 +518,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="operate on one crate name instead of every fuzz workspace",
     )
     parser.add_argument("--target", help="operate on one target in the selected workspace")
+    parser.add_argument(
+        "--sanitizer",
+        choices=("address", "none"),
+        default="address",
+        help="sanitizer for target builds; macOS local builds of the "
+        "arkworks-dependent workspaces fail to link under ASan (see FUZZING.md)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     inventory = subparsers.add_parser("inventory", help="list discovered fuzz targets")
@@ -532,6 +540,11 @@ def create_parser() -> argparse.ArgumentParser:
         "--resolve",
         action="store_true",
         help="also require every committed lockfile to resolve unchanged",
+    )
+    check.add_argument(
+        "--compile",
+        action="store_true",
+        help="also type-check every fuzz target with `cargo check --locked`",
     )
     subparsers.add_parser("build", help="build every selected fuzz target")
     subparsers.add_parser("replay", help="replay checked-in seeds and regressions")
@@ -599,6 +612,21 @@ def main(argv: Iterable[str] | None = None) -> int:
                     for profile in PROFILES
                 )
                 print(f"{workspace.name}: {runtimes}")
+            if args.compile:
+                # `cargo metadata` never compiles a target, so configuration
+                # validation alone cannot catch API bitrot in target sources.
+                failures = []
+                for workspace in workspaces:
+                    status = run_command(
+                        ["cargo", "check", "--locked", "--quiet"],
+                        cwd=workspace.directory,
+                    )
+                    if status != 0:
+                        failures.append(f"{workspace.name} (exit {status})")
+                if failures:
+                    raise RuntimeError(
+                        "fuzz workspaces failed to compile: " + ", ".join(failures)
+                    )
             print(
                 f"Validated {len(workspaces)} fuzz workspaces with "
                 f"{sum(len(workspace.targets) for workspace in workspaces)} targets"
@@ -608,7 +636,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             failures = []
             for workspace in workspaces:
                 check_workspace(root, workspace, resolve=True)
-                command = ["cargo", "fuzz", "build"]
+                command = ["cargo", "fuzz", "build", "--sanitizer", args.sanitizer]
                 if args.target is not None:
                     selected_targets(workspace, args.target)
                     command.append(args.target)
