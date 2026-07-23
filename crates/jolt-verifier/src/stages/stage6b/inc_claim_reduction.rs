@@ -82,9 +82,7 @@ impl<F: Field> IncClaimReduction<F> {
             registers_val_evaluation_cycle,
         }
     }
-}
 
-impl<F: Field> IncClaimReduction<F> {
     /// The four upstream cycle points in relation order: RAM read-write, RAM
     /// val-check, registers read-write, registers val-evaluation.
     pub fn cycle_points(&self) -> [&[F]; 4] {

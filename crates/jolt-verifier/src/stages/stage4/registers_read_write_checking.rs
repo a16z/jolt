@@ -61,18 +61,16 @@ impl<F: Field> RegistersReadWriteChecking<F> {
             _field: core::marker::PhantomData,
         }
     }
+
+    pub fn register_dimensions(&self) -> ReadWriteDimensions {
+        self.register_dimensions
+    }
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::RegistersReadWriteChecking,
         reason: reason.to_string(),
-    }
-}
-
-impl<F: Field> RegistersReadWriteChecking<F> {
-    pub fn register_dimensions(&self) -> ReadWriteDimensions {
-        self.register_dimensions
     }
 }
 

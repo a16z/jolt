@@ -595,7 +595,7 @@ where
         ),
         (
             BooleanityChallenge::Gamma.into(),
-            input.stage6a.challenges.booleanity_gamma,
+            input.stage6a.challenges.booleanity.gamma,
         ),
         (
             InstructionRaVirtualizationChallenge::Gamma.into(),
@@ -747,14 +747,16 @@ where
     let reference_eq_point = input
         .stage6a
         .challenges
-        .booleanity_reference_address
+        .booleanity
+        .reference_address
         .iter()
         .rev()
         .chain(
             input
                 .stage6a
                 .challenges
-                .booleanity_reference_cycle
+                .booleanity
+                .reference_cycle
                 .iter()
                 .rev(),
         )

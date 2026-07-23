@@ -53,9 +53,7 @@ impl<F: Field> RegistersClaimReduction<F> {
             product_uniskip_tau_low,
         }
     }
-}
 
-impl<F: Field> RegistersClaimReduction<F> {
     pub fn product_uniskip_tau_low(&self) -> &[F] {
         &self.product_uniskip_tau_low
     }

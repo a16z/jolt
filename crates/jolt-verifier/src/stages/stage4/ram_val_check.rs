@@ -144,22 +144,20 @@ impl<F: Field> RamValCheck<F> {
             contribution_openings,
         }
     }
-}
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::RamValCheck,
-        reason: reason.to_string(),
-    }
-}
-
-impl<F: Field> RamValCheck<F> {
     pub fn trace_dimensions(&self) -> TraceDimensions {
         self.trace_dimensions
     }
 
     pub fn ram_log_k(&self) -> usize {
         self.ram_log_k
+    }
+}
+
+fn public_input_failed(reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::RamValCheck,
+        reason: reason.to_string(),
     }
 }
 

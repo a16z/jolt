@@ -56,9 +56,7 @@ impl<F: Field> SpartanShift<F> {
             product_remainder_opening_point,
         }
     }
-}
 
-impl<F: Field> SpartanShift<F> {
     pub fn product_uniskip_tau_low(&self) -> &[F] {
         &self.product_uniskip_tau_low
     }

@@ -74,15 +74,14 @@ pub trait StageProver<F: Field>: Sized {
         Rec: SumcheckRecorder<F>,
         T: Transcript<Challenge = F>;
 
-    /// The stage's absorbed opening scalars, with any wire-claim mutation the
-    /// stage curates (stage 4 has none to make — its staged advice openings
-    /// ride in from the kernel — but stage 6b's runtime point dedup reorders).
-    /// The default emitted by [`impl_stage_prover!`] returns the
-    /// derive-generated canonical order (`opening_values`); curated stages
-    /// supply an override block at the macro invocation site.
+    /// The stage's absorbed opening scalars, in the stage's curated order
+    /// (stage 6b's runtime point dedup reorders the returned values). The
+    /// default emitted by [`impl_stage_prover!`] returns the derive-generated
+    /// canonical order (`opening_values`); curated stages supply an override
+    /// block at the macro invocation site.
     fn curate_opening_values(
         &self,
-        claims: &mut Self::OutputClaims,
+        claims: &Self::OutputClaims,
         points: &Self::OutputPoints,
     ) -> Result<Vec<F>, ProverError<F>>;
 }
@@ -413,13 +412,13 @@ macro_rules! impl_stage_prover {
                     validate $presence $member, self, input_points, __output_points, challenges
                 );)+
 
-                let mut __output_claims = $output_claims {
+                let __output_claims = $output_claims {
                     $($member: $crate::driver::__stage_member!(extract $presence $member),)+
                 };
                 $($crate::driver::__stage_member!(park $presence $member, session);)+
 
                 let __opening_values =
-                    self.curate_opening_values(&mut __output_claims, &__output_points)?;
+                    self.curate_opening_values(&__output_claims, &__output_points)?;
                 $crate::driver::__stage_shape_check!($shape, self, __output_claims);
 
                 let __expected = self.expected_final_claim(
@@ -454,7 +453,7 @@ macro_rules! impl_stage_prover {
 
             fn curate_opening_values(
                 &self,
-                $curate_claims: &mut Self::OutputClaims,
+                $curate_claims: &Self::OutputClaims,
                 $curate_points: &Self::OutputPoints,
             ) -> ::core::result::Result<::std::vec::Vec<F>, $crate::ProverError<F>> {
                 let $curate_batch = self;

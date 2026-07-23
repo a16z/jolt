@@ -37,22 +37,20 @@ impl<F: Field> RamHammingBooleanity<F> {
             stage1_cycle_binding,
         }
     }
-}
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::RamHammingBooleanity,
-        reason: reason.to_string(),
-    }
-}
-
-impl<F: Field> RamHammingBooleanity<F> {
     pub fn trace_dimensions(&self) -> TraceDimensions {
         self.trace_dimensions
     }
 
     pub fn stage1_cycle_binding(&self) -> &[F] {
         &self.stage1_cycle_binding
+    }
+}
+
+fn public_input_failed(reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::RamHammingBooleanity,
+        reason: reason.to_string(),
     }
 }
 

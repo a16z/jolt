@@ -25,7 +25,7 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints};
-use crate::stages::stage6b::batch::BytecodeStagePoints;
+use crate::stages::BytecodeStagePoints;
 use crate::stages::{
     stage1::Stage1BatchOutputClaims, stage2::Stage2BatchOutputClaims, stage3::Stage3OutputClaims,
     stage4::Stage4OutputClaims, stage5::Stage5OutputClaims,

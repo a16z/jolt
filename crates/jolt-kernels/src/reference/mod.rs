@@ -15,10 +15,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::JoltBackend;
 
-use self::precommitted_reduction::{
-    ReferenceBytecodeReductionAddress, ReferenceProgramImageReductionAddress,
-    ReferenceTrustedAdviceAddress, ReferenceUntrustedAdviceAddress,
-};
+use self::precommitted_reduction::ReferencePrecommittedAddress;
 use self::spartan_outer::ReferenceOuterRemainder;
 use self::spartan_product::ReferenceProductRemainder;
 
@@ -102,10 +99,18 @@ where
             bytecode_reduction_cycle: Box::new(ReferenceBackend),
             program_image_reduction_cycle: Box::new(ReferenceBackend),
             hamming_weight_claim_reduction: Box::new(ReferenceBackend),
-            trusted_advice_address: Box::new(ReferenceTrustedAdviceAddress),
-            untrusted_advice_address: Box::new(ReferenceUntrustedAdviceAddress),
-            bytecode_reduction_address: Box::new(ReferenceBytecodeReductionAddress),
-            program_image_reduction_address: Box::new(ReferenceProgramImageReductionAddress),
+            trusted_advice_address: Box::new(ReferencePrecommittedAddress::new(
+                "stage 6b parked no trusted-advice reduction state for the scheduled address phase",
+            )),
+            untrusted_advice_address: Box::new(ReferencePrecommittedAddress::new(
+                "stage 6b parked no untrusted-advice reduction state for the scheduled address phase",
+            )),
+            bytecode_reduction_address: Box::new(ReferencePrecommittedAddress::new(
+                "stage 6b parked no bytecode reduction state for the scheduled address phase",
+            )),
+            program_image_reduction_address: Box::new(ReferencePrecommittedAddress::new(
+                "stage 6b parked no program-image reduction state for the scheduled address phase",
+            )),
             joint_opening: Box::new(ReferenceBackend),
         }
     }

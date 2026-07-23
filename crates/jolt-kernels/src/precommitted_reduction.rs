@@ -97,6 +97,29 @@ impl<F: Field> PrecommittedTables<F> {
         UnivariatePoly::new(vec![eval_0 * self.scale, c1 * self.scale, c2 * self.scale])
     }
 
+    /// Drive one head-aligned round against the phase's active-round
+    /// schedule: bind the pending challenge — it belongs to the previous
+    /// round; the member is head-aligned and consulted every round of its
+    /// window, so `bind` is `Some` exactly when `round >= 1` — then emit this
+    /// round's message.
+    fn prove_round(
+        &mut self,
+        active_rounds: &[usize],
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> UnivariatePoly<F> {
+        if let Some(challenge) = bind {
+            self.bind_round(is_active(active_rounds, round - 1), challenge);
+        }
+        self.round_message(is_active(active_rounds, round), previous_claim)
+    }
+
+    /// Ingest the final round's challenge for the phase's schedule.
+    fn finish_rounds(&mut self, active_rounds: &[usize], total_rounds: usize, bind: F) {
+        self.bind_round(is_active(active_rounds, total_rounds - 1), bind);
+    }
+
     /// Bind a round's challenge: on an active round bind every table, on an
     /// inactive one fold the halving into the running `scale` instead.
     fn bind_round(&mut self, active: bool, challenge: F) {
@@ -158,6 +181,10 @@ impl<F: Field> PrecommittedTables<F> {
     }
 }
 
+fn is_active(active_rounds: &[usize], round: usize) -> bool {
+    active_rounds.binary_search(&round).is_ok()
+}
+
 /// The 6b→7 carry: the post-cycle bound tables and running scale, moved out
 /// of the cycle kernel by its `park_residue` and into a fresh
 /// [`AddressReductionKernel`] by stage 7's `prepare`. Plain owned data —
@@ -175,7 +202,6 @@ pub struct PrecommittedReductionCarry<F, R> {
 pub struct CycleReductionKernel<F: Field, R> {
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
-    has_address_phase: bool,
     _relation: PhantomData<fn() -> R>,
 }
 
@@ -206,7 +232,6 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
             reason = "2 is invertible in any Jolt field (large-prime characteristic)"
         )]
         let two_inv = F::from_u64(2).inverse().expect("2 is invertible");
-        let has_address_phase = reduction.num_address_phase_rounds() > 0;
         Ok(Self {
             reduction,
             tables: PrecommittedTables {
@@ -217,16 +242,12 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
                 scale_inv: F::one(),
                 two_inv,
             },
-            has_address_phase,
             _relation: PhantomData,
         })
     }
 
-    fn is_active_round(&self, round: usize) -> bool {
-        self.reduction
-            .cycle_phase_rounds()
-            .binary_search(&round)
-            .is_ok()
+    fn has_address_phase(&self) -> bool {
+        self.reduction.num_address_phase_rounds() > 0
     }
 
     /// The schedule-resolved scalar wire claim: the intermediate handoff
@@ -236,7 +257,7 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
     /// chunked wire shape spells the same resolution out in its own
     /// `output_claims`.
     fn scalar_claim(&self) -> Result<F, SumcheckKernelError<F>> {
-        if self.has_address_phase {
+        if self.has_address_phase() {
             Ok(self.tables.intermediate_claim())
         } else {
             self.tables.final_claim()
@@ -247,7 +268,7 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
     /// body of the per-kind `park_residue` overrides. A cycle-completed
     /// schedule has no stage-7 member, so it parks nothing.
     fn park_carry<RA: 'static>(self, session: &mut ProofSession) {
-        if !self.has_address_phase {
+        if !self.has_address_phase() {
             return;
         }
         session.park(PrecommittedReductionCarry::<F, RA> {
@@ -269,20 +290,18 @@ impl<F: Field, R> ProveRounds<F> for CycleReductionKernel<F, R> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        if let Some(challenge) = bind {
-            // The pending challenge belongs to the previous round; the member
-            // is head-aligned and consulted every round of its window, so
-            // `bind` is `Some` exactly when `round >= 1`.
-            let active = self.is_active_round(round - 1);
-            self.tables.bind_round(active, challenge);
-        }
-        let active = self.is_active_round(round);
-        Ok(self.tables.round_message(active, previous_claim))
+        Ok(self.tables.prove_round(
+            self.reduction.cycle_phase_rounds(),
+            bind,
+            round,
+            previous_claim,
+        ))
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        let active = self.is_active_round(self.num_rounds() - 1);
-        self.tables.bind_round(active, bind);
+        let total_rounds = self.num_rounds();
+        self.tables
+            .finish_rounds(self.reduction.cycle_phase_rounds(), total_rounds, bind);
         Ok(())
     }
 }
@@ -304,13 +323,6 @@ impl<F: Field, R> AddressReductionKernel<F, R> {
             _relation: PhantomData,
         }
     }
-
-    fn is_active_round(&self, round: usize) -> bool {
-        self.reduction
-            .address_phase_rounds()
-            .binary_search(&round)
-            .is_ok()
-    }
 }
 
 impl<F: Field, R> ProveRounds<F> for AddressReductionKernel<F, R> {
@@ -324,19 +336,18 @@ impl<F: Field, R> ProveRounds<F> for AddressReductionKernel<F, R> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        if let Some(challenge) = bind {
-            // Same head-aligned convention as the cycle phase: `bind` is
-            // `Some` exactly when `round >= 1`.
-            let active = self.is_active_round(round - 1);
-            self.tables.bind_round(active, challenge);
-        }
-        let active = self.is_active_round(round);
-        Ok(self.tables.round_message(active, previous_claim))
+        Ok(self.tables.prove_round(
+            self.reduction.address_phase_rounds(),
+            bind,
+            round,
+            previous_claim,
+        ))
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        let active = self.is_active_round(self.num_rounds() - 1);
-        self.tables.bind_round(active, bind);
+        let total_rounds = self.num_rounds();
+        self.tables
+            .finish_rounds(self.reduction.address_phase_rounds(), total_rounds, bind);
         Ok(())
     }
 }
@@ -382,7 +393,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCy
         // The chunked counterpart of `scalar_claim`: an address phase stages
         // the intermediate handoff claim (chunks come later, at stage 7); a
         // cycle-only schedule ends here with the per-chunk openings.
-        Ok(if self.has_address_phase {
+        Ok(if self.has_address_phase() {
             BytecodeReductionCyclePhaseOutputClaims {
                 intermediate: Some(self.tables.intermediate_claim()),
                 chunks: Vec::new(),

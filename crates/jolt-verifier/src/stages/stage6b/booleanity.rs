@@ -79,16 +79,7 @@ impl<F: Field> Booleanity<F> {
             &self.dimensions.base
         }
     }
-}
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::Booleanity,
-        reason: reason.to_string(),
-    }
-}
-
-impl<F: Field> Booleanity<F> {
     pub fn dimensions(&self) -> BooleanityDimensions {
         *self.base_dimensions()
     }
@@ -103,6 +94,13 @@ impl<F: Field> Booleanity<F> {
 
     pub fn reference_cycle(&self) -> &[F] {
         &self.reference_cycle
+    }
+}
+
+fn public_input_failed(reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::Booleanity,
+        reason: reason.to_string(),
     }
 }
 

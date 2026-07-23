@@ -1,6 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 6a (address-phase)
 //! verification.
 
+use jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -57,9 +58,18 @@ pub struct Stage6aCarriedChallenges<F: Field> {
     /// per-stage gammas), verbatim. Consumers folding with power vectors expand
     /// them via `stage_gamma_powers`.
     pub bytecode_read_raf: BytecodeReadRafAddressPhaseChallenges<F>,
-    pub booleanity_reference_address: Vec<F>,
-    pub booleanity_reference_cycle: Vec<F>,
-    pub booleanity_gamma: F,
+    /// The booleanity address-phase draws (the reference address/cycle vectors
+    /// and the gamma), verbatim.
+    pub booleanity: BooleanityAddressPhaseChallenges<F>,
+}
+
+impl<F: Field> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
+    fn from(challenges: &Stage6aChallenges<F>) -> Self {
+        Self {
+            bytecode_read_raf: challenges.bytecode_read_raf,
+            booleanity: challenges.booleanity.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

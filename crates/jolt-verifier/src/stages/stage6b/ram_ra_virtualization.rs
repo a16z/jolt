@@ -71,16 +71,7 @@ impl<F: Field> RamRaVirtualization<F> {
             committed_chunk_bits,
         }
     }
-}
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::RamRaVirtualization,
-        reason: reason.to_string(),
-    }
-}
-
-impl<F: Field> RamRaVirtualization<F> {
     pub fn dimensions(&self) -> RamRaVirtualizationDimensions {
         self.dimensions
     }
@@ -95,6 +86,13 @@ impl<F: Field> RamRaVirtualization<F> {
 
     pub fn committed_chunk_bits(&self) -> usize {
         self.committed_chunk_bits
+    }
+}
+
+fn public_input_failed(reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::RamRaVirtualization,
+        reason: reason.to_string(),
     }
 }
 

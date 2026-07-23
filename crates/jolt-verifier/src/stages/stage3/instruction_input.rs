@@ -56,9 +56,7 @@ impl<F: Field> InstructionInput<F> {
             product_remainder_opening_point,
         }
     }
-}
 
-impl<F: Field> InstructionInput<F> {
     pub fn product_remainder_opening_point(&self) -> &[F] {
         &self.product_remainder_opening_point
     }

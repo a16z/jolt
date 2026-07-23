@@ -1,5 +1,6 @@
 //! Stage 6a (address-phase) verifier entry point.
 
+pub mod batch;
 pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod outputs;

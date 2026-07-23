@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::{Field, FieldCore};
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -244,6 +244,22 @@ impl ProofSession {
 /// instead of threading preprocessing borrows through every kernel call.
 pub struct RetainedProgram {
     pub program: Arc<JoltProgramPreprocessing>,
+}
+
+impl RetainedProgram {
+    /// The session-resident program, read non-destructively — the shared
+    /// fetch of the stage-6 table-fold kernels' `prepare`.
+    pub fn from_session<F: FieldCore>(
+        session: &ProofSession,
+    ) -> Result<Arc<JoltProgramPreprocessing>, KernelError<F>> {
+        Ok(session
+            .state::<Self>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "prover-retained program data was not parked in the proof session",
+            })?
+            .program
+            .clone())
+    }
 }
 
 #[cfg(test)]

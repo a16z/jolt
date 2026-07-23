@@ -14,7 +14,6 @@
 //! per-cycle bytecode indices) comes off the witness plane's typed stage-6
 //! rows — both fetched inside `prepare`, never staged here.
 
-use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -27,17 +26,13 @@ use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
-use jolt_verifier::stages::stage6a::booleanity::{
-    BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
-};
-use jolt_verifier::stages::stage6a::bytecode_read_raf::{
-    bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
-};
+use jolt_verifier::stages::stage6a::batch::Stage6aBuildParts;
+use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseInputClaims;
+use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream;
 use jolt_verifier::stages::stage6a::outputs::{
     Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutputClaims,
     Stage6aSumchecks,
 };
-use jolt_verifier::stages::stage6b::batch::bytecode_stage_points;
 use jolt_verifier::CheckedInputs;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
@@ -74,10 +69,6 @@ where
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
-    // Committed-program mode stages the five raw bound `Val_s` values as
-    // extra wire claims; the sumcheck itself is unchanged.
-    let committed_program = checked.precommitted.bytecode.is_some();
     let formula_dimensions = super::formula_dimensions(
         checked,
         config,
@@ -85,51 +76,34 @@ where
         JoltRelationId::BytecodeReadRaf,
     )?;
 
-    // The relation carries the upstream cycle/register points and the entry
-    // index (full geometry at construction) — the kernel's read path.
+    // The batch, through the verifier's own promoted constructor: the relation
+    // carries the upstream cycle/register points and the entry index (full
+    // geometry at construction) — the kernel's read path. Committed-program
+    // mode stages the five raw bound `Val_s` values as extra wire claims; the
+    // sumcheck itself is unchanged.
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
-    let stage_points = bytecode_stage_points(
-        &stage1_cycle_binding,
-        &stage2.output_points,
-        &stage3.output_points,
-        &stage4.output_points,
-        &stage5.output_points,
-    )?;
     let entry_bytecode_index = preprocessing
         .verifier
         .program
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
-
-    let booleanity_dimensions = BooleanityDimensions::new(
-        formula_dimensions.ra_layout,
-        log_t,
-        config.one_hot_config.committed_chunk_bits(),
-    );
-    let sumchecks = Stage6aSumchecks {
-        bytecode_read_raf: BytecodeReadRafAddressPhase::new(
-            formula_dimensions.bytecode_read_raf,
-            committed_program,
-            stage_points,
-            entry_bytecode_index,
-        ),
-        booleanity: BooleanityAddressPhase::new(
-            booleanity_dimensions,
-            stage5.instruction_r_address.clone(),
-            stage5.output_points.instruction_r_cycle().to_vec(),
-        ),
-    };
+    let sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
+        formula_dimensions: &formula_dimensions,
+        committed_chunk_bits: config.one_hot_config.committed_chunk_bits(),
+        committed_program: checked.precommitted.bytecode.is_some(),
+        entry_bytecode_index,
+        stage1_cycle_binding: &stage1_cycle_binding,
+        stage2_points: &stage2.output_points,
+        stage3_points: &stage3.output_points,
+        stage4_points: &stage4.output_points,
+        stage5_points: &stage5.output_points,
+    })?;
     // The generated per-member draw, mirroring the verifier: the bytecode
     // member's six squeezes (the fold gamma plus the five per-stage gammas),
     // then the booleanity member's override (the reference-address pad draw
     // and the gamma). The 6a verifier only carries the booleanity values; this
     // prover's booleanity kernel consumes them off the challenge aggregate.
     let address_challenges = sumchecks.draw_challenges(transcript)?;
-    let carried = Stage6aCarriedChallenges {
-        bytecode_read_raf: address_challenges.bytecode_read_raf,
-        booleanity_reference_address: address_challenges.booleanity.reference_address.clone(),
-        booleanity_reference_cycle: address_challenges.booleanity.reference_cycle.clone(),
-        booleanity_gamma: address_challenges.booleanity.gamma,
-    };
+    let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
     let input_points = sumchecks.empty_input_points();
     let inputs = Stage6aInputClaims {

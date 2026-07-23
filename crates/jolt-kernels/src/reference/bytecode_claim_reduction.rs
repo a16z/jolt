@@ -42,13 +42,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for ReferenceBac
         let layout = inputs.relation.layout();
         // The chunk grids materialize from the session-resident retained
         // program (the prover keeps the full bytecode in committed mode).
-        let program = session
-            .state::<RetainedProgram>()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "prover-retained program data was not parked in the proof session",
-            })?
-            .program
-            .clone();
+        let program = RetainedProgram::from_session(session)?;
         Ok(Box::new(bytecode_reduction_kernel(
             layout,
             inputs.relation.weights(),

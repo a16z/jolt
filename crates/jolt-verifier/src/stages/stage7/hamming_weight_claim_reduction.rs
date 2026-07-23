@@ -160,16 +160,7 @@ impl<F: Field> HammingWeightClaimReduction<F> {
                 ))
             })
     }
-}
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::HammingWeightClaimReduction,
-        reason: reason.to_string(),
-    }
-}
-
-impl<F: Field> HammingWeightClaimReduction<F> {
     pub fn dimensions(&self) -> HammingDimensions {
         self.dimensions
     }
@@ -184,6 +175,13 @@ impl<F: Field> HammingWeightClaimReduction<F> {
 
     pub fn virtualization_points(&self) -> &[Vec<F>] {
         &self.virtualization_points
+    }
+}
+
+fn public_input_failed(reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::HammingWeightClaimReduction,
+        reason: reason.to_string(),
     }
 }
 

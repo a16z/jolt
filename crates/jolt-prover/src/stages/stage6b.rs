@@ -136,7 +136,7 @@ where
         bytecode_table_rows,
         carried,
         eta,
-        stage1_cycle_binding: stage1_cycle_binding.clone(),
+        stage1_cycle_binding,
         stage2_points: &stage2.output_points,
         stage3_points: &stage3.output_points,
         stage4_points: &stage4.output_points,
@@ -160,7 +160,7 @@ where
             gamma: carried.bytecode_read_raf.gamma,
         },
         booleanity: BooleanityCyclePhaseChallenges {
-            gamma: carried.booleanity_gamma,
+            gamma: carried.booleanity.gamma,
         },
         ram_hamming_booleanity: NoChallenges::default(),
         ram_ra_virtualization: NoChallenges::default(),

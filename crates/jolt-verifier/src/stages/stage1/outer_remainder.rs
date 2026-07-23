@@ -96,16 +96,6 @@ impl<F: Field> OuterRemainderCoefficients<F> {
     }
 }
 
-impl<F: Field> OuterRemainder<F> {
-    pub fn tau(&self) -> &[F] {
-        &self.tau
-    }
-
-    pub fn uniskip_challenge(&self) -> F {
-        self.uniskip_challenge
-    }
-}
-
 #[derive(Clone)]
 pub struct OuterRemainder<F: Field> {
     symbolic: relations::spartan::OuterRemainder,
@@ -136,6 +126,10 @@ impl<F: Field> OuterRemainder<F> {
             bound_point: std::sync::OnceLock::new(),
             coefficients: std::sync::OnceLock::new(),
         }
+    }
+
+    pub fn uniskip_challenge(&self) -> F {
+        self.uniskip_challenge
     }
 
     /// The expanded `SpartanOuterPublic` coefficient table, built on first use from

@@ -1,16 +1,12 @@
-use jolt_claims::protocols::jolt::{
-    geometry::{booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions},
-    JoltRelationId,
-};
+use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
 use super::{
-    booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseInputClaims},
-    bytecode_read_raf::{
-        bytecode_read_raf_address_phase_input_values_from_upstream, BytecodeReadRafAddressPhase,
-    },
+    batch::Stage6aBuildParts,
+    booleanity::BooleanityAddressPhaseInputClaims,
+    bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream,
     outputs::{
         Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutput,
         Stage6aSumchecks, Stage6aZkOutput,
@@ -21,7 +17,7 @@ use crate::{
     proof::JoltProof,
     stages::{
         stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
-        stage5::Stage5Output, stage6b::batch::bytecode_stage_points, zk::committed,
+        stage5::Stage5Output, zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -48,43 +44,24 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = formula_dimensions.trace.log_t();
-
-    let committed_program = checked.precommitted.bytecode.is_some();
-
     // The upstream cycle/register points and entry index ride on the relation
     // (full geometry at construction) for the prover's address-phase kernel;
     // the verifier itself never evaluates them here.
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
-    let stage_points = bytecode_stage_points(
-        &stage1_cycle_binding,
-        stage2.batch_output_points(),
-        stage3.output_points(),
-        stage4.output_points(),
-        stage5.output_points(),
-    )?;
     let entry_bytecode_index = preprocessing
         .program
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
-
-    let booleanity_dimensions = BooleanityDimensions::new(
-        formula_dimensions.ra_layout,
-        log_t,
-        proof.one_hot_config.committed_chunk_bits(),
-    );
-    let address_sumchecks = Stage6aSumchecks {
-        bytecode_read_raf: BytecodeReadRafAddressPhase::new(
-            formula_dimensions.bytecode_read_raf,
-            committed_program,
-            stage_points,
-            entry_bytecode_index,
-        ),
-        booleanity: BooleanityAddressPhase::new(
-            booleanity_dimensions,
-            stage5.instruction_r_address().to_vec(),
-            stage5.output_points().instruction_r_cycle().to_vec(),
-        ),
-    };
+    let address_sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
+        formula_dimensions,
+        committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+        committed_program: checked.precommitted.bytecode.is_some(),
+        entry_bytecode_index,
+        stage1_cycle_binding: &stage1_cycle_binding,
+        stage2_points: stage2.batch_output_points(),
+        stage3_points: stage3.output_points(),
+        stage4_points: stage4.output_points(),
+        stage5_points: stage5.output_points(),
+    })?;
 
     // The generated per-member draw: the bytecode member's six squeezes (the
     // fold gamma plus the five per-stage folding gammas, each formerly an
@@ -98,12 +75,7 @@ where
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
-    let carried = Stage6aCarriedChallenges {
-        bytecode_read_raf: address_challenges.bytecode_read_raf,
-        booleanity_reference_address: address_challenges.booleanity.reference_address.clone(),
-        booleanity_reference_cycle: address_challenges.booleanity.reference_cycle.clone(),
-        booleanity_gamma: address_challenges.booleanity.gamma,
-    };
+    let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
     // Every member's input points are empty (the address phase reads only
     // opening values; produced points derive from its own sumcheck point).
@@ -187,13 +159,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::booleanity::BooleanityAddressPhaseOutputClaims;
-    use super::super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
+    use super::super::booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims};
+    use super::super::bytecode_read_raf::{
+        BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
+    };
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
     use crate::stages::relations::append_recording::RecordingTranscript;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
-    use crate::stages::stage6b::batch::BytecodeStagePoints;
+    use crate::stages::BytecodeStagePoints;
+    use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::{Fr, FromPrimitiveInt};

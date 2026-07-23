@@ -57,10 +57,11 @@ pub enum SumcheckKernelError<F: FieldCore> {
 /// with the member's [`ConcreteSumcheck`] relation, so the generated stage
 /// drivers can extract typed output claims after the loop.
 ///
-/// Kernels do NOT own a relation instance — the stage's relation is the
+/// Kernels need not own a relation instance — the stage's relation is the
 /// single source of geometry, threaded back in through
-/// [`validate_derived_tables`](Self::validate_derived_tables) — so batch and
-/// kernel geometry cannot diverge.
+/// [`validate_derived_tables`](Self::validate_derived_tables). A kernel that
+/// does keep a copy (the naive tier clones the driver-supplied instance)
+/// must treat the threaded-in relation as authoritative.
 pub trait SumcheckKernel<F: Field>: ProveRounds<F>
 where
     SumcheckInputClaims<F, Self::Relation>: InputClaims<F>,

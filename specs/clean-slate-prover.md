@@ -344,11 +344,11 @@ with optimization as follow-up work.
 
 > **Update (`specs/prover-stage-drivers.md`):** the derive now generates the
 > prove-side stage *driver* too — `begin_batch` generates the head, and the
-> generated `prove_clear` owns everything between the head and the engine
-> (prepare in declaration order, typed extraction, shape validation, the
-> `expected_final_claim` hard check, and the finish absorb), reached through
-> the universal `PrepareKernel<F, R>` backend trait. "begin_batch generates
-> the head" below should be read as "head and driver".
+> generated recorder-generic `prove` owns everything between the head and the
+> engine (prepare in declaration order, typed extraction, shape validation,
+> the `expected_final_claim` hard check, and the finish absorb), reached
+> through the universal `PrepareKernel<F, R>` backend trait. "begin_batch
+> generates the head" below should be read as "head and driver".
 
 Layering (each crate one role; the verifier is the executable protocol spec):
 

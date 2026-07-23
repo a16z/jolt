@@ -35,13 +35,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Referenc
         KernelError<F>,
     > {
         let layout = inputs.relation.layout();
-        let program = session
-            .state::<RetainedProgram>()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "prover-retained program data was not parked in the proof session",
-            })?
-            .program
-            .clone();
+        let program = RetainedProgram::from_session(session)?;
         Ok(Box::new(program_image_reduction_kernel(
             layout,
             inputs.relation.r_addr_rw(),

@@ -530,11 +530,7 @@ mod muldiv {
             let mut session = backend.begin_proof();
             // Program-data session residency, as `prove` establishes it at
             // proof start (this harness drives the stages individually).
-            if let Some(program) = prover_preprocessing.program() {
-                session.park(jolt_prover::RetainedProgram {
-                    program: std::sync::Arc::new(program.clone()),
-                });
-            }
+            prover_preprocessing.park_program(&mut session);
             let stage0 = prove_stage0::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 backend,
                 &mut session,

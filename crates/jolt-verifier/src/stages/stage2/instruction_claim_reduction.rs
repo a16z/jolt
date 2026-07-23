@@ -63,18 +63,16 @@ impl<F: Field> InstructionClaimReduction<F> {
             tau_low,
         }
     }
+
+    pub fn tau_low(&self) -> &[F] {
+        &self.tau_low
+    }
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::InstructionClaimReduction,
         reason: reason.to_string(),
-    }
-}
-
-impl<F: Field> InstructionClaimReduction<F> {
-    pub fn tau_low(&self) -> &[F] {
-        &self.tau_low
     }
 }
 

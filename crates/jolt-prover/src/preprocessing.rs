@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
+use jolt_kernels::{ProofSession, RetainedProgram};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::JoltVerifierPreprocessing;
@@ -57,5 +60,18 @@ where
             .program
             .as_full()
             .or_else(|| self.committed_program.as_ref().map(|data| &data.full))
+    }
+
+    /// Establish program-data session residency: the stage-6 table folds
+    /// (bytecode stage values, reduction chunk grids, program-image words)
+    /// read the retained program off the session inside their kernels'
+    /// `prepare`. `prove` parks it at proof start; any harness driving the
+    /// stage functions individually must do the same.
+    pub fn park_program(&self, session: &mut ProofSession) {
+        if let Some(program) = self.program() {
+            session.park(RetainedProgram {
+                program: Arc::new(program.clone()),
+            });
+        }
     }
 }

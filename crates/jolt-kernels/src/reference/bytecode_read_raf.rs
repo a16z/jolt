@@ -63,13 +63,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBac
         let relation = inputs.relation;
         // The per-row stage-value tables: the verifier's own fold over the
         // padded bytecode (the session-resident prover-retained program).
-        let program = session
-            .state::<RetainedProgram>()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "prover-retained program data was not parked in the proof session",
-            })?
-            .program
-            .clone();
+        let program = RetainedProgram::from_session(session)?;
         let stage_gammas = inputs.challenges.stage_gamma_powers();
         let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
             bytecode: &program.bytecode.bytecode,
