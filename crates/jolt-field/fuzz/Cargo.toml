@@ -9,6 +9,30 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.field_arith]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.from_bytes]
+focus = "defensive"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.wide_accumulator_fmadd]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.wide_accumulator_merge]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-field = { path = ".." }

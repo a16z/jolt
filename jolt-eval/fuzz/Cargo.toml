@@ -16,6 +16,42 @@ allocative = { git = "https://github.com/facebookexperimental/allocative", rev =
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.field_mul_scalar]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.split_eq_bind_high_low]
+focus = "correctness"
+pr-seconds = 45
+daily-seconds = 900
+weekly-seconds = 1800
+
+[package.metadata.jolt-fuzz.targets.split_eq_bind_low_high]
+focus = "correctness"
+pr-seconds = 45
+daily-seconds = 900
+weekly-seconds = 1800
+
+[package.metadata.jolt-fuzz.targets.transcript_consistency_blake2b]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.transcript_consistency_keccak]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.transcript_consistency_poseidon]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 900
+
 [package.metadata.cargo-machete]
 ignored = ["libfuzzer-sys"]
 

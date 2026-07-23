@@ -19,6 +19,18 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.sumcheck_verifier]
+focus = "defensive"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.valid_prefix_proof]
+focus = "soundness"
+pr-seconds = 90
+daily-seconds = 1800
+weekly-seconds = 5400
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-field = { path = "../../jolt-field" }

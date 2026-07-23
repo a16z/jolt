@@ -9,6 +9,12 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.dense_poly_ops]
+focus = "correctness"
+pr-seconds = 45
+daily-seconds = 900
+weekly-seconds = 2700
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-poly = { path = ".." }

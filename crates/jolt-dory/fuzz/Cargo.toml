@@ -9,6 +9,18 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.deser_commitment]
+focus = "defensive"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.verify_tampered]
+focus = "soundness"
+pr-seconds = 20
+daily-seconds = 300
+weekly-seconds = 900
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-dory = { path = ".." }

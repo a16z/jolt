@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import importlib.util
 import json
 import sys
@@ -18,17 +20,31 @@ SPEC.loader.exec_module(FUZZ)
 
 
 class FuzzInventoryTests(unittest.TestCase):
+    DEFAULT_POLICY = (
+        'focus = "correctness"\n'
+        "pr-seconds = 30\n"
+        "daily-seconds = 600\n"
+        "weekly-seconds = 900\n"
+    )
+
     def make_workspace(
         self,
         root: Path,
         crate: str = "sample",
         targets: tuple[str, ...] = ("alpha", "beta"),
         top_level: bool = False,
+        policies: dict[str, str] | None = None,
     ) -> Path:
         base = root / crate if top_level else root / "crates" / crate
         fuzz_dir = base / "fuzz"
         target_dir = fuzz_dir / "fuzz_targets"
         target_dir.mkdir(parents=True)
+        if policies is None:
+            policies = {target: self.DEFAULT_POLICY for target in targets}
+        policy_blocks = "\n".join(
+            f"[package.metadata.jolt-fuzz.targets.{name}]\n{body}"
+            for name, body in policies.items()
+        )
         bins = "\n".join(
             (
                 "[[bin]]\n"
@@ -48,6 +64,8 @@ class FuzzInventoryTests(unittest.TestCase):
             "\n"
             "[package.metadata]\n"
             "cargo-fuzz = true\n"
+            "\n"
+            f"{policy_blocks}\n"
             "\n"
             f"{bins}"
         )
@@ -83,7 +101,7 @@ class FuzzInventoryTests(unittest.TestCase):
             workspaces = FUZZ.discover_workspaces(root)
 
             self.assertEqual([workspace.name for workspace in workspaces], ["alpha", "zeta"])
-            self.assertEqual(workspaces[1].targets, ("first", "second"))
+            self.assertEqual(workspaces[1].target_names(), ("first", "second"))
 
     def test_discovers_top_level_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -109,6 +127,174 @@ class FuzzInventoryTests(unittest.TestCase):
                 FUZZ.FuzzConfigurationError, "duplicate fuzz workspace names"
             ):
                 FUZZ.discover_workspaces(root)
+
+    def test_parses_focus_and_profile_budgets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_workspace(
+                root,
+                targets=("alpha",),
+                policies={
+                    "alpha": (
+                        'focus = "soundness"\n'
+                        "pr-seconds = 90\n"
+                        "daily-seconds = 1800\n"
+                        "weekly-seconds = 5400\n"
+                    )
+                },
+            )
+
+            workspace = FUZZ.discover_workspaces(root)[0]
+            target = workspace.targets[0]
+
+            self.assertEqual(target.focus, "soundness")
+            self.assertEqual(target.profile_seconds("pr"), 90)
+            self.assertEqual(target.profile_seconds("daily"), 1800)
+            self.assertEqual(target.profile_seconds("weekly"), 5400)
+            self.assertEqual(workspace.profile_runtime("weekly"), 5400)
+
+    def test_rejects_target_without_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_workspace(root, targets=("alpha",), policies={})
+
+            with self.assertRaisesRegex(
+                FUZZ.FuzzConfigurationError, "has no .*jolt-fuzz.targets.alpha"
+            ):
+                FUZZ.discover_workspaces(root)
+
+    def test_rejects_policy_for_unknown_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_workspace(
+                root,
+                targets=("alpha",),
+                policies={
+                    "alpha": self.DEFAULT_POLICY,
+                    "ghost": self.DEFAULT_POLICY,
+                },
+            )
+
+            with self.assertRaisesRegex(
+                FUZZ.FuzzConfigurationError, "unknown targets: ghost"
+            ):
+                FUZZ.discover_workspaces(root)
+
+    def test_rejects_invalid_focus(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_workspace(
+                root,
+                targets=("alpha",),
+                policies={
+                    "alpha": (
+                        'focus = "important"\n'
+                        "pr-seconds = 30\n"
+                        "daily-seconds = 600\n"
+                        "weekly-seconds = 900\n"
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                FUZZ.FuzzConfigurationError, "focus must be one of"
+            ):
+                FUZZ.discover_workspaces(root)
+
+    def test_rejects_missing_or_invalid_budget(self) -> None:
+        for budget_line in ("", 'daily-seconds = "fast"\n', "daily-seconds = 3.5\n"):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_workspace(
+                    root,
+                    targets=("alpha",),
+                    policies={
+                        "alpha": (
+                            'focus = "defensive"\n'
+                            "pr-seconds = 30\n"
+                            f"{budget_line}"
+                            "weekly-seconds = 900\n"
+                        )
+                    },
+                )
+
+                with self.assertRaisesRegex(
+                    FUZZ.FuzzConfigurationError, "missing or has an invalid"
+                ):
+                    FUZZ.discover_workspaces(root)
+
+    def test_rejects_non_positive_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_workspace(
+                root,
+                targets=("alpha",),
+                policies={
+                    "alpha": (
+                        'focus = "defensive"\n'
+                        "pr-seconds = 0\n"
+                        "daily-seconds = 600\n"
+                        "weekly-seconds = 900\n"
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                FUZZ.FuzzConfigurationError, "pr-seconds must be positive"
+            ):
+                FUZZ.discover_workspaces(root)
+
+    def test_check_reports_workspace_profile_runtimes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_validated_workspace(root, targets=("alpha", "beta"))
+            output = StringIO()
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                redirect_stdout(output),
+            ):
+                status = FUZZ.main(("check",))
+
+            self.assertEqual(status, 0)
+            self.assertIn("sample: pr 1m, daily 20m, weekly 30m", output.getvalue())
+
+    def test_run_uses_manifest_budgets_and_seconds_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.make_validated_workspace(root, targets=("alpha",))
+            commands = []
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(FUZZ, "check_cargo_fuzz_version"),
+                mock.patch.object(FUZZ, "check_workspace"),
+                mock.patch.object(
+                    FUZZ,
+                    "run_command",
+                    side_effect=lambda command, **_: commands.append(command) or 0,
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                self.assertEqual(FUZZ.main(("run", "--profile", "daily")), 0)
+                self.assertEqual(FUZZ.main(("run", "--seconds", "7")), 0)
+
+            self.assertIn("-max_total_time=600", commands[0])
+            self.assertIn("-max_total_time=7", commands[1])
+
+    def test_run_requires_exactly_one_of_profile_or_seconds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_validated_workspace(root, targets=("alpha",))
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                redirect_stderr(StringIO()),
+            ):
+                self.assertEqual(FUZZ.main(("run",)), 1)
+                self.assertEqual(
+                    FUZZ.main(("run", "--profile", "pr", "--seconds", "5")), 1
+                )
 
     def test_rejects_missing_target_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -180,6 +366,34 @@ class FuzzInventoryTests(unittest.TestCase):
                 [path.name for path in files],
                 ["a-seed", "z-seed", "crash-1"],
             )
+
+    def test_validation_rejects_unpinned_toolchain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fuzz_dir = self.make_validated_workspace(root, targets=("alpha",))
+            (fuzz_dir / "rust-toolchain.toml").write_text(
+                "[toolchain]\n"
+                'channel = "nightly"\n'
+                'components = ["llvm-tools-preview", "rust-src"]\n'
+            )
+            workspace = FUZZ.discover_workspaces(root)[0]
+
+            with self.assertRaisesRegex(
+                FUZZ.FuzzConfigurationError, f"expected '{FUZZ.PINNED_NIGHTLY}'"
+            ):
+                FUZZ.check_workspace(root, workspace, resolve=False)
+
+    def test_validation_rejects_missing_lockfile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fuzz_dir = self.make_validated_workspace(root, targets=("alpha",))
+            (fuzz_dir / "Cargo.lock").unlink()
+            workspace = FUZZ.discover_workspaces(root)[0]
+
+            with self.assertRaisesRegex(
+                FUZZ.FuzzConfigurationError, "missing Cargo.lock"
+            ):
+                FUZZ.check_workspace(root, workspace, resolve=False)
 
     def test_validation_rejects_missing_toolchain_component(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

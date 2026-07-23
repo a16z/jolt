@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -17,6 +18,13 @@ from typing import Iterable, Sequence
 PINNED_CARGO_FUZZ = "cargo-fuzz 0.13.2"
 PINNED_NIGHTLY = "nightly-2026-07-20"
 REQUIRED_TOOLCHAIN_COMPONENTS = frozenset(("llvm-tools-preview", "rust-src"))
+PROFILES = ("pr", "daily", "weekly")
+FOCUS_VALUES = frozenset(("soundness", "correctness", "defensive"))
+
+POLICY_TABLE = re.compile(
+    r"(?ms)^\[package\.metadata\.jolt-fuzz\.targets\.(?P<name>[A-Za-z0-9_-]+)\]\s*$"
+    r"(?P<body>.*?)(?=^\[|\Z)"
+)
 
 
 class FuzzConfigurationError(RuntimeError):
@@ -24,13 +32,40 @@ class FuzzConfigurationError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class FuzzTarget:
+    name: str
+    focus: str
+    pr_seconds: int
+    daily_seconds: int
+    weekly_seconds: int
+
+    def profile_seconds(self, profile: str) -> int:
+        return int(getattr(self, f"{profile}_seconds"))
+
+
+@dataclass(frozen=True)
 class FuzzWorkspace:
     name: str
     directory: Path
-    targets: tuple[str, ...]
+    targets: tuple[FuzzTarget, ...]
 
     def relative_directory(self, root: Path) -> str:
         return self.directory.relative_to(root).as_posix()
+
+    def target_names(self) -> tuple[str, ...]:
+        return tuple(target.name for target in self.targets)
+
+    def profile_runtime(self, profile: str) -> int:
+        return sum(target.profile_seconds(profile) for target in self.targets)
+
+
+def format_seconds(total: int) -> str:
+    minutes, seconds = divmod(total, 60)
+    if minutes and seconds:
+        return f"{minutes}m{seconds:02d}s"
+    if minutes:
+        return f"{minutes}m"
+    return f"{seconds}s"
 
 
 def repository_root() -> Path:
@@ -38,6 +73,39 @@ def repository_root() -> Path:
     if override:
         return Path(override).resolve()
     return Path(__file__).resolve().parents[1]
+
+
+def parse_target_policy(
+    manifest_name: str, target_name: str, body: str
+) -> FuzzTarget:
+    focus_match = re.search(r'(?m)^focus\s*=\s*"([^"]+)"\s*$', body)
+    focus = focus_match.group(1) if focus_match else None
+    if focus not in FOCUS_VALUES:
+        choices = ", ".join(sorted(FOCUS_VALUES))
+        raise FuzzConfigurationError(
+            f"{manifest_name} target {target_name!r} focus must be one of: {choices}"
+        )
+    budgets = {}
+    for key in ("pr-seconds", "daily-seconds", "weekly-seconds"):
+        value_match = re.search(rf"(?m)^{key}\s*=\s*(-?\d+)\s*$", body)
+        if value_match is None:
+            raise FuzzConfigurationError(
+                f"{manifest_name} target {target_name!r} is missing or has an "
+                f"invalid {key} (expected an integer)"
+            )
+        value = int(value_match.group(1))
+        if value <= 0:
+            raise FuzzConfigurationError(
+                f"{manifest_name} target {target_name!r} {key} must be positive"
+            )
+        budgets[key] = value
+    return FuzzTarget(
+        name=target_name,
+        focus=focus,
+        pr_seconds=budgets["pr-seconds"],
+        daily_seconds=budgets["daily-seconds"],
+        weekly_seconds=budgets["weekly-seconds"],
+    )
 
 
 def discover_workspaces(root: Path) -> tuple[FuzzWorkspace, ...]:
@@ -60,13 +128,24 @@ def discover_workspaces(root: Path) -> tuple[FuzzWorkspace, ...]:
                 "[package.metadata].cargo-fuzz = true"
             )
 
+        manifest_name = manifest_path.relative_to(root).as_posix()
+        policies = {}
+        for policy in POLICY_TABLE.finditer(manifest):
+            policy_name = policy.group("name")
+            if policy_name in policies:
+                raise FuzzConfigurationError(
+                    f"{manifest_name} has duplicate policy entries for "
+                    f"target {policy_name!r}"
+                )
+            policies[policy_name] = policy.group("body")
+
         target_names = []
         for target in re.split(r"(?m)^\[\[bin\]\]\s*$", manifest)[1:]:
             name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', target)
             path_match = re.search(r'(?m)^path\s*=\s*"([^"]+)"\s*$', target)
             if name_match is None or path_match is None:
                 raise FuzzConfigurationError(
-                    f"{manifest_path.relative_to(root)} has a [[bin]] without "
+                    f"{manifest_name} has a [[bin]] without "
                     "string name and path fields"
                 )
             name = name_match.group(1)
@@ -80,19 +159,32 @@ def discover_workspaces(root: Path) -> tuple[FuzzWorkspace, ...]:
             target_names.append(name)
 
         if not target_names:
-            raise FuzzConfigurationError(
-                f"{manifest_path.relative_to(root)} has no fuzz targets"
-            )
+            raise FuzzConfigurationError(f"{manifest_name} has no fuzz targets")
         if len(target_names) != len(set(target_names)):
             raise FuzzConfigurationError(
-                f"{manifest_path.relative_to(root)} has duplicate target names"
+                f"{manifest_name} has duplicate target names"
+            )
+
+        targets = []
+        for name in target_names:
+            body = policies.pop(name, None)
+            if body is None:
+                raise FuzzConfigurationError(
+                    f"{manifest_name} target {name!r} has no "
+                    f"[package.metadata.jolt-fuzz.targets.{name}] policy"
+                )
+            targets.append(parse_target_policy(manifest_name, name, body))
+        if policies:
+            unknown = ", ".join(sorted(policies))
+            raise FuzzConfigurationError(
+                f"{manifest_name} has policy entries for unknown targets: {unknown}"
             )
 
         workspaces.append(
             FuzzWorkspace(
                 name=manifest_path.parent.parent.name,
                 directory=manifest_path.parent,
-                targets=tuple(sorted(target_names)),
+                targets=tuple(sorted(targets, key=lambda target: target.name)),
             )
         )
 
@@ -161,13 +253,13 @@ def check_workspace(root: Path, workspace: FuzzWorkspace, resolve: bool) -> None
         )
 
     for target in workspace.targets:
-        seed_directory = workspace.directory / "seeds" / target
+        seed_directory = workspace.directory / "seeds" / target.name
         if not seed_directory.is_dir() or not any(
             path.is_file() and not path.name.startswith(".")
             for path in seed_directory.iterdir()
         ):
             raise FuzzConfigurationError(
-                f"{workspace.name}/{target} has no checked-in seed inputs"
+                f"{workspace.name}/{target.name} has no checked-in seed inputs"
             )
 
     if resolve:
@@ -247,17 +339,18 @@ def corpus_directories(workspace: FuzzWorkspace, target: str) -> tuple[Path, ...
     return tuple(directories)
 
 
-def target_names(
+def selected_targets(
     workspace: FuzzWorkspace, requested_target: str | None
-) -> tuple[str, ...]:
+) -> tuple[FuzzTarget, ...]:
     if requested_target is None:
         return workspace.targets
-    if requested_target not in workspace.targets:
-        choices = ", ".join(workspace.targets)
-        raise FuzzConfigurationError(
-            f"{workspace.name} has no target {requested_target!r}; expected: {choices}"
-        )
-    return (requested_target,)
+    for target in workspace.targets:
+        if target.name == requested_target:
+            return (target,)
+    choices = ", ".join(workspace.target_names())
+    raise FuzzConfigurationError(
+        f"{workspace.name} has no target {requested_target!r}; expected: {choices}"
+    )
 
 
 def run_for_targets(
@@ -270,34 +363,40 @@ def run_for_targets(
 
     for workspace in workspaces:
         check_workspace(root, workspace, resolve=True)
-        for target in target_names(workspace, args.target):
+        for target in selected_targets(workspace, args.target):
+            seconds = None
             if args.command == "replay":
-                files = seed_and_regression_files(workspace, target)
+                files = seed_and_regression_files(workspace, target.name)
                 if not files:
                     raise FuzzConfigurationError(
-                        f"{workspace.name}/{target} has no seeds or regressions"
+                        f"{workspace.name}/{target.name} has no seeds or regressions"
                     )
-                command = ["cargo", "fuzz", "run", target]
+                command = ["cargo", "fuzz", "run", target.name]
                 command.extend(str(path) for path in files)
             elif args.command == "reproduce":
-                command = ["cargo", "fuzz", "run", target, str(args.input)]
+                command = ["cargo", "fuzz", "run", target.name, str(args.input)]
             elif args.command == "tmin":
-                command = ["cargo", "fuzz", "tmin", target, str(args.input)]
+                command = ["cargo", "fuzz", "tmin", target.name, str(args.input)]
             elif args.command == "run":
-                corpus = workspace.directory / "corpus" / target
-                artifacts = workspace.directory / "artifacts" / target
+                seconds = (
+                    args.seconds
+                    if args.seconds is not None
+                    else target.profile_seconds(args.profile)
+                )
+                corpus = workspace.directory / "corpus" / target.name
+                artifacts = workspace.directory / "artifacts" / target.name
                 corpus.mkdir(parents=True, exist_ok=True)
                 artifacts.mkdir(parents=True, exist_ok=True)
-                command = ["cargo", "fuzz", "run", target, str(corpus)]
+                command = ["cargo", "fuzz", "run", target.name, str(corpus)]
                 command.extend(
                     str(path)
-                    for path in corpus_directories(workspace, target)
+                    for path in corpus_directories(workspace, target.name)
                     if path != corpus
                 )
                 command.extend(
                     [
                         "--",
-                        f"-max_total_time={args.seconds}",
+                        f"-max_total_time={seconds}",
                         f"-max_len={args.max_len}",
                         f"-timeout={args.timeout}",
                         f"-rss_limit_mb={args.rss_limit_mb}",
@@ -307,30 +406,39 @@ def run_for_targets(
                     ]
                 )
             elif args.command == "cmin":
-                corpus = workspace.directory / "corpus" / target
+                corpus = workspace.directory / "corpus" / target.name
                 if not corpus.is_dir() or not any(corpus.iterdir()):
-                    print(f"Skipping empty corpus for {workspace.name}/{target}")
+                    print(f"Skipping empty corpus for {workspace.name}/{target.name}")
                     continue
-                command = ["cargo", "fuzz", "cmin", target, str(corpus)]
+                command = ["cargo", "fuzz", "cmin", target.name, str(corpus)]
             elif args.command == "coverage":
-                directories = corpus_directories(workspace, target)
+                directories = corpus_directories(workspace, target.name)
                 if not directories:
                     raise FuzzConfigurationError(
-                        f"{workspace.name}/{target} has no corpus inputs"
+                        f"{workspace.name}/{target.name} has no corpus inputs"
                     )
-                command = ["cargo", "fuzz", "coverage", target]
+                command = ["cargo", "fuzz", "coverage", target.name]
                 command.extend(str(path) for path in directories)
             else:
                 raise AssertionError(f"unsupported target command {args.command}")
 
+            started = time.monotonic()
             status = run_command(command, cwd=workspace.directory)
+            elapsed = time.monotonic() - started
+            if args.command == "run":
+                print(
+                    f"[stats] {workspace.name}/{target.name}: exit={status} "
+                    f"focus={target.focus} budget={seconds}s "
+                    f"elapsed={elapsed:.1f}s",
+                    flush=True,
+                )
             if status != 0:
-                failures.append(f"{workspace.name}/{target} (exit {status})")
+                failures.append(f"{workspace.name}/{target.name} (exit {status})")
                 if args.command in ("run", "replay"):
-                    artifacts = workspace.directory / "artifacts" / target
+                    artifacts = workspace.directory / "artifacts" / target.name
                     print(
                         f"replay a failing input with: python3 scripts/fuzz.py "
-                        f"--workspace {workspace.name} --target {target} "
+                        f"--workspace {workspace.name} --target {target.name} "
                         f"reproduce <input> (run artifacts land in {artifacts})",
                         file=sys.stderr,
                     )
@@ -349,7 +457,21 @@ def print_inventory(
                 "workspace": workspace.name,
                 "directory": workspace.relative_directory(root),
                 "target_count": len(workspace.targets),
-                "targets": list(workspace.targets),
+                **{
+                    f"{profile}_seconds": workspace.profile_runtime(profile)
+                    for profile in PROFILES
+                },
+                "targets": [
+                    {
+                        "name": target.name,
+                        "focus": target.focus,
+                        **{
+                            f"{profile}_seconds": target.profile_seconds(profile)
+                            for profile in PROFILES
+                        },
+                    }
+                    for target in workspace.targets
+                ],
             }
             for workspace in workspaces
         ]
@@ -361,6 +483,10 @@ def print_inventory(
                 "workspace": workspace.name,
                 "directory": workspace.relative_directory(root),
                 "target_count": len(workspace.targets),
+                **{
+                    f"{profile}_seconds": workspace.profile_runtime(profile)
+                    for profile in PROFILES
+                },
             }
             for workspace in workspaces
         ]
@@ -369,8 +495,17 @@ def print_inventory(
 
     total = 0
     for workspace in workspaces:
-        targets = ", ".join(workspace.targets)
-        print(f"{workspace.name} ({len(workspace.targets)}): {targets}")
+        runtimes = ", ".join(
+            f"{profile} {format_seconds(workspace.profile_runtime(profile))}"
+            for profile in PROFILES
+        )
+        print(f"{workspace.name} ({len(workspace.targets)} targets; {runtimes})")
+        for target in workspace.targets:
+            budgets = ", ".join(
+                f"{profile} {format_seconds(target.profile_seconds(profile))}"
+                for profile in PROFILES
+            )
+            print(f"  {target.name} [{target.focus}]: {budgets}")
         total += len(workspace.targets)
     print(f"{len(workspaces)} workspaces, {total} targets")
 
@@ -406,7 +541,16 @@ def create_parser() -> argparse.ArgumentParser:
     tmin.add_argument("input", type=Path)
 
     run = subparsers.add_parser("run", help="run coverage-guided fuzzing")
-    run.add_argument("--seconds", type=int, default=30)
+    run.add_argument(
+        "--profile",
+        choices=PROFILES,
+        help="use each target's manifest-declared budget for this profile",
+    )
+    run.add_argument(
+        "--seconds",
+        type=int,
+        help="override every selected target's budget with one duration",
+    )
     run.add_argument("--max-len", type=int, default=4096)
     run.add_argument("--timeout", type=int, default=30)
     run.add_argument("--rss-limit-mb", type=int, default=4096)
@@ -450,6 +594,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         elif args.command == "check":
             for workspace in workspaces:
                 check_workspace(root, workspace, resolve=args.resolve)
+                runtimes = ", ".join(
+                    f"{profile} {format_seconds(workspace.profile_runtime(profile))}"
+                    for profile in PROFILES
+                )
+                print(f"{workspace.name}: {runtimes}")
             print(
                 f"Validated {len(workspaces)} fuzz workspaces with "
                 f"{sum(len(workspace.targets) for workspace in workspaces)} targets"
@@ -461,7 +610,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 check_workspace(root, workspace, resolve=True)
                 command = ["cargo", "fuzz", "build"]
                 if args.target is not None:
-                    target_names(workspace, args.target)
+                    selected_targets(workspace, args.target)
                     command.append(args.target)
                 status = run_command(command, cwd=workspace.directory)
                 if status != 0:
@@ -470,7 +619,12 @@ def main(argv: Iterable[str] | None = None) -> int:
                 raise RuntimeError("fuzz builds failed: " + ", ".join(failures))
         else:
             if args.command == "run":
-                positive(args.seconds, "seconds")
+                if (args.profile is None) == (args.seconds is None):
+                    raise FuzzConfigurationError(
+                        "run requires exactly one of --profile or --seconds"
+                    )
+                if args.seconds is not None:
+                    positive(args.seconds, "seconds")
                 positive(args.max_len, "max-len")
                 positive(args.timeout, "timeout")
                 positive(args.rss_limit_mb, "rss-limit-mb")

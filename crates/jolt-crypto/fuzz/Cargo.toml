@@ -19,6 +19,24 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.deser_group]
+focus = "defensive"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.group_arith]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.pedersen_commit]
+focus = "correctness"
+pr-seconds = 60
+daily-seconds = 1500
+weekly-seconds = 2700
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-crypto = { path = ".." }

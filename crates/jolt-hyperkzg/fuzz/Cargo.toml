@@ -9,6 +9,24 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.commit_open_verify]
+focus = "correctness"
+pr-seconds = 60
+daily-seconds = 1500
+weekly-seconds = 2700
+
+[package.metadata.jolt-fuzz.targets.tampered_proof]
+focus = "soundness"
+pr-seconds = 60
+daily-seconds = 1500
+weekly-seconds = 2700
+
+[package.metadata.jolt-fuzz.targets.wrong_eval]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1200
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-hyperkzg = { path = ".." }
