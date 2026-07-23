@@ -15,7 +15,7 @@ use crate::protocols::jolt::{
 use crate::{opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
-/// intermediate, plus (committed-program mode only) the staged `BytecodeValStage`
+/// intermediate, plus (committed-program mode only) the staged `BytecodeValClaim`
 /// openings. In full-program mode `val_stages` is empty.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -26,7 +26,7 @@ use crate::{opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumc
 pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
     #[opening(BytecodeReadRafAddrClaim)]
     pub intermediate: C,
-    #[opening(BytecodeValStage)]
+    #[opening(BytecodeValClaim)]
     pub val_stages: Vec<C>,
 }
 

@@ -15,14 +15,18 @@
 //! table is a performance floor, never a correctness gate; catalog identity
 //! is validated against the config policy on every lookup.
 
-pub(crate) use akita_challenges::TensorChallengeShape;
 pub(crate) use akita_planner::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
+    GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
+    GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
+    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedRootSource,
+    GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition,
+    PlannerCostModelId, SelectionPolicyId,
 };
 pub(crate) use akita_planner::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub(crate) use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, PolynomialGroupLayout, PrecommittedGroupParams,
-    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
+    ChunkedWitnessCfg, DecompositionParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,
 };
 
 #[expect(
@@ -60,9 +64,9 @@ pub fn jolt_fp128_d64_onehot_k256_table() -> Option<GeneratedScheduleTable> {
 pub mod emit {
     use akita_config::{policy_of, CommitmentConfig};
     use akita_pcs::AkitaError;
-    use akita_planner::{find_group_batch_schedule, find_schedule, EmitSpec};
+    use akita_planner::{find_group_batch_schedule, EmitSpec};
     use akita_types::{
-        AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout, Schedule,
+        AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     };
 
     use crate::configs::{JoltD64OneHotK16, JoltD64OneHotK256};
@@ -75,8 +79,11 @@ pub mod emit {
         1, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
         71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
     ];
-    /// Column arity is `4 + log_T`; `log_T < 25` in the K=16 regime.
-    pub const K16_NUM_VARS: (usize, usize) = (1, 28);
+    /// Column arity is `4 + log_T`. The packed pipeline pads every trace to
+    /// `T >= 2^12` (`AkitaPackedScheme::MIN_PADDED_TRACE_LENGTH` — the
+    /// folded-only planner cannot schedule wide K=16 groups below 16
+    /// variables), and `log_T < 25` in the K=16 regime.
+    pub const K16_NUM_VARS: (usize, usize) = (16, 28);
 
     /// `OneHotTrace` widths at K=256: 25 fixed columns (16 instruction
     /// chunks, eight unsigned-increment chunks, and the MSB), plus up to eight
@@ -87,24 +94,24 @@ pub mod emit {
     /// Column arity is `8 + log_T`; the K=256 regime starts at `log_T = 25`.
     pub const K256_NUM_VARS: (usize, usize) = (33, 38);
 
-    fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
-        find_schedule(
-            key,
-            &policy_of::<Cfg>(),
-            Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
-        )
+    /// Pure DP regeneration for `Cfg` — never consults the shipped table.
+    fn regen<Cfg: CommitmentConfig>(
+        key: PolynomialGroupLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
+        regen_group_batch::<Cfg>(AkitaScheduleLookupKey::single(key))
     }
 
     fn regen_group_batch<Cfg: CommitmentConfig>(
         key: AkitaScheduleLookupKey,
-    ) -> Result<Schedule, AkitaError> {
-        find_group_batch_schedule(
+    ) -> Result<FoldSchedule, AkitaError> {
+        let planned = find_group_batch_schedule(
             &key,
             &policy_of::<Cfg>(),
             Cfg::ring_challenge_config,
             Cfg::fold_challenge_shape_at_level,
-        )
+        )?;
+        planned.schedule.validate_structure()?;
+        Ok(planned.schedule)
     }
 
     /// The reachable scalar keys of one family grid.

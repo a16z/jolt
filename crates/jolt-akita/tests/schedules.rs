@@ -32,10 +32,10 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
         assert!(!grid.is_empty());
         for key in grid {
             assert!(
-                table
-                    .entries
-                    .iter()
-                    .any(|entry| entry.final_group == key && entry.precommitteds.is_empty()),
+                table.entries.iter().any(|entry| {
+                    entry.root.final_group.layout == key
+                        && entry.root.precommitted_groups.is_empty()
+                }),
                 "missing catalog entry for {key:?}"
             );
         }

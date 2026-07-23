@@ -156,7 +156,7 @@ pub enum BytecodeReadRafChallenge {
 pub enum BytecodeReadRafPublic {
     StageValue(usize),
     /// Committed program mode: `eq(stage_cycle_point_s, r_cycle)` factor
-    /// multiplying the staged `BytecodeValStage(s)` opening. In full mode this
+    /// multiplying the staged `BytecodeValClaim(s)` opening. In full mode this
     /// factor is folded into `StageValue(s)` instead.
     StageCycleEq(usize),
     SpartanOuterRaf,
@@ -492,7 +492,7 @@ pub enum JoltVirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
-    BytecodeValStage(usize),
+    BytecodeValClaim(usize),
     BytecodeReadRafAddrClaim,
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,

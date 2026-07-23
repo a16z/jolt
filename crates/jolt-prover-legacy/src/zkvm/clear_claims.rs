@@ -6,24 +6,43 @@ use jolt_claims::protocols::jolt::{
         booleanity, bytecode,
         claim_reductions::registers as registers_claim_reduction,
         claim_reductions::{
-            advice, bytecode as bytecode_claim_reduction, increments,
+            advice, bytecode as bytecode_claim_reduction,
             instruction as instruction_claim_reduction, program_image,
         },
         instruction, ram, registers, spartan,
-        spartan::{outer_opening, outer_uniskip_opening, product_uniskip_opening},
+        spartan::{outer_opening, product_uniskip_opening},
     },
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
+    JoltAdviceKind, JoltVirtualPolynomial,
+};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::{
+    geometry::{claim_reductions::increments, spartan::outer_uniskip_opening},
+    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
 };
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_riscv::CircuitFlags;
+#[cfg(not(feature = "akita"))]
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::{
-        stage1::{
-            outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
-            OuterRemainderOutputClaims,
+        stage1::outputs::Stage1OutputClaims,
+        stage6b::outputs::{
+            BooleanityOutputClaims, BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
+            Stage6bOutputClaims,
         },
+        stage7::{
+            advice_address_phase::{
+                TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
+            },
+            hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
+            outputs::Stage7OutputClaims,
+        },
+    },
+};
+use jolt_verifier::{
+    stages::{
+        stage1::{outputs::Stage1BatchOutputClaims, OuterRemainderOutputClaims},
         stage2::outputs::{
             InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
             RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
@@ -43,27 +62,23 @@ use jolt_verifier::{
             Stage6aOutputClaims,
         },
         stage6b::outputs::{
-            BooleanityOutputClaims, BytecodeReadRafOutputClaims,
-            BytecodeReductionCyclePhaseOutputClaims, IncClaimReductionOutputClaims,
-            InstructionRaVirtualizationOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
-            RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
-            TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
+            BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
+            ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
+            RamRaVirtualizationOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
+            UntrustedAdviceCyclePhaseOutputClaims,
         },
-        stage7::{
-            advice_address_phase::{
-                TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
-            },
-            committed_reduction_address_phase::{
-                BytecodeReductionAddressPhaseOutputClaims,
-                ProgramImageReductionAddressPhaseOutputClaims,
-            },
-            hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
-            outputs::Stage7OutputClaims,
+        stage7::committed_reduction_address_phase::{
+            BytecodeReductionAddressPhaseOutputClaims,
+            ProgramImageReductionAddressPhaseOutputClaims,
         },
     },
     VerifierError,
 };
 
+// The akita (packed) prove path assembles the akita-shaped
+// `ClearProofClaims` itself; the base builder and its stage-6b/7 pieces
+// target the base wire shape and are compiled out with it.
+#[cfg(not(feature = "akita"))]
 pub(crate) fn build_clear_claims<F: Field>(
     claims: impl IntoIterator<Item = (jolt::JoltOpeningId, F)>,
     _trace_length: usize,
@@ -299,6 +314,7 @@ fn stage6a_claims_from_openings<F: Field>(
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn stage6b_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage6bOutputClaims<F>, VerifierError> {
@@ -455,10 +471,17 @@ fn bytecode_val_stage_claims_from_openings<F: Field>(
     {
         return Ok(Vec::new());
     }
-    let mut stage_claims = Vec::with_capacity(bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES);
-    for stage in 0..bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES {
-        stage_claims
-            .push(claims.require(bytecode_claim_reduction::bytecode_val_stage_opening(stage))?);
+    // Five staged vals in base mode, six on the packed path (the store
+    // stage); the verifier's count validation enforces the mode.
+    let mut stage_claims =
+        Vec::with_capacity(bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES + 1);
+    for stage in 0.. {
+        let Some(opening_claim) =
+            claims.get(bytecode_claim_reduction::bytecode_val_stage_opening(stage))
+        else {
+            break;
+        };
+        stage_claims.push(opening_claim);
     }
     Ok(stage_claims)
 }
@@ -494,6 +517,7 @@ fn final_bytecode_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<
     chunks
 }
 
+#[cfg(not(feature = "akita"))]
 fn stage7_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage7OutputClaims<F>, VerifierError> {
@@ -603,3 +627,311 @@ impl<F: Field> OpeningClaimMap<F> {
         self.get(id).unwrap_or_else(F::zero)
     }
 }
+
+#[cfg(feature = "akita")]
+mod packed {
+    use super::*;
+    use jolt_claims::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
+    use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
+        self, TrustedAdviceReconstructionOutputClaims, UntrustedAdviceReconstructionOutputClaims,
+    };
+    use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims;
+    use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
+        self, BytecodeChunkReconstructionOutputClaims,
+    };
+    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
+    use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::{
+        self, ProgramImageReconstructionOutputClaims,
+    };
+    use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
+    use jolt_claims::protocols::jolt::{
+        BytecodeRegisterLane, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+    };
+    use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+    use jolt_verifier::proof::ClearProofClaims;
+    use jolt_verifier::stages::stage1::outputs::Stage1OutputClaims;
+    use jolt_verifier::stages::stage6b::outputs::Stage6bOutputClaims;
+    use jolt_verifier::stages::stage7::advice_address_phase::{
+        TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
+    };
+    use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
+    use jolt_verifier::stages::stage7::outputs::Stage7OutputClaims;
+    use jolt_verifier::stages::stage8::reconstruction::ReconstructionOutputClaims;
+    use spartan::outer_uniskip_opening;
+
+    /// The packed (akita) analog of the base clear-claims projection: the
+    /// base stage payloads plus the reconstruction phase cells, with the
+    /// lattice stage-6b/7 shapes (the read-raf carries the fused-inc opening;
+    /// booleanity carries the unsigned-inc columns; there is no stage-6b inc
+    /// slot).
+    pub(crate) fn build_packed_clear_claims<F: Field>(
+        claims: impl IntoIterator<Item = (jolt::JoltOpeningId, F)>,
+    ) -> Result<ClearProofClaims<F>, VerifierError> {
+        let claims = OpeningClaimMap {
+            claims: claims.into_iter().collect(),
+        };
+        Ok(ClearProofClaims {
+            stage1: Stage1OutputClaims {
+                uniskip_output_claim: claims.require(outer_uniskip_opening())?,
+                outer: spartan_outer_claims_from_openings(&claims)?,
+            },
+            stage2: stage2_claims_from_openings(&claims)?,
+            stage3: stage3_claims_from_openings(&claims)?,
+            stage4: stage4_claims_from_openings(&claims)?,
+            stage5: stage5_claims_from_openings(&claims)?,
+            stage6a: stage6a_claims_from_openings(&claims)?,
+            stage6b: packed_stage6b_claims_from_openings(&claims)?,
+            stage7: packed_stage7_claims_from_openings(&claims)?,
+            reconstruction: reconstruction_claims_from_openings(&claims),
+        })
+    }
+
+    fn indexed_family<F: Field>(
+        claims: &OpeningClaimMap<F>,
+        id: impl Fn(usize) -> JoltOpeningId,
+    ) -> Vec<F> {
+        let mut family = Vec::new();
+        for index in 0.. {
+            let Some(opening_claim) = claims.get(id(index)) else {
+                break;
+            };
+            family.push(opening_claim);
+        }
+        family
+    }
+
+    fn packed_stage6b_claims_from_openings<F: Field>(
+        claims: &OpeningClaimMap<F>,
+    ) -> Result<Stage6bOutputClaims<F>, VerifierError> {
+        let bytecode_ra = indexed_family(claims, |index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltRelationId::BytecodeReadRaf,
+            )
+        });
+        if bytecode_ra.is_empty() {
+            return Err(VerifierError::MissingOpeningClaim {
+                id: JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeRa(0),
+                    JoltRelationId::BytecodeReadRaf,
+                ),
+            });
+        }
+
+        let booleanity_instruction_ra = indexed_family(claims, |index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::InstructionRa(index),
+                JoltRelationId::Booleanity,
+            )
+        });
+        let mut booleanity_bytecode_ra = Vec::new();
+        for index in 0.. {
+            let id = JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltRelationId::Booleanity,
+            );
+            let fallback_id = JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltRelationId::BytecodeReadRaf,
+            );
+            let Some(opening_claim) = claims.get(id).or_else(|| claims.get(fallback_id)) else {
+                break;
+            };
+            booleanity_bytecode_ra.push(opening_claim);
+        }
+        let booleanity_ram_ra = indexed_family(claims, |index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamRa(index),
+                JoltRelationId::Booleanity,
+            )
+        });
+        let unsigned_inc_chunks = indexed_family(claims, |index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::UnsignedIncChunk(index),
+                JoltRelationId::Booleanity,
+            )
+        });
+        let unsigned_inc_msb = claims.require(JoltOpeningId::committed(
+            JoltCommittedPolynomial::UnsignedIncMsb,
+            JoltRelationId::Booleanity,
+        ))?;
+
+        let ram_ra = indexed_family(claims, ram::committed_ram_ra);
+        let committed_instruction_ra =
+            indexed_family(claims, instruction::committed_instruction_ra);
+        if committed_instruction_ra.is_empty() {
+            return Err(VerifierError::MissingOpeningClaim {
+                id: instruction::committed_instruction_ra(0),
+            });
+        }
+
+        Ok(Stage6bOutputClaims {
+            bytecode_read_raf: LatticeBytecodeReadRafOutputClaims {
+                bytecode_ra,
+                fused_inc: claims.require(fused_inc_read_raf_opening())?,
+            },
+            booleanity: LatticeBooleanityOutputClaims {
+                instruction_ra: booleanity_instruction_ra,
+                bytecode_ra: booleanity_bytecode_ra,
+                ram_ra: booleanity_ram_ra,
+                unsigned_inc_chunks,
+                unsigned_inc_msb,
+            },
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
+            },
+            ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                committed_instruction_ra,
+            },
+            trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
+            untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),
+            bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
+            program_image_reduction: claims
+                .get(program_image::cycle_phase_program_image_opening())
+                .or_else(|| claims.get(program_image::final_program_image_opening()))
+                .map(|program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image }),
+        })
+    }
+
+    fn packed_stage7_claims_from_openings<F: Field>(
+        claims: &OpeningClaimMap<F>,
+    ) -> Result<Stage7OutputClaims<F>, VerifierError> {
+        let instruction_ra = indexed_family(claims, |index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::InstructionRa(index),
+                JoltRelationId::HammingWeightClaimReduction,
+            )
+        });
+        let bytecode_ra = indexed_family(claims, |index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltRelationId::HammingWeightClaimReduction,
+            )
+        });
+        let ram_ra = indexed_family(claims, |index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamRa(index),
+                JoltRelationId::HammingWeightClaimReduction,
+            )
+        });
+        if instruction_ra.is_empty() && bytecode_ra.is_empty() && ram_ra.is_empty() {
+            return Err(VerifierError::MissingOpeningClaim {
+                id: JoltOpeningId::committed(
+                    JoltCommittedPolynomial::InstructionRa(0),
+                    JoltRelationId::HammingWeightClaimReduction,
+                ),
+            });
+        }
+
+        let chunks = indexed_family(claims, lattice_hamming::reduced_unsigned_inc_chunk_opening);
+        if chunks.is_empty() {
+            return Err(VerifierError::MissingOpeningClaim {
+                id: lattice_hamming::reduced_unsigned_inc_chunk_opening(0),
+            });
+        }
+
+        Ok(Stage7OutputClaims {
+            hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
+                instruction_ra,
+                bytecode_ra,
+                ram_ra,
+                unsigned_inc_chunks: chunks,
+                unsigned_inc_msb: claims
+                    .require(lattice_hamming::reduced_unsigned_inc_msb_opening())?,
+            },
+            trusted_advice: advice_address_phase_claim_from_openings(
+                claims,
+                JoltAdviceKind::Trusted,
+            )
+            .map(|opening| TrustedAdviceAddressPhaseOutputClaims { trusted: opening }),
+            untrusted_advice: advice_address_phase_claim_from_openings(
+                claims,
+                JoltAdviceKind::Untrusted,
+            )
+            .map(|opening| UntrustedAdviceAddressPhaseOutputClaims { untrusted: opening }),
+            bytecode_address_phase: bytecode_address_phase_claims_from_openings(claims),
+            program_image_address_phase: program_image_address_phase_claim_from_openings(claims),
+        })
+    }
+
+    fn reconstruction_claims_from_openings<F: Field>(
+        claims: &OpeningClaimMap<F>,
+    ) -> ReconstructionOutputClaims<F> {
+        ReconstructionOutputClaims {
+            untrusted_advice: claims
+                .get(advice_reconstruction::untrusted_advice_bytes_opening())
+                .map(|bytes| UntrustedAdviceReconstructionOutputClaims { bytes }),
+            trusted_advice: claims
+                .get(advice_reconstruction::trusted_advice_bytes_opening())
+                .map(|bytes| TrustedAdviceReconstructionOutputClaims { bytes }),
+            bytecode: bytecode_reconstruction_claims_from_openings(claims),
+            program_image: claims
+                .get(program_image_reconstruction::program_image_bytes_opening())
+                .map(|bytes| ProgramImageReconstructionOutputClaims { bytes }),
+        }
+    }
+
+    /// Every per-chunk lane family, in the relation's family-major layout;
+    /// `None` when no bytecode reconstruction ran (full-program mode).
+    fn bytecode_reconstruction_claims_from_openings<F: Field>(
+        claims: &OpeningClaimMap<F>,
+    ) -> Option<BytecodeChunkReconstructionOutputClaims<F>> {
+        let mut chunk_count = 0;
+        while claims
+            .get(bytecode_reconstruction::bytecode_lookup_selector_opening(
+                chunk_count,
+            ))
+            .is_some()
+        {
+            chunk_count += 1;
+        }
+        if chunk_count == 0 {
+            return None;
+        }
+        let mut register_selectors = Vec::new();
+        let mut circuit_flags = Vec::new();
+        let mut instruction_flags = Vec::new();
+        let mut lookup_selectors = Vec::new();
+        let mut raf_flags = Vec::new();
+        let mut pc_bytes = Vec::new();
+        let mut imm_bytes = Vec::new();
+        for chunk in 0..chunk_count {
+            for lane in BytecodeRegisterLane::ALL {
+                register_selectors.push(claims.get(
+                    bytecode_reconstruction::bytecode_register_selector_opening(chunk, lane),
+                )?);
+            }
+            for flag in 0..NUM_CIRCUIT_FLAGS {
+                circuit_flags.push(claims.get(
+                    bytecode_reconstruction::bytecode_circuit_flag_opening(chunk, flag),
+                )?);
+            }
+            for flag in 0..NUM_INSTRUCTION_FLAGS {
+                instruction_flags.push(claims.get(
+                    bytecode_reconstruction::bytecode_instruction_flag_opening(chunk, flag),
+                )?);
+            }
+            lookup_selectors.push(claims.get(
+                bytecode_reconstruction::bytecode_lookup_selector_opening(chunk),
+            )?);
+            raf_flags.push(claims.get(bytecode_reconstruction::bytecode_raf_flag_opening(chunk))?);
+            pc_bytes.push(
+                claims.get(bytecode_reconstruction::bytecode_unexpanded_pc_bytes_opening(chunk))?,
+            );
+            imm_bytes.push(claims.get(bytecode_reconstruction::bytecode_imm_bytes_opening(chunk))?);
+        }
+        Some(BytecodeChunkReconstructionOutputClaims {
+            register_selectors,
+            circuit_flags,
+            instruction_flags,
+            lookup_selectors,
+            raf_flags,
+            pc_bytes,
+            imm_bytes,
+        })
+    }
+}
+
+#[cfg(feature = "akita")]
+pub(crate) use packed::build_packed_clear_claims;
