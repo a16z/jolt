@@ -540,16 +540,420 @@ fn invalid<T>(message: &'static str) -> Result<T, ProgramError> {
 }
 
 #[cfg(test)]
-#[cfg_attr(
-    feature = "field-inline",
-    expect(clippy::panic, reason = "decode tests fail with contextual errors")
-)]
+#[expect(clippy::panic, reason = "decode tests fail with contextual errors")]
 mod tests {
     use super::*;
     use jolt_riscv::RV64IMAC_JOLT;
 
     fn field_word(funct3: u32, rd: u8, rs1: u8, rs2_or_imm: u32) -> u32 {
         0x7b | (funct3 << 12) | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (rs2_or_imm << 20)
+    }
+
+    fn bit(value: u32, index: u32) -> u32 {
+        (value >> index) & 1
+    }
+
+    fn field_bits(value: u32, hi: u32, lo: u32) -> u32 {
+        (value >> lo) & ((1 << (hi - lo + 1)) - 1)
+    }
+
+    // Encoding-side assemblers transcribed from the RV64I base instruction
+    // formats (unprivileged spec §2.3); they scatter immediates independently
+    // of the reassembly code under test.
+
+    fn b_word(offset: i32, rs2: u32, rs1: u32, funct3: u32) -> u32 {
+        let imm = offset as u32;
+        (bit(imm, 12) << 31)
+            | (field_bits(imm, 10, 5) << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (funct3 << 12)
+            | (field_bits(imm, 4, 1) << 8)
+            | (bit(imm, 11) << 7)
+            | 0x63
+    }
+
+    fn j_word(offset: i32, rd: u32) -> u32 {
+        let imm = offset as u32;
+        (bit(imm, 20) << 31)
+            | (field_bits(imm, 10, 1) << 21)
+            | (bit(imm, 11) << 20)
+            | (field_bits(imm, 19, 12) << 12)
+            | (rd << 7)
+            | 0x6f
+    }
+
+    fn s_word(imm: i32, rs2: u32, rs1: u32, funct3: u32) -> u32 {
+        let imm = imm as u32 & 0xfff;
+        (field_bits(imm, 11, 5) << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (funct3 << 12)
+            | (field_bits(imm, 4, 0) << 7)
+            | 0x23
+    }
+
+    fn u_word(imm31_12: u32, rd: u32, opcode: u32) -> u32 {
+        (imm31_12 << 12) | (rd << 7) | opcode
+    }
+
+    fn decode_ok(word: u32, address: u64, is_compressed: bool) -> SourceInstruction {
+        match decode_instruction(word, address, is_compressed, RV64IMAC_JOLT) {
+            Ok(instruction) => instruction,
+            Err(error) => panic!("decode failed for word {word:#010x}: {error:?}"),
+        }
+    }
+
+    #[test]
+    fn sign_extension_helpers_handle_boundary_widths() {
+        assert_eq!(sign_extend_i64(0x7ff, 12), 2047);
+        assert_eq!(sign_extend_i64(0x800, 12), -2048);
+        assert_eq!(sign_extend_i64(0xfff, 12), -1);
+        assert_eq!(sign_extend_i64(0, 12), 0);
+        // garbage above the extracted width must not leak into the result
+        assert_eq!(sign_extend_i64(0xffff_f7ff, 12), 2047);
+        assert_eq!(sign_extend_i64(1, 1), -1);
+        assert_eq!(sign_extend_i64(0, 1), 0);
+        assert_eq!(sign_extend_i64(0x8000_0000, 32), i64::from(i32::MIN));
+        assert_eq!(sign_extend_i64(0x7fff_ffff, 32), i64::from(i32::MAX));
+
+        assert_eq!(sign_extend_u64(0x800, 12), 0xffff_ffff_ffff_f800);
+        assert_eq!(sign_extend_u64(0x7ff, 12), 0x7ff);
+
+        assert_eq!(
+            sign_extension_mask(0x8000_0000, 0x8000_0000, 0xffff_f000),
+            0xffff_f000
+        );
+        assert_eq!(
+            sign_extension_mask(0x7fff_ffff, 0x8000_0000, 0xffff_f000),
+            0
+        );
+    }
+
+    #[test]
+    fn format_b_operands_reassembles_scattered_branch_immediate() {
+        assert_eq!(
+            format_b_operands(b_word(-4096, 2, 1, 0b000)),
+            NormalizedOperands {
+                rs1: Some(1),
+                rs2: Some(2),
+                rd: None,
+                imm: -4096,
+            }
+        );
+        assert_eq!(format_b_operands(b_word(4094, 31, 15, 0b000)).imm, 4094);
+        assert_eq!(format_b_operands(b_word(-2, 0, 0, 0b000)).imm, -2);
+        // one-hot sweep over every branch immediate bit position
+        for b in 1..=11 {
+            let offset = 1 << b;
+            assert_eq!(
+                format_b_operands(b_word(offset, 3, 4, 0b000)).imm,
+                i128::from(offset)
+            );
+        }
+    }
+
+    #[test]
+    fn format_j_operands_reassembles_scattered_jump_immediate() {
+        // JAL immediates carry the 64-bit two's-complement pattern
+        // zero-extended into i128, not a negative i128
+        let operands = format_j_operands(j_word(-2, 1));
+        assert_eq!(operands.rd, Some(1));
+        assert_eq!(operands.rs1, None);
+        assert_eq!(operands.rs2, None);
+        assert_eq!(operands.imm, i128::from(-2i64 as u64));
+        assert_eq!(
+            format_j_operands(j_word(-1_048_576, 0)).imm,
+            i128::from(-1_048_576i64 as u64)
+        );
+        assert_eq!(format_j_operands(j_word(703_710, 0)).imm, 703_710); // 0xABCDE
+        for b in 1..=19 {
+            let offset = 1 << b;
+            assert_eq!(format_j_operands(j_word(offset, 5)).imm, i128::from(offset));
+        }
+    }
+
+    #[test]
+    fn format_s_operands_reassembles_split_store_immediate() {
+        assert_eq!(
+            format_s_operands(s_word(-2048, 10, 11, 0b011)),
+            NormalizedOperands {
+                rs1: Some(11),
+                rs2: Some(10),
+                rd: None,
+                imm: -2048,
+            }
+        );
+        assert_eq!(format_s_operands(s_word(2047, 1, 2, 0b011)).imm, 2047);
+        assert_eq!(format_s_operands(s_word(-677, 1, 2, 0b011)).imm, -677);
+        for b in 0..=10 {
+            let imm = 1 << b;
+            assert_eq!(
+                format_s_operands(s_word(imm, 6, 7, 0b011)).imm,
+                i128::from(imm)
+            );
+        }
+    }
+
+    #[test]
+    fn format_u_operands_zero_extends_the_64_bit_pattern() {
+        assert_eq!(
+            format_u_operands(u_word(0x12345, 3, 0x37)),
+            NormalizedOperands {
+                rs1: None,
+                rs2: None,
+                rd: Some(3),
+                imm: 0x1234_5000,
+            }
+        );
+        // sign bit set: the sign-extended u64 pattern appears as a large
+        // positive i128
+        assert_eq!(
+            format_u_operands(u_word(0xfffff, 3, 0x37)).imm,
+            i128::from(0xffff_ffff_ffff_f000u64)
+        );
+    }
+
+    #[test]
+    fn decodes_r_format_add_with_register_operands() {
+        let instruction = decode_ok(0x0073_02b3, 0x8000_0000, false); // add t0,t1,t2
+        assert_eq!(instruction.kind(), SourceInstructionKind::ADD);
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(6),
+                rs2: Some(7),
+                rd: Some(5),
+                imm: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_i_format_addi_and_records_row_metadata() {
+        let instruction = decode_ok(0xff01_0113, 0x8000_0010, true); // addi sp,sp,-16
+        assert_eq!(instruction.kind(), SourceInstructionKind::ADDI);
+        // unlike loads (format_load_operands), plain I-format immediates carry
+        // the zero-extended 64-bit two's-complement pattern in the i128
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(2),
+                rs2: None,
+                rd: Some(2),
+                imm: i128::from(-16i64 as u64),
+            }
+        );
+        assert_eq!(instruction.row().address, 0x8000_0010);
+        assert!(instruction.row().is_compressed);
+
+        let instruction = decode_ok(0x0010_8093, 0x8000_0000, false); // addi ra,ra,1
+        assert_eq!(instruction.kind(), SourceInstructionKind::ADDI);
+        assert_eq!(instruction.row().operands.imm, 1);
+        assert!(!instruction.row().is_compressed);
+    }
+
+    #[test]
+    fn decodes_loads_with_sign_extended_offset() {
+        let instruction = decode_ok(0xff84_a503, 0x8000_0000, false); // lw a0,-8(s1)
+        assert_eq!(instruction.kind(), SourceInstructionKind::LW);
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(9),
+                rs2: None,
+                rd: Some(10),
+                imm: -8,
+            }
+        );
+
+        let instruction = decode_ok(0x0106_3583, 0x8000_0000, false); // ld a1,16(a2)
+        assert_eq!(instruction.kind(), SourceInstructionKind::LD);
+        assert_eq!(instruction.row().operands.imm, 16);
+    }
+
+    #[test]
+    fn decodes_s_format_store_with_negative_offset() {
+        let instruction = decode_ok(s_word(-16, 10, 11, 0b011), 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::SD);
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(11),
+                rs2: Some(10),
+                rd: None,
+                imm: -16,
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_b_format_branch_with_negative_target() {
+        let instruction = decode_ok(b_word(-4, 9, 8, 0b001), 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::BNE);
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(8),
+                rs2: Some(9),
+                rd: None,
+                imm: -4,
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_u_format_lui_and_auipc() {
+        let instruction = decode_ok(u_word(0x12345, 7, 0x37), 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::LUI);
+        assert_eq!(instruction.row().operands.imm, 0x1234_5000);
+
+        let instruction = decode_ok(u_word(0xfffff, 7, 0x17), 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::AUIPC);
+        assert_eq!(
+            instruction.row().operands.imm,
+            i128::from(0xffff_ffff_ffff_f000u64)
+        );
+    }
+
+    #[test]
+    fn decodes_j_format_jal_with_negative_offset() {
+        let instruction = decode_ok(j_word(-2, 1), 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::JAL);
+        assert_eq!(instruction.row().operands.rd, Some(1));
+        assert_eq!(instruction.row().operands.imm, i128::from(-2i64 as u64));
+    }
+
+    #[test]
+    fn decodes_amo_and_ignores_aq_rl_bits() {
+        // amoadd.w.aq.rl a0,a1,(a2): funct5 selects the operation; aq/rl
+        // (bits 26:25) must not affect decoding
+        let word = (0b11 << 25) | (11 << 20) | (12 << 15) | (0b010 << 12) | (10 << 7) | 0x2f;
+        let instruction = decode_ok(word, 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::AMOADDW);
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(12),
+                rs2: Some(11),
+                rd: Some(10),
+                imm: 0,
+            }
+        );
+
+        let word = (0b00010 << 27) | (6 << 15) | (0b011 << 12) | (5 << 7) | 0x2f; // lr.d t0,(t1)
+        assert_eq!(
+            decode_ok(word, 0x8000_0000, false).kind(),
+            SourceInstructionKind::LRD
+        );
+    }
+
+    #[test]
+    fn decodes_system_instructions_exactly() {
+        assert_eq!(
+            decode_ok(0x0000_0073, 0x8000_0000, false).kind(),
+            SourceInstructionKind::ECALL
+        );
+        assert_eq!(
+            decode_ok(0x0010_0073, 0x8000_0000, false).kind(),
+            SourceInstructionKind::EBREAK
+        );
+        assert_eq!(
+            decode_ok(0x3020_0073, 0x8000_0000, false).kind(),
+            SourceInstructionKind::MRET
+        );
+
+        let word = (0x305 << 20) | (1 << 15) | (0b001 << 12) | (3 << 7) | 0x73; // csrrw gp,mtvec,ra
+        let instruction = decode_ok(word, 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::CSRRW);
+        assert_eq!(instruction.row().operands.imm, 0x305);
+
+        let word = (0xc00 << 20) | (0b010 << 12) | (5 << 7) | 0x73; // csrrs t0,cycle,x0
+        let instruction = decode_ok(word, 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::CSRRS);
+        // I-format sign extension leaves the u64 bit pattern in the i128
+        assert_eq!(
+            instruction.row().operands.imm,
+            i128::from(0xffff_ffff_ffff_fc00u64)
+        );
+
+        // ecall with rd=1 is not the canonical 0x00000073 encoding
+        assert!(matches!(
+            decode_instruction(0x0000_00f3, 0x8000_0000, false, RV64IMAC_JOLT),
+            Err(ProgramError::MalformedImage(
+                "unsupported system instruction"
+            ))
+        ));
+    }
+
+    #[test]
+    fn decodes_inline_opcode_with_dispatch_key() {
+        let word = (3 << 25) | (2 << 20) | (1 << 15) | (0b101 << 12) | (4 << 7) | 0x0b;
+        let instruction = decode_ok(word, 0x8000_0000, false);
+        assert_eq!(instruction.kind(), SourceInstructionKind::Inline);
+        assert_eq!(
+            instruction.row().inline,
+            Some(SourceInlineKey {
+                opcode: 0x0b,
+                funct3: 0b101,
+                funct7: 3,
+            })
+        );
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(1),
+                rs2: Some(2),
+                rd: Some(4),
+                imm: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_encodings_with_exact_messages() {
+        let cases: &[(u32, &str)] = &[
+            (0x0000_007f, "unknown RV64 opcode"),
+            (0x63 | (0b010 << 12), "invalid branch funct3"),
+            (0x67 | (0b001 << 12), "invalid JALR funct3"),
+            (0x03 | (0b111 << 12), "invalid load funct3"),
+            (0x23 | (0b100 << 12), "invalid store funct3"),
+            ((1 << 26) | (0b001 << 12) | 0x13, "invalid SLLI funct6"),
+            (
+                (0b100000 << 26) | (0b101 << 12) | 0x13,
+                "invalid shift-immediate funct6",
+            ),
+            (0x1b | (0b010 << 12), "invalid RV64 op-imm-32 instruction"),
+            ((0b0000010 << 25) | 0x33, "invalid op instruction"),
+            (0x3b | (0b010 << 12), "invalid RV64 op-32 instruction"),
+            (
+                (0b00101 << 27) | (0b010 << 12) | 0x2f,
+                "invalid atomic memory operation",
+            ),
+            ((0x3f << 25) | 0x5b, "invalid custom instruction"),
+        ];
+        for (word, message) in cases {
+            match decode_instruction(*word, 0x8000_0000, false, RV64IMAC_JOLT) {
+                Err(ProgramError::MalformedImage(actual)) => {
+                    assert_eq!(actual, *message, "wrong message for word {word:#010x}");
+                }
+                Err(error) => panic!("expected MalformedImage for {word:#010x}, got {error:?}"),
+                Ok(_) => panic!("expected MalformedImage for {word:#010x}, got Ok"),
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_source_instructions_outside_the_profile() {
+        // amoadd.w decodes but the A extension is absent from RV64IM_JOLT
+        let word = (11 << 20) | (12 << 15) | (0b010 << 12) | (10 << 7) | 0x2f;
+        match decode_instruction(word, 0x8000_0000, false, jolt_riscv::RV64IM_JOLT) {
+            Err(ProgramError::IllegalSourceInstruction(kind)) => {
+                assert_eq!(kind, SourceInstructionKind::AMOADDW);
+            }
+            Err(error) => panic!("expected IllegalSourceInstruction, got {error:?}"),
+            Ok(_) => panic!("expected IllegalSourceInstruction, got Ok"),
+        }
     }
 
     #[cfg(feature = "field-inline")]
